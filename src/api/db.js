@@ -1,162 +1,127 @@
-/**
- * db.js — Camada de dados com localStorage
- * API idêntica ao padrão Supabase usado no EON-HUB:
- *   db.entities.X.list()
- *   db.entities.X.filter({ field: value })
- *   db.entities.X.create(data)
- *   db.entities.X.update(id, data)
- *   db.entities.X.delete(id)
- *   db.entities.X.get(id)
- *
- * Para migrar para Supabase: substituir createLocalProxy por createSupabaseProxy
- */
+import { createClient } from '@supabase/supabase-js';
 
-function generateId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY,
+);
+
+function parseSortBy(sortBy = '-created_date') {
+  const desc = sortBy.startsWith('-');
+  const field = desc ? sortBy.slice(1) : sortBy;
+  return { field, ascending: !desc };
 }
 
-function generateOrderNumber() {
-  const all = readStore('presale_orders');
-  const max = all.reduce((acc, o) => {
-    const num = parseInt(o.order_number?.replace('PED-', '') || '0', 10);
-    return num > acc ? num : acc;
-  }, 0);
-  return `PED-${String(max + 1).padStart(6, '0')}`;
-}
-
-function readStore(table) {
-  try {
-    const raw = localStorage.getItem(`eon_store_${table}`);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeStore(table, data) {
-  localStorage.setItem(`eon_store_${table}`, JSON.stringify(data));
-}
-
-function createLocalProxy(tableName) {
+function createSupabaseProxy(tableName) {
   return {
     async list(sortBy = '-created_date') {
-      let data = readStore(tableName);
-      if (sortBy) {
-        const desc = sortBy.startsWith('-');
-        const field = desc ? sortBy.slice(1) : sortBy;
-        data = [...data].sort((a, b) => {
-          const av = a[field] ?? '';
-          const bv = b[field] ?? '';
-          return desc ? (bv > av ? 1 : -1) : (av > bv ? 1 : -1);
-        });
-      }
-      return data;
+      const { field, ascending } = parseSortBy(sortBy);
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .order(field, { ascending });
+      if (error) throw error;
+      return data ?? [];
     },
 
     async filter(filters = {}, sortBy = '-created_date') {
-      let data = readStore(tableName);
+      const { field, ascending } = parseSortBy(sortBy);
+      let query = supabase.from(tableName).select('*');
       for (const [key, value] of Object.entries(filters)) {
         if (value === null || value === undefined) {
-          data = data.filter(r => r[key] == null);
+          query = query.is(key, null);
         } else if (Array.isArray(value)) {
-          data = data.filter(r => value.includes(r[key]));
+          query = query.in(key, value);
         } else {
-          data = data.filter(r => r[key] === value);
+          query = query.eq(key, value);
         }
       }
-      if (sortBy) {
-        const desc = sortBy.startsWith('-');
-        const field = desc ? sortBy.slice(1) : sortBy;
-        data = [...data].sort((a, b) => {
-          const av = a[field] ?? '';
-          const bv = b[field] ?? '';
-          return desc ? (bv > av ? 1 : -1) : (av > bv ? 1 : -1);
-        });
-      }
-      return data;
+      query = query.order(field, { ascending });
+      const { data, error } = await query;
+      if (error) throw error;
+      return data ?? [];
     },
 
     async create(data) {
-      const all = readStore(tableName);
-      const record = {
-        ...data,
-        id: generateId(),
-        created_date: data.created_date ?? new Date().toISOString(),
-        // Número de pedido automático para orders
-        ...(tableName === 'presale_orders' && !data.order_number
-          ? { order_number: generateOrderNumber() }
-          : {}),
-      };
-      all.push(record);
-      writeStore(tableName, all);
-      return record;
+      // Strip client-side id/created_date; let DB generate them
+      const { id: _id, created_date: _cd, order_number: _on, ...rest } = data;
+      const { data: created, error } = await supabase
+        .from(tableName)
+        .insert(rest)
+        .select()
+        .single();
+      if (error) throw error;
+      return created;
     },
 
     async update(id, data) {
-      const all = readStore(tableName);
-      const idx = all.findIndex(r => r.id === id);
-      if (idx === -1) throw new Error('Record not found');
-      all[idx] = { ...all[idx], ...data, updated_date: new Date().toISOString() };
-      writeStore(tableName, all);
-      return all[idx];
+      const { id: _id, created_date: _cd, ...rest } = data;
+      const { data: updated, error } = await supabase
+        .from(tableName)
+        .update({ ...rest, updated_date: new Date().toISOString() })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return updated;
     },
 
     async delete(id) {
-      const all = readStore(tableName);
-      writeStore(tableName, all.filter(r => r.id !== id));
+      const { error } = await supabase.from(tableName).delete().eq('id', id);
+      if (error) throw error;
       return true;
     },
 
     async get(id) {
-      const all = readStore(tableName);
-      const record = all.find(r => r.id === id);
-      if (!record) throw new Error('Record not found');
-      return record;
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (error) throw error;
+      return data;
     },
   };
 }
 
 const TABLE_MAP = {
-  PreSaleCampaign:   'presale_campaigns',
-  PreSaleProduct:    'presale_products',
-  PreSaleCustomer:   'presale_customers',
-  PreSaleOrder:      'presale_orders',
-  PreSaleSupplier:   'presale_suppliers',
-  PreSaleCategory:   'presale_categories',
-  PreSaleTrainer:    'presale_trainers',
+  PreSaleCampaign:  'presale_campaigns',
+  PreSaleProduct:   'presale_products',
+  PreSaleCustomer:  'presale_customers',
+  PreSaleOrder:     'presale_orders',
+  PreSaleSupplier:  'presale_suppliers',
+  PreSaleCategory:  'presale_categories',
+  PreSaleTrainer:   'presale_trainers',
 };
 
 const entities = Object.fromEntries(
-  Object.entries(TABLE_MAP).map(([name, table]) => [name, createLocalProxy(table)])
+  Object.entries(TABLE_MAP).map(([name, table]) => [name, createSupabaseProxy(table)])
 );
 
-// Helper para buscar cliente por WhatsApp ou email
 async function findOrCreateCustomer({ full_name, whatsapp, email, trainer }) {
-  const all = await entities.PreSaleCustomer.list();
-  const existing = all.find(
-    c =>
-      (whatsapp && c.whatsapp === whatsapp) ||
-      (email && c.email === email)
-  );
+  // Try to find by whatsapp first, then email
+  let existing = null;
+  if (whatsapp) {
+    const { data } = await supabase
+      .from('presale_customers')
+      .select('*')
+      .eq('whatsapp', whatsapp)
+      .maybeSingle();
+    existing = data;
+  }
+  if (!existing && email) {
+    const { data } = await supabase
+      .from('presale_customers')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+    existing = data;
+  }
   if (existing) return existing;
   return entities.PreSaleCustomer.create({ full_name, whatsapp, email, trainer });
 }
 
-const DEFAULT_TRAINERS = [
-  'Bruno Jeremias', 'Elinai Freitas', 'Guto Fernandes',
-  'Thais Prando', 'Denis Santana', 'Jéssica Vieira',
-];
-
-async function seedTrainers() {
-  const existing = readStore('presale_trainers');
-  if (existing.length > 0) return;
-  const seeded = DEFAULT_TRAINERS.map(name => ({
-    name,
-    id: generateId(),
-    created_date: new Date().toISOString(),
-  }));
-  writeStore('presale_trainers', seeded);
-}
+// Trainers are seeded via SQL migration; this is a no-op
+async function seedTrainers() {}
 
 export const db = {
   entities,

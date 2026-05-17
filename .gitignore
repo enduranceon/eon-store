@@ -30,3 +30,6 @@ dist-ssr
 
 # Claude
 .claude/
+
+# Local Netlify folder
+.netlify
