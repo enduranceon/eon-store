@@ -20,6 +20,7 @@ import Trainers from '@/pages/Trainers';
 import { seedTrainers } from '@/api/entities';
 import PublicCheckout from '@/pages/PublicCheckout';
 import PublicOrderConfirmation from '@/pages/PublicOrderConfirmation';
+import Migrate from '@/pages/Migrate';
 
 function AdminLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -43,6 +44,9 @@ export default function App() {
     <BrowserRouter>
       <Toaster position="top-right" richColors />
       <Routes>
+        {/* Migração */}
+        <Route path="/migrar" element={<Migrate />} />
+
         {/* Rotas públicas */}
         <Route path="/checkout/:campaignId" element={<PublicCheckout />} />
         <Route path="/confirmacao/:orderId" element={<PublicOrderConfirmation />} />

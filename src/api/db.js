@@ -11,6 +11,19 @@ function parseSortBy(sortBy = '-created_date') {
   return { field, ascending: !desc };
 }
 
+// Convert empty strings to null for UUID foreign-key fields
+function sanitize(data) {
+  const out = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (typeof v === 'string' && v === '' && k.endsWith('_id')) {
+      out[k] = null;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 function createSupabaseProxy(tableName) {
   return {
     async list(sortBy = '-created_date') {
@@ -42,11 +55,10 @@ function createSupabaseProxy(tableName) {
     },
 
     async create(data) {
-      // Strip client-side id/created_date; let DB generate them
       const { id: _id, created_date: _cd, order_number: _on, ...rest } = data;
       const { data: created, error } = await supabase
         .from(tableName)
-        .insert(rest)
+        .insert(sanitize(rest))
         .select()
         .single();
       if (error) throw error;
@@ -57,7 +69,7 @@ function createSupabaseProxy(tableName) {
       const { id: _id, created_date: _cd, ...rest } = data;
       const { data: updated, error } = await supabase
         .from(tableName)
-        .update({ ...rest, updated_date: new Date().toISOString() })
+        .update(sanitize({ ...rest, updated_date: new Date().toISOString() }))
         .eq('id', id)
         .select()
         .single();
