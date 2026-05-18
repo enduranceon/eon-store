@@ -41,7 +41,6 @@ export default function PublicOrderConfirmation() {
         <div className="bg-blue-600 text-white rounded-xl p-6 text-center mb-6">
           <p className="text-sm opacity-80 mb-1">Número do pedido</p>
           <p className="text-3xl font-bold font-mono tracking-wider">{order.order_number}</p>
-          <p className="text-sm opacity-80 mt-1">Guarde este número para consultas</p>
         </div>
 
         {/* Dados do pedido */}
@@ -83,10 +82,6 @@ export default function PublicOrderConfirmation() {
           </div>
         </div>
 
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-sm text-yellow-800">
-          <p className="font-semibold mb-1">Próximos passos</p>
-          <p>Em breve você receberá as instruções de pagamento via WhatsApp. Guarde o número do pedido <strong>{order.order_number}</strong> para acompanhamento.</p>
-        </div>
       </div>
     </div>
   );
