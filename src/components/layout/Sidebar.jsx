@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
-  Megaphone, Store, X, Truck, Tag, UserCheck,
+  Megaphone, Store, X, Truck, Tag, UserCheck, LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -18,7 +18,7 @@ const menu = [
   { label: 'Relatórios',   icon: BarChart3,        to: '/relatorios' },
 ];
 
-export default function Sidebar({ open, onClose }) {
+export default function Sidebar({ open, onClose, onSignOut }) {
   const location = useLocation();
 
   const isActive = (to, exact) => {
@@ -80,9 +80,16 @@ export default function Sidebar({ open, onClose }) {
         </nav>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-700">
+        <div className="px-6 py-4 border-t border-slate-700 space-y-3">
+          {onSignOut && (
+            <button
+              onClick={onSignOut}
+              className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors w-full"
+            >
+              <LogOut className="w-4 h-4" /> Sair
+            </button>
+          )}
           <p className="text-xs text-slate-500">EON Store v1.0</p>
-          <p className="text-xs text-slate-600">Pré-venda & Controle financeiro</p>
         </div>
       </aside>
     </>

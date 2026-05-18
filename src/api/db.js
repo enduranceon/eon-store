@@ -135,6 +135,8 @@ async function findOrCreateCustomer({ full_name, whatsapp, email, trainer }) {
 // Trainers are seeded via SQL migration; this is a no-op
 async function seedTrainers() {}
 
+export { supabase };
+
 export const db = {
   entities,
   helpers: {
