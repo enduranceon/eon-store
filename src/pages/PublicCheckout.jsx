@@ -20,7 +20,7 @@ export default function PublicCheckout() {
   });
   const [step, setStep] = useState('shop');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [form, setForm] = useState({ full_name: '', whatsapp: '', email: '', trainer: '' });
+  const [form, setForm] = useState({ full_name: '', whatsapp: '', email: '', trainer: '', delivery_method: '', delivery_city: '' });
   const [submitting, setSubmitting] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
@@ -31,8 +31,11 @@ export default function PublicCheckout() {
     PreSaleCampaign.get(campaignId)
       .then(c => {
         setCampaign(c);
-        return PreSaleProduct.filter({ campaign_id: campaignId }).then(p => {
-          const active = p.filter(prod => prod.status === 'active');
+        return PreSaleProduct.list().then(p => {
+          const active = p.filter(prod =>
+            prod.status === 'active' &&
+            ((prod.campaign_ids || []).includes(campaignId) || prod.campaign_id === campaignId)
+          );
           if (c.product_order?.length) {
             active.sort((a, b) => {
               const ia = c.product_order.indexOf(a.id);
@@ -106,6 +109,8 @@ export default function PublicCheckout() {
     if (!form.full_name.trim()) return toast.error('Informe seu nome completo');
     if (!form.whatsapp.trim()) return toast.error('Informe seu WhatsApp');
     if (cart.length === 0) return toast.error('Adicione produtos ao carrinho');
+    if (!form.delivery_method) return toast.error('Selecione a forma de entrega');
+    if (form.delivery_method === 'pickup' && !form.delivery_city) return toast.error('Selecione a cidade de retirada');
     setSubmitting(true);
     try {
       const customer = await findOrCreateCustomer(form);
@@ -127,6 +132,8 @@ export default function PublicCheckout() {
         items,
         total_value: cartTotal,
         total_cost: cartCost,
+        delivery_method: form.delivery_method,
+        delivery_city: form.delivery_city || null,
         payment_status: 'awaiting_charge',
         delivery_status: 'awaiting_supplier',
       });
@@ -373,6 +380,81 @@ export default function PublicCheckout() {
                     />
                   )}
                 </div>
+              </div>
+            </div>
+
+            {/* Entrega */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100">
+                <h3 className="font-bold text-gray-900">Forma de entrega</h3>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                {/* Retirada */}
+                <label className={cn(
+                  'flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all',
+                  form.delivery_method === 'pickup'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                )}>
+                  <input
+                    type="radio"
+                    name="delivery_method"
+                    value="pickup"
+                    checked={form.delivery_method === 'pickup'}
+                    onChange={() => setForm(f => ({ ...f, delivery_method: 'pickup', delivery_city: '' }))}
+                    className="mt-0.5 accent-blue-600"
+                  />
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-900 text-sm">Retirada em Treino Coletivo</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Retire seu pedido no treino coletivo da sua cidade</p>
+
+                    {/* Cidades */}
+                    {form.delivery_method === 'pickup' && (
+                      <div className="flex gap-2 mt-3">
+                        {['Florianópolis', 'São Paulo'].map(city => (
+                          <button
+                            key={city}
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, delivery_city: city }))}
+                            className={cn(
+                              'flex-1 py-2 px-3 rounded-xl text-sm font-semibold border-2 transition-all',
+                              form.delivery_city === city
+                                ? 'border-blue-500 bg-blue-500 text-white'
+                                : 'border-gray-200 text-gray-600 hover:border-blue-300'
+                            )}
+                          >
+                            {city}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </label>
+
+                {/* Frete */}
+                <label className={cn(
+                  'flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all',
+                  form.delivery_method === 'shipping'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                )}>
+                  <input
+                    type="radio"
+                    name="delivery_method"
+                    value="shipping"
+                    checked={form.delivery_method === 'shipping'}
+                    onChange={() => setForm(f => ({ ...f, delivery_method: 'shipping', delivery_city: '' }))}
+                    className="mt-0.5 accent-blue-600"
+                  />
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">Frete</p>
+                    {form.delivery_method === 'shipping' && (
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                        O valor do frete será calculado e enviado separadamente via WhatsApp.
+                      </p>
+                    )}
+                  </div>
+                </label>
               </div>
             </div>
 
