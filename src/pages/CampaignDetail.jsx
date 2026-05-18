@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Edit2, Save, X, ExternalLink, Copy, Package, ShoppingCart, DollarSign, TrendingUp, LayoutGrid, GripVertical } from 'lucide-react';
+import { ArrowLeft, Edit2, Save, X, ExternalLink, Copy, Package, ShoppingCart, DollarSign, TrendingUp, LayoutGrid, GripVertical, Plus, Search, Link2Off } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,18 +24,21 @@ export default function CampaignDetail() {
   const [orders, setOrders] = useState([]);
   const [products, setProducts] = useState([]);
   const [productOrder, setProductOrder] = useState([]);
+  const [allProducts, setAllProducts] = useState([]);
   const [showOrderModal, setShowOrderModal] = useState(false);
+  const [showLinkModal, setShowLinkModal] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [savingOrder, setSavingOrder] = useState(false);
 
   const load = async () => {
-    const [c, allOrders, allProducts] = await Promise.all([PreSaleCampaign.get(id), PreSaleOrder.list(), PreSaleProduct.list()]);
+    const [c, allOrders, allProds] = await Promise.all([PreSaleCampaign.get(id), PreSaleOrder.list(), PreSaleProduct.list()]);
     setCampaign(c);
     setForm({ ...c });
-    const campaignProducts = allProducts.filter(p => p.campaign_id === id);
+    const campaignProducts = allProds.filter(p => p.campaign_id === id);
     setOrders(allOrders.filter(o => o.campaign_id === id));
+    setAllProducts(allProds);
     setProducts(campaignProducts);
     // Inicializa a ordem: usa a ordem salva ou a ordem padrão (criação)
     const savedOrder = c.product_order || [];
@@ -74,6 +77,24 @@ export default function CampaignDetail() {
     } finally {
       setSavingOrder(false);
     }
+  };
+
+  const handleLinkProducts = async (productIds) => {
+    try {
+      await Promise.all(productIds.map(pid => PreSaleProduct.update(pid, { campaign_id: id })));
+      toast.success(`${productIds.length} produto(s) vinculado(s)!`);
+      setShowLinkModal(false);
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handleUnlink = async (pid) => {
+    if (!confirm('Desvincular este produto da campanha?')) return;
+    try {
+      await PreSaleProduct.update(pid, { campaign_id: null });
+      toast.success('Produto desvinculado');
+      load();
+    } catch (e) { toast.error(e.message); }
   };
 
   const checkoutUrl = `${window.location.origin}/checkout/${id}`;
@@ -166,8 +187,72 @@ export default function CampaignDetail() {
         ))}
       </div>
 
+      {/* Produtos da campanha */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Package className="w-4 h-4" /> Produtos ({products.length})
+            </CardTitle>
+            <div className="flex gap-2">
+              {products.length > 1 && (
+                <Button variant="outline" size="sm" onClick={() => setShowOrderModal(true)}>
+                  <LayoutGrid className="w-3.5 h-3.5" /> Organizar
+                </Button>
+              )}
+              <Button size="sm" onClick={() => setShowLinkModal(true)}>
+                <Plus className="w-3.5 h-3.5" /> Vincular produto
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {products.length === 0 ? (
+            <div className="text-center py-10">
+              <Package className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">Nenhum produto vinculado ainda</p>
+              <Button size="sm" className="mt-3" onClick={() => setShowLinkModal(true)}>
+                <Plus className="w-3.5 h-3.5" /> Vincular produto
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {productOrder.map((pid, idx) => {
+                const p = products.find(x => x.id === pid);
+                if (!p) return null;
+                const img = p.images?.[0];
+                return (
+                  <div key={pid} className="group relative border rounded-xl overflow-hidden bg-white hover:shadow-md transition-shadow">
+                    <div className="aspect-square bg-gray-100">
+                      {img ? (
+                        <img src={img} alt={p.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Package className="w-7 h-7 text-gray-300" />
+                        </div>
+                      )}
+                      <div className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-black/50 text-white text-[10px] font-bold flex items-center justify-center">{idx + 1}</div>
+                      <button
+                        onClick={() => handleUnlink(p.id)}
+                        className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white hidden group-hover:flex items-center justify-center shadow"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div className="p-2">
+                      <p className="text-xs font-semibold text-gray-900 truncate">{p.name}</p>
+                      <p className="text-xs text-blue-600 font-medium">{p.sale_price ? `R$ ${Number(p.sale_price).toFixed(2).replace('.', ',')}` : '—'}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Pedidos + Top produtos */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pedidos */}
         <div className="lg:col-span-2">
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Pedidos ({orders.length})</CardTitle></CardHeader>
@@ -193,45 +278,32 @@ export default function CampaignDetail() {
             </CardContent>
           </Card>
         </div>
-
-        <div className="space-y-4">
-          {/* Produtos mais vendidos */}
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Package className="w-4 h-4" /> Top produtos</CardTitle></CardHeader>
-            <CardContent>
-              {topProducts.length === 0 ? <p className="text-sm text-muted-foreground">-</p> : (
-                <div className="space-y-2">
-                  {topProducts.map(([name, qty]) => (
-                    <div key={name} className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground truncate">{name}</span>
-                      <span className="font-semibold ml-2 shrink-0">{qty} un.</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Ordenação dos produtos */}
-          <Card>
-            <CardContent className="p-4">
-              {products.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Nenhum produto vinculado. Vincule na edição do produto.</p>
-              ) : (
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm font-semibold">Ordem no checkout</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{products.length} produto{products.length !== 1 ? 's' : ''} nesta campanha</p>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Package className="w-4 h-4" /> Top produtos</CardTitle></CardHeader>
+          <CardContent>
+            {topProducts.length === 0 ? <p className="text-sm text-muted-foreground">—</p> : (
+              <div className="space-y-2">
+                {topProducts.map(([name, qty]) => (
+                  <div key={name} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground truncate">{name}</span>
+                    <span className="font-semibold ml-2 shrink-0">{qty} un.</span>
                   </div>
-                  <Button className="w-full" variant="outline" onClick={() => setShowOrderModal(true)}>
-                    <LayoutGrid className="w-4 h-4" /> Organizar produtos
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Modal de vincular produtos */}
+      {showLinkModal && (
+        <LinkProductsModal
+          allProducts={allProducts}
+          linkedIds={products.map(p => p.id)}
+          onLink={handleLinkProducts}
+          onClose={() => setShowLinkModal(false)}
+        />
+      )}
 
       {/* Modal de ordenação */}
       {showOrderModal && (
@@ -272,6 +344,93 @@ export default function CampaignDetail() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function LinkProductsModal({ allProducts, linkedIds, onLink, onClose }) {
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState([]);
+
+  const available = allProducts.filter(p =>
+    !linkedIds.includes(p.id) &&
+    (p.name.toLowerCase().includes(search.toLowerCase()) ||
+     (p.category || '').toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const toggle = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-xl">
+        <div className="px-5 py-4 border-b flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-gray-900">Vincular produtos</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">{selected.length > 0 ? `${selected.length} selecionado(s)` : 'Selecione os produtos para adicionar à campanha'}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="px-4 py-3 border-b">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              autoFocus
+              placeholder="Buscar produto..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-9 pr-4 h-9 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {available.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground py-8">
+              {allProducts.length === linkedIds.length ? 'Todos os produtos já estão vinculados.' : 'Nenhum produto encontrado.'}
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {available.map(p => {
+                const sel = selected.includes(p.id);
+                const img = p.images?.[0];
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => toggle(p.id)}
+                    className={`text-left border-2 rounded-xl overflow-hidden transition-all ${sel ? 'border-blue-500 shadow-md' : 'border-transparent hover:border-gray-200'}`}
+                  >
+                    <div className="aspect-square bg-gray-100 relative">
+                      {img ? <img src={img} alt={p.name} className="w-full h-full object-cover" /> : (
+                        <div className="w-full h-full flex items-center justify-center"><Package className="w-7 h-7 text-gray-300" /></div>
+                      )}
+                      {sel && (
+                        <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
+                          <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center">
+                            <Save className="w-4 h-4 text-white" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-2 bg-white">
+                      <p className="text-xs font-semibold text-gray-900 truncate">{p.name}</p>
+                      <p className="text-xs text-blue-600">{p.sale_price ? `R$ ${Number(p.sale_price).toFixed(2).replace('.', ',')}` : '—'}</p>
+                      {p.category && <p className="text-[10px] text-muted-foreground">{p.category}</p>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t flex justify-end gap-3">
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={() => onLink(selected)} disabled={selected.length === 0}>
+            <Plus className="w-4 h-4" /> Vincular {selected.length > 0 ? `${selected.length} produto(s)` : ''}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
