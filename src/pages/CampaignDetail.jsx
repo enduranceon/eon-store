@@ -36,7 +36,7 @@ export default function CampaignDetail() {
     const [c, allOrders, allProds] = await Promise.all([PreSaleCampaign.get(id), PreSaleOrder.list(), PreSaleProduct.list()]);
     setCampaign(c);
     setForm({ ...c });
-    const campaignProducts = allProds.filter(p => p.campaign_id === id);
+    const campaignProducts = allProds.filter(p => (p.campaign_ids || []).includes(id) || p.campaign_id === id);
     setOrders(allOrders.filter(o => o.campaign_id === id));
     setAllProducts(allProds);
     setProducts(campaignProducts);
@@ -81,7 +81,13 @@ export default function CampaignDetail() {
 
   const handleLinkProducts = async (productIds) => {
     try {
-      await Promise.all(productIds.map(pid => PreSaleProduct.update(pid, { campaign_id: id })));
+      await Promise.all(productIds.map(async pid => {
+        const p = allProducts.find(x => x.id === pid);
+        const existing = p?.campaign_ids || [];
+        if (!existing.includes(id)) {
+          await PreSaleProduct.update(pid, { campaign_ids: [...existing, id] });
+        }
+      }));
       toast.success(`${productIds.length} produto(s) vinculado(s)!`);
       setShowLinkModal(false);
       load();
@@ -91,7 +97,9 @@ export default function CampaignDetail() {
   const handleUnlink = async (pid) => {
     if (!confirm('Desvincular este produto da campanha?')) return;
     try {
-      await PreSaleProduct.update(pid, { campaign_id: null });
+      const p = allProducts.find(x => x.id === pid);
+      const existing = p?.campaign_ids || [];
+      await PreSaleProduct.update(pid, { campaign_ids: existing.filter(x => x !== id) });
       toast.success('Produto desvinculado');
       load();
     } catch (e) { toast.error(e.message); }

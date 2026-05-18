@@ -21,7 +21,7 @@ const EMPTY = {
   name: '', supplier: '', sale_price: '', regular_price: '', cost_price: '',
   extra_cost: '', extra_cost_description: '',
   category: '', subcategory: '',
-  status: 'active', campaign_id: '', variations: [], notes: '',
+  status: 'active', campaign_ids: [], variations: [], notes: '',
 };
 
 // ─── Chip de seleção múltipla ────────────────────────────────────────────────
@@ -82,6 +82,8 @@ export default function ProductForm() {
           extra_cost: String(p.extra_cost || ''),
           variations: p.variations || [],
           images,
+          // backward compat: migrate single campaign_id to array
+          campaign_ids: p.campaign_ids?.length ? p.campaign_ids : (p.campaign_id ? [p.campaign_id] : []),
         });
       });
     }
@@ -310,14 +312,31 @@ export default function ProductForm() {
               )}
             </div>
             <div>
-              <Label>Campanha (opcional)</Label>
-              <Select value={form.campaign_id || '_none'} onValueChange={v => setField('campaign_id', v === '_none' ? '' : v)}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none">Sem campanha</SelectItem>
-                  {campaigns.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label>Campanhas (opcional)</Label>
+              {campaigns.length === 0 ? (
+                <p className="text-xs text-muted-foreground mt-2">Nenhuma campanha cadastrada ainda.</p>
+              ) : (
+                <div className="mt-1.5 space-y-1.5 max-h-36 overflow-y-auto border rounded-lg p-2">
+                  {campaigns.map(c => {
+                    const checked = (form.campaign_ids || []).includes(c.id);
+                    return (
+                      <label key={c.id} className="flex items-center gap-2.5 px-1 py-1 rounded-md hover:bg-gray-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            const ids = form.campaign_ids || [];
+                            setField('campaign_ids', checked ? ids.filter(x => x !== c.id) : [...ids, c.id]);
+                          }}
+                          className="w-4 h-4 rounded accent-blue-600"
+                        />
+                        <span className="text-sm text-gray-700">{c.name}</span>
+                        {c.status === 'active' && <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-medium">Ativa</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
           <div>
