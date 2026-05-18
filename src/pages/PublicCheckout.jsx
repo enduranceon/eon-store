@@ -65,15 +65,49 @@ export default function PublicCheckout() {
     </div>
   );
 
-  if (campaign.status !== 'active') return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center px-4">
-        <Store className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-        <h2 className="text-xl font-bold text-gray-800">Pré-venda encerrada</h2>
-        <p className="text-gray-500 mt-2 text-sm">Esta campanha já foi encerrada.</p>
+  if (campaign.status !== 'active') {
+    const deliveryDate = campaign.end_date && campaign.delivery_days
+      ? new Date(new Date(campaign.end_date).getTime() + campaign.delivery_days * 86400000)
+      : null;
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <header className="bg-[#1a1a2e] text-white py-4 px-4">
+          <div className="max-w-lg mx-auto flex items-center gap-3">
+            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shrink-0">
+              <Store className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <p className="text-xs text-blue-300 font-medium tracking-wide uppercase">EON Store</p>
+              <h1 className="text-sm font-bold leading-none">{campaign.name}</h1>
+            </div>
+          </div>
+        </header>
+        <div className="max-w-lg mx-auto px-4 py-12 text-center space-y-6">
+          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+            <Store className="w-8 h-8 text-amber-600" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Pré-venda encerrada</h2>
+            <p className="text-gray-500 mt-2">O período de pedidos desta campanha foi encerrado.</p>
+          </div>
+          {deliveryDate && (
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 text-left space-y-3">
+              <p className="font-bold text-blue-900 text-lg">🚚 Entregas a partir de</p>
+              <p className="text-3xl font-bold text-blue-700">
+                {deliveryDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
+              </p>
+              <p className="text-sm text-blue-700">
+                Pedido encaminhado ao fornecedor. Assim que os produtos chegarem, as entregas serão organizadas.
+              </p>
+            </div>
+          )}
+          {!deliveryDate && (
+            <p className="text-gray-500 text-sm">Em breve as informações de entrega serão divulgadas.</p>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   const addToCart = (product, variation = null, qty = 1) => {
     const key = `${product.id}-${variation?.name || ''}`;
@@ -209,11 +243,10 @@ export default function PublicCheckout() {
                   {daysLeft === 0 && <span className="font-semibold text-red-600">· Encerra hoje!</span>}
                 </span>
               )}
-              {campaign.delivery_days && (
+              {deliveryEnd && (
                 <span className="flex items-center gap-1.5">
                   <span>🚚</span>
-                  <span>Entrega estimada em até <strong>{campaign.delivery_days} dias</strong> após encerramento</span>
-                  {deliveryEnd && <span className="text-amber-700">(previsão: {deliveryEnd.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })})</span>}
+                  <span>Entregas a partir de <strong>{deliveryEnd.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })}</strong></span>
                 </span>
               )}
             </div>
@@ -321,7 +354,7 @@ export default function PublicCheckout() {
                 <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-sm text-amber-800 space-y-1">
                   <p className="font-semibold text-amber-900">⚠️ Atenção: isso é uma pré-venda</p>
                   {end && <p>Os pedidos ficam abertos até <strong>{end.toLocaleDateString('pt-BR')}</strong>. Após essa data, realizamos o pedido ao fornecedor.</p>}
-                  {deliveryEnd && <p>🚚 Previsão de entrega: até <strong>{deliveryEnd.toLocaleDateString('pt-BR')}</strong> ({campaign.delivery_days} dias após encerramento).</p>}
+                  {deliveryEnd && <p>🚚 Entregas a partir de <strong>{deliveryEnd.toLocaleDateString('pt-BR')}</strong>.</p>}
                 </div>
               );
             })()}
