@@ -202,21 +202,33 @@ export default function PublicCheckout() {
               <>
                 {/* Filtros de categoria */}
                 {categories.length >= 2 && (
-                  <div className="flex gap-2 flex-wrap mb-5 pb-5 border-b border-gray-200">
-                    {['all', ...categories].map(c => (
-                      <button
-                        key={c}
-                        onClick={() => setCategoryFilter(c)}
-                        className={cn(
-                          'text-sm px-4 py-1.5 rounded-full font-medium transition-all duration-150',
-                          categoryFilter === c
-                            ? 'bg-[#1a1a2e] text-white shadow-sm'
-                            : 'bg-white text-gray-600 border border-gray-200 hover:border-gray-400'
-                        )}
-                      >
-                        {c === 'all' ? 'Todos' : c}
-                      </button>
-                    ))}
+                  <div className="mb-6">
+                    <div className="flex gap-2.5 overflow-x-auto pb-1 scrollbar-none" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                      {['all', ...categories].map(c => {
+                        const count = c === 'all' ? products.length : products.filter(p => p.category === c).length;
+                        const active = categoryFilter === c;
+                        return (
+                          <button
+                            key={c}
+                            onClick={() => setCategoryFilter(c)}
+                            className={cn(
+                              'flex items-center gap-2 px-4 py-2.5 rounded-2xl font-semibold text-sm whitespace-nowrap transition-all duration-150 shrink-0 border-2',
+                              active
+                                ? 'bg-[#1a1a2e] text-white border-[#1a1a2e] shadow-md'
+                                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400 hover:shadow-sm'
+                            )}
+                          >
+                            {c === 'all' ? 'Todos' : c}
+                            <span className={cn(
+                              'text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center',
+                              active ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
+                            )}>
+                              {count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
