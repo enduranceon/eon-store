@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Edit2, Save, X, ExternalLink, Copy, Package, ShoppingCart, DollarSign, TrendingUp, LayoutGrid, GripVertical, Plus, Search, Link2Off } from 'lucide-react';
+import { ArrowLeft, Edit2, Save, X, ExternalLink, Copy, Package, ShoppingCart, DollarSign, TrendingUp, LayoutGrid, GripVertical, Plus, Search, Link2Off, BarChart2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -138,6 +138,9 @@ export default function CampaignDetail() {
           <p className="text-sm text-muted-foreground">{campaign.supplier} · {formatDate(campaign.start_date)} → {formatDate(campaign.end_date)}</p>
         </div>
         <Badge variant={STATUS_BADGE[campaign.status]}>{STATUS_LABEL[campaign.status]}</Badge>
+        <Button variant="outline" asChild>
+          <Link to={`/campanhas/${id}/relatorio`}><BarChart2 className="w-4 h-4" /> Relatório</Link>
+        </Button>
         {!editing ? (
           <Button variant="outline" onClick={() => setEditing(true)}><Edit2 className="w-4 h-4" /> Editar</Button>
         ) : (

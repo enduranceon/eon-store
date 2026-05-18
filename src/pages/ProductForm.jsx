@@ -18,7 +18,7 @@ const SIZES_NUMERIC = ['34', '36', '38', '40', '42', '44', '46', '48'];
 const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
 
 const EMPTY = {
-  name: '', supplier: '', sale_price: '', regular_price: '', cost_price: '',
+  name: '', sku: '', supplier: '', sale_price: '', regular_price: '', cost_price: '',
   extra_cost: '', extra_cost_description: '',
   category: '', subcategory: '',
   status: 'active', campaign_ids: [], variations: [], notes: '',
@@ -119,20 +119,20 @@ export default function ProductForm() {
         for (const size of sizes) {
           const name = `${gender} - ${size}`;
           if (!existing.find(v => v.name === name)) {
-            toAdd.push({ name, gender, size, sale_price: '', regular_price: '', cost_price: '' });
+            toAdd.push({ name, sku: '', gender, size, sale_price: '', regular_price: '', cost_price: '' });
           }
         }
       }
     } else if (sizes.length > 0) {
       for (const size of sizes) {
         if (!existing.find(v => v.size === size && !v.gender)) {
-          toAdd.push({ name: size, size, gender: '', sale_price: '', regular_price: '', cost_price: '' });
+          toAdd.push({ name: size, sku: '', size, gender: '', sale_price: '', regular_price: '', cost_price: '' });
         }
       }
     } else {
       for (const gender of genGenders) {
         if (!existing.find(v => v.gender === gender && !v.size)) {
-          toAdd.push({ name: gender, gender, size: '', sale_price: '', regular_price: '', cost_price: '' });
+          toAdd.push({ name: gender, sku: '', gender, size: '', sale_price: '', regular_price: '', cost_price: '' });
         }
       }
     }
@@ -150,7 +150,7 @@ export default function ProductForm() {
 
   const addVariation = () => setForm(f => ({
     ...f,
-    variations: [...(f.variations || []), { name: '', gender: '', size: '', sale_price: '', regular_price: '', cost_price: '' }],
+    variations: [...(f.variations || []), { name: '', sku: '', gender: '', size: '', sale_price: '', regular_price: '', cost_price: '' }],
   }));
 
   const updateVariation = (i, k, v) => setForm(f => {
@@ -230,9 +230,15 @@ export default function ProductForm() {
               />
             </div>
           </div>
-          <div>
-            <Label>Nome do produto *</Label>
-            <Input placeholder="Ex: Camiseta EON Dri-Fit" value={form.name} onChange={e => setField('name', e.target.value)} className="mt-1" />
+          <div className="grid grid-cols-[1fr,160px] gap-4">
+            <div>
+              <Label>Nome do produto *</Label>
+              <Input placeholder="Ex: Camiseta EON Dri-Fit" value={form.name} onChange={e => setField('name', e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Label>SKU base <span className="text-xs text-muted-foreground font-normal">(código)</span></Label>
+              <Input placeholder="Ex: EON-CAM-BRA" value={form.sku || ''} onChange={e => setField('sku', e.target.value)} className="mt-1 font-mono" />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -531,10 +537,11 @@ export default function ProductForm() {
           {variations.length > 0 && (
             <div className="space-y-2">
               {/* Cabeçalho da tabela */}
-              <div className="grid grid-cols-[1fr,100px,100px,90px,90px,90px,36px] gap-2 text-xs font-medium text-muted-foreground px-1">
+              <div className="grid grid-cols-[1fr,90px,90px,80px,80px,80px,80px,36px] gap-2 text-xs font-medium text-muted-foreground px-1">
                 <span>Nome / Variação</span>
+                <span>SKU</span>
                 <span>Gênero</span>
-                <span>Tamanho</span>
+                <span>Tam.</span>
                 <span className="text-right">Pré-venda</span>
                 <span className="text-right">Regular</span>
                 <span className="text-right">Custo</span>
@@ -542,12 +549,18 @@ export default function ProductForm() {
               </div>
 
               {variations.map((v, i) => (
-                <div key={i} className="grid grid-cols-[1fr,100px,100px,90px,90px,90px,36px] gap-2 items-center p-2 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200">
+                <div key={i} className="grid grid-cols-[1fr,90px,90px,80px,80px,80px,80px,36px] gap-2 items-center p-2 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200">
                   <Input
                     placeholder="Ex: Fem. - M, Azul GG..."
                     value={v.name}
                     onChange={e => updateVariation(i, 'name', e.target.value)}
                     className="h-8 text-sm"
+                  />
+                  <Input
+                    placeholder="SKU"
+                    value={v.sku ?? ''}
+                    onChange={e => updateVariation(i, 'sku', e.target.value)}
+                    className="h-8 text-xs font-mono"
                   />
                   <Select value={v.gender || '_none'} onValueChange={val => updateVariation(i, 'gender', val === '_none' ? '' : val)}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Gênero" /></SelectTrigger>

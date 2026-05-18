@@ -21,6 +21,7 @@ import { seedTrainers } from '@/api/entities';
 import PublicCheckout from '@/pages/PublicCheckout';
 import PublicOrderConfirmation from '@/pages/PublicOrderConfirmation';
 import Migrate from '@/pages/Migrate';
+import CampaignReport from '@/pages/CampaignReport';
 
 function AdminLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/" element={<AdminLayout><Dashboard /></AdminLayout>} />
         <Route path="/campanhas" element={<AdminLayout><Campaigns /></AdminLayout>} />
         <Route path="/campanhas/:id" element={<AdminLayout><CampaignDetail /></AdminLayout>} />
+        <Route path="/campanhas/:id/relatorio" element={<AdminLayout><CampaignReport /></AdminLayout>} />
         <Route path="/produtos" element={<AdminLayout><Products /></AdminLayout>} />
         <Route path="/produtos/novo" element={<AdminLayout><ProductForm /></AdminLayout>} />
         <Route path="/produtos/:id" element={<AdminLayout><ProductForm /></AdminLayout>} />
