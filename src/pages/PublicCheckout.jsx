@@ -65,7 +65,8 @@ export default function PublicCheckout() {
     </div>
   );
 
-  if (campaign.status !== 'active') {
+  const campaignExpired = campaign.end_date && new Date() > new Date(campaign.end_date + 'T23:59:59');
+  if (campaign.status !== 'active' || campaignExpired) {
     const deliveryDate = campaign.end_date && campaign.delivery_days
       ? new Date(new Date(campaign.end_date).getTime() + campaign.delivery_days * 86400000)
       : null;

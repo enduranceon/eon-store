@@ -109,6 +109,14 @@ export default function OrderDetail() {
             {order.checkout_whatsapp && <p className="flex items-center gap-2 text-muted-foreground"><Phone className="w-3.5 h-3.5" />{order.checkout_whatsapp}</p>}
             {order.checkout_email && <p className="flex items-center gap-2 text-muted-foreground"><Mail className="w-3.5 h-3.5" />{order.checkout_email}</p>}
             {order.checkout_trainer && <p className="flex items-center gap-2 text-muted-foreground"><User className="w-3.5 h-3.5" />Treinador: {order.checkout_trainer}</p>}
+            {order.delivery_method && (
+              <p className="flex items-center gap-2 text-muted-foreground">
+                <Package className="w-3.5 h-3.5" />
+                {order.delivery_method === 'pickup'
+                  ? `Retirada em treino${order.delivery_city ? ' · ' + order.delivery_city : ''}`
+                  : 'Frete'}
+              </p>
+            )}
             {customer && (
               <Link to={`/clientes/${customer.id}`} className="text-xs text-blue-600 hover:underline block mt-1">
                 Ver perfil do cliente →
@@ -155,7 +163,7 @@ export default function OrderDetail() {
                       <td className="py-2 text-right">{item.quantity}</td>
                       <td className="py-2 text-right">{formatCurrency(item.sale_price)}</td>
                       <td className="py-2 text-right text-red-600">{formatCurrency(item.cost_price)}</td>
-                      <td className="py-2 text-right font-semibold">{formatCurrency(item.sale_price * item.quantity)}</td>
+                      <td className="py-2 text-right font-semibold">{formatCurrency((item.sale_price || 0) * (item.quantity || 1))}</td>
                     </tr>
                   ))}
                 </tbody>
