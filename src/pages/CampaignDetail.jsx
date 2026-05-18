@@ -364,9 +364,19 @@ export default function CampaignDetail() {
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div><Label>Data início</Label><Input type="date" value={form.start_date || ''} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} className="mt-1" /></div>
               <div><Label>Data encerramento</Label><Input type="date" value={form.end_date || ''} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} className="mt-1" /></div>
+              <div>
+                <Label>Prazo de entrega (dias)</Label>
+                <Input
+                  type="number" min="1" placeholder="Ex: 45"
+                  value={form.delivery_days || ''}
+                  onChange={e => setForm(f => ({ ...f, delivery_days: e.target.value ? parseInt(e.target.value) : null }))}
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Após encerramento da campanha</p>
+              </div>
             </div>
             <div><Label>Descrição</Label><Textarea value={form.description || ''} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="mt-1" rows={3} /></div>
           </CardContent>

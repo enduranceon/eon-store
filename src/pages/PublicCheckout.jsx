@@ -188,6 +188,39 @@ export default function PublicCheckout() {
         </div>
       </header>
 
+      {/* ── Barra de pré-venda ─────────────────────────────────────────── */}
+      {(campaign.end_date || campaign.delivery_days) && (() => {
+        const now = new Date();
+        const end = campaign.end_date ? new Date(campaign.end_date) : null;
+        const daysLeft = end ? Math.max(0, Math.ceil((end - now) / 86400000)) : null;
+        const deliveryEnd = end && campaign.delivery_days
+          ? new Date(end.getTime() + campaign.delivery_days * 86400000) : null;
+        return (
+          <div className="bg-amber-50 border-b border-amber-200 sticky top-16 z-10">
+            <div className="max-w-6xl mx-auto px-4 py-2 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-xs text-amber-800">
+              <span className="font-bold uppercase tracking-widest bg-amber-300 text-amber-950 px-2.5 py-0.5 rounded-full text-[10px]">
+                Pré-venda
+              </span>
+              {end && (
+                <span className="flex items-center gap-1.5">
+                  <span>📅</span>
+                  <span>Aberta até <strong>{end.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</strong></span>
+                  {daysLeft > 0 && <span className="font-semibold bg-amber-200 px-1.5 py-0.5 rounded-full">{daysLeft} {daysLeft === 1 ? 'dia restante' : 'dias restantes'}</span>}
+                  {daysLeft === 0 && <span className="font-semibold text-red-600">· Encerra hoje!</span>}
+                </span>
+              )}
+              {campaign.delivery_days && (
+                <span className="flex items-center gap-1.5">
+                  <span>🚚</span>
+                  <span>Entrega estimada em até <strong>{campaign.delivery_days} dias</strong> após encerramento</span>
+                  {deliveryEnd && <span className="text-amber-700">(previsão: {deliveryEnd.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })})</span>}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="max-w-6xl mx-auto px-4 py-6">
 
         {/* ── Loja ────────────────────────────────────────────────────── */}
@@ -278,6 +311,20 @@ export default function PublicCheckout() {
             >
               <ChevronLeft className="w-4 h-4" /> Voltar aos produtos
             </button>
+
+            {/* Lembrete pré-venda */}
+            {(campaign.end_date || campaign.delivery_days) && (() => {
+              const end = campaign.end_date ? new Date(campaign.end_date) : null;
+              const deliveryEnd = end && campaign.delivery_days
+                ? new Date(end.getTime() + campaign.delivery_days * 86400000) : null;
+              return (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-sm text-amber-800 space-y-1">
+                  <p className="font-semibold text-amber-900">⚠️ Atenção: isso é uma pré-venda</p>
+                  {end && <p>Os pedidos ficam abertos até <strong>{end.toLocaleDateString('pt-BR')}</strong>. Após essa data, realizamos o pedido ao fornecedor.</p>}
+                  {deliveryEnd && <p>🚚 Previsão de entrega: até <strong>{deliveryEnd.toLocaleDateString('pt-BR')}</strong> ({campaign.delivery_days} dias após encerramento).</p>}
+                </div>
+              );
+            })()}
 
             {/* Resumo do pedido */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
