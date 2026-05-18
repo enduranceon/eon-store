@@ -266,7 +266,24 @@ export default function CampaignDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Pedidos ({orders.length})</CardTitle></CardHeader>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Pedidos ({orders.length})</CardTitle>
+              {orders.length > 0 && (() => {
+                const delivered = orders.filter(o => o.delivery_status === 'delivered').length;
+                const pct = Math.round((delivered / orders.length) * 100);
+                return (
+                  <div className="mt-2">
+                    <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                      <span>{delivered} de {orders.length} entregues</span>
+                      <span>{pct}%</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-1.5">
+                      <div className="h-1.5 rounded-full bg-green-500 transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })()}
+            </CardHeader>
             <CardContent>
               {orders.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">Nenhum pedido ainda</p>
