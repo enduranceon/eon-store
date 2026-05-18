@@ -1,31 +1,48 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { ShoppingCart, Search, Filter, Plus } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ShoppingCart, Search } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { PreSaleOrder, PreSaleCampaign } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
-  awaiting_charge: { label: 'Aguardando cobrança', badge: 'secondary' },
-  charge_sent: { label: 'Cobrança enviada', badge: 'info' },
-  paid: { label: 'Pago', badge: 'success' },
-  partially_paid: { label: 'Parcialmente pago', badge: 'warning' },
-  cancelled: { label: 'Cancelado', badge: 'destructive' },
-  refunded: { label: 'Reembolsado', badge: 'outline' },
+  awaiting_charge: { label: 'Ag. cobrança',      color: 'bg-gray-100 text-gray-700' },
+  charge_sent:     { label: 'Cobrança enviada',   color: 'bg-blue-100 text-blue-700' },
+  paid:            { label: 'Pago',               color: 'bg-green-100 text-green-700' },
+  partially_paid:  { label: 'Parcialmente pago',  color: 'bg-amber-100 text-amber-700' },
+  cancelled:       { label: 'Cancelado',          color: 'bg-red-100 text-red-700' },
+  refunded:        { label: 'Reembolsado',        color: 'bg-purple-100 text-purple-700' },
 };
 
 const DELIVERY_STATUS = {
-  awaiting_supplier: { label: 'Aguardando fornecedor', badge: 'secondary' },
-  supplier_ordered: { label: 'Pedido ao fornecedor', badge: 'info' },
-  received: { label: 'Produto recebido', badge: 'info' },
-  separated: { label: 'Separado p/ entrega', badge: 'warning' },
-  delivered: { label: 'Entregue', badge: 'success' },
-  cancelled: { label: 'Cancelado', badge: 'destructive' },
+  awaiting_supplier: { label: 'Ag. fornecedor',     color: 'bg-gray-100 text-gray-700' },
+  supplier_ordered:  { label: 'Pedido ao forn.',    color: 'bg-blue-100 text-blue-700' },
+  received:          { label: 'Produto recebido',   color: 'bg-sky-100 text-sky-700' },
+  separated:         { label: 'Separado p/ entrega',color: 'bg-amber-100 text-amber-700' },
+  delivered:         { label: 'Entregue',           color: 'bg-green-100 text-green-700' },
+  cancelled:         { label: 'Cancelado',          color: 'bg-red-100 text-red-700' },
 };
+
+function StatusSelect({ value, options, onChange }) {
+  const current = options[value] || { label: value || '—', color: 'bg-gray-100 text-gray-600' };
+  return (
+    <div className="relative" onClick={e => e.stopPropagation()}>
+      <select
+        value={value || ''}
+        onChange={e => onChange(e.target.value)}
+        className={`appearance-none text-xs font-medium px-2.5 py-1.5 rounded-full border-0 cursor-pointer pr-6 ${current.color}`}
+        style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7280'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}
+      >
+        {Object.entries(options).map(([k, v]) => (
+          <option key={k} value={k}>{v.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export default function Orders() {
   const [orders, setOrders] = useState([]);
@@ -36,12 +53,22 @@ export default function Orders() {
   const [campaignFilter, setCampaignFilter] = useState('all');
   const navigate = useNavigate();
 
-  useEffect(() => {
-    Promise.all([PreSaleOrder.list(), PreSaleCampaign.list()]).then(([o, c]) => {
-      setOrders(o);
-      setCampaigns(c);
-    });
-  }, []);
+  const load = () => Promise.all([PreSaleOrder.list(), PreSaleCampaign.list()]).then(([o, c]) => {
+    setOrders(o);
+    setCampaigns(c);
+  });
+
+  useEffect(() => { load(); }, []);
+
+  const updateStatus = async (orderId, field, value) => {
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, [field]: value } : o));
+    try {
+      await PreSaleOrder.update(orderId, { [field]: value });
+    } catch (e) {
+      toast.error(e.message);
+      load();
+    }
+  };
 
   const filtered = orders.filter(o => {
     const q = search.toLowerCase();
@@ -115,28 +142,32 @@ export default function Orders() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {filtered.map(o => {
-                const ps = PAYMENT_STATUS[o.payment_status] || { label: o.payment_status, badge: 'secondary' };
-                const ds = DELIVERY_STATUS[o.delivery_status] || { label: o.delivery_status, badge: 'secondary' };
-                return (
-                  <tr key={o.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/pedidos/${o.id}`)}>
-                    <td className="px-4 py-3 font-mono font-semibold text-blue-700">{o.order_number}</td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium">{o.checkout_name}</p>
-                      <p className="text-xs text-muted-foreground">{o.checkout_whatsapp}</p>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{o.checkout_trainer || '-'}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatDate(o.created_date)}</td>
-                    <td className="px-4 py-3 text-right font-semibold">{formatCurrency(o.total_value)}</td>
-                    <td className="px-4 py-3 text-center">
-                      <Badge variant={ps.badge}>{ps.label}</Badge>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <Badge variant={ds.badge}>{ds.label}</Badge>
-                    </td>
-                  </tr>
-                );
-              })}
+              {filtered.map(o => (
+                <tr key={o.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/pedidos/${o.id}`)}>
+                  <td className="px-4 py-3 font-mono font-semibold text-blue-700">{o.order_number}</td>
+                  <td className="px-4 py-3">
+                    <p className="font-medium">{o.checkout_name}</p>
+                    <p className="text-xs text-muted-foreground">{o.checkout_whatsapp}</p>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{o.checkout_trainer || '-'}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{formatDate(o.created_date)}</td>
+                  <td className="px-4 py-3 text-right font-semibold">{formatCurrency(o.total_value)}</td>
+                  <td className="px-4 py-3 text-center">
+                    <StatusSelect
+                      value={o.payment_status}
+                      options={PAYMENT_STATUS}
+                      onChange={v => updateStatus(o.id, 'payment_status', v)}
+                    />
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <StatusSelect
+                      value={o.delivery_status}
+                      options={DELIVERY_STATUS}
+                      onChange={v => updateStatus(o.id, 'delivery_status', v)}
+                    />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
