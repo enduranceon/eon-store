@@ -109,27 +109,65 @@ const entities = Object.fromEntries(
   Object.entries(TABLE_MAP).map(([name, table]) => [name, createSupabaseProxy(table)])
 );
 
+export function normalizePhone(value) {
+  return value ? value.replace(/\D/g, '') : value;
+}
+
+export function normalizeEmail(value) {
+  return value ? value.trim().toLowerCase() : value;
+}
+
 async function findOrCreateCustomer({ full_name, whatsapp, email, trainer }) {
-  // Try to find by whatsapp first, then email
+  const cleanPhone = normalizePhone(whatsapp);
+  const cleanEmail = normalizeEmail(email);
+
   let existing = null;
-  if (whatsapp) {
-    const { data } = await supabase
+  if (cleanPhone) {
+    const { data, error } = await supabase
       .from('presale_customers')
       .select('*')
-      .eq('whatsapp', whatsapp)
+      .eq('whatsapp', cleanPhone)
       .maybeSingle();
+    if (error) throw error;
     existing = data;
   }
-  if (!existing && email) {
-    const { data } = await supabase
+  if (!existing && cleanEmail) {
+    const { data, error } = await supabase
       .from('presale_customers')
       .select('*')
-      .eq('email', email)
+      .eq('email', cleanEmail)
       .maybeSingle();
+    if (error) throw error;
     existing = data;
   }
-  if (existing) return existing;
-  return entities.PreSaleCustomer.create({ full_name, whatsapp, email, trainer });
+  if (existing) {
+    const updates = {};
+    if (full_name && full_name !== existing.full_name) updates.full_name = full_name;
+    if (cleanEmail && cleanEmail !== existing.email) updates.email = cleanEmail;
+    if (trainer && trainer !== existing.trainer) updates.trainer = trainer;
+    if (Object.keys(updates).length > 0) {
+      return entities.PreSaleCustomer.update(existing.id, updates);
+    }
+    return existing;
+  }
+  return entities.PreSaleCustomer.create({ full_name, whatsapp: cleanPhone, email: cleanEmail, trainer });
+}
+
+export async function getCampaignBySlugOrId(slugOrId) {
+  const { data: bySlug } = await supabase
+    .from('presale_campaigns')
+    .select('*')
+    .eq('slug', slugOrId)
+    .maybeSingle();
+  if (bySlug) return bySlug;
+  const { data, error } = await supabase
+    .from('presale_campaigns')
+    .select('*')
+    .eq('id', slugOrId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('Campanha não encontrada');
+  return data;
 }
 
 // Trainers are seeded via SQL migration; this is a no-op

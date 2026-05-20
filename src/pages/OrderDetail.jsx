@@ -157,14 +157,26 @@ export default function OrderDetail() {
                 </thead>
                 <tbody className="divide-y">
                   {items.map((item, i) => (
-                    <tr key={i}>
-                      <td className="py-2 font-medium">{item.product_name}</td>
-                      <td className="py-2 text-muted-foreground">{item.variation || '-'}</td>
-                      <td className="py-2 text-right">{item.quantity}</td>
-                      <td className="py-2 text-right">{formatCurrency(item.sale_price)}</td>
-                      <td className="py-2 text-right text-red-600">{formatCurrency(item.cost_price)}</td>
-                      <td className="py-2 text-right font-semibold">{formatCurrency((item.sale_price || 0) * (item.quantity || 1))}</td>
-                    </tr>
+                    <>
+                      <tr key={i}>
+                        <td className="py-2 font-medium">{item.product_name}</td>
+                        <td className="py-2 text-muted-foreground">{item.variation || '-'}</td>
+                        <td className="py-2 text-right">{item.quantity}</td>
+                        <td className="py-2 text-right">{formatCurrency(item.sale_price)}</td>
+                        <td className="py-2 text-right text-red-600">{formatCurrency(item.cost_price)}</td>
+                        <td className="py-2 text-right font-semibold">{formatCurrency(((item.sale_price || 0) + (item.extras_total || 0)) * (item.quantity || 1))}</td>
+                      </tr>
+                      {(item.extras || []).map((extra, j) => (
+                        <tr key={`${i}-x${j}`} className="bg-blue-50/40 text-xs">
+                          <td className="py-1 pl-4 text-blue-700">+ {extra.name}</td>
+                          <td className="py-1 text-muted-foreground">—</td>
+                          <td className="py-1 text-right text-muted-foreground">{item.quantity}</td>
+                          <td className="py-1 text-right text-blue-600">{formatCurrency(extra.price)}</td>
+                          <td className="py-1 text-muted-foreground">—</td>
+                          <td className="py-1 text-right font-medium text-blue-600">{formatCurrency((extra.price || 0) * (item.quantity || 1))}</td>
+                        </tr>
+                      ))}
+                    </>
                   ))}
                 </tbody>
               </table>

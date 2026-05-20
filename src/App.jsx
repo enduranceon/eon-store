@@ -21,6 +21,7 @@ import Trainers from '@/pages/Trainers';
 import { seedTrainers } from '@/api/entities';
 import PublicCheckout from '@/pages/PublicCheckout';
 import PublicOrderConfirmation from '@/pages/PublicOrderConfirmation';
+import PublicHome from '@/pages/PublicHome';
 import Migrate from '@/pages/Migrate';
 import CampaignReport from '@/pages/CampaignReport';
 import Login from '@/pages/Login';
@@ -58,18 +59,15 @@ export default function App() {
       <BrowserRouter>
         <Toaster position="top-right" richColors />
         <Routes>
-          {/* Login */}
-          <Route path="/login" element={<Login />} />
-
-          {/* Migração */}
-          <Route path="/migrar" element={<Migrate />} />
-
-          {/* Rotas públicas */}
+          {/* Públicas */}
+          <Route path="/" element={<PublicHome />} />
           <Route path="/checkout/:campaignId" element={<PublicCheckout />} />
           <Route path="/confirmacao/:orderId" element={<PublicOrderConfirmation />} />
 
-          {/* Rotas admin (protegidas) */}
-          <Route path="/" element={<AdminLayout><Dashboard /></AdminLayout>} />
+          {/* Admin */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/migrar" element={<AdminLayout><Migrate /></AdminLayout>} />
+          <Route path="/admin" element={<AdminLayout><Dashboard /></AdminLayout>} />
           <Route path="/campanhas" element={<AdminLayout><Campaigns /></AdminLayout>} />
           <Route path="/campanhas/:id" element={<AdminLayout><CampaignDetail /></AdminLayout>} />
           <Route path="/campanhas/:id/relatorio" element={<AdminLayout><CampaignReport /></AdminLayout>} />
@@ -86,7 +84,7 @@ export default function App() {
           <Route path="/fornecedores/novo" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/fornecedores/:id" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/relatorios" element={<AdminLayout><Reports /></AdminLayout>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

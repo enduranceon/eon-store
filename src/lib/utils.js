@@ -21,7 +21,10 @@ export function formatPercent(value) {
 export function formatDate(dateStr) {
   if (!dateStr) return '-';
   try {
-    return new Date(dateStr).toLocaleDateString('pt-BR');
+    const str = String(dateStr);
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(str) ? new Date(str + 'T00:00:00') : new Date(str);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleDateString('pt-BR');
   } catch {
     return '-';
   }
@@ -30,7 +33,9 @@ export function formatDate(dateStr) {
 export function formatDateTime(dateStr) {
   if (!dateStr) return '-';
   try {
-    return new Date(dateStr).toLocaleString('pt-BR');
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleString('pt-BR');
   } catch {
     return '-';
   }

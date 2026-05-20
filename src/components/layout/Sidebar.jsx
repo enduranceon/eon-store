@@ -7,7 +7,7 @@ import {
 import { cn } from '@/lib/utils';
 
 const menu = [
-  { label: 'Dashboard',    icon: LayoutDashboard, to: '/',             exact: true },
+  { label: 'Dashboard',    icon: LayoutDashboard, to: '/admin',          exact: true },
   { label: 'Campanhas',    icon: Megaphone,        to: '/campanhas' },
   { label: 'Produtos',     icon: Package,          to: '/produtos' },
   { label: 'Categorias',   icon: Tag,              to: '/categorias' },

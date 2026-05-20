@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, Printer, Package, ShoppingCart, Users, DollarSign, CheckCircle2, Clock, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -73,6 +73,15 @@ export default function CampaignReport() {
       setRows(sorted);
       setStats({ orders: activeOrders.length, customers: customerSet.size, total: totalValue, items: totalItems });
     });
+  }, [id]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        PreSaleCampaign.update(id, { receipts: receiptsRef.current }).catch(() => {});
+      }
+    };
   }, [id]);
 
   const updateReceipt = (key, value) => {
@@ -259,7 +268,7 @@ export default function CampaignReport() {
                   const subVal = items.reduce((s, r) => s + r.qty * r.sale_price, 0);
 
                   return (
-                    <>
+                    <Fragment key={productName}>
                       {items.map((r, i) => {
                         const received = receipts[r.receipt_key]?.qty || 0;
                         const pending = Math.max(0, r.qty - received);
@@ -322,7 +331,7 @@ export default function CampaignReport() {
                           <td className="px-4 py-2 text-right font-bold text-blue-700 print:hidden">{formatCurrency(subVal)}</td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>

@@ -18,10 +18,17 @@ export default function SupplierForm() {
   const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [loadingData, setLoadingData] = useState(false);
   const isEdit = Boolean(id);
 
   useEffect(() => {
-    if (isEdit) PreSaleSupplier.get(id).then(setForm);
+    if (isEdit) {
+      setLoadingData(true);
+      PreSaleSupplier.get(id)
+        .then(setForm)
+        .catch(e => toast.error('Erro ao carregar: ' + e.message))
+        .finally(() => setLoadingData(false));
+    }
   }, [id]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -45,10 +52,19 @@ export default function SupplierForm() {
     }
   };
 
+  if (isEdit && loadingData) {
+    return (
+      <div className="max-w-lg mx-auto flex flex-col items-center justify-center py-24">
+        <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-muted-foreground mt-3">Carregando fornecedor...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-lg mx-auto space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+        <Button variant="ghost" size="icon" onClick={() => navigate('/fornecedores')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <h2 className="text-xl font-bold">{isEdit ? 'Editar Fornecedor' : 'Novo Fornecedor'}</h2>
@@ -87,7 +103,7 @@ export default function SupplierForm() {
       </Card>
 
       <div className="flex justify-end gap-3 pb-6">
-        <Button variant="outline" onClick={() => navigate(-1)}>Cancelar</Button>
+        <Button variant="outline" onClick={() => navigate('/fornecedores')}>Cancelar</Button>
         <Button onClick={handleSave} disabled={saving}>
           {saving ? 'Salvando...' : isEdit ? 'Salvar alterações' : 'Criar fornecedor'}
         </Button>

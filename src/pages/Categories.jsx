@@ -25,24 +25,30 @@ export default function Categories() {
     if (!name) return;
     if (categories.find(c => c.name.toLowerCase() === name.toLowerCase()))
       return toast.error('Categoria já existe');
-    await PreSaleCategory.create({ name, subcategories: [] });
-    setNewCatName('');
-    load();
+    try {
+      await PreSaleCategory.create({ name, subcategories: [] });
+      setNewCatName('');
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   const saveCategory = async (cat) => {
     const name = editingCat.name.trim();
     if (!name) return;
-    await PreSaleCategory.update(cat.id, { name });
-    setEditingCat(null);
-    load();
+    try {
+      await PreSaleCategory.update(cat.id, { name });
+      setEditingCat(null);
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   const deleteCategory = async (cat) => {
     if (!confirm(`Excluir categoria "${cat.name}" e todas suas subcategorias?`)) return;
-    await PreSaleCategory.delete(cat.id);
-    toast.success('Categoria excluída');
-    load();
+    try {
+      await PreSaleCategory.delete(cat.id);
+      toast.success('Categoria excluída');
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   // ─── Subcategorias ───────────────────────────────────────────────────────────
@@ -52,9 +58,11 @@ export default function Categories() {
     if (!name) return;
     const subs = cat.subcategories || [];
     if (subs.includes(name)) return toast.error('Subcategoria já existe');
-    await PreSaleCategory.update(cat.id, { subcategories: [...subs, name] });
-    setNewSubName(prev => ({ ...prev, [cat.id]: '' }));
-    load();
+    try {
+      await PreSaleCategory.update(cat.id, { subcategories: [...subs, name] });
+      setNewSubName(prev => ({ ...prev, [cat.id]: '' }));
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   const saveSub = async (cat) => {
@@ -62,15 +70,21 @@ export default function Categories() {
     if (!name) return;
     const subs = [...(cat.subcategories || [])];
     subs[editingSub.index] = name;
-    await PreSaleCategory.update(cat.id, { subcategories: subs });
-    setEditingSub(null);
-    load();
+    try {
+      await PreSaleCategory.update(cat.id, { subcategories: subs });
+      setEditingSub(null);
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   const deleteSub = async (cat, idx) => {
-    const subs = (cat.subcategories || []).filter((_, i) => i !== idx);
-    await PreSaleCategory.update(cat.id, { subcategories: subs });
-    load();
+    const subName = (cat.subcategories || [])[idx];
+    if (!confirm(`Excluir subcategoria "${subName}"?`)) return;
+    try {
+      const subs = (cat.subcategories || []).filter((_, i) => i !== idx);
+      await PreSaleCategory.update(cat.id, { subcategories: subs });
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   const toggleExpand = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));

@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ShoppingCart, Plus, Minus, Trash2, Store, ChevronRight, ChevronLeft, Lock, Tag, CheckCircle2 } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, Store, ChevronRight, ChevronLeft, Lock, Tag, CheckCircle2, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { PreSaleCampaign, PreSaleProduct, PreSaleOrder, PreSaleTrainer, findOrCreateCustomer } from '@/api/entities';
+import { PreSaleProduct, PreSaleOrder, PreSaleTrainer, findOrCreateCustomer, getCampaignBySlugOrId } from '@/api/entities';
+import { normalizePhone, normalizeEmail } from '@/api/db';
 import { formatCurrency } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+
+const extrasTotal = (extras) => (extras || []).reduce((s, e) => s + (e.price || 0), 0);
 
 export default function PublicCheckout() {
   const { campaignId } = useParams();
@@ -23,18 +26,19 @@ export default function PublicCheckout() {
   const [form, setForm] = useState({ full_name: '', whatsapp: '', email: '', trainer: '', delivery_method: '', delivery_city: '' });
   const [submitting, setSubmitting] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
 
   useEffect(() => { PreSaleTrainer.list().then(setTrainers); }, []);
   useEffect(() => { localStorage.setItem(CART_KEY, JSON.stringify(cart)); }, [cart]);
 
   useEffect(() => {
-    PreSaleCampaign.get(campaignId)
+    getCampaignBySlugOrId(campaignId)
       .then(c => {
         setCampaign(c);
         return PreSaleProduct.list().then(p => {
           const active = p.filter(prod =>
             prod.status === 'active' &&
-            ((prod.campaign_ids || []).includes(campaignId) || prod.campaign_id === campaignId)
+            ((prod.campaign_ids || []).includes(c.id) || prod.campaign_id === c.id)
           );
           if (c.product_order?.length) {
             active.sort((a, b) => {
@@ -44,6 +48,36 @@ export default function PublicCheckout() {
             });
           }
           setProducts(active);
+          setCart(prev => {
+            if (prev.length === 0) return prev;
+            let changed = false;
+            const reconciled = prev.filter(item => {
+              const prod = active.find(p => p.id === item.product.id);
+              if (!prod) { changed = true; return false; }
+              return true;
+            }).map(item => {
+              const prod = active.find(p => p.id === item.product.id);
+              const variation = item.variation ? (prod.variations || []).find(v => v.name === item.variation.name) : null;
+              const freshSale    = variation?.sale_price    ?? prod.sale_price    ?? 0;
+              const freshRegular = variation?.regular_price ?? prod.regular_price ?? 0;
+              const freshProdExtras = prod.extras || [];
+              const reconciledExtras = (item.extras || [])
+                .map(e => { const fe = freshProdExtras.find(pe => pe.name === e.name); return fe ? { name: fe.name, price: fe.price || 0 } : null; })
+                .filter(Boolean);
+              const priceChanged = item.sale_price !== freshSale || item.regular_price !== freshRegular;
+              const extrasChanged = reconciledExtras.length !== (item.extras || []).length ||
+                reconciledExtras.some((e, i) => e.price !== (item.extras || [])[i]?.price);
+              const extrasKey = reconciledExtras.map(e => e.name).sort().join('+');
+              const correctKey = `${prod.id}-${variation?.name || ''}-${extrasKey}`;
+              if (priceChanged || extrasChanged || item.key !== correctKey) {
+                changed = true;
+                return { ...item, key: correctKey, product: prod, variation: variation || item.variation, sale_price: freshSale, regular_price: freshRegular, extras: reconciledExtras };
+              }
+              return { ...item, product: prod };
+            });
+            if (changed) toast.info('Carrinho atualizado com os preços mais recentes');
+            return changed ? reconciled : prev;
+          });
         });
       })
       .catch(() => setNotFound(true));
@@ -110,17 +144,18 @@ export default function PublicCheckout() {
     );
   }
 
-  const addToCart = (product, variation = null, qty = 1) => {
-    const key = `${product.id}-${variation?.name || ''}`;
+  const addToCart = (product, variation = null, qty = 1, extras = []) => {
+    const extrasKey = extras.map(e => e.name).sort().join('+');
+    const key = `${product.id}-${variation?.name || ''}-${extrasKey}`;
     setCart(prev => {
       const existing = prev.find(i => i.key === key);
       if (existing) return prev.map(i => i.key === key ? { ...i, quantity: i.quantity + qty } : i);
-      const salePrice = variation?.sale_price || product.sale_price || 0;
-      const costPrice = variation?.cost_price || product.cost_price || 0;
-      const regularPrice = variation?.regular_price || product.regular_price || 0;
-      return [...prev, { key, product, variation, quantity: qty, sale_price: salePrice, cost_price: costPrice, regular_price: regularPrice }];
+      const salePrice    = variation?.sale_price    ?? product.sale_price    ?? 0;
+      const regularPrice = variation?.regular_price ?? product.regular_price ?? 0;
+      return [...prev, { key, product, variation, extras, quantity: qty, sale_price: salePrice, regular_price: regularPrice }];
     });
-    toast.success(`${product.name}${variation ? ' — ' + variation.name : ''} adicionado!`);
+    const extrasDesc = extras.length > 0 ? ` + ${extras.map(e => e.name).join(', ')}` : '';
+    toast.success(`${product.name}${variation ? ' — ' + variation.name : ''}${extrasDesc} adicionado!`);
   };
 
   const updateQty = (key, delta) => {
@@ -132,8 +167,7 @@ export default function PublicCheckout() {
 
   const removeFromCart = (key) => setCart(prev => prev.filter(i => i.key !== key));
 
-  const cartTotal = cart.reduce((acc, i) => acc + i.sale_price * i.quantity, 0);
-  const cartCost  = cart.reduce((acc, i) => acc + i.cost_price * i.quantity, 0);
+  const cartTotal = cart.reduce((acc, i) => acc + (i.sale_price + extrasTotal(i.extras)) * i.quantity, 0);
   const cartCount = cart.reduce((acc, i) => acc + i.quantity, 0);
   const cartSavings = cart.reduce((acc, i) => {
     const reg = i.regular_price || 0;
@@ -141,41 +175,76 @@ export default function PublicCheckout() {
   }, 0);
 
   const handleSubmit = async () => {
-    if (!form.full_name.trim()) return toast.error('Informe seu nome completo');
-    if (!form.whatsapp.trim()) return toast.error('Informe seu WhatsApp');
+    if (form.full_name.trim().length < 3) return toast.error('Informe seu nome completo');
+    const cleanWhatsapp = normalizePhone(form.whatsapp);
+    if (cleanWhatsapp.length < 10 || cleanWhatsapp.length > 11) return toast.error('WhatsApp inválido. Informe DDD + número (10 ou 11 dígitos)');
     if (cart.length === 0) return toast.error('Adicione produtos ao carrinho');
     if (!form.delivery_method) return toast.error('Selecione a forma de entrega');
     if (form.delivery_method === 'pickup' && !form.delivery_city) return toast.error('Selecione a cidade de retirada');
     setSubmitting(true);
     try {
-      const customer = await findOrCreateCustomer(form);
-      const items = cart.map(i => ({
-        product_id: i.product.id,
-        product_name: i.product.name,
-        variation: i.variation?.name || null,
-        quantity: i.quantity,
-        sale_price: i.sale_price,
-        cost_price: i.cost_price,
-      }));
+      const freshCampaign = await getCampaignBySlugOrId(campaignId);
+      const nowExpired = freshCampaign.end_date && new Date() > new Date(freshCampaign.end_date + 'T23:59:59');
+      if (freshCampaign.status !== 'active' || nowExpired) {
+        toast.error('Esta pré-venda foi encerrada. Não é possível finalizar o pedido.');
+        setSubmitting(false);
+        return;
+      }
+
+      // Re-fetch products to validate prices server-side
+      const freshProducts = await PreSaleProduct.list();
+      const validatedItems = cart.map(i => {
+        const prod = freshProducts.find(p => p.id === i.product.id);
+        if (!prod) throw new Error(`Produto "${i.product.name}" não está mais disponível.`);
+        const variation = i.variation ? (prod.variations || []).find(v => v.name === i.variation.name) : null;
+        const freshSale = variation?.sale_price ?? prod.sale_price ?? 0;
+        const freshCost = variation?.cost_price ?? prod.cost_price ?? 0;
+        if (Math.round(i.sale_price * 100) !== Math.round(freshSale * 100)) throw new Error(`O preço de "${prod.name}" foi atualizado. Recarregue a página.`);
+        if (!Number.isInteger(i.quantity) || i.quantity <= 0) throw new Error('Quantidade inválida no carrinho.');
+        const freshProdExtras = prod.extras || [];
+        const validatedExtras = (i.extras || []).map(sel => {
+          const fe = freshProdExtras.find(e => e.name === sel.name);
+          if (!fe) throw new Error(`O adicional "${sel.name}" não está mais disponível. Recarregue a página.`);
+          if (Math.round(sel.price * 100) !== Math.round((fe.price || 0) * 100)) throw new Error(`O preço do adicional "${sel.name}" foi atualizado. Recarregue a página.`);
+          return { name: fe.name, price: fe.price || 0 };
+        });
+        const itemExtrasTotal = validatedExtras.reduce((s, e) => s + e.price, 0);
+        return {
+          product_id: prod.id,
+          product_name: prod.name,
+          variation: variation?.name || null,
+          extras: validatedExtras,
+          extras_total: itemExtrasTotal,
+          quantity: i.quantity,
+          sale_price: freshSale,
+          cost_price: freshCost,
+        };
+      });
+
+      const freshTotal = validatedItems.reduce((acc, i) => acc + (i.sale_price + i.extras_total) * i.quantity, 0);
+      const freshCostTotal = validatedItems.reduce((acc, i) => acc + i.cost_price * i.quantity, 0);
+      const trainerValue = form.trainer === '__outro' ? '' : form.trainer;
+      const cleanEmail = normalizeEmail(form.email);
+      const customer = await findOrCreateCustomer({ ...form, whatsapp: cleanWhatsapp, email: cleanEmail, trainer: trainerValue });
       const order = await PreSaleOrder.create({
-        campaign_id: campaignId,
+        campaign_id: campaign.id,
         customer_id: customer.id,
         checkout_name: form.full_name,
-        checkout_whatsapp: form.whatsapp,
-        checkout_email: form.email,
-        checkout_trainer: form.trainer,
-        items,
-        total_value: cartTotal,
-        total_cost: cartCost,
+        checkout_whatsapp: cleanWhatsapp,
+        checkout_email: cleanEmail,
+        checkout_trainer: trainerValue,
+        items: validatedItems,
+        total_value: freshTotal,
+        total_cost: freshCostTotal,
         delivery_method: form.delivery_method,
         delivery_city: form.delivery_city || null,
         payment_status: 'awaiting_charge',
         delivery_status: 'awaiting_supplier',
       });
       localStorage.removeItem(CART_KEY);
-      navigate(`/confirmacao/${order.id}`);
+      navigate(`/confirmacao/${order.id}`, { state: { order, campaignName: campaign.name } });
     } catch (e) {
-      toast.error('Erro ao finalizar pedido: ' + e.message);
+      toast.error(e.message || 'Erro ao finalizar pedido. Tente novamente.');
     } finally {
       setSubmitting(false);
     }
@@ -302,7 +371,7 @@ export default function PublicCheckout() {
                 {/* Grid de produtos */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                   {visibleProducts.map(p => (
-                    <ProductCard key={p.id} product={p} cart={cart} onAdd={addToCart} onQty={updateQty} />
+                    <ProductCard key={p.id} product={p} cart={cart} onAdd={addToCart} onQty={updateQty} onOpen={setSelectedProduct} />
                   ))}
                 </div>
               </>
@@ -381,6 +450,9 @@ export default function PublicCheckout() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-gray-900 truncate">{i.product.name}</p>
                       {i.variation && <p className="text-xs text-gray-500 mt-0.5">{i.variation.name}</p>}
+                      {(i.extras || []).map((e, idx) => (
+                        <p key={idx} className="text-xs text-blue-600 mt-0.5">+ {e.name} · {formatCurrency(e.price)}</p>
+                      ))}
                       <div className="flex items-center gap-2 mt-1.5">
                         <button onClick={() => updateQty(i.key, -1)} className="w-6 h-6 rounded-full border border-gray-200 flex items-center justify-center hover:bg-gray-100 transition-colors">
                           <Minus className="w-3 h-3" />
@@ -389,11 +461,11 @@ export default function PublicCheckout() {
                         <button onClick={() => updateQty(i.key, 1)} className="w-6 h-6 rounded-full bg-gray-900 text-white flex items-center justify-center hover:bg-black transition-colors">
                           <Plus className="w-3 h-3" />
                         </button>
-                        <span className="text-xs text-gray-400 ml-1">{formatCurrency(i.sale_price)} cada</span>
+                        <span className="text-xs text-gray-400 ml-1">{formatCurrency(i.sale_price + extrasTotal(i.extras))} cada</span>
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2 shrink-0">
-                      <p className="text-sm font-bold text-gray-900">{formatCurrency(i.sale_price * i.quantity)}</p>
+                      <p className="text-sm font-bold text-gray-900">{formatCurrency((i.sale_price + extrasTotal(i.extras)) * i.quantity)}</p>
                       <button onClick={() => removeFromCart(i.key)} className="text-gray-300 hover:text-red-400 transition-colors">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -574,33 +646,58 @@ export default function PublicCheckout() {
           </div>
         )}
       </div>
+
+      {selectedProduct && (
+        <ProductDetailModal
+          product={selectedProduct}
+          cart={cart}
+          onAdd={(p, v, q) => { addToCart(p, v, q); }}
+          onQty={updateQty}
+          onClose={() => setSelectedProduct(null)}
+        />
+      )}
     </div>
   );
 }
 
 /* ── ProductCard ──────────────────────────────────────────────────────────── */
-function ProductCard({ product: p, cart, onAdd, onQty }) {
+function ProductCard({ product: p, cart, onAdd, onQty, onOpen }) {
   const variations  = p.variations || [];
   const genders     = [...new Set(variations.map(v => v.gender).filter(Boolean))];
   const hasGenders  = genders.length > 0;
   const hasVars     = variations.length > 0;
+  const productExtras = p.extras || [];
 
   const [selGender, setSelGender] = useState(null);
   const [selVar,    setSelVar]    = useState(null);
   const [qty,       setQty]       = useState(1);
+  const [selExtras, setSelExtras] = useState(() =>
+    productExtras.filter(e => e.required).map(e => ({ name: e.name, price: e.price || 0 }))
+  );
 
   const visibleVars = hasGenders
     ? (selGender ? variations.filter(v => v.gender === selGender) : [])
     : variations;
 
-  const cartKeyNoVar = `${p.id}-`;
-  const cartKeyVar   = selVar ? `${p.id}-${selVar.name}` : null;
-  const inCartNoVar  = !hasVars ? cart.find(i => i.key === cartKeyNoVar) : null;
-  const inCartVar    = cartKeyVar ? cart.find(i => i.key === cartKeyVar) : null;
+  const extrasKey    = selExtras.map(e => e.name).sort().join('+');
+  const currentKey   = `${p.id}-${selVar?.name || ''}-${extrasKey}`;
+  const inCart       = cart.find(i => i.key === currentKey);
+
+  const toggleExtra = (extra) => {
+    if (extra.required) return;
+    setSelExtras(prev =>
+      prev.find(e => e.name === extra.name)
+        ? prev.filter(e => e.name !== extra.name)
+        : [...prev, { name: extra.name, price: extra.price || 0 }]
+    );
+  };
+
+  const requiredMet  = productExtras.filter(e => e.required).every(r => selExtras.find(e => e.name === r.name));
+  const selectedExtrasCost = extrasTotal(selExtras);
 
   const handleGender = (g) => { setSelGender(g === selGender ? null : g); setSelVar(null); setQty(1); };
   const handleSize   = (v) => { setSelVar(selVar?.name === v.name ? null : v); setQty(1); };
-  const handleAdd    = () => { onAdd(p, selVar, qty); setSelVar(null); setQty(1); };
+  const handleAdd    = () => { onAdd(p, selVar, qty, selExtras); setSelVar(null); setQty(1); };
 
   const displayPrice   = selVar?.sale_price   || p.sale_price   || 0;
   const displayRegular = selVar?.regular_price || p.regular_price || 0;
@@ -611,13 +708,15 @@ function ProductCard({ product: p, cart, onAdd, onQty }) {
     <div className="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col border border-gray-100">
 
       {/* Imagem */}
-      <ProductImageCarousel product={p} />
+      <div className="cursor-pointer" onClick={() => onOpen(p)}>
+        <ProductImageCarousel product={p} />
+      </div>
 
       {/* Conteúdo */}
       <div className="p-3 flex flex-col flex-1 gap-2">
 
         {/* Nome */}
-        <div>
+        <div className="cursor-pointer" onClick={() => onOpen(p)}>
           <h3 className="font-semibold text-gray-900 text-sm leading-snug line-clamp-2">{p.name}</h3>
           {p.supplier && <p className="text-xs text-gray-400 mt-0.5">{p.supplier}</p>}
         </div>
@@ -625,17 +724,49 @@ function ProductCard({ product: p, cart, onAdd, onQty }) {
         {/* Preço */}
         <div>
           <div className="flex items-baseline gap-1.5 flex-wrap">
-            <span className="text-lg font-bold text-gray-900">{formatCurrency(displayPrice)}</span>
+            <span className="text-lg font-bold text-gray-900">
+              {formatCurrency(displayPrice + selectedExtrasCost)}
+            </span>
             {discountPct > 0 && (
               <span className="text-xs text-gray-400 line-through">{formatCurrency(displayRegular)}</span>
             )}
           </div>
+          {selectedExtrasCost > 0 && (
+            <span className="text-xs text-blue-600">{formatCurrency(displayPrice)} + {formatCurrency(selectedExtrasCost)} adicionais</span>
+          )}
           {discountPct > 0 && (
             <span className="inline-block text-[11px] font-bold bg-green-500 text-white px-1.5 py-0.5 rounded-md mt-0.5">
               {discountPct}% OFF
             </span>
           )}
         </div>
+
+        {/* Adicionais */}
+        {productExtras.length > 0 && (
+          <div className="space-y-1">
+            {productExtras.map((extra, i) => {
+              const sel = selExtras.find(e => e.name === extra.name);
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => toggleExtra(extra)}
+                  disabled={extra.required}
+                  className={cn(
+                    'w-full flex items-center justify-between px-2 py-1.5 rounded-lg border text-xs transition-all',
+                    sel
+                      ? 'bg-blue-50 border-blue-400 text-blue-800 font-medium'
+                      : 'border-gray-200 text-gray-600 hover:border-blue-300',
+                    extra.required && 'cursor-default'
+                  )}
+                >
+                  <span>{extra.required && <span className="text-red-500 mr-0.5">*</span>}{extra.name}{extra.required && <span className="text-gray-400 ml-1 font-normal">(obrigatório)</span>}</span>
+                  <span className={sel ? 'text-blue-700 font-semibold' : 'text-gray-400'}>+{formatCurrency(extra.price || 0)}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Variações */}
         {hasVars ? (
@@ -667,7 +798,7 @@ function ProductCard({ product: p, cart, onAdd, onQty }) {
                 {visibleVars.map((v, i) => {
                   const label    = v.size || v.name;
                   const selected = selVar?.name === v.name;
-                  const inCart   = cart.find(ci => ci.key === `${p.id}-${v.name}`);
+                  const varInCart = cart.some(ci => ci.key.startsWith(`${p.id}-${v.name}-`));
                   return (
                     <button
                       key={i}
@@ -680,7 +811,7 @@ function ProductCard({ product: p, cart, onAdd, onQty }) {
                       )}
                     >
                       {label}
-                      {inCart && !selected && (
+                      {varInCart && !selected && (
                         <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border border-white" />
                       )}
                     </button>
@@ -709,9 +840,14 @@ function ProductCard({ product: p, cart, onAdd, onQty }) {
                 </div>
                 <button
                   onClick={handleAdd}
-                  className="flex-1 h-9 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-xs font-bold transition-colors"
+                  disabled={!requiredMet}
+                  className={cn('flex-1 h-9 rounded-xl text-xs font-bold transition-colors',
+                    requiredMet
+                      ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white'
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  )}
                 >
-                  {inCartVar ? `+ Adicionar` : 'Adicionar'}
+                  {!requiredMet ? 'Selecione os adicionais' : inCart ? '+ Adicionar' : 'Adicionar'}
                 </button>
               </div>
             ) : (
@@ -724,14 +860,14 @@ function ProductCard({ product: p, cart, onAdd, onQty }) {
             )}
 
             {/* Indicador de já está no carrinho */}
-            {inCartVar && selVar && (
+            {inCart && selVar && (
               <div className="flex items-center justify-between bg-blue-50 rounded-xl px-3 py-2">
-                <span className="text-xs text-blue-700 font-medium">No carrinho: {inCartVar.quantity} un.</span>
+                <span className="text-xs text-blue-700 font-medium">No carrinho: {inCart.quantity} un.</span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => onQty(inCartVar.key, -1)} className="w-6 h-6 rounded-full border border-blue-200 flex items-center justify-center hover:bg-blue-100">
+                  <button onClick={() => onQty(inCart.key, -1)} className="w-6 h-6 rounded-full border border-blue-200 flex items-center justify-center hover:bg-blue-100">
                     <Minus className="w-3 h-3 text-blue-600" />
                   </button>
-                  <button onClick={() => onQty(inCartVar.key, 1)} className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700">
+                  <button onClick={() => onQty(inCart.key, 1)} className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700">
                     <Plus className="w-3 h-3" />
                   </button>
                 </div>
@@ -742,24 +878,29 @@ function ProductCard({ product: p, cart, onAdd, onQty }) {
         ) : (
           /* Sem variações */
           <div className="mt-auto">
-            {inCartNoVar ? (
+            {inCart ? (
               <div className="flex items-center justify-between bg-blue-50 rounded-xl px-3 py-2">
-                <span className="text-xs text-blue-700 font-medium">No carrinho: {inCartNoVar.quantity} un.</span>
+                <span className="text-xs text-blue-700 font-medium">No carrinho: {inCart.quantity} un.</span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => onQty(inCartNoVar.key, -1)} className="w-6 h-6 rounded-full border border-blue-200 flex items-center justify-center hover:bg-blue-100">
+                  <button onClick={() => onQty(inCart.key, -1)} className="w-6 h-6 rounded-full border border-blue-200 flex items-center justify-center hover:bg-blue-100">
                     <Minus className="w-3 h-3 text-blue-600" />
                   </button>
-                  <button onClick={() => onQty(inCartNoVar.key, 1)} className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700">
+                  <button onClick={() => onQty(inCart.key, 1)} className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700">
                     <Plus className="w-3 h-3" />
                   </button>
                 </div>
               </div>
             ) : (
               <button
-                onClick={() => onAdd(p, null, 1)}
-                className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors"
+                onClick={() => onAdd(p, null, 1, selExtras)}
+                disabled={!requiredMet}
+                className={cn('w-full h-9 rounded-xl text-xs font-bold transition-colors',
+                  requiredMet
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                )}
               >
-                Adicionar ao carrinho
+                {requiredMet ? 'Adicionar ao carrinho' : 'Selecione os adicionais'}
               </button>
             )}
           </div>
@@ -805,6 +946,353 @@ function ProductImageCarousel({ product }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/* ── ProductDetailModal ───────────────────────────────────────────────────── */
+function ProductDetailModal({ product: p, cart, onAdd, onQty, onClose }) {
+  const variations     = p.variations || [];
+  const genders        = [...new Set(variations.map(v => v.gender).filter(Boolean))];
+  const hasGenders     = genders.length > 0;
+  const hasVars        = variations.length > 0;
+  const productExtras  = p.extras || [];
+
+  const [selGender, setSelGender] = useState(null);
+  const [selVar,    setSelVar]    = useState(null);
+  const [qty,       setQty]       = useState(1);
+  const [imgIdx,    setImgIdx]    = useState(0);
+  const [selExtras, setSelExtras] = useState(() =>
+    productExtras.filter(e => e.required).map(e => ({ name: e.name, price: e.price || 0 }))
+  );
+
+  const images = p.images?.length ? p.images : (p.image ? [p.image] : []);
+
+  const visibleVars = hasGenders
+    ? (selGender ? variations.filter(v => v.gender === selGender) : [])
+    : variations;
+
+  const extrasKey   = selExtras.map(e => e.name).sort().join('+');
+  const currentKey  = `${p.id}-${selVar?.name || ''}-${extrasKey}`;
+  const inCart      = cart.find(i => i.key === currentKey);
+
+  const toggleExtra = (extra) => {
+    if (extra.required) return;
+    setSelExtras(prev =>
+      prev.find(e => e.name === extra.name)
+        ? prev.filter(e => e.name !== extra.name)
+        : [...prev, { name: extra.name, price: extra.price || 0 }]
+    );
+  };
+
+  const requiredMet        = productExtras.filter(e => e.required).every(r => selExtras.find(e => e.name === r.name));
+  const selectedExtrasCost = extrasTotal(selExtras);
+
+  const handleGender = (g) => { setSelGender(g === selGender ? null : g); setSelVar(null); setQty(1); };
+  const handleSize   = (v) => { setSelVar(selVar?.name === v.name ? null : v); setQty(1); };
+  const handleAdd    = () => { onAdd(p, selVar, qty, selExtras); setSelVar(null); setQty(1); };
+
+  const displayPrice   = selVar?.sale_price   || p.sale_price   || 0;
+  const displayRegular = selVar?.regular_price || p.regular_price || 0;
+  const discountPct    = displayRegular > displayPrice
+    ? Math.round((1 - displayPrice / displayRegular) * 100) : 0;
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="relative bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-3xl max-h-[92vh] overflow-y-auto"
+        style={{ animation: 'slideUp 0.3s ease-out' }}
+      >
+
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full bg-black/40 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/60 transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        {/* Image gallery */}
+        {images.length > 0 ? (
+          <div className="relative">
+            <div className="bg-gray-50 flex items-center justify-center">
+              <img src={images[imgIdx]} alt={p.name} className="w-full h-auto max-h-[70vh] object-contain" />
+            </div>
+            {images.length > 1 && (
+              <>
+                <button
+                  onClick={() => setImgIdx(i => (i - 1 + images.length) % images.length)}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/60 transition-colors"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => setImgIdx(i => (i + 1) % images.length)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 backdrop-blur-sm text-white flex items-center justify-center hover:bg-black/60 transition-colors"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                  {images.map((_, i) => (
+                    <button key={i} onClick={() => setImgIdx(i)}
+                      className={cn('w-2 h-2 rounded-full transition-colors', i === imgIdx ? 'bg-white' : 'bg-white/40')}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+            {/* Thumbnails */}
+            {images.length > 1 && (
+              <div className="flex gap-2 px-5 py-3 overflow-x-auto bg-gray-50/50">
+                {images.map((img, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setImgIdx(i)}
+                    className={cn(
+                      'w-14 h-14 rounded-xl overflow-hidden shrink-0 border-2 transition-all',
+                      i === imgIdx ? 'border-blue-500 shadow-md' : 'border-transparent opacity-60 hover:opacity-100'
+                    )}
+                  >
+                    <img src={img} alt="" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="aspect-[16/10] bg-gray-50 flex items-center justify-center">
+            <Package className="w-16 h-16 text-gray-200" />
+          </div>
+        )}
+
+        {/* Product info */}
+        <div className="px-5 pt-4 pb-6 space-y-4">
+          {/* Name & supplier */}
+          <div>
+            {p.category && (
+              <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">{p.category}{p.subcategory ? ` · ${p.subcategory}` : ''}</p>
+            )}
+            <h2 className="text-xl font-bold text-gray-900 leading-tight">{p.name}</h2>
+            {p.supplier && <p className="text-sm text-gray-500 mt-1">{p.supplier}</p>}
+          </div>
+
+          {/* Price */}
+          <div>
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <span className="text-2xl font-bold text-gray-900">{formatCurrency(displayPrice + selectedExtrasCost)}</span>
+              {discountPct > 0 && (
+                <>
+                  <span className="text-base text-gray-400 line-through">{formatCurrency(displayRegular)}</span>
+                  <span className="text-sm font-bold bg-green-500 text-white px-2 py-0.5 rounded-lg">
+                    {discountPct}% OFF
+                  </span>
+                </>
+              )}
+            </div>
+            {selectedExtrasCost > 0 && (
+              <p className="text-sm text-blue-600 mt-0.5">{formatCurrency(displayPrice)} + {formatCurrency(selectedExtrasCost)} em adicionais</p>
+            )}
+            {discountPct > 0 && (
+              <p className="text-sm text-green-600 font-medium mt-1">
+                Economia de {formatCurrency(displayRegular - displayPrice)} na pré-venda
+              </p>
+            )}
+          </div>
+
+          {/* Description / Notes */}
+          {p.notes && (
+            <div className="bg-gray-50 rounded-xl p-4">
+              <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">{p.notes}</p>
+            </div>
+          )}
+
+          {/* Adicionais */}
+          {productExtras.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Adicionais</p>
+              <div className="space-y-2">
+                {productExtras.map((extra, i) => {
+                  const sel = selExtras.find(e => e.name === extra.name);
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => toggleExtra(extra)}
+                      disabled={extra.required}
+                      className={cn(
+                        'w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm transition-all',
+                        sel
+                          ? 'bg-blue-50 border-blue-400 text-blue-900 font-medium'
+                          : 'border-gray-200 text-gray-700 hover:border-blue-300',
+                        extra.required && 'cursor-default'
+                      )}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={cn('w-4 h-4 rounded border-2 flex items-center justify-center shrink-0', sel ? 'bg-blue-600 border-blue-600' : 'border-gray-300')}>
+                          {sel && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 8"><path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </span>
+                        {extra.name}
+                        {extra.required && <span className="text-xs text-gray-400">(obrigatório)</span>}
+                      </span>
+                      <span className={cn('font-semibold', sel ? 'text-blue-700' : 'text-gray-500')}>
+                        +{formatCurrency(extra.price || 0)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Variations */}
+          {hasVars ? (
+            <div className="space-y-3">
+              {/* Gender selector */}
+              {hasGenders && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Gênero</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {genders.map(g => (
+                      <button
+                        key={g}
+                        onClick={() => handleGender(g)}
+                        className={cn(
+                          'px-4 py-2 rounded-xl border-2 font-semibold text-sm transition-all duration-150',
+                          selGender === g
+                            ? 'bg-gray-900 text-white border-gray-900'
+                            : 'border-gray-200 text-gray-600 hover:border-gray-400'
+                        )}
+                      >
+                        {g}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Size selector */}
+              {visibleVars.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tamanho</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {visibleVars.map((v, i) => {
+                      const label    = v.size || v.name;
+                      const selected = selVar?.name === v.name;
+                      const varInCart = cart.some(ci => ci.key.startsWith(`${p.id}-${v.name}-`));
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => handleSize(v)}
+                          className={cn(
+                            'min-w-[44px] h-11 px-3 rounded-xl border-2 text-sm font-bold transition-all duration-150 relative',
+                            selected
+                              ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                              : 'border-gray-200 text-gray-700 hover:border-gray-400 bg-white'
+                          )}
+                        >
+                          {label}
+                          {varInCart && !selected && (
+                            <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-white" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Qty + Add to cart */}
+              {selVar ? (
+                <div className="flex gap-3 items-center pt-2">
+                  <div className="flex items-center border-2 border-gray-200 rounded-xl overflow-hidden shrink-0">
+                    <button
+                      onClick={() => setQty(q => Math.max(1, q - 1))}
+                      className="w-11 h-11 flex items-center justify-center text-gray-500 hover:bg-gray-50 transition-colors"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <span className="w-10 text-center text-base font-bold text-gray-900">{qty}</span>
+                    <button
+                      onClick={() => setQty(q => q + 1)}
+                      className="w-11 h-11 flex items-center justify-center text-gray-500 hover:bg-gray-50 transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={handleAdd}
+                    disabled={!requiredMet}
+                    className={cn('flex-1 h-12 rounded-xl font-bold text-sm transition-colors',
+                      requiredMet
+                        ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white'
+                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    )}
+                  >
+                    {!requiredMet ? 'Selecione os adicionais obrigatórios' : `Adicionar · ${formatCurrency((displayPrice + selectedExtrasCost) * qty)}`}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  disabled
+                  className="w-full h-12 bg-gray-100 text-gray-400 rounded-xl font-semibold cursor-not-allowed"
+                >
+                  {hasGenders && !selGender ? 'Selecione o gênero' : 'Selecione o tamanho'}
+                </button>
+              )}
+
+              {/* Already in cart indicator */}
+              {inCart && selVar && (
+                <div className="flex items-center justify-between bg-blue-50 rounded-xl px-4 py-3">
+                  <span className="text-sm text-blue-700 font-medium">No carrinho: {inCart.quantity} un.</span>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => onQty(inCart.key, -1)} className="w-7 h-7 rounded-full border border-blue-200 flex items-center justify-center hover:bg-blue-100">
+                      <Minus className="w-3.5 h-3.5 text-blue-600" />
+                    </button>
+                    <button onClick={() => onQty(inCart.key, 1)} className="w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700">
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* No variations */
+            <div>
+              {inCart ? (
+                <div className="flex items-center justify-between bg-blue-50 rounded-xl px-4 py-3">
+                  <span className="text-sm text-blue-700 font-medium">No carrinho: {inCart.quantity} un.</span>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => onQty(inCart.key, -1)} className="w-7 h-7 rounded-full border border-blue-200 flex items-center justify-center hover:bg-blue-100">
+                      <Minus className="w-3.5 h-3.5 text-blue-600" />
+                    </button>
+                    <button onClick={() => onQty(inCart.key, 1)} className="w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700">
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { onAdd(p, null, 1, selExtras); }}
+                  disabled={!requiredMet}
+                  className={cn('w-full h-12 rounded-xl font-bold text-sm transition-colors',
+                    requiredMet
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  )}
+                >
+                  {!requiredMet ? 'Selecione os adicionais obrigatórios' : `Adicionar ao carrinho · ${formatCurrency(displayPrice + selectedExtrasCost)}`}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

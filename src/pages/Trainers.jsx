@@ -20,25 +20,32 @@ export default function Trainers() {
     if (!newForm.name.trim()) return;
     if (trainers.find(t => t.name.toLowerCase() === newForm.name.trim().toLowerCase()))
       return toast.error('Treinador já cadastrado');
-    await PreSaleTrainer.create({ name: newForm.name.trim(), whatsapp: newForm.whatsapp, email: newForm.email });
-    setNewForm({ name: '', whatsapp: '', email: '' });
-    setAdding(false);
-    toast.success('Treinador cadastrado!');
-    load();
+    try {
+      await PreSaleTrainer.create({ name: newForm.name.trim(), whatsapp: newForm.whatsapp, email: newForm.email });
+      setNewForm({ name: '', whatsapp: '', email: '' });
+      setAdding(false);
+      toast.success('Treinador cadastrado!');
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   const handleSave = async () => {
     if (!editing.name.trim()) return;
-    await PreSaleTrainer.update(editing.id, { name: editing.name.trim(), whatsapp: editing.whatsapp, email: editing.email });
-    setEditing(null);
-    load();
+    try {
+      await PreSaleTrainer.update(editing.id, { name: editing.name.trim(), whatsapp: editing.whatsapp, email: editing.email });
+      setEditing(null);
+      toast.success('Treinador atualizado!');
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   const handleDelete = async (t) => {
     if (!confirm(`Excluir "${t.name}"?`)) return;
-    await PreSaleTrainer.delete(t.id);
-    toast.success('Treinador excluído');
-    load();
+    try {
+      await PreSaleTrainer.delete(t.id);
+      toast.success('Treinador excluído');
+      load();
+    } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
   return (

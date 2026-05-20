@@ -33,6 +33,7 @@ export default function CampaignDetail() {
   const [savingOrder, setSavingOrder] = useState(false);
 
   const load = async () => {
+    try {
     const [c, allOrders, allProds] = await Promise.all([PreSaleCampaign.get(id), PreSaleOrder.list(), PreSaleProduct.list()]);
     setCampaign(c);
     setForm({ ...c });
@@ -47,6 +48,7 @@ export default function CampaignDetail() {
       ...campaignProducts.filter(p => !savedOrder.includes(p.id)).map(p => p.id),
     ];
     setProductOrder(orderedIds);
+    } catch { toast.error('Erro ao carregar campanha'); }
   };
 
   useEffect(() => { load(); }, [id]);
@@ -105,7 +107,7 @@ export default function CampaignDetail() {
     } catch (e) { toast.error(e.message); }
   };
 
-  const checkoutUrl = `${window.location.origin}/checkout/${id}`;
+  const checkoutUrl = `${window.location.origin}/checkout/${campaign?.slug || id}`;
   const copyCheckout = () => { navigator.clipboard.writeText(checkoutUrl); toast.success('Link copiado!'); };
 
   if (!campaign) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
@@ -269,12 +271,15 @@ export default function CampaignDetail() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Pedidos ({orders.length})</CardTitle>
               {orders.length > 0 && (() => {
-                const delivered = orders.filter(o => o.delivery_status === 'delivered').length;
-                const pct = Math.round((delivered / orders.length) * 100);
+                const nonCancelled = orders.filter(o => o.payment_status !== 'cancelled');
+                const delivered = nonCancelled.filter(o => o.delivery_status === 'delivered').length;
+                const total = nonCancelled.length;
+                if (total === 0) return null;
+                const pct = Math.round((delivered / total) * 100);
                 return (
                   <div className="mt-2">
                     <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                      <span>{delivered} de {orders.length} entregues</span>
+                      <span>{delivered} de {total} entregues</span>
                       <span>{pct}%</span>
                     </div>
                     <div className="w-full bg-gray-100 rounded-full h-1.5">

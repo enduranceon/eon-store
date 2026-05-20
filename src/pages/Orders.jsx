@@ -56,7 +56,7 @@ export default function Orders() {
   const load = () => Promise.all([PreSaleOrder.list(), PreSaleCampaign.list()]).then(([o, c]) => {
     setOrders(o);
     setCampaigns(c);
-  });
+  }).catch(() => toast.error('Erro ao carregar pedidos'));
 
   useEffect(() => { load(); }, []);
 
@@ -73,7 +73,7 @@ export default function Orders() {
   const filtered = orders.filter(o => {
     const q = search.toLowerCase();
     const matchSearch = !q || [o.order_number, o.checkout_name, o.checkout_whatsapp, o.checkout_email, o.checkout_trainer]
-      .some(v => v?.toLowerCase().includes(q));
+      .some(v => String(v ?? '').toLowerCase().includes(q));
     const matchPayment = paymentFilter === 'all' || o.payment_status === paymentFilter;
     const matchDelivery = deliveryFilter === 'all' || o.delivery_status === deliveryFilter;
     const matchCampaign = campaignFilter === 'all' || o.campaign_id === campaignFilter;

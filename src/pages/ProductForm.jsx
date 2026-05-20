@@ -21,7 +21,7 @@ const EMPTY = {
   name: '', sku: '', supplier: '', sale_price: '', regular_price: '', cost_price: '',
   extra_cost: '', extra_cost_description: '',
   category: '', subcategory: '',
-  status: 'active', campaign_ids: [], variations: [], notes: '',
+  status: 'active', campaign_ids: [], variations: [], extras: [], notes: '',
 };
 
 // ─── Chip de seleção múltipla ────────────────────────────────────────────────
@@ -50,6 +50,7 @@ export default function ProductForm() {
   const [suppliers, setSuppliers] = useState([]);
   const [categories, setCategories] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [loadingProduct, setLoadingProduct] = useState(false);
   const isEdit = Boolean(id);
 
   // Estado do gerador rápido
@@ -64,9 +65,9 @@ export default function ProductForm() {
     PreSaleSupplier.list().then(setSuppliers);
     PreSaleCategory.list().then(setCategories);
     if (isEdit) {
+      setLoadingProduct(true);
       PreSaleProduct.get(id).then(async p => {
         const images = p.images || (p.image ? [p.image] : []);
-        // Se tem supplier_id, usa ele. Se só tem supplier (nome), tenta achar pelo nome
         let supplier_id = p.supplier_id || '';
         if (!supplier_id && p.supplier) {
           const all = await PreSaleSupplier.list();
@@ -80,11 +81,15 @@ export default function ProductForm() {
           regular_price: String(p.regular_price || ''),
           cost_price: String(p.cost_price || ''),
           extra_cost: String(p.extra_cost || ''),
-          variations: p.variations || [],
+          variations: Array.isArray(p.variations) ? p.variations : [],
+          extras: Array.isArray(p.extras) ? p.extras : [],
           images,
-          // backward compat: migrate single campaign_id to array
           campaign_ids: p.campaign_ids?.length ? p.campaign_ids : (p.campaign_id ? [p.campaign_id] : []),
         });
+      }).catch(e => {
+        toast.error('Erro ao carregar produto: ' + e.message);
+      }).finally(() => {
+        setLoadingProduct(false);
       });
     }
   }, [id]);
@@ -169,6 +174,10 @@ export default function ProductForm() {
 
   const removeVariation = (i) => setForm(f => ({ ...f, variations: f.variations.filter((_, idx) => idx !== i) }));
 
+  const addExtra = () => setForm(f => ({ ...f, extras: [...(f.extras || []), { name: '', price: '', required: false }] }));
+  const updateExtra = (i, k, v) => setForm(f => { const ex = [...(f.extras || [])]; ex[i] = { ...ex[i], [k]: v }; return { ...f, extras: ex }; });
+  const removeExtra = (i) => setForm(f => ({ ...f, extras: f.extras.filter((_, idx) => idx !== i) }));
+
   const handleSave = async () => {
     if (!form.name.trim()) return toast.error('Nome é obrigatório');
     if (!form.sale_price) return toast.error('Preço de venda é obrigatório');
@@ -190,6 +199,9 @@ export default function ProductForm() {
           regular_price: parseFloat(v.regular_price) || null,
           cost_price: parseFloat(v.cost_price) || null,
         })),
+        extras: (form.extras || [])
+          .filter(e => e.name?.trim())
+          .map(e => ({ name: e.name.trim(), price: parseFloat(e.price) || 0, required: Boolean(e.required) })),
       };
       if (isEdit) {
         await PreSaleProduct.update(id, payload);
@@ -208,10 +220,19 @@ export default function ProductForm() {
 
   const variations = form.variations || [];
 
+  if (isEdit && loadingProduct) {
+    return (
+      <div className="max-w-2xl mx-auto flex flex-col items-center justify-center py-24">
+        <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-muted-foreground mt-3">Carregando produto...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+        <Button variant="ghost" size="icon" onClick={() => navigate('/produtos')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <h2 className="text-xl font-bold">{isEdit ? 'Editar Produto' : 'Novo Produto'}</h2>
@@ -612,6 +633,68 @@ export default function ProductForm() {
         </CardContent>
       </Card>
 
+      {/* Adicionais opcionais */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Adicionais opcionais</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">Itens que o cliente pode adicionar ao produto, com custo extra. Ex: personalização de nome, numeração.</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={addExtra}>
+              <Plus className="w-3.5 h-3.5" /> Adicionar
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {(form.extras || []).length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">Nenhum adicional cadastrado. Clique em <strong>Adicionar</strong> para criar.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-[1fr,120px,auto,36px] gap-2 text-xs font-medium text-muted-foreground px-1">
+                <span>Nome do adicional</span>
+                <span className="text-right">Preço (R$)</span>
+                <span className="text-center">Obrigatório</span>
+                <span />
+              </div>
+              {(form.extras || []).map((extra, i) => (
+                <div key={i} className="grid grid-cols-[1fr,120px,auto,36px] gap-2 items-center p-2 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200">
+                  <Input
+                    placeholder="Ex: Personalização de nome"
+                    value={extra.name}
+                    onChange={e => updateExtra(i, 'name', e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                  <Input
+                    type="number" step="0.01" min="0" placeholder="0,00"
+                    value={extra.price}
+                    onChange={e => updateExtra(i, 'price', e.target.value)}
+                    className="h-8 text-sm text-right"
+                  />
+                  <div className="flex items-center justify-center">
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(extra.required)}
+                        onChange={e => updateExtra(i, 'required', e.target.checked)}
+                        className="w-4 h-4 rounded accent-blue-600"
+                      />
+                      <span className="text-xs text-gray-600">Sim</span>
+                    </label>
+                  </div>
+                  <Button size="icon" variant="ghost" onClick={() => removeExtra(i)} className="h-8 w-8 text-red-400 hover:text-red-700">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ))}
+              <p className="text-xs text-muted-foreground px-1">
+                Adicionais <strong>obrigatórios</strong> bloqueiam o checkout até serem selecionados. Os opcionais ficam à escolha do cliente.
+              </p>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Observações */}
       <div>
         <Label>Observações internas</Label>
@@ -619,7 +702,7 @@ export default function ProductForm() {
       </div>
 
       <div className="flex justify-end gap-3 pb-6">
-        <Button variant="outline" onClick={() => navigate(-1)}>Cancelar</Button>
+        <Button variant="outline" onClick={() => navigate('/produtos')}>Cancelar</Button>
         <Button onClick={handleSave} disabled={saving}>
           {saving ? 'Salvando...' : isEdit ? 'Salvar alterações' : 'Criar produto'}
         </Button>

@@ -35,16 +35,24 @@ export default function Products() {
 
   const handleDelete = async (id, name) => {
     if (!confirm(`Excluir "${name}"?`)) return;
-    await PreSaleProduct.delete(id);
-    toast.success('Produto excluído');
-    load();
+    try {
+      await PreSaleProduct.delete(id);
+      toast.success('Produto excluído');
+      load();
+    } catch (e) {
+      toast.error('Erro ao excluir: ' + e.message);
+    }
   };
 
   const handleDuplicate = async (p) => {
-    const { id, created_date, ...rest } = p;
-    await PreSaleProduct.create({ ...rest, name: `${p.name} (cópia)`, status: 'inactive' });
-    toast.success('Produto duplicado');
-    load();
+    try {
+      const { id, created_date, ...rest } = p;
+      await PreSaleProduct.create({ ...rest, name: `${p.name} (cópia)`, status: 'inactive' });
+      toast.success('Produto duplicado');
+      load();
+    } catch (e) {
+      toast.error('Erro ao duplicar: ' + e.message);
+    }
   };
 
   return (

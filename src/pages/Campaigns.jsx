@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Megaphone, Calendar, Building2, Search } from 'lucide-react';
+import { Plus, Megaphone, Calendar, Building2, Search, Edit, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,20 +16,33 @@ import { toast } from 'sonner';
 const STATUS_LABEL = { active: 'Ativa', ended: 'Encerrada', archived: 'Arquivada' };
 const STATUS_BADGE = { active: 'success', ended: 'warning', archived: 'secondary' };
 
-const EMPTY_FORM = { name: '', supplier: '', start_date: '', end_date: '', status: 'active', description: '' };
+const EMPTY_FORM = { name: '', supplier: '', start_date: '', end_date: '', status: 'active', description: '', slug: '' };
+const RESERVED_SLUGS = ['admin', 'login', 'checkout', 'confirmacao', 'campanhas', 'pedidos', 'clientes', 'produtos', 'categorias', 'treinadores', 'fornecedores', 'relatorios', 'migrar', 'app'];
+
+function generateSlug(name) {
+  return name
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+}
 
 export default function Campaigns() {
   const [campaigns, setCampaigns] = useState([]);
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
-    const [c, o] = await Promise.all([PreSaleCampaign.list(), PreSaleOrder.list()]);
-    setCampaigns(c);
-    setOrders(o);
+    try {
+      const [c, o] = await Promise.all([PreSaleCampaign.list(), PreSaleOrder.list()]);
+      setCampaigns(c);
+      setOrders(o);
+    } catch { toast.error('Erro ao carregar campanhas'); }
   };
 
   useEffect(() => { load(); }, []);
@@ -41,17 +54,48 @@ export default function Campaigns() {
 
   const handleSave = async () => {
     if (!form.name.trim()) return toast.error('Nome é obrigatório');
+    if (form.slug && RESERVED_SLUGS.includes(form.slug)) return toast.error(`Slug "${form.slug}" é reservado. Escolha outro.`);
+    if (form.start_date && form.end_date && form.end_date < form.start_date) return toast.error('Data de encerramento deve ser após a data de início');
     setSaving(true);
     try {
-      await PreSaleCampaign.create(form);
-      toast.success('Campanha criada!');
+      if (editingId) {
+        await PreSaleCampaign.update(editingId, form);
+        toast.success('Campanha atualizada!');
+      } else {
+        await PreSaleCampaign.create(form);
+        toast.success('Campanha criada!');
+      }
       setOpen(false);
+      setEditingId(null);
       setForm(EMPTY_FORM);
       load();
     } catch (e) {
       toast.error(e.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleEdit = (e, c) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEditingId(c.id);
+    setForm({ name: c.name || '', slug: c.slug || '', supplier: c.supplier || '', start_date: c.start_date || '', end_date: c.end_date || '', status: c.status || 'active', description: c.description || '' });
+    setOpen(true);
+  };
+
+  const handleDelete = async (e, c) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const cOrders = orders.filter(o => o.campaign_id === c.id);
+    if (cOrders.length > 0) return toast.error(`Não é possível excluir: campanha tem ${cOrders.length} pedido(s)`);
+    if (!confirm(`Excluir campanha "${c.name}"?`)) return;
+    try {
+      await PreSaleCampaign.delete(c.id);
+      toast.success('Campanha excluída');
+      load();
+    } catch (err) {
+      toast.error(err.message);
     }
   };
 
@@ -62,7 +106,7 @@ export default function Campaigns() {
           <h2 className="text-xl font-bold text-gray-900">Campanhas de Pré-venda</h2>
           <p className="text-sm text-muted-foreground">{campaigns.length} campanhas cadastradas</p>
         </div>
-        <Button onClick={() => setOpen(true)}>
+        <Button onClick={() => { setEditingId(null); setForm(EMPTY_FORM); setOpen(true); }}>
           <Plus className="w-4 h-4" />
           Nova Campanha
         </Button>
@@ -125,6 +169,14 @@ export default function Campaigns() {
                         <p className="text-sm font-semibold text-green-700">{formatCurrency(totalPaid)}</p>
                       </div>
                     </div>
+                    <div className="border-t pt-2 mt-2 flex justify-end gap-1">
+                      <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => handleEdit(e, c)} title="Editar campanha">
+                        <Edit className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button size="icon" variant="ghost" className="h-7 w-7 text-red-500 hover:text-red-700" onClick={(e) => handleDelete(e, c)} title="Excluir campanha">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               </Link>
@@ -134,15 +186,35 @@ export default function Campaigns() {
       )}
 
       {/* Modal nova campanha */}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={v => { setOpen(v); if (!v) { setEditingId(null); setForm(EMPTY_FORM); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Nova Campanha de Pré-venda</DialogTitle>
+            <DialogTitle>{editingId ? 'Editar Campanha' : 'Nova Campanha de Pré-venda'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <Label>Nome da campanha *</Label>
-              <Input placeholder="Ex: Pré-venda Uniforme EON 2026" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="mt-1" />
+              <Input
+              placeholder="Ex: Pré-venda Uniforme EON 2026"
+              value={form.name}
+              onChange={e => {
+                const name = e.target.value;
+                setForm(f => ({ ...f, name, ...(!editingId && { slug: generateSlug(name) }) }));
+              }}
+              className="mt-1"
+            />
+            </div>
+            <div>
+              <Label>Link da loja (slug)</Label>
+              <div className="flex items-center mt-1">
+                <span className="text-xs text-muted-foreground bg-gray-100 border border-r-0 rounded-l-md px-2 py-2 whitespace-nowrap">/checkout/</span>
+                <Input
+                  placeholder="colecao-woom"
+                  value={form.slug}
+                  onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') }))}
+                  className="rounded-l-none"
+                />
+              </div>
             </div>
             <div>
               <Label>Fornecedor principal</Label>
@@ -176,7 +248,7 @@ export default function Campaigns() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={saving}>{saving ? 'Salvando...' : 'Criar Campanha'}</Button>
+            <Button onClick={handleSave} disabled={saving}>{saving ? 'Salvando...' : editingId ? 'Salvar Alterações' : 'Criar Campanha'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -9,29 +9,17 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState('login');
   const [showPw, setShowPw] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email || !password) return toast.error('Preencha e-mail e senha');
 
-    if (mode === 'signup') {
-      if (password.length < 6) return toast.error('Senha deve ter pelo menos 6 caracteres');
-      setLoading(true);
-      const { error } = await supabase.auth.signUp({ email, password });
-      setLoading(false);
-      if (error) return toast.error(error.message);
-      toast.success('Conta criada! Verifique seu e-mail para confirmar, depois faça login.');
-      setMode('login');
-      return;
-    }
-
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) return toast.error('E-mail ou senha incorretos');
-    navigate('/');
+    navigate('/admin');
   };
 
   return (
@@ -46,9 +34,7 @@ export default function Login() {
         </div>
 
         <div className="bg-white rounded-2xl p-6 shadow-xl">
-          <h2 className="font-bold text-gray-900 text-lg mb-4">
-            {mode === 'login' ? 'Entrar' : 'Criar conta'}
-          </h2>
+          <h2 className="font-bold text-gray-900 text-lg mb-4">Entrar</h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -87,18 +73,10 @@ export default function Login() {
               disabled={loading}
               className="w-full h-11 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-xl font-semibold text-sm transition-colors"
             >
-              {loading ? 'Carregando...' : mode === 'login' ? 'Entrar' : 'Criar conta'}
+              {loading ? 'Carregando...' : 'Entrar'}
             </button>
           </form>
 
-          <div className="mt-4 text-center">
-            <button
-              onClick={() => setMode(m => m === 'login' ? 'signup' : 'login')}
-              className="text-xs text-blue-600 hover:underline"
-            >
-              {mode === 'login' ? 'Criar primeira conta' : 'Já tenho conta · Entrar'}
-            </button>
-          </div>
         </div>
       </div>
     </div>

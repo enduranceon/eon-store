@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PreSaleOrder, PreSaleCustomer, PreSaleProduct, PreSaleCampaign } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { toast } from 'sonner';
 
 function KPICard({ title, value, sub, icon: Icon, color = 'blue' }) {
   const colors = {
@@ -67,7 +68,7 @@ export default function Dashboard() {
       setCustomers(c);
       setProducts(p);
       setCampaigns(camp);
-    });
+    }).catch(() => toast.error('Erro ao carregar dados'));
   }, []);
 
   const activeOrders = orders.filter(o => o.payment_status !== 'cancelled');
