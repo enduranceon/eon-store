@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -37,6 +38,9 @@ export default function OrderDetail() {
   const [campaign, setCampaign] = useState(null);
   const [customer, setCustomer] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [whatsappModal, setWhatsappModal] = useState(false);
+  const [whatsappMsg, setWhatsappMsg] = useState('');
+  const [copied, setCopied] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState('');
   const [deliveryStatus, setDeliveryStatus] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
@@ -76,19 +80,15 @@ export default function OrderDetail() {
     }
   };
 
-  const openWhatsApp = () => {
-    const phone = '55' + (order.checkout_whatsapp || '').replace(/\D/g, '');
-    const items = (order.items || []);
-    const itemLines = items.map(item => {
+  const buildMessage = () => {
+    const itemLines = (order.items || []).map(item => {
       const extras = (item.extras || []).map(e => `   ➕ ${e.name}: ${formatCurrency(e.price)}`).join('\n');
       const itemTotal = ((item.sale_price || 0) + (item.extras_total || 0)) * item.quantity;
       const label = item.variation ? `${item.product_name} - ${item.variation}` : item.product_name;
       return `• ${label} x${item.quantity} → ${formatCurrency(itemTotal)}${extras ? '\n' + extras : ''}`;
     }).join('\n');
-
     const total = order.total_value || 0;
-
-    const msg = `Olá, ${order.checkout_name}! 👋
+    return `Olá, ${order.checkout_name}! 👋
 
 Segue o resumo do seu pedido *${order.order_number}*:
 
@@ -100,8 +100,25 @@ ${itemLines}
 Como você prefere pagar?
 • PIX (à vista) — ${formatCurrency(total)}
 • Cartão (em até 4x)`;
+  };
 
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+  const openWhatsApp = () => {
+    const msg = buildMessage();
+    setWhatsappMsg(msg);
+    setCopied(false);
+    setWhatsappModal(true);
+  };
+
+  const copyMessage = () => {
+    navigator.clipboard.writeText(whatsappMsg).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const openWhatsAppDirect = () => {
+    const phone = '55' + (order.checkout_whatsapp || '').replace(/\D/g, '');
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
   };
 
   if (!order) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
@@ -232,6 +249,30 @@ Como você prefere pagar?
           </div>
         </CardContent>
       </Card>
+
+      {/* Modal mensagem WhatsApp */}
+      <Dialog open={whatsappModal} onOpenChange={setWhatsappModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="w-5 h-5 text-green-600" />
+              Mensagem de cobrança
+            </DialogTitle>
+          </DialogHeader>
+          <div className="bg-gray-50 rounded-xl p-4 text-sm whitespace-pre-wrap font-mono border">
+            {whatsappMsg}
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button className="flex-1" variant="outline" onClick={copyMessage}>
+              {copied ? <><Check className="w-4 h-4 mr-1.5 text-green-600" />Copiado!</> : <><Copy className="w-4 h-4 mr-1.5" />Copiar mensagem</>}
+            </Button>
+            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsAppDirect}>
+              <ExternalLink className="w-4 h-4 mr-1.5" />
+              Abrir no WhatsApp
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Controles de status */}
       <Card>
