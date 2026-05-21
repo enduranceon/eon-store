@@ -14,7 +14,8 @@ import { formatCurrency, formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
-  awaiting_charge: { label: 'Aguardando cobrança', badge: 'secondary' },
+  awaiting_charge: { label: 'Aguardando contato', badge: 'secondary' },
+  message_sent: { label: 'Mensagem enviada', badge: 'warning' },
   charge_sent: { label: 'Cobrança enviada', badge: 'info' },
   paid: { label: 'Pago', badge: 'success' },
   partially_paid: { label: 'Parcialmente pago', badge: 'warning' },
@@ -124,10 +125,10 @@ Como você prefere pagar?
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
   };
 
-  const markChargeSent = async () => {
+  const markMessageSent = async () => {
     try {
-      await PreSaleOrder.update(id, { payment_status: 'charge_sent' });
-      toast.success('Cobrança marcada como enviada!');
+      await PreSaleOrder.update(id, { payment_status: 'message_sent' });
+      toast.success('Mensagem marcada como enviada!');
       setWhatsappModal(false);
       load();
     } catch (e) {
@@ -285,25 +286,10 @@ Como você prefere pagar?
               Abrir no WhatsApp
             </Button>
           </div>
-          <div className="border-t pt-3 space-y-2">
-            <p className="text-xs text-muted-foreground font-medium">Forma de pagamento confirmada pelo cliente</p>
-            <div className="grid grid-cols-3 gap-2">
-              {['pix', 'card_1x', 'card_2x', 'card_3x', 'card_4x'].map(m => {
-                const labels = { pix: 'PIX', card_1x: 'Cartão 1x', card_2x: 'Cartão 2x', card_3x: 'Cartão 3x', card_4x: 'Cartão 4x' };
-                const active = order.payment_method === m;
-                return (
-                  <button key={m} onClick={async () => { await PreSaleOrder.update(id, { payment_method: m }); load(); toast.success('Forma de pagamento salva!'); }}
-                    className={`text-xs py-1.5 px-2 rounded-lg border font-medium transition-colors ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:border-blue-400'}`}>
-                    {labels[m]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          {order.payment_status !== 'charge_sent' && order.payment_status !== 'paid' && (
-            <Button className="w-full" variant="secondary" onClick={markChargeSent}>
+          {order.payment_status === 'awaiting_charge' && (
+            <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={markMessageSent}>
               <Check className="w-4 h-4 mr-1.5" />
-              Marcar cobrança como enviada
+              Mensagem enviada — aguardando resposta
             </Button>
           )}
         </DialogContent>
