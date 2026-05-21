@@ -46,6 +46,7 @@ export default function OrderDetail() {
   const [internalNotes, setInternalNotes] = useState('');
   const [paymentDate, setPaymentDate] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('');
 
   const load = async () => {
     const o = await PreSaleOrder.get(id);
@@ -55,6 +56,7 @@ export default function OrderDetail() {
     setInternalNotes(o.internal_notes || '');
     setPaymentDate(o.payment_date || '');
     setDeliveryDate(o.delivery_date || '');
+    setPaymentMethod(o.payment_method || '');
     if (o.campaign_id) PreSaleCampaign.get(o.campaign_id).then(setCampaign).catch(() => {});
     if (o.customer_id) PreSaleCustomer.get(o.customer_id).then(setCustomer).catch(() => {});
   };
@@ -70,6 +72,7 @@ export default function OrderDetail() {
         internal_notes: internalNotes,
         payment_date: paymentDate || null,
         delivery_date: deliveryDate || null,
+        payment_method: paymentMethod || null,
       });
       toast.success('Pedido atualizado!');
       load();
@@ -282,6 +285,21 @@ Como você prefere pagar?
               Abrir no WhatsApp
             </Button>
           </div>
+          <div className="border-t pt-3 space-y-2">
+            <p className="text-xs text-muted-foreground font-medium">Forma de pagamento confirmada pelo cliente</p>
+            <div className="grid grid-cols-3 gap-2">
+              {['pix', 'card_1x', 'card_2x', 'card_3x', 'card_4x'].map(m => {
+                const labels = { pix: 'PIX', card_1x: 'Cartão 1x', card_2x: 'Cartão 2x', card_3x: 'Cartão 3x', card_4x: 'Cartão 4x' };
+                const active = order.payment_method === m;
+                return (
+                  <button key={m} onClick={async () => { await PreSaleOrder.update(id, { payment_method: m }); load(); toast.success('Forma de pagamento salva!'); }}
+                    className={`text-xs py-1.5 px-2 rounded-lg border font-medium transition-colors ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:border-blue-400'}`}>
+                    {labels[m]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           {order.payment_status !== 'charge_sent' && order.payment_status !== 'paid' && (
             <Button className="w-full" variant="secondary" onClick={markChargeSent}>
               <Check className="w-4 h-4 mr-1.5" />
@@ -305,6 +323,22 @@ Como você prefere pagar?
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <Label>Forma de Pagamento</Label>
+              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Não confirmado" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Não confirmado</SelectItem>
+                  <SelectItem value="pix">PIX</SelectItem>
+                  <SelectItem value="card_1x">Cartão 1x</SelectItem>
+                  <SelectItem value="card_2x">Cartão 2x</SelectItem>
+                  <SelectItem value="card_3x">Cartão 3x</SelectItem>
+                  <SelectItem value="card_4x">Cartão 4x</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Data de Pagamento</Label>
               <Input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} className="mt-1" />
