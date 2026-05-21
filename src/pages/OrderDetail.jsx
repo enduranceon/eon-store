@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -76,6 +76,38 @@ export default function OrderDetail() {
     }
   };
 
+  const openWhatsApp = () => {
+    const phone = '55' + (order.checkout_whatsapp || '').replace(/\D/g, '');
+    const items = (order.items || []);
+    const itemLines = items.map(item => {
+      const extras = (item.extras || []).map(e => `   ➕ ${e.name}: ${formatCurrency(e.price)}`).join('\n');
+      const itemTotal = ((item.sale_price || 0) + (item.extras_total || 0)) * item.quantity;
+      const label = item.variation ? `${item.product_name} - ${item.variation}` : item.product_name;
+      return `• ${label} x${item.quantity} → ${formatCurrency(itemTotal)}${extras ? '\n' + extras : ''}`;
+    }).join('\n');
+
+    const total = order.total_value || 0;
+    const installments = [2, 3, 4].map(n => `   ${n}x de ${formatCurrency(total / n)}`).join('\n');
+
+    const msg = `Olá, ${order.checkout_name}! 👋
+
+Segue o resumo do seu pedido *${order.order_number}*:
+
+📦 *Itens:*
+${itemLines}
+
+💰 *Total: ${formatCurrency(total)}*
+
+Como você prefere pagar?
+1️⃣ PIX (à vista) — ${formatCurrency(total)}
+2️⃣ Cartão 1x — ${formatCurrency(total)}
+${installments}
+
+Responda com o número da opção! 😊`;
+
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
   if (!order) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const ps = PAYMENT_STATUS[order.payment_status] || { label: order.payment_status, badge: 'secondary' };
@@ -94,9 +126,15 @@ export default function OrderDetail() {
           <h2 className="text-xl font-bold font-mono">{order.order_number}</h2>
           <p className="text-sm text-muted-foreground">{formatDate(order.created_date)}</p>
         </div>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex items-center gap-2">
           <Badge variant={ps.badge}>{ps.label}</Badge>
           <Badge variant={ds.badge}>{ds.label}</Badge>
+          {order.checkout_whatsapp && (
+            <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white gap-1.5" onClick={openWhatsApp}>
+              <MessageCircle className="w-4 h-4" />
+              Cobrar via WhatsApp
+            </Button>
+          )}
         </div>
       </div>
 
