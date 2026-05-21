@@ -87,7 +87,6 @@ export default function OrderDetail() {
     }).join('\n');
 
     const total = order.total_value || 0;
-    const installments = [2, 3, 4].map(n => `   ${n}x de ${formatCurrency(total / n)}`).join('\n');
 
     const msg = `Olá, ${order.checkout_name}! 👋
 
@@ -100,8 +99,7 @@ ${itemLines}
 
 Como você prefere pagar?
 1️⃣ PIX (à vista) — ${formatCurrency(total)}
-2️⃣ Cartão 1x — ${formatCurrency(total)}
-${installments}
+2️⃣ Cartão (em até 4x)
 
 Responda com o número da opção! 😊`;
 
