@@ -121,6 +121,17 @@ Como você prefere pagar?
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
   };
 
+  const markChargeSent = async () => {
+    try {
+      await PreSaleOrder.update(id, { payment_status: 'charge_sent' });
+      toast.success('Cobrança marcada como enviada!');
+      setWhatsappModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
   if (!order) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const ps = PAYMENT_STATUS[order.payment_status] || { label: order.payment_status, badge: 'secondary' };
@@ -271,6 +282,12 @@ Como você prefere pagar?
               Abrir no WhatsApp
             </Button>
           </div>
+          {order.payment_status !== 'charge_sent' && order.payment_status !== 'paid' && (
+            <Button className="w-full" variant="secondary" onClick={markChargeSent}>
+              <Check className="w-4 h-4 mr-1.5" />
+              Marcar cobrança como enviada
+            </Button>
+          )}
         </DialogContent>
       </Dialog>
 
