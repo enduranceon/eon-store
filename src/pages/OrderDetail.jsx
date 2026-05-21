@@ -98,10 +98,8 @@ ${itemLines}
 💰 *Total: ${formatCurrency(total)}*
 
 Como você prefere pagar?
-1️⃣ PIX (à vista) — ${formatCurrency(total)}
-2️⃣ Cartão (em até 4x)
-
-Responda com o número da opção! 😊`;
+• PIX (à vista) — ${formatCurrency(total)}
+• Cartão (em até 4x)`;
 
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
