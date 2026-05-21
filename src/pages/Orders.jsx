@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
   awaiting_charge: { label: 'Ag. cobrança',      color: 'bg-gray-100 text-gray-700' },
+  message_sent:    { label: 'Mensagem enviada',   color: 'bg-orange-100 text-orange-700' },
   charge_sent:     { label: 'Cobrança enviada',   color: 'bg-blue-100 text-blue-700' },
   paid:            { label: 'Pago',               color: 'bg-green-100 text-green-700' },
   partially_paid:  { label: 'Parcialmente pago',  color: 'bg-amber-100 text-amber-700' },
