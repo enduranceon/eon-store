@@ -311,10 +311,10 @@ Como você prefere pagar?
             </div>
             <div>
               <Label>Forma de Pagamento</Label>
-              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Não confirmado" /></SelectTrigger>
+              <Select value={paymentMethod || 'none'} onValueChange={v => setPaymentMethod(v === 'none' ? '' : v)}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Não confirmado</SelectItem>
+                  <SelectItem value="none">Não confirmado</SelectItem>
                   <SelectItem value="pix">PIX</SelectItem>
                   <SelectItem value="card_1x">Cartão 1x</SelectItem>
                   <SelectItem value="card_2x">Cartão 2x</SelectItem>
