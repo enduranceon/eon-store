@@ -127,6 +127,8 @@ export default function OrderDetail() {
     if (cpf.length < 11) return toast.error('Informe o CPF do cliente (11 dígitos)');
     try {
       await callAsaas('create', { cpf: asaasCpf, billing_type: billingType, due_date: asaasDueDate, installments: asaasInstallments });
+      // Salva due_date no banco para uso no mural financeiro
+      await supabase.from('presale_orders').update({ due_date: asaasDueDate }).eq('id', id);
       toast.success('Cobrança criada com sucesso!');
       load();
     } catch (e) { toast.error(e.message || 'Erro ao criar cobrança'); }

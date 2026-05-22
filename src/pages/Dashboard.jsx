@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { DollarSign, ShoppingCart, Users, TrendingUp, Package, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
+import { DollarSign, ShoppingCart, Users, TrendingUp, Package, AlertCircle, CheckCircle2, Clock, AlertTriangle, UserX, MessageCircle, CreditCard } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PreSaleOrder, PreSaleCustomer, PreSaleProduct, PreSaleCampaign } from '@/api/entities';
@@ -82,12 +82,78 @@ export default function Dashboard() {
   const recentOrders = [...orders].slice(0, 8);
   const activeCampaigns = campaigns.filter(c => c.status === 'active');
 
+  // Alertas de ação
+  const clientsNoCpf = customers.filter(c => !c.cpf);
+  const ordersAwaitingCharge = activeOrders.filter(o => o.payment_status === 'awaiting_charge');
+  const ordersMessageSent = activeOrders.filter(o => o.payment_status === 'message_sent');
+  const ordersPaidNoDate = activeOrders.filter(o => o.payment_status === 'paid' && !o.payment_date);
+  const ordersNoPaymentMethod = activeOrders.filter(o => !o.payment_method && o.payment_status !== 'paid' && o.payment_status !== 'cancelled');
+
+  const alerts = [
+    clientsNoCpf.length > 0 && {
+      icon: UserX, color: 'text-red-600 bg-red-50 border-red-200',
+      title: `${clientsNoCpf.length} cliente${clientsNoCpf.length > 1 ? 's' : ''} sem CPF`,
+      desc: 'Sem CPF não é possível gerar cobrança via Asaas.',
+      link: '/clientes?filtro=sem-cpf', linkLabel: 'Ver clientes',
+    },
+    ordersAwaitingCharge.length > 0 && {
+      icon: Clock, color: 'text-orange-600 bg-orange-50 border-orange-200',
+      title: `${ordersAwaitingCharge.length} pedido${ordersAwaitingCharge.length > 1 ? 's' : ''} sem contato`,
+      desc: 'Ninguém entrou em contato com esses clientes ainda.',
+      link: '/pedidos?pagamento=awaiting_charge', linkLabel: 'Ver pedidos',
+    },
+    ordersMessageSent.length > 0 && {
+      icon: MessageCircle, color: 'text-amber-600 bg-amber-50 border-amber-200',
+      title: `${ordersMessageSent.length} pedido${ordersMessageSent.length > 1 ? 's' : ''} aguardando resposta`,
+      desc: 'Mensagem enviada mas cliente ainda não confirmou pagamento.',
+      link: '/pedidos?pagamento=message_sent', linkLabel: 'Ver pedidos',
+    },
+    ordersNoPaymentMethod.length > 0 && {
+      icon: CreditCard, color: 'text-blue-600 bg-blue-50 border-blue-200',
+      title: `${ordersNoPaymentMethod.length} pedido${ordersNoPaymentMethod.length > 1 ? 's' : ''} sem forma de pagamento`,
+      desc: 'Clientes não informaram como querem pagar. Pergunte antes de gerar cobrança.',
+      link: '/pedidos', linkLabel: 'Ver pedidos',
+    },
+    ordersPaidNoDate.length > 0 && {
+      icon: AlertTriangle, color: 'text-gray-600 bg-gray-50 border-gray-200',
+      title: `${ordersPaidNoDate.length} pedido${ordersPaidNoDate.length > 1 ? 's' : ''} pagos sem data registrada`,
+      desc: 'Registre a data de pagamento para relatórios precisos.',
+      link: '/pedidos?pagamento=paid', linkLabel: 'Ver pedidos',
+    },
+  ].filter(Boolean);
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-bold text-gray-900">Painel Financeiro</h2>
         <p className="text-sm text-muted-foreground">Visão geral de vendas, pedidos e lucro</p>
       </div>
+
+      {/* Alertas de ação */}
+      {alerts.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-500" /> Atenção agora
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {alerts.map((alert, i) => {
+              const Icon = alert.icon;
+              return (
+                <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${alert.color}`}>
+                  <Icon className="w-4 h-4 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold leading-tight">{alert.title}</p>
+                    <p className="text-xs mt-0.5 opacity-75">{alert.desc}</p>
+                  </div>
+                  <Link to={alert.link} className="text-xs font-semibold underline underline-offset-2 shrink-0 mt-0.5">
+                    {alert.linkLabel}
+                  </Link>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ShoppingCart, Search } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ShoppingCart, Search, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
@@ -53,13 +53,19 @@ export default function Orders() {
   const [deliveryFilter, setDeliveryFilter] = useState('all');
   const [campaignFilter, setCampaignFilter] = useState('all');
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const load = () => Promise.all([PreSaleOrder.list(), PreSaleCampaign.list()]).then(([o, c]) => {
     setOrders(o);
     setCampaigns(c);
   }).catch(() => toast.error('Erro ao carregar pedidos'));
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // Lê filtro de pagamento da URL (ex: ?pagamento=awaiting_charge)
+    const p = searchParams.get('pagamento');
+    if (p) setPaymentFilter(p);
+  }, []);
 
   const updateStatus = async (orderId, field, value) => {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, [field]: value } : o));
@@ -152,7 +158,14 @@ export default function Orders() {
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{o.checkout_trainer || '-'}</td>
                   <td className="px-4 py-3 text-muted-foreground">{formatDate(o.created_date)}</td>
-                  <td className="px-4 py-3 text-right font-semibold">{formatCurrency(o.total_value)}</td>
+                  <td className="px-4 py-3 text-right font-semibold">
+                    {formatCurrency(o.total_value)}
+                    {!o.payment_method && o.payment_status !== 'paid' && o.payment_status !== 'cancelled' && (
+                      <span className="block text-xs text-orange-500 font-normal flex items-center justify-end gap-1 mt-0.5">
+                        <AlertTriangle className="w-3 h-3" /> sem forma de pgto
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-center">
                     <StatusSelect
                       value={o.payment_status}

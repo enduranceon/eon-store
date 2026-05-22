@@ -31,6 +31,7 @@ import StockOrders from '@/pages/StockOrders';
 import StockOrderDetail from '@/pages/StockOrderDetail';
 import PublicStore from '@/pages/PublicStore';
 import PublicStoreConfirmation from '@/pages/PublicStoreConfirmation';
+import Financial from '@/pages/Financial';
 
 function AdminLayout({ children }) {
   const { user, loading, signOut } = useAuth();
@@ -92,6 +93,7 @@ export default function App() {
           <Route path="/fornecedores/novo" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/fornecedores/:id" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/relatorios" element={<AdminLayout><Reports /></AdminLayout>} />
+          <Route path="/financeiro" element={<AdminLayout><Financial /></AdminLayout>} />
           <Route path="/estoque" element={<AdminLayout><StockProducts /></AdminLayout>} />
           <Route path="/estoque/novo" element={<AdminLayout><StockProductForm /></AdminLayout>} />
           <Route path="/estoque/pedidos" element={<AdminLayout><StockOrders /></AdminLayout>} />
