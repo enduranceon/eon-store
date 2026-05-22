@@ -103,6 +103,9 @@ const TABLE_MAP = {
   PreSaleSupplier:  'presale_suppliers',
   PreSaleCategory:  'presale_categories',
   PreSaleTrainer:   'presale_trainers',
+  StockProduct:     'stock_products',
+  StockOrder:       'stock_orders',
+  Product:          'products',
 };
 
 const entities = Object.fromEntries(

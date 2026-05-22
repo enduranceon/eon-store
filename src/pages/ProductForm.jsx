@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import ImageUpload from '@/components/shared/ImageUpload';
-import { PreSaleProduct, PreSaleCampaign, PreSaleSupplier, PreSaleCategory } from '@/api/entities';
+import { PreSaleProduct, PreSaleCampaign, PreSaleSupplier, PreSaleCategory, Product } from '@/api/entities';
 import { formatCurrency, cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -16,6 +16,35 @@ import { toast } from 'sonner';
 const SIZES_LETTER = ['PP', 'P', 'M', 'G', 'GG', 'XG', '2XG', '3XG'];
 const SIZES_NUMERIC = ['34', '36', '38', '40', '42', '44', '46', '48'];
 const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
+
+// ─── Auto-geração de SKU ─────────────────────────────────────────────────────
+const STOP_WORDS = new Set(['de','da','do','das','dos','e','a','o','as','os','em','na','no','para','com','sem','por','the','of']);
+
+function removeAccents(str) {
+  return str.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function suggestSku(name, category) {
+  const catPrefix = removeAccents(category || 'GER')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(0, 3)
+    .toUpperCase() || 'GER';
+
+  if (!name?.trim()) return `EON-${catPrefix}-`;
+
+  const words = removeAccents(name)
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 0 && !STOP_WORDS.has(w.toLowerCase()));
+
+  let abbr = '';
+  for (let i = 0; i < words.length && abbr.length < 6; i++) {
+    const w = words[i].toUpperCase();
+    abbr += w.slice(0, Math.min(i === 0 ? 4 : 3, 6 - abbr.length));
+  }
+
+  return abbr ? `EON-${catPrefix}-${abbr}` : `EON-${catPrefix}-`;
+}
 
 const EMPTY = {
   name: '', sku: '', supplier: '', sale_price: '', regular_price: '', cost_price: '',
@@ -51,6 +80,7 @@ export default function ProductForm() {
   const [categories, setCategories] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loadingProduct, setLoadingProduct] = useState(false);
+  const [skuAutoMode, setSkuAutoMode] = useState(true); // false quando usuário edita manualmente
   const isEdit = Boolean(id);
 
   // Estado do gerador rápido
@@ -86,6 +116,7 @@ export default function ProductForm() {
           images,
           campaign_ids: p.campaign_ids?.length ? p.campaign_ids : (p.campaign_id ? [p.campaign_id] : []),
         });
+        if (p.sku) setSkuAutoMode(false); // produto já tem SKU, não sobrescrever
       }).catch(e => {
         toast.error('Erro ao carregar produto: ' + e.message);
       }).finally(() => {
@@ -93,6 +124,12 @@ export default function ProductForm() {
       });
     }
   }, [id]);
+
+  // Auto-sugestão de SKU enquanto digita nome/categoria
+  useEffect(() => {
+    if (!skuAutoMode || isEdit) return;
+    setField('sku', suggestSku(form.name, form.category));
+  }, [form.name, form.category, skuAutoMode]);
 
   const salePrice = parseFloat(form.sale_price) || 0;
   const regularPrice = parseFloat(form.regular_price) || 0;
@@ -183,25 +220,44 @@ export default function ProductForm() {
     if (!form.sale_price) return toast.error('Preço de venda é obrigatório');
     setSaving(true);
     try {
+      const variations = (form.variations || []).map(v => ({
+        ...v,
+        sale_price: parseFloat(v.sale_price) || null,
+        regular_price: parseFloat(v.regular_price) || null,
+        cost_price: parseFloat(v.cost_price) || null,
+      }));
+      const extras = (form.extras || [])
+        .filter(e => e.name?.trim())
+        .map(e => ({ name: e.name.trim(), price: parseFloat(e.price) || 0, required: Boolean(e.required) }));
+
+      // Salva / atualiza na biblioteca central
+      const libraryPayload = {
+        name: form.name, description: form.description,
+        category: form.category, subcategory: form.subcategory,
+        images: form.images || [],
+        sale_price: salePrice, regular_price: regularPrice || null,
+        cost_price: costPrice, extra_cost: extraCost,
+        supplier: form.supplier, supplier_id: form.supplier_id || null,
+        notes: form.notes, status: form.status,
+        variations, extras,
+      };
+      let productId = form.product_id || null;
+      if (productId) {
+        await Product.update(productId, libraryPayload);
+      } else {
+        const lib = await Product.create(libraryPayload);
+        productId = lib.id;
+      }
+
+      // Salva / atualiza no presale_products (com product_id linkado)
       const payload = {
         ...form,
-        sale_price: salePrice,
-        regular_price: regularPrice || null,
-        cost_price: costPrice,
-        extra_cost: extraCost,
-        total_cost: totalCost,
-        profit_per_unit: profit,
-        margin_percent: margin,
-        discount_percent: discount || null,
-        variations: (form.variations || []).map(v => ({
-          ...v,
-          sale_price: parseFloat(v.sale_price) || null,
-          regular_price: parseFloat(v.regular_price) || null,
-          cost_price: parseFloat(v.cost_price) || null,
-        })),
-        extras: (form.extras || [])
-          .filter(e => e.name?.trim())
-          .map(e => ({ name: e.name.trim(), price: parseFloat(e.price) || 0, required: Boolean(e.required) })),
+        product_id: productId,
+        sale_price: salePrice, regular_price: regularPrice || null,
+        cost_price: costPrice, extra_cost: extraCost,
+        total_cost: totalCost, profit_per_unit: profit,
+        margin_percent: margin, discount_percent: discount || null,
+        variations, extras,
       };
       if (isEdit) {
         await PreSaleProduct.update(id, payload);
@@ -258,7 +314,19 @@ export default function ProductForm() {
             </div>
             <div>
               <Label>SKU base <span className="text-xs text-muted-foreground font-normal">(código)</span></Label>
-              <Input placeholder="Ex: EON-CAM-BRA" value={form.sku || ''} onChange={e => setField('sku', e.target.value)} className="mt-1 font-mono" />
+              <Input
+                placeholder="Ex: EON-COR-CAMBR"
+                value={form.sku || ''}
+                onChange={e => {
+                  setSkuAutoMode(e.target.value === ''); // reativa auto se apagar tudo
+                  setField('sku', e.target.value);
+                }}
+                onFocus={() => !isEdit && setSkuAutoMode(false)}
+                className="mt-1 font-mono"
+              />
+              {skuAutoMode && !isEdit && (
+                <p className="text-[11px] text-blue-500 mt-0.5">✦ Gerado automaticamente · edite se quiser</p>
+              )}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
-  Megaphone, Store, X, Truck, Tag, UserCheck, LogOut,
+  Megaphone, Store, X, Truck, Tag, UserCheck, LogOut, Archive, ClipboardList,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -16,6 +16,9 @@ const menu = [
   { label: 'Pedidos',      icon: ShoppingCart,     to: '/pedidos' },
   { label: 'Clientes',     icon: Users,            to: '/clientes' },
   { label: 'Relatórios',   icon: BarChart3,        to: '/relatorios' },
+  null,
+  { label: 'Estoque',      icon: Archive,          to: '/estoque',          exact: true },
+  { label: 'Pedidos Loja', icon: ClipboardList,    to: '/estoque/pedidos' },
 ];
 
 export default function Sidebar({ open, onClose, onSignOut }) {
@@ -57,7 +60,10 @@ export default function Sidebar({ open, onClose, onSignOut }) {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto py-4 px-3">
-          {menu.map((item) => {
+          {menu.map((item, idx) => {
+            if (item === null) {
+              return <div key={`sep-${idx}`} className="my-2 border-t border-slate-700/60" />;
+            }
             const active = isActive(item.to, item.exact);
             const Icon = item.icon;
             return (

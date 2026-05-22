@@ -25,6 +25,12 @@ import PublicHome from '@/pages/PublicHome';
 import Migrate from '@/pages/Migrate';
 import CampaignReport from '@/pages/CampaignReport';
 import Login from '@/pages/Login';
+import StockProducts from '@/pages/StockProducts';
+import StockProductForm from '@/pages/StockProductForm';
+import StockOrders from '@/pages/StockOrders';
+import StockOrderDetail from '@/pages/StockOrderDetail';
+import PublicStore from '@/pages/PublicStore';
+import PublicStoreConfirmation from '@/pages/PublicStoreConfirmation';
 
 function AdminLayout({ children }) {
   const { user, loading, signOut } = useAuth();
@@ -63,6 +69,8 @@ export default function App() {
           <Route path="/" element={<PublicHome />} />
           <Route path="/checkout/:campaignId" element={<PublicCheckout />} />
           <Route path="/confirmacao/:orderId" element={<PublicOrderConfirmation />} />
+          <Route path="/loja" element={<PublicStore />} />
+          <Route path="/loja/confirmacao/:orderId" element={<PublicStoreConfirmation />} />
 
           {/* Admin */}
           <Route path="/login" element={<Login />} />
@@ -84,6 +92,11 @@ export default function App() {
           <Route path="/fornecedores/novo" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/fornecedores/:id" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/relatorios" element={<AdminLayout><Reports /></AdminLayout>} />
+          <Route path="/estoque" element={<AdminLayout><StockProducts /></AdminLayout>} />
+          <Route path="/estoque/novo" element={<AdminLayout><StockProductForm /></AdminLayout>} />
+          <Route path="/estoque/pedidos" element={<AdminLayout><StockOrders /></AdminLayout>} />
+          <Route path="/estoque/pedidos/:id" element={<AdminLayout><StockOrderDetail /></AdminLayout>} />
+          <Route path="/estoque/:id" element={<AdminLayout><StockProductForm /></AdminLayout>} />
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Routes>
       </BrowserRouter>

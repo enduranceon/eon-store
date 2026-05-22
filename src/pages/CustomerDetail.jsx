@@ -26,7 +26,7 @@ export default function CustomerDetail() {
   const load = async () => {
     const [c, allOrders] = await Promise.all([PreSaleCustomer.get(id), PreSaleOrder.list()]);
     setCustomer(c);
-    setForm({ full_name: c.full_name, whatsapp: c.whatsapp, email: c.email, trainer: c.trainer, internal_notes: c.internal_notes || '' });
+    setForm({ full_name: c.full_name, whatsapp: c.whatsapp, email: c.email, trainer: c.trainer, cpf: c.cpf || '', internal_notes: c.internal_notes || '' });
     setOrders(allOrders.filter(o => o.customer_id === id));
   };
 
@@ -107,6 +107,12 @@ export default function CustomerDetail() {
                 <div><Label>E-mail</Label><Input value={form.email || ''} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} className="mt-1" /></div>
                 <div><Label>Treinador</Label><Input value={form.trainer || ''} onChange={e => setForm(f => ({ ...f, trainer: e.target.value }))} className="mt-1" /></div>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>CPF <span className="text-xs text-muted-foreground font-normal">(necessário para cobrança Asaas)</span></Label>
+                  <Input value={form.cpf || ''} onChange={e => setForm(f => ({ ...f, cpf: e.target.value }))} className="mt-1" placeholder="000.000.000-00" />
+                </div>
+              </div>
               <div><Label>Observações internas</Label><Textarea value={form.internal_notes} onChange={e => setForm(f => ({ ...f, internal_notes: e.target.value }))} className="mt-1" rows={3} /></div>
             </>
           ) : (
@@ -114,6 +120,7 @@ export default function CustomerDetail() {
               <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-muted-foreground" /><span>{customer.whatsapp || '-'}</span></div>
               <div className="flex items-center gap-2"><Mail className="w-4 h-4 text-muted-foreground" /><span>{customer.email || '-'}</span></div>
               <div className="flex items-center gap-2"><User className="w-4 h-4 text-muted-foreground" /><span>Treinador: {customer.trainer || '-'}</span></div>
+              <div className="flex items-center gap-2"><span className="text-muted-foreground text-xs">CPF:</span><span className="font-mono text-sm">{customer.cpf || <span className="text-gray-400 italic">não cadastrado</span>}</span></div>
               {customer.internal_notes && <div className="col-span-2 bg-yellow-50 border border-yellow-200 rounded p-3 text-sm">{customer.internal_notes}</div>}
             </div>
           )}

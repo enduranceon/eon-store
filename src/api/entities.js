@@ -7,5 +7,8 @@ export const PreSaleOrder     = db.entities.PreSaleOrder;
 export const PreSaleSupplier  = db.entities.PreSaleSupplier;
 export const PreSaleCategory  = db.entities.PreSaleCategory;
 export const PreSaleTrainer   = db.entities.PreSaleTrainer;
+export const StockProduct     = db.entities.StockProduct;
+export const StockOrder       = db.entities.StockOrder;
+export const Product          = db.entities.Product;
 export const { findOrCreateCustomer, seedTrainers } = db.helpers;
 export { getCampaignBySlugOrId } from '@/api/db';

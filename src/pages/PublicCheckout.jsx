@@ -23,7 +23,7 @@ export default function PublicCheckout() {
   });
   const [step, setStep] = useState('shop');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [form, setForm] = useState({ full_name: '', whatsapp: '', email: '', trainer: '', delivery_method: '', delivery_city: '' });
+  const [form, setForm] = useState({ full_name: '', whatsapp: '', email: '', trainer: '', delivery_method: '', delivery_city: '', payment_method: '' });
   const [submitting, setSubmitting] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -181,6 +181,7 @@ export default function PublicCheckout() {
     if (cart.length === 0) return toast.error('Adicione produtos ao carrinho');
     if (!form.delivery_method) return toast.error('Selecione a forma de entrega');
     if (form.delivery_method === 'pickup' && !form.delivery_city) return toast.error('Selecione a cidade de retirada');
+    if (!form.payment_method) return toast.error('Selecione a forma de pagamento');
     setSubmitting(true);
     try {
       const freshCampaign = await getCampaignBySlugOrId(campaignId);
@@ -238,6 +239,7 @@ export default function PublicCheckout() {
         total_cost: freshCostTotal,
         delivery_method: form.delivery_method,
         delivery_city: form.delivery_city || null,
+        payment_method: form.payment_method || null,
         payment_status: 'awaiting_charge',
         delivery_status: 'awaiting_supplier',
       });
@@ -617,6 +619,78 @@ export default function PublicCheckout() {
                       <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
                         O valor do frete será calculado e enviado separadamente via WhatsApp.
                       </p>
+                    )}
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Forma de pagamento */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100">
+                <h3 className="font-bold text-gray-900">Forma de pagamento</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Qual método você prefere usar?</p>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                <label className={cn(
+                  'flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all',
+                  form.payment_method === 'pix_boleto'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                )}>
+                  <input
+                    type="radio"
+                    name="payment_method"
+                    value="pix_boleto"
+                    checked={form.payment_method === 'pix_boleto'}
+                    onChange={() => setForm(f => ({ ...f, payment_method: 'pix_boleto' }))}
+                    className="mt-0.5 accent-blue-600"
+                  />
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">PIX ou Boleto</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Pagamento à vista</p>
+                  </div>
+                </label>
+
+                <label className={cn(
+                  'flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all',
+                  form.payment_method.startsWith('card_')
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                )}>
+                  <input
+                    type="radio"
+                    name="payment_method"
+                    value="card"
+                    checked={form.payment_method.startsWith('card_')}
+                    onChange={() => setForm(f => ({ ...f, payment_method: 'card_1x' }))}
+                    className="mt-0.5 accent-blue-600"
+                  />
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-900 text-sm">Cartão de crédito</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Em até 6x</p>
+
+                    {form.payment_method.startsWith('card_') && (
+                      <div className="grid grid-cols-3 gap-2 mt-3">
+                        {Array.from({ length: Math.min(6, Math.max(1, Math.floor(cartTotal / 50))) }, (_, i) => i + 1).map(n => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, payment_method: `card_${n}x` }))}
+                            className={cn(
+                              'py-2.5 rounded-xl border-2 text-xs font-bold transition-all',
+                              form.payment_method === `card_${n}x`
+                                ? 'border-blue-500 bg-blue-500 text-white'
+                                : 'border-gray-200 text-gray-700 hover:border-blue-300 bg-white'
+                            )}
+                          >
+                            <p>{n}x</p>
+                            <p className={cn('font-normal mt-0.5', form.payment_method === `card_${n}x` ? 'text-blue-100' : 'text-gray-400')}>
+                              {formatCurrency(cartTotal / n)}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </div>
                 </label>
