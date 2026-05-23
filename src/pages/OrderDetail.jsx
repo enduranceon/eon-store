@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,14 @@ const DELIVERY_STATUS = {
   cancelled: { label: 'Cancelado', badge: 'destructive' },
 };
 
+const CANCEL_REASONS = [
+  'Desistência do cliente',
+  'Produto indisponível',
+  'Duplicidade de pedido',
+  'Erro no pedido',
+  'Outro',
+];
+
 export default function OrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -49,10 +57,24 @@ export default function OrderDetail() {
   const [paymentDate, setPaymentDate] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [cancellationReason, setCancellationReason] = useState('');
   const [asaasLoading, setAsaasLoading] = useState(false);
   const [asaasCpf, setAsaasCpf] = useState('');
   const [asaasBilling, setAsaasBilling] = useState('PIX');
   const [asaasInstallments, setAsaasInstallments] = useState(1);
+  const [asaasStatus, setAsaasStatus] = useState(null);
+  const [asaasDueDate, setAsaasDueDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 3);
+    return d.toISOString().split('T')[0];
+  });
+
+  // Estados dos modais de cancelamento e estorno
+  const [cancelModal, setCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelReasonCustom, setCancelReasonCustom] = useState('');
+  const [refundModal, setRefundModal] = useState(false);
+  const [refundReason, setRefundReason] = useState('');
+  const [refundReasonCustom, setRefundReasonCustom] = useState('');
 
   const load = async () => {
     const o = await PreSaleOrder.get(id);
@@ -63,7 +85,7 @@ export default function OrderDetail() {
     setPaymentDate(o.payment_date || '');
     setDeliveryDate(o.delivery_date || '');
     setPaymentMethod(o.payment_method || '');
-    // Pré-seleciona cobrança conforme preferência do cliente
+    setCancellationReason(o.cancellation_reason || '');
     if (o.payment_method?.startsWith('card_')) {
       setAsaasBilling('CREDIT_CARD');
       const m = o.payment_method.match(/card_(\d+)x/);
@@ -92,6 +114,7 @@ export default function OrderDetail() {
         payment_date: paymentDate || null,
         delivery_date: deliveryDate || null,
         payment_method: paymentMethod || null,
+        cancellation_reason: cancellationReason || null,
       });
       toast.success('Pedido atualizado!');
       load();
@@ -101,12 +124,6 @@ export default function OrderDetail() {
       setSaving(false);
     }
   };
-
-  const [asaasStatus, setAsaasStatus] = useState(null); // { label, color, is_paid }
-  const [asaasDueDate, setAsaasDueDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() + 3);
-    return d.toISOString().split('T')[0];
-  });
 
   const callAsaas = async (action, extra = {}) => {
     setAsaasLoading(true);
@@ -127,7 +144,6 @@ export default function OrderDetail() {
     if (cpf.length < 11) return toast.error('Informe o CPF do cliente (11 dígitos)');
     try {
       await callAsaas('create', { cpf: asaasCpf, billing_type: billingType, due_date: asaasDueDate, installments: asaasInstallments });
-      // Salva due_date no banco para uso no mural financeiro
       await supabase.from('presale_orders').update({ due_date: asaasDueDate }).eq('id', id);
       toast.success('Cobrança criada com sucesso!');
       load();
@@ -147,14 +163,36 @@ export default function OrderDetail() {
     } catch (e) { toast.error(e.message || 'Erro ao verificar'); }
   };
 
-  const cancelAsaasCharge = async () => {
-    if (!confirm('Cancelar esta cobrança no Asaas? O cliente não poderá mais pagar por esse link.')) return;
+  // Abre modal de cancelamento
+  const cancelAsaasCharge = () => {
+    setCancelReason('');
+    setCancelReasonCustom('');
+    setCancelModal(true);
+  };
+
+  // Confirma cancelamento com motivo
+  const confirmCancelAsaasCharge = async () => {
+    const reason = cancelReason === 'Outro' ? cancelReasonCustom : cancelReason;
     try {
       await callAsaas('cancel');
+      await supabase.from('presale_orders').update({ cancellation_reason: reason || null }).eq('id', id);
+      setCancelModal(false);
       setAsaasStatus(null);
-      toast.success('Cobrança cancelada. Você pode criar uma nova.');
+      toast.success('Cobrança cancelada.');
       load();
     } catch (e) { toast.error(e.message || 'Erro ao cancelar'); }
+  };
+
+  // Confirma estorno com motivo
+  const confirmRefund = async () => {
+    const reason = refundReason === 'Outro' ? refundReasonCustom : refundReason;
+    try {
+      await callAsaas('refund', { reason });
+      await supabase.from('presale_orders').update({ cancellation_reason: reason || null }).eq('id', id);
+      setRefundModal(false);
+      toast.success('Estorno realizado com sucesso!');
+      load();
+    } catch (e) { toast.error(e.message || 'Erro ao estornar'); }
   };
 
   const buildMessage = () => {
@@ -232,6 +270,17 @@ export default function OrderDetail() {
           )}
         </div>
       </div>
+
+      {/* Aviso de cancelamento */}
+      {order.cancellation_reason && (
+        <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm">
+          <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-red-700">Motivo do cancelamento / estorno</p>
+            <p className="text-red-600 mt-0.5">{order.cancellation_reason}</p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Dados do cliente */}
@@ -362,6 +411,96 @@ export default function OrderDetail() {
         </DialogContent>
       </Dialog>
 
+      {/* Modal cancelar cobrança */}
+      <Dialog open={cancelModal} onOpenChange={setCancelModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <X className="w-5 h-5" /> Cancelar cobrança
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Selecione o motivo do cancelamento:</p>
+            <div className="space-y-1.5">
+              {CANCEL_REASONS.map(r => (
+                <button key={r} type="button" onClick={() => setCancelReason(r)}
+                  className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-all ${
+                    cancelReason === r ? 'border-red-400 bg-red-50 text-red-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                  }`}>
+                  {r}
+                </button>
+              ))}
+            </div>
+            {cancelReason === 'Outro' && (
+              <Textarea
+                placeholder="Descreva o motivo..."
+                value={cancelReasonCustom}
+                onChange={e => setCancelReasonCustom(e.target.value)}
+                rows={2}
+                className="mt-1"
+              />
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setCancelModal(false)}>Voltar</Button>
+              <Button
+                className="flex-1 bg-red-500 hover:bg-red-600 text-white"
+                onClick={confirmCancelAsaasCharge}
+                disabled={asaasLoading || !cancelReason}
+              >
+                {asaasLoading ? 'Cancelando...' : 'Confirmar cancelamento'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal estornar pagamento */}
+      <Dialog open={refundModal} onOpenChange={setRefundModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              <RotateCcw className="w-5 h-5" /> Estornar pagamento
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <p className="text-sm font-semibold text-amber-800">Valor a estornar: {formatCurrency(order.total_value)}</p>
+              <p className="text-xs text-amber-600 mt-0.5">O estorno será processado no Asaas e é irreversível.</p>
+            </div>
+            <p className="text-sm text-muted-foreground">Motivo do estorno:</p>
+            <div className="space-y-1.5">
+              {CANCEL_REASONS.map(r => (
+                <button key={r} type="button" onClick={() => setRefundReason(r)}
+                  className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-all ${
+                    refundReason === r ? 'border-amber-400 bg-amber-50 text-amber-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                  }`}>
+                  {r}
+                </button>
+              ))}
+            </div>
+            {refundReason === 'Outro' && (
+              <Textarea
+                placeholder="Descreva o motivo..."
+                value={refundReasonCustom}
+                onChange={e => setRefundReasonCustom(e.target.value)}
+                rows={2}
+                className="mt-1"
+              />
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setRefundModal(false)}>Voltar</Button>
+              <Button
+                className="flex-1 bg-amber-500 hover:bg-amber-600 text-white"
+                onClick={confirmRefund}
+                disabled={asaasLoading || !refundReason}
+              >
+                {asaasLoading ? 'Estornando...' : 'Confirmar estorno'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Cobrança Asaas */}
       <Card>
         <CardHeader className="pb-2">
@@ -385,8 +524,8 @@ export default function OrderDetail() {
                   </span>
                   <span className="text-xs text-muted-foreground font-mono">{order.asaas_charge_id}</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <Button size="sm" variant="outline" onClick={verifyAsaasStatus} disabled={asaasLoading} title="Verificar se foi pago">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Button size="sm" variant="outline" onClick={verifyAsaasStatus} disabled={asaasLoading}>
                     <Check className="w-3.5 h-3.5 mr-1" />{asaasLoading ? '...' : 'Verificar'}
                   </Button>
                   {order.asaas_payment_link && (
@@ -396,9 +535,18 @@ export default function OrderDetail() {
                       </a>
                     </Button>
                   )}
-                  <Button size="sm" variant="outline" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={cancelAsaasCharge} disabled={asaasLoading}>
-                    <X className="w-3.5 h-3.5 mr-1" /> Cancelar
-                  </Button>
+                  {/* Botão estornar — só aparece quando pago */}
+                  {order.payment_status === 'paid' && (
+                    <Button size="sm" variant="outline" className="text-amber-600 hover:text-amber-800 hover:bg-amber-50" onClick={() => { setRefundReason(''); setRefundReasonCustom(''); setRefundModal(true); }} disabled={asaasLoading}>
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> Estornar
+                    </Button>
+                  )}
+                  {/* Botão cancelar — só aparece quando não pago/estornado */}
+                  {!['paid', 'refunded', 'cancelled'].includes(order.payment_status) && (
+                    <Button size="sm" variant="outline" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={cancelAsaasCharge} disabled={asaasLoading}>
+                      <X className="w-3.5 h-3.5 mr-1" /> Cancelar
+                    </Button>
+                  )}
                 </div>
               </div>
               {/* PIX copia e cola */}
@@ -472,7 +620,6 @@ export default function OrderDetail() {
                   ))}
                 </div>
               </div>
-              {/* Parcelas — só aparece quando Cartão está selecionado */}
               {asaasBilling === 'CREDIT_CARD' && (
                 <div>
                   <Label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Parcelas</Label>
@@ -538,6 +685,29 @@ export default function OrderDetail() {
               <Input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} className="mt-1" />
             </div>
           </div>
+          {/* Motivo do cancelamento — aparece quando status for cancelado ou reembolsado */}
+          {['cancelled', 'refunded'].includes(paymentStatus) && (
+            <div>
+              <Label>Motivo do cancelamento / estorno</Label>
+              <div className="grid grid-cols-2 gap-1.5 mt-1.5 mb-2">
+                {CANCEL_REASONS.map(r => (
+                  <button key={r} type="button" onClick={() => setCancellationReason(r)}
+                    className={`text-left px-3 py-1.5 rounded-lg border text-sm transition-all ${
+                      cancellationReason === r ? 'border-red-400 bg-red-50 text-red-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                    }`}>
+                    {r}
+                  </button>
+                ))}
+              </div>
+              <Textarea
+                placeholder="Detalhes do motivo (opcional)..."
+                value={cancellationReason}
+                onChange={e => setCancellationReason(e.target.value)}
+                rows={2}
+                className="mt-1"
+              />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Status de Entrega</Label>
