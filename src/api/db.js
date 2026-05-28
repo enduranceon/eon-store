@@ -24,34 +24,66 @@ function sanitize(data) {
   return out;
 }
 
+// Tabelas modernas usam `updated_at`; tabelas legadas usam `updated_date`.
+// Esse Set lista as que usam `updated_at` (consultado no SELECT do schema).
+const TABLES_WITH_UPDATED_AT = new Set([
+  'assessment_modalities', 'assessment_plans', 'assessment_coaches',
+  'assessment_contracts', 'assessment_leaves', 'assessment_contract_coach_history',
+  'payout_growth_tiers', 'payout_role_modality_rates',
+  'payout_monthly_closings', 'payout_monthly_statement_items',
+  'renewal_rules', 'revenue_centers',
+  'contract_renewal_actions', 'discount_log',
+]);
+
+function getUpdatedColumn(tableName) {
+  return TABLES_WITH_UPDATED_AT.has(tableName) ? 'updated_at' : 'updated_date';
+}
+
+// Tenta ordenar por `field`. Se a coluna não existir (42703), faz fallback
+// entre `created_date` ↔ `created_at`. Reconstrói a query a cada tentativa
+// para não acumular cláusulas ORDER BY inválidas.
+async function safeOrder(buildQuery, field, ascending) {
+  let { data, error } = await buildQuery().order(field, { ascending });
+  if (error?.code === '42703') {
+    const fallback = field === 'created_date' ? 'created_at'
+                   : field === 'created_at'   ? 'created_date'
+                   : null;
+    if (fallback) {
+      ({ data, error } = await buildQuery().order(fallback, { ascending }));
+    }
+    // Última tentativa: sem ordenação
+    if (error?.code === '42703') {
+      ({ data, error } = await buildQuery());
+    }
+  }
+  if (error) throw error;
+  return data ?? [];
+}
+
 function createSupabaseProxy(tableName) {
   return {
     async list(sortBy = '-created_date') {
       const { field, ascending } = parseSortBy(sortBy);
-      const { data, error } = await supabase
-        .from(tableName)
-        .select('*')
-        .order(field, { ascending });
-      if (error) throw error;
-      return data ?? [];
+      return safeOrder(() => supabase.from(tableName).select('*'), field, ascending);
     },
 
     async filter(filters = {}, sortBy = '-created_date') {
       const { field, ascending } = parseSortBy(sortBy);
-      let query = supabase.from(tableName).select('*');
-      for (const [key, value] of Object.entries(filters)) {
-        if (value === null || value === undefined) {
-          query = query.is(key, null);
-        } else if (Array.isArray(value)) {
-          query = query.in(key, value);
-        } else {
-          query = query.eq(key, value);
+      // Constrói uma factory que cria a query do zero a cada chamada
+      const buildQuery = () => {
+        let q = supabase.from(tableName).select('*');
+        for (const [key, value] of Object.entries(filters)) {
+          if (value === null || value === undefined) {
+            q = q.is(key, null);
+          } else if (Array.isArray(value)) {
+            q = q.in(key, value);
+          } else {
+            q = q.eq(key, value);
+          }
         }
-      }
-      query = query.order(field, { ascending });
-      const { data, error } = await query;
-      if (error) throw error;
-      return data ?? [];
+        return q;
+      };
+      return safeOrder(buildQuery, field, ascending);
     },
 
     async create(data) {
@@ -66,10 +98,11 @@ function createSupabaseProxy(tableName) {
     },
 
     async update(id, data) {
-      const { id: _id, created_date: _cd, ...rest } = data;
+      const { id: _id, created_date: _cd, created_at: _ca, ...rest } = data;
+      const updatedCol = getUpdatedColumn(tableName);
       const { data: updated, error } = await supabase
         .from(tableName)
-        .update(sanitize({ ...rest, updated_date: new Date().toISOString() }))
+        .update(sanitize({ ...rest, [updatedCol]: new Date().toISOString() }))
         .eq('id', id)
         .select()
         .single();
@@ -106,6 +139,24 @@ const TABLE_MAP = {
   StockProduct:     'stock_products',
   StockOrder:       'stock_orders',
   Product:          'products',
+  Coupon:           'coupons',
+  // Universal
+  RevenueCenter:    'revenue_centers',
+  DiscountLog:      'discount_log',
+  // Régua de renovação
+  RenewalRule:             'renewal_rules',
+  ContractRenewalAction:   'contract_renewal_actions',
+  // Módulo Assessoria
+  AssessmentModality:           'assessment_modalities',
+  AssessmentPlan:               'assessment_plans',
+  AssessmentCoach:              'assessment_coaches',
+  AssessmentContract:           'assessment_contracts',
+  AssessmentContractCoachHist:  'assessment_contract_coach_history',
+  AssessmentLeave:              'assessment_leaves',
+  PayoutRoleModalityRate:       'payout_role_modality_rates',
+  PayoutGrowthTier:             'payout_growth_tiers',
+  PayoutMonthlyClosing:         'payout_monthly_closings',
+  PayoutMonthlyStatementItem:   'payout_monthly_statement_items',
 };
 
 const entities = Object.fromEntries(

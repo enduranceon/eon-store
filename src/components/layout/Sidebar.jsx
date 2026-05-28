@@ -1,31 +1,63 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Package, ShoppingCart, Users, BarChart3,
-  Megaphone, Store, X, Truck, Tag, UserCheck, LogOut, Archive,
-  ClipboardList, ChevronDown, ChevronRight, Settings, TrendingUp,
+  Activity, FileText, Layers, CalendarClock, Award, DollarSign,
+  Users, TrendingUp, BarChart3,
+  ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
+  LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
+  ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, todayLocalStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
 
-const PRESALE_ITEMS = [
-  { label: 'Dashboard',   icon: LayoutDashboard, to: '/admin',     exact: true },
-  { label: 'Campanhas',   icon: Megaphone,        to: '/campanhas' },
-  { label: 'Pedidos',     icon: ShoppingCart,     to: '/pedidos',  badge: 'orders' },
-  { label: 'Clientes',    icon: Users,            to: '/clientes', badge: 'clients' },
+// ─────────────────────────────────────────────────────────────────
+// ITENS DE NAVEGAÇÃO
+// ─────────────────────────────────────────────────────────────────
+
+const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge: 'today' };
+
+// ASSESSORIA — core do negócio
+const ASSESSORIA_ITEMS = [
+  { label: 'Painel',         icon: Activity,      to: '/assessoria',              exact: true },
+  { label: 'Contratos',      icon: FileText,      to: '/assessoria/contratos',    badge: 'assessoria' },
+  { label: 'Alunos',         icon: Users,         to: '/assessoria/alunos' },
+  { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },
+  { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
+  { label: 'Fechamento',     icon: DollarSign,    to: '/assessoria/fechamento' },
+  { label: 'Régua',          icon: CalendarClock, to: '/assessoria/regua' },
 ];
 
+// FINANCEIRO — visão unificada
+const FINANCEIRO_ITEMS = [
+  { label: 'Fluxo de Caixa', icon: TrendingUp,    to: '/financeiro' },
+  { label: 'Relatórios',     icon: BarChart3,     to: '/relatorios' },
+  { label: 'Clientes',       icon: Users,         to: '/clientes',   badge: 'clients' },
+];
+
+// LOJA — módulo secundário (colapsável)
 const LOJA_ITEMS = [
-  { label: 'Estoque',      icon: Archive,       to: '/estoque',          exact: true },
-  { label: 'Pedidos Loja', icon: ClipboardList, to: '/estoque/pedidos' },
+  { label: 'Pedidos',        icon: ShoppingCart,  to: '/pedidos',         badge: 'orders' },
+  { label: 'Campanhas',      icon: Megaphone,     to: '/campanhas' },
+  { label: 'Devoluções',     icon: Undo2,         to: '/devolucoes' },
+  { label: 'Estoque',        icon: Archive,       to: '/estoque',         exact: true },
+  { label: 'Ped. estoque',   icon: ClipboardList, to: '/estoque/pedidos' },
 ];
 
+// CONFIGURAÇÕES (colapsável)
 const CONFIG_ITEMS = [
-  { label: 'Produtos',     icon: Package,   to: '/produtos' },
-  { label: 'Categorias',   icon: Tag,       to: '/categorias' },
-  { label: 'Treinadores',  icon: UserCheck, to: '/treinadores' },
-  { label: 'Fornecedores', icon: Truck,     to: '/fornecedores' },
+  { label: 'Dashboard',         icon: LayoutDashboard, to: '/admin',                  exact: true },
+  { label: 'Produtos loja',     icon: Package,         to: '/produtos' },
+  { label: 'Categorias',        icon: Tag,             to: '/categorias' },
+  { label: 'Treinadores',       icon: UserCheck,       to: '/treinadores' },
+  { label: 'Fornecedores',      icon: Truck,           to: '/fornecedores' },
+  { label: 'Cupons',            icon: Ticket,          to: '/cupons' },
+  { label: 'Centros receita',   icon: Palette,         to: '/centros-receita' },
+  { label: 'Config. assessoria',icon: Settings,        to: '/assessoria/configuracoes' },
 ];
+
+// ─────────────────────────────────────────────────────────────────
+// COMPONENTES
+// ─────────────────────────────────────────────────────────────────
 
 function NavItem({ item, isActive, badges, onClick }) {
   const Icon = item.icon;
@@ -37,8 +69,10 @@ function NavItem({ item, isActive, badges, onClick }) {
       to={item.to}
       onClick={onClick}
       className={cn(
-        'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium mb-1 transition-colors',
-        active ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+        'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium mb-0.5 transition-colors',
+        active
+          ? 'bg-blue-600 text-white'
+          : 'text-slate-400 hover:bg-slate-800 hover:text-white'
       )}
     >
       <Icon className="w-4 h-4 shrink-0" />
@@ -63,41 +97,90 @@ function SectionLabel({ label }) {
   );
 }
 
+function CollapseSection({ label, icon: Icon, items, isActive, badges, onClick, defaultOpen = false }) {
+  const location = useLocation();
+  const [open, setOpen] = useState(defaultOpen);
+
+  // Abre automaticamente se estiver em uma rota do grupo
+  useEffect(() => {
+    const isInGroup = items.some(item =>
+      item.exact ? location.pathname === item.to : location.pathname.startsWith(item.to)
+    );
+    if (isInGroup) setOpen(true);
+  }, [location.pathname]);
+
+  return (
+    <div className="mt-1">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+      >
+        <Icon className="w-3.5 h-3.5 shrink-0" />
+        <span className="flex-1 text-left">{label}</span>
+        {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+      </button>
+      {open && (
+        <div className="mt-0.5 ml-2 pl-2 border-l border-slate-700/60">
+          {items.map(item => (
+            <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClick} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// SIDEBAR PRINCIPAL
+// ─────────────────────────────────────────────────────────────────
+
 export default function Sidebar({ open, onClose, onSignOut }) {
   const location = useLocation();
-  const [configOpen, setConfigOpen] = useState(false);
-  const [badges, setBadges] = useState({ orders: 0, clients: 0 });
+  const [badges, setBadges] = useState({ orders: 0, clients: 0, today: 0, assessoria: 0 });
 
   const isActive = (to, exact) => {
     if (exact) return location.pathname === to;
+    if (to === '/clientes' && location.pathname.startsWith('/assessoria/alunos')) return true;
     return location.pathname.startsWith(to);
   };
 
-  // Abre Cadastros automaticamente se estiver numa rota de config
-  useEffect(() => {
-    const configRoutes = CONFIG_ITEMS.map(i => i.to);
-    if (configRoutes.some(r => location.pathname.startsWith(r))) {
-      setConfigOpen(true);
-    }
-  }, [location.pathname]);
-
-  // Busca contagens de alertas
+  // Contagens de alertas
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
-        const [ordersRes, clientsRes] = await Promise.all([
-          supabase
-            .from('presale_orders')
-            .select('id', { count: 'exact', head: true })
-            .in('payment_status', ['awaiting_charge', 'message_sent']),
-          supabase
-            .from('presale_customers')
-            .select('id', { count: 'exact', head: true })
+        const todayStr = todayLocalStr();
+        const in14 = new Date(); in14.setDate(in14.getDate() + 14);
+        const in14Str = in14.toISOString().split('T')[0];
+
+        const [presaleOrders, stockOrders, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds] = await Promise.all([
+          supabase.from('presale_orders').select('id, payment_status, due_date')
+            .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
+          supabase.from('stock_orders').select('id, payment_status, due_date')
+            .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
+          supabase.from('order_returns').select('id', { count: 'exact', head: true })
+            .in('status', ['pending_return', 'received']),
+          supabase.from('presale_customers').select('id', { count: 'exact', head: true })
             .or('cpf.is.null,cpf.eq.""'),
+          supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
+            .eq('status', 'overdue'),
+          supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
+            .eq('status', 'active').lte('end_date', in14Str).gte('end_date', todayStr),
+          supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
+            .eq('refund_status', 'pending'),
         ]);
+
+        const allOrders = [...(presaleOrders.data || []), ...(stockOrders.data || [])];
+        const todayCount =
+          allOrders.filter(o => ['awaiting_charge', 'message_sent'].includes(o.payment_status)).length +
+          allOrders.filter(o => o.due_date && o.due_date < todayStr && o.payment_status !== 'paid').length +
+          (returnsRes.count || 0) +
+          (pendingRefunds.count || 0);
+
         setBadges({
-          orders: ordersRes.count || 0,
-          clients: clientsRes.count || 0,
+          orders:     allOrders.filter(o => ['awaiting_charge', 'message_sent'].includes(o.payment_status)).length,
+          clients:    clientsRes.count || 0,
+          today:      todayCount,
+          assessoria: (contractsOverdue.count || 0) + (contractsExpiring.count || 0),
         });
       } catch { /* silencioso */ }
     };
@@ -114,82 +197,82 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         'fixed left-0 top-0 z-40 h-full w-64 bg-slate-900 text-white flex flex-col transition-transform duration-200',
         open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       )}>
-        {/* Logo */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-700">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-              <Store className="w-4 h-4 text-white" />
+
+        {/* ── Logo / Marca ──────────────────────────────────── */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/60">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shrink-0">
+              <Zap className="w-4 h-4 text-white" />
             </div>
-            <span className="font-bold text-lg tracking-tight">EON Store</span>
+            <div>
+              <p className="font-bold text-white leading-none text-base tracking-tight">Endurance ON</p>
+              <p className="text-[10px] text-slate-400 leading-none mt-0.5">Gestão & Assessoria</p>
+            </div>
           </div>
           <button onClick={onClose} className="lg:hidden text-slate-400 hover:text-white">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Nav */}
+        {/* ── Navegação ─────────────────────────────────────── */}
         <nav className="flex-1 overflow-y-auto py-2 px-3">
-          {/* Pré-venda */}
-          <SectionLabel label="Pré-venda" />
-          {PRESALE_ITEMS.map(item => (
-            <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
-          ))}
 
-          {/* Loja */}
-          <SectionLabel label="Loja" />
-          {LOJA_ITEMS.map(item => (
-            <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
-          ))}
-
-          {/* Análises */}
-          <SectionLabel label="Análises" />
-          <NavItem
-            item={{ label: 'Fluxo de Caixa', icon: TrendingUp, to: '/financeiro' }}
-            isActive={isActive}
-            badges={badges}
-            onClick={onClose}
-          />
-          <NavItem
-            item={{ label: 'Relatórios', icon: BarChart3, to: '/relatorios' }}
-            isActive={isActive}
-            badges={badges}
-            onClick={onClose}
-          />
-
-          {/* Cadastros — colapsável */}
-          <div className="mt-3">
-            <button
-              onClick={() => setConfigOpen(o => !o)}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span className="flex-1 text-left">Cadastros</span>
-              {configOpen
-                ? <ChevronDown className="w-3.5 h-3.5" />
-                : <ChevronRight className="w-3.5 h-3.5" />
-              }
-            </button>
-            {configOpen && (
-              <div className="mt-1">
-                {CONFIG_ITEMS.map(item => (
-                  <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
-                ))}
-              </div>
-            )}
+          {/* Hoje */}
+          <div className="pt-1 pb-1">
+            <NavItem item={TODAY_ITEM} isActive={isActive} badges={badges} onClick={onClose} />
           </div>
+
+          {/* ── ASSESSORIA — seção principal ──────────────── */}
+          <SectionLabel label="Assessoria" />
+          {ASSESSORIA_ITEMS.map(item => (
+            <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
+          ))}
+          {badges.assessoria > 0 && (
+            <div className="mx-1 mb-1 flex items-center gap-1.5 text-xs text-amber-400 bg-amber-400/10 rounded-lg px-2.5 py-1.5 mt-0.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>{badges.assessoria} contrato{badges.assessoria !== 1 ? 's' : ''} exige atenção</span>
+            </div>
+          )}
+
+          {/* ── FINANCEIRO ────────────────────────────────── */}
+          <SectionLabel label="Financeiro" />
+          {FINANCEIRO_ITEMS.map(item => (
+            <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
+          ))}
+
+          {/* ── LOJA — colapsável ──────────────────────────── */}
+          <div className="mt-3 border-t border-slate-700/40 pt-2">
+            <CollapseSection
+              label="Loja"
+              icon={ShoppingCart}
+              items={LOJA_ITEMS}
+              isActive={isActive}
+              badges={badges}
+              onClick={onClose}
+            />
+          </div>
+
+          {/* ── CONFIGURAÇÕES — colapsável ─────────────────── */}
+          <CollapseSection
+            label="Configurações"
+            icon={Settings}
+            items={CONFIG_ITEMS}
+            isActive={isActive}
+            badges={badges}
+            onClick={onClose}
+          />
+
         </nav>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-700 space-y-3">
+        {/* ── Footer ────────────────────────────────────────── */}
+        <div className="px-5 py-3 border-t border-slate-700/60 flex items-center justify-between">
           {onSignOut && (
-            <button
-              onClick={onSignOut}
-              className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors w-full"
-            >
+            <button onClick={onSignOut}
+              className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors">
               <LogOut className="w-4 h-4" /> Sair
             </button>
           )}
-          <p className="text-xs text-slate-500">EON Store v1.0</p>
+          <p className="text-xs text-slate-600">v1.0</p>
         </div>
       </aside>
     </>

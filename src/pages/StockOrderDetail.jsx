@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,9 @@ import { Input } from '@/components/ui/input';
 import { StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
+import { returnCouponUse } from '@/lib/coupon';
 
 const PAYMENT_STATUS = {
   awaiting_charge: { label: 'Aguardando contato', badge: 'secondary' },
@@ -67,7 +69,8 @@ export default function StockOrderDetail() {
   const [asaasStatus, setAsaasStatus] = useState(null);
   const [asaasDueDate, setAsaasDueDate] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 3);
-    return d.toISOString().split('T')[0];
+    const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   });
 
   const [cancelModal, setCancelModal] = useState(false);
@@ -76,6 +79,11 @@ export default function StockOrderDetail() {
   const [refundModal, setRefundModal] = useState(false);
   const [refundReason, setRefundReason] = useState('');
   const [refundReasonCustom, setRefundReasonCustom] = useState('');
+  const [cancelItemModal, setCancelItemModal] = useState(false);
+  const [cancelItemIndex, setCancelItemIndex] = useState(null);
+  const [cancelItemDelivered, setCancelItemDelivered] = useState(false);
+  const [cancelItemReason, setCancelItemReason] = useState('');
+  const [cancelItemLoading, setCancelItemLoading] = useState(false);
 
   const load = async () => {
     try {
@@ -109,6 +117,9 @@ export default function StockOrderDetail() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      const wasActive = !['cancelled', 'refunded'].includes(order.payment_status);
+      const willBeCancelled = ['cancelled', 'refunded'].includes(paymentStatus);
+
       await StockOrder.update(id, {
         payment_status: paymentStatus,
         delivery_status: deliveryStatus,
@@ -118,6 +129,12 @@ export default function StockOrderDetail() {
         payment_method: paymentMethod || null,
         cancellation_reason: cancellationReason || null,
       });
+
+      // Devolve uso de cupom se mudou para cancelado/estornado manualmente
+      if (wasActive && willBeCancelled && order.coupon_code) {
+        await returnCouponUse(id, 'stock');
+      }
+
       toast.success('Pedido atualizado!');
       load();
     } catch (e) {
@@ -177,6 +194,7 @@ export default function StockOrderDetail() {
     try {
       await callAsaas('cancel');
       await supabase.from('stock_orders').update({ cancellation_reason: reason || null }).eq('id', id);
+      await returnCouponUse(id, 'stock');
       setCancelModal(false);
       setAsaasStatus(null);
       toast.success('Cobrança cancelada.');
@@ -189,6 +207,7 @@ export default function StockOrderDetail() {
     try {
       await callAsaas('refund', { reason });
       await supabase.from('stock_orders').update({ cancellation_reason: reason || null }).eq('id', id);
+      await returnCouponUse(id, 'stock');
       setRefundModal(false);
       toast.success('Estorno realizado com sucesso!');
       load();
@@ -197,17 +216,19 @@ export default function StockOrderDetail() {
 
   const buildMessage = () => {
     if (!order) return '';
-    const itemLines = (order.items || []).map(item => {
+    const itemLines = (order.items || []).filter(it => !it.cancelled).map(item => {
       const label = item.variation ? `${item.product_name} - ${item.variation}` : item.product_name;
       return `• ${label} x${item.quantity} → ${formatCurrency((item.sale_price || 0) * item.quantity)}`;
     }).join('\n');
     const total = order.total_value || 0;
     const chargeLink = order.asaas_payment_link;
     const pixCopy = order.asaas_pix_copy;
+    const trackingLink = `${window.location.origin}/p/${order.id}`;
+    const trackingLine = `\n\n🔍 *Acompanhe seu pedido:*\n${trackingLink}`;
     if (chargeLink || pixCopy) {
-      return `Olá, ${order.customer_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\n${pixCopy ? `📲 *PIX Copia e Cola:*\n\`${pixCopy}\`\n\n` : ''}${chargeLink ? `🔗 *Link de pagamento:*\n${chargeLink}` : ''}`;
+      return `Olá, ${order.customer_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\n${pixCopy ? `📲 *PIX Copia e Cola:*\n\`${pixCopy}\`\n\n` : ''}${chargeLink ? `🔗 *Link de pagamento:*\n${chargeLink}` : ''}${trackingLine}`;
     }
-    return `Olá, ${order.customer_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\nComo você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 6x)`;
+    return `Olá, ${order.customer_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\nComo você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 6x)${trackingLine}`;
   };
 
   const openWhatsApp = () => { setWhatsappMsg(buildMessage()); setCopied(false); setWhatsappModal(true); };
@@ -228,6 +249,97 @@ export default function StockOrderDetail() {
   const ps = PAYMENT_STATUS[order.payment_status] || { label: order.payment_status, badge: 'secondary' };
   const ds = DELIVERY_STATUS[order.delivery_status] || { label: order.delivery_status, badge: 'secondary' };
   const items = order.items || [];
+
+  const openCancelItem = (index) => {
+    setCancelItemIndex(index);
+    setCancelItemDelivered(order.delivery_status === 'delivered');
+    setCancelItemReason('');
+    setCancelItemModal(true);
+  };
+
+  const confirmCancelItem = async () => {
+    const item = items[cancelItemIndex];
+    const itemPrice = (item.sale_price || 0) * item.quantity;
+
+    // Calcula novo estado dos itens
+    const newItems = items.map((it, i) =>
+      i === cancelItemIndex ? { ...it, cancelled: true, cancelled_at: new Date().toISOString() } : it
+    );
+    const activeItems = newItems.filter(it => !it.cancelled);
+    const newSubtotal = activeItems.reduce((sum, it) => sum + (it.sale_price || 0) * it.quantity, 0);
+
+    // Recalcula desconto de cupom proporcionalmente
+    const oldDiscount = Number(order.discount_value) || 0;
+    const oldSubtotal = (order.total_value || 0) + oldDiscount;
+    let newDiscount = 0;
+    if (oldDiscount > 0 && oldSubtotal > 0) {
+      newDiscount = Math.round((newSubtotal * (oldDiscount / oldSubtotal)) * 100) / 100;
+      newDiscount = Math.min(newDiscount, newSubtotal);
+    }
+    const newTotal = Math.max(0, newSubtotal - newDiscount);
+    const refundValue = Math.max(0, (order.total_value || 0) - newTotal);
+    const allCancelled = activeItems.length === 0;
+    const newPaymentStatus = allCancelled
+      ? (order.payment_status === 'paid' ? 'refunded' : 'cancelled')
+      : order.payment_status;
+
+    setCancelItemLoading(true);
+    try {
+      // 1. Asaas PRIMEIRO — se falhar, nada é alterado no DB
+      if (order.payment_status === 'paid' && order.asaas_charge_id && refundValue > 0) {
+        await callAsaas('refund', { value: refundValue, reason: cancelItemReason || 'Cancelamento de peça' });
+      }
+
+      // 3. Atualiza pedido
+      await supabase.from('stock_orders').update({
+        items: newItems,
+        total_value: newTotal,
+        discount_value: newDiscount,
+        ...(allCancelled ? { payment_status: newPaymentStatus } : {}),
+      }).eq('id', id);
+
+      // 4. Reposição automática de estoque se não foi entregue
+      if (!cancelItemDelivered && item.product_id) {
+        const { data: prod } = await supabase
+          .from('stock_products').select('quantity').eq('id', item.product_id).single();
+        if (prod) {
+          await supabase.from('stock_products')
+            .update({ quantity: (prod.quantity || 0) + item.quantity })
+            .eq('id', item.product_id);
+        }
+      }
+
+      // 5. Registra devolução
+      await supabase.from('order_returns').insert({
+        order_id: id,
+        order_type: 'stock',
+        order_number: order.order_number,
+        customer_name: order.customer_name,
+        item_index: cancelItemIndex,
+        product_id: item.product_id || null,
+        product_name: item.product_name,
+        variation: item.variation || null,
+        quantity: item.quantity,
+        unit_price: item.sale_price || 0,
+        refund_value: refundValue,
+        was_delivered: cancelItemDelivered,
+        status: cancelItemDelivered ? 'pending_return' : 'completed',
+        notes: cancelItemReason || null,
+      });
+
+      // 6. Se todas as peças foram canceladas, devolve uso de cupom
+      if (allCancelled) await returnCouponUse(id, 'stock');
+
+      setCancelItemModal(false);
+      const stockMsg = !cancelItemDelivered && item.product_id ? ' Estoque reposto automaticamente.' : '';
+      toast.success(cancelItemDelivered ? 'Peça cancelada — aguardando devolução física.' : `Peça cancelada.${stockMsg}`);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cancelar peça');
+    } finally {
+      setCancelItemLoading(false);
+    }
+  };
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -295,27 +407,77 @@ export default function StockOrderDetail() {
                     <th className="text-right py-2 font-medium text-muted-foreground">Qtd</th>
                     <th className="text-right py-2 font-medium text-muted-foreground">Preço unit.</th>
                     <th className="text-right py-2 font-medium text-muted-foreground">Total</th>
+                    <th className="py-2"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {items.map((item, i) => (
-                    <tr key={i}>
-                      <td className="py-2 font-medium">{item.product_name}{item.variation ? ` — ${item.variation}` : ''}</td>
+                    <tr key={i} className={item.cancelled ? 'opacity-50' : ''}>
+                      <td className="py-2 font-medium">
+                        <span className={item.cancelled ? 'line-through text-muted-foreground' : ''}>
+                          {item.product_name}{item.variation ? ` — ${item.variation}` : ''}
+                        </span>
+                        {item.cancelled && <span className="ml-2 text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">Cancelado</span>}
+                      </td>
                       <td className="py-2 text-right">{item.quantity}</td>
                       <td className="py-2 text-right">{formatCurrency(item.sale_price)}</td>
                       <td className="py-2 text-right font-semibold">{formatCurrency((item.sale_price || 0) * item.quantity)}</td>
+                      <td className="py-2 text-right">
+                        {!item.cancelled && !['cancelled', 'refunded'].includes(order.payment_status) && (
+                          <button onClick={() => openCancelItem(i)} className="text-xs text-red-500 hover:text-red-700 hover:underline whitespace-nowrap">
+                            Cancelar peça
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-          <div className="border-t mt-4 pt-4 text-right">
+          {order.coupon_code && (
+            <div className="border-t mt-4 pt-3 flex items-center justify-between text-sm bg-amber-50 -mx-6 px-6 py-2">
+              <span className="flex items-center gap-2 text-amber-800">
+                <Tag className="w-3.5 h-3.5" />
+                Cupom aplicado: <span className="font-mono font-bold">{order.coupon_code}</span>
+              </span>
+              <span className="font-semibold text-amber-800">-{formatCurrency(order.discount_value || 0)}</span>
+            </div>
+          )}
+          <div className={`${order.coupon_code ? 'pt-3' : 'border-t mt-4 pt-4'} text-right`}>
             <span className="text-sm text-muted-foreground mr-3">Total do pedido</span>
             <span className="font-bold text-lg">{formatCurrency(order.total_value)}</span>
+            {order.coupon_code && (
+              <p className="text-[10px] text-muted-foreground mt-0.5">já com desconto aplicado</p>
+            )}
           </div>
         </CardContent>
       </Card>
+
+      {/* Desconto manual */}
+      <DiscountInput
+        subtotal={(order.items || []).filter(it => !it.cancelled).reduce((s, it) => s + (it.sale_price || 0) * it.quantity, 0) - (Number(order.discount_value) || 0)}
+        currentDiscount={Number(order.manual_discount) || 0}
+        currentReason={order.discount_reason || ''}
+        lockedReason={order.asaas_charge_id
+          ? 'Já existe uma cobrança gerada no Asaas. Cancele a cobrança atual antes de aplicar desconto.'
+          : null}
+        entityType="stock_order"
+        entityId={order.id}
+        onSave={async (newValue, reason) => {
+          // Recalcula total_value: subtotal_items - cupom - manual
+          const activeItems = (order.items || []).filter(it => !it.cancelled);
+          const subItens = activeItems.reduce((s, it) => s + (it.sale_price || 0) * it.quantity, 0);
+          const cupom = Number(order.discount_value) || 0;
+          const newTotal = Math.max(0, subItens - cupom - newValue);
+          await StockOrder.update(order.id, {
+            manual_discount: newValue,
+            discount_reason: reason || null,
+            total_value:     newTotal,
+          });
+          await load();
+        }}
+      />
 
       {/* Modal WhatsApp */}
       <Dialog open={whatsappModal} onOpenChange={setWhatsappModal}>
@@ -397,6 +559,96 @@ export default function StockOrderDetail() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal cancelar peça individual */}
+      <Dialog open={cancelItemModal} onOpenChange={setCancelItemModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600"><X className="w-5 h-5" /> Cancelar peça</DialogTitle>
+          </DialogHeader>
+          {cancelItemIndex !== null && items[cancelItemIndex] && (
+            <div className="space-y-4">
+              <div className="bg-gray-50 border rounded-xl px-4 py-3 text-sm">
+                <p className="font-semibold">{items[cancelItemIndex].product_name}</p>
+                {items[cancelItemIndex].variation && <p className="text-muted-foreground">{items[cancelItemIndex].variation}</p>}
+                <p className="text-muted-foreground mt-1">
+                  Qtd: {items[cancelItemIndex].quantity} × {formatCurrency(items[cancelItemIndex].sale_price)}
+                  {' = '}<span className="font-semibold text-gray-800">{formatCurrency((items[cancelItemIndex].sale_price || 0) * items[cancelItemIndex].quantity)}</span>
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium mb-2">Esta peça já foi entregue ao cliente?</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setCancelItemDelivered(false)}
+                    className={`py-2 rounded-lg border-2 text-sm font-medium transition-all ${!cancelItemDelivered ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                    Não entregue
+                  </button>
+                  <button onClick={() => setCancelItemDelivered(true)}
+                    className={`py-2 rounded-lg border-2 text-sm font-medium transition-all ${cancelItemDelivered ? 'border-orange-400 bg-orange-50 text-orange-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                    Já entregue
+                  </button>
+                </div>
+                {!cancelItemDelivered && items[cancelItemIndex]?.product_id && (
+                  <p className="text-xs text-blue-600 mt-1.5">✓ Estoque será reposto automaticamente.</p>
+                )}
+                {cancelItemDelivered && (
+                  <p className="text-xs text-orange-600 mt-1.5">⚠ Item ficará pendente na Central de Devoluções até retornar fisicamente.</p>
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-medium mb-1.5">Motivo (opcional)</p>
+                <div className="space-y-1.5">
+                  {CANCEL_REASONS.filter(r => r !== 'Outro').map(r => (
+                    <button key={r} type="button" onClick={() => setCancelItemReason(cancelItemReason === r ? '' : r)}
+                      className={`w-full text-left px-3 py-1.5 rounded-lg border text-sm transition-all ${cancelItemReason === r ? 'border-red-400 bg-red-50 text-red-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-700'}`}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {order.payment_status === 'paid' && order.asaas_charge_id && (() => {
+                const itemPrice = (items[cancelItemIndex].sale_price || 0) * items[cancelItemIndex].quantity;
+                const oldDiscount = Number(order.discount_value) || 0;
+                const oldSubtotal = (order.total_value || 0) + oldDiscount;
+                const newSubtotal = oldSubtotal - itemPrice;
+                const newDiscount = oldDiscount > 0 && oldSubtotal > 0
+                  ? Math.min(Math.round((newSubtotal * (oldDiscount / oldSubtotal)) * 100) / 100, newSubtotal)
+                  : 0;
+                const refund = Math.max(0, (order.total_value || 0) - (newSubtotal - newDiscount));
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-700">
+                    Estorno de {formatCurrency(refund)} será processado no Asaas.
+                    {order.coupon_code && (
+                      <p className="text-[11px] text-amber-600 mt-0.5">
+                        (valor proporcional após desconto do cupom {order.coupon_code})
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+              {order.payment_status !== 'paid' && order.asaas_charge_id && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-700">
+                  ⚠ A cobrança Asaas ainda está com o valor original. Se o cliente ainda não pagou, cancele e gere nova cobrança após o ajuste.
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => setCancelItemModal(false)}>Voltar</Button>
+                <Button
+                  className="flex-1 bg-red-500 hover:bg-red-600 text-white"
+                  onClick={confirmCancelItem}
+                  disabled={cancelItemLoading}
+                >
+                  {cancelItemLoading ? 'Cancelando...' : 'Confirmar'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

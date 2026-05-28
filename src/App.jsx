@@ -32,6 +32,27 @@ import StockOrderDetail from '@/pages/StockOrderDetail';
 import PublicStore from '@/pages/PublicStore';
 import PublicStoreConfirmation from '@/pages/PublicStoreConfirmation';
 import Financial from '@/pages/Financial';
+import Returns from '@/pages/Returns';
+import Today from '@/pages/Today';
+import Coupons from '@/pages/Coupons';
+import CouponForm from '@/pages/CouponForm';
+import RevenueCenters from '@/pages/RevenueCenters';
+import StockOrderNewAdmin from '@/pages/StockOrderNewAdmin';
+import PublicOrderTracking from '@/pages/PublicOrderTracking';
+
+// Assessoria
+import AssConfiguracoes from '@/pages/assessment/Configuracoes';
+import AssPlanos from '@/pages/assessment/Planos';
+import AssCoaches from '@/pages/assessment/Coaches';
+import AssStudents from '@/pages/assessment/Students';
+import AssStudentDetail from '@/pages/assessment/StudentDetail';
+import AssContracts from '@/pages/assessment/Contracts';
+import AssContractForm from '@/pages/assessment/ContractForm';
+import AssContractDetail from '@/pages/assessment/ContractDetail';
+import AssMonthlyClosing from '@/pages/assessment/MonthlyClosing';
+import AssClosingDetail from '@/pages/assessment/ClosingDetail';
+import AssPainel from '@/pages/assessment/Painel';
+import AssRegua from '@/pages/assessment/Regua';
 
 function AdminLayout({ children }) {
   const { user, loading, signOut } = useAuth();
@@ -72,11 +93,13 @@ export default function App() {
           <Route path="/confirmacao/:orderId" element={<PublicOrderConfirmation />} />
           <Route path="/loja" element={<PublicStore />} />
           <Route path="/loja/confirmacao/:orderId" element={<PublicStoreConfirmation />} />
+          <Route path="/p/:orderId" element={<PublicOrderTracking />} />
 
           {/* Admin */}
           <Route path="/login" element={<Login />} />
           <Route path="/migrar" element={<AdminLayout><Migrate /></AdminLayout>} />
           <Route path="/admin" element={<AdminLayout><Dashboard /></AdminLayout>} />
+          <Route path="/hoje" element={<AdminLayout><Today /></AdminLayout>} />
           <Route path="/campanhas" element={<AdminLayout><Campaigns /></AdminLayout>} />
           <Route path="/campanhas/:id" element={<AdminLayout><CampaignDetail /></AdminLayout>} />
           <Route path="/campanhas/:id/relatorio" element={<AdminLayout><CampaignReport /></AdminLayout>} />
@@ -94,12 +117,32 @@ export default function App() {
           <Route path="/fornecedores/:id" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/relatorios" element={<AdminLayout><Reports /></AdminLayout>} />
           <Route path="/financeiro" element={<AdminLayout><Financial /></AdminLayout>} />
+          <Route path="/devolucoes" element={<AdminLayout><Returns /></AdminLayout>} />
+          <Route path="/cupons" element={<AdminLayout><Coupons /></AdminLayout>} />
+          <Route path="/cupons/novo" element={<AdminLayout><CouponForm /></AdminLayout>} />
+          <Route path="/cupons/:id" element={<AdminLayout><CouponForm /></AdminLayout>} />
+          <Route path="/centros-receita" element={<AdminLayout><RevenueCenters /></AdminLayout>} />
+
+          {/* Assessoria */}
+          <Route path="/assessoria"               element={<AdminLayout><AssPainel /></AdminLayout>} />
+          <Route path="/assessoria/planos"        element={<AdminLayout><AssPlanos /></AdminLayout>} />
+          <Route path="/assessoria/regua"         element={<AdminLayout><AssRegua /></AdminLayout>} />
+          <Route path="/assessoria/configuracoes" element={<AdminLayout><AssConfiguracoes /></AdminLayout>} />
+          <Route path="/assessoria/coaches"       element={<AdminLayout><AssCoaches /></AdminLayout>} />
+          <Route path="/assessoria/alunos"        element={<AdminLayout><AssStudents /></AdminLayout>} />
+          <Route path="/assessoria/alunos/:id"    element={<AdminLayout><AssStudentDetail /></AdminLayout>} />
+          <Route path="/assessoria/contratos"     element={<AdminLayout><AssContracts /></AdminLayout>} />
+          <Route path="/assessoria/contratos/novo" element={<AdminLayout><AssContractForm /></AdminLayout>} />
+          <Route path="/assessoria/contratos/:id" element={<AdminLayout><AssContractDetail /></AdminLayout>} />
+          <Route path="/assessoria/fechamento"     element={<AdminLayout><AssMonthlyClosing /></AdminLayout>} />
+          <Route path="/assessoria/fechamento/:id" element={<AdminLayout><AssClosingDetail /></AdminLayout>} />
           <Route path="/estoque" element={<AdminLayout><StockProducts /></AdminLayout>} />
           <Route path="/estoque/novo" element={<AdminLayout><StockProductForm /></AdminLayout>} />
           <Route path="/estoque/pedidos" element={<AdminLayout><StockOrders /></AdminLayout>} />
+          <Route path="/estoque/pedidos/novo" element={<AdminLayout><StockOrderNewAdmin /></AdminLayout>} />
           <Route path="/estoque/pedidos/:id" element={<AdminLayout><StockOrderDetail /></AdminLayout>} />
           <Route path="/estoque/:id" element={<AdminLayout><StockProductForm /></AdminLayout>} />
-          <Route path="*" element={<Navigate to="/admin" replace />} />
+          <Route path="*" element={<Navigate to="/hoje" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

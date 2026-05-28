@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,9 @@ import { Input } from '@/components/ui/input';
 import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
+import { returnCouponUse } from '@/lib/coupon';
 
 const PAYMENT_STATUS = {
   awaiting_charge: { label: 'Aguardando contato', badge: 'secondary' },
@@ -48,6 +50,10 @@ export default function OrderDetail() {
   const [campaign, setCampaign] = useState(null);
   const [customer, setCustomer] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [saveConfirmModal, setSaveConfirmModal] = useState(false);
+  const [manualPayModal, setManualPayModal] = useState(false);
+  const [manualPayForm, setManualPayForm] = useState({ method: 'pix_manual', date: '', value: '' });
+  const [manualPaySaving, setManualPaySaving] = useState(false);
   const [whatsappModal, setWhatsappModal] = useState(false);
   const [whatsappMsg, setWhatsappMsg] = useState('');
   const [copied, setCopied] = useState(false);
@@ -65,7 +71,8 @@ export default function OrderDetail() {
   const [asaasStatus, setAsaasStatus] = useState(null);
   const [asaasDueDate, setAsaasDueDate] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() + 3);
-    return d.toISOString().split('T')[0];
+    const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   });
 
   // Estados dos modais de cancelamento e estorno
@@ -75,6 +82,11 @@ export default function OrderDetail() {
   const [refundModal, setRefundModal] = useState(false);
   const [refundReason, setRefundReason] = useState('');
   const [refundReasonCustom, setRefundReasonCustom] = useState('');
+  const [cancelItemModal, setCancelItemModal] = useState(false);
+  const [cancelItemIndex, setCancelItemIndex] = useState(null);
+  const [cancelItemDelivered, setCancelItemDelivered] = useState(false);
+  const [cancelItemReason, setCancelItemReason] = useState('');
+  const [cancelItemLoading, setCancelItemLoading] = useState(false);
 
   const load = async () => {
     const o = await PreSaleOrder.get(id);
@@ -104,9 +116,46 @@ export default function OrderDetail() {
 
   useEffect(() => { load(); }, [id]);
 
+  const openManualPay = () => {
+    const total = order?.total_value ? Number(order.total_value).toFixed(2) : '';
+    setManualPayForm({ method: 'pix_manual', date: new Date().toISOString().split('T')[0], value: total });
+    setManualPayModal(true);
+  };
+
+  const recordManualPayment = async () => {
+    if (!manualPayForm.date) return toast.error('Informe a data do pagamento');
+    if (!manualPayForm.value || isNaN(Number(manualPayForm.value))) return toast.error('Informe o valor recebido');
+    setManualPaySaving(true);
+    try {
+      await PreSaleOrder.update(id, {
+        payment_status: 'paid',
+        payment_method: manualPayForm.method,
+        payment_date:   manualPayForm.date,
+      });
+      toast.success('Pagamento registrado!');
+      setManualPayModal(false);
+      load();
+    } catch (e) { toast.error(e.message); }
+    finally { setManualPaySaving(false); }
+  };
+
+  const SENSITIVE_PAYMENT = new Set(['paid', 'cancelled', 'refunded', 'partially_paid']);
+
+  const handleSaveClick = () => {
+    if (order && SENSITIVE_PAYMENT.has(paymentStatus) && paymentStatus !== order.payment_status) {
+      setSaveConfirmModal(true);
+    } else {
+      handleSave();
+    }
+  };
+
   const handleSave = async () => {
+    setSaveConfirmModal(false);
     setSaving(true);
     try {
+      const wasActive = !['cancelled', 'refunded'].includes(order.payment_status);
+      const willBeCancelled = ['cancelled', 'refunded'].includes(paymentStatus);
+
       await PreSaleOrder.update(id, {
         payment_status: paymentStatus,
         delivery_status: deliveryStatus,
@@ -116,6 +165,12 @@ export default function OrderDetail() {
         payment_method: paymentMethod || null,
         cancellation_reason: cancellationReason || null,
       });
+
+      // Devolve uso de cupom se mudou para cancelado/estornado manualmente
+      if (wasActive && willBeCancelled && order.coupon_code) {
+        await returnCouponUse(id, 'presale');
+      }
+
       toast.success('Pedido atualizado!');
       load();
     } catch (e) {
@@ -176,6 +231,7 @@ export default function OrderDetail() {
     try {
       await callAsaas('cancel');
       await supabase.from('presale_orders').update({ cancellation_reason: reason || null }).eq('id', id);
+      await returnCouponUse(id, 'presale');
       setCancelModal(false);
       setAsaasStatus(null);
       toast.success('Cobrança cancelada.');
@@ -189,6 +245,7 @@ export default function OrderDetail() {
     try {
       await callAsaas('refund', { reason });
       await supabase.from('presale_orders').update({ cancellation_reason: reason || null }).eq('id', id);
+      await returnCouponUse(id, 'presale');
       setRefundModal(false);
       toast.success('Estorno realizado com sucesso!');
       load();
@@ -196,7 +253,7 @@ export default function OrderDetail() {
   };
 
   const buildMessage = () => {
-    const itemLines = (order.items || []).map(item => {
+    const itemLines = (order.items || []).filter(it => !it.cancelled).map(item => {
       const extras = (item.extras || []).map(e => `   ➕ ${e.name}: ${formatCurrency(e.price)}`).join('\n');
       const itemTotal = ((item.sale_price || 0) + (item.extras_total || 0)) * item.quantity;
       const label = item.variation ? `${item.product_name} - ${item.variation}` : item.product_name;
@@ -205,10 +262,12 @@ export default function OrderDetail() {
     const total = order.total_value || 0;
     const chargeLink = order.asaas_payment_link;
     const pixCopy = order.asaas_pix_copy;
+    const trackingLink = `${window.location.origin}/p/${order.id}`;
+    const trackingLine = `\n\n🔍 *Acompanhe seu pedido:*\n${trackingLink}`;
     if (chargeLink || pixCopy) {
-      return `Olá, ${order.checkout_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\n${pixCopy ? `📲 *PIX Copia e Cola:*\n\`${pixCopy}\`\n\n` : ''}${chargeLink ? `🔗 *Link de pagamento:*\n${chargeLink}` : ''}`;
+      return `Olá, ${order.checkout_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\n${pixCopy ? `📲 *PIX Copia e Cola:*\n\`${pixCopy}\`\n\n` : ''}${chargeLink ? `🔗 *Link de pagamento:*\n${chargeLink}` : ''}${trackingLine}`;
     }
-    return `Olá, ${order.checkout_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\nComo você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 4x)`;
+    return `Olá, ${order.checkout_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\nComo você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 4x)${trackingLine}`;
   };
 
   const openWhatsApp = () => {
@@ -248,6 +307,89 @@ export default function OrderDetail() {
   const items = order.items || [];
   const totalCost = order.total_cost || 0;
   const grossProfit = (order.total_value || 0) - totalCost;
+
+  const openCancelItem = (index) => {
+    setCancelItemIndex(index);
+    setCancelItemDelivered(order.delivery_status === 'delivered');
+    setCancelItemReason('');
+    setCancelItemModal(true);
+  };
+
+  const confirmCancelItem = async () => {
+    const item = items[cancelItemIndex];
+    const itemPrice = ((item.sale_price || 0) + (item.extras_total || 0)) * item.quantity;
+
+    // 1. Calcula novo subtotal (sem o item cancelado)
+    const newItems = items.map((it, i) =>
+      i === cancelItemIndex ? { ...it, cancelled: true, cancelled_at: new Date().toISOString() } : it
+    );
+    const activeItems = newItems.filter(it => !it.cancelled);
+    const newSubtotal = activeItems.reduce((sum, it) => sum + ((it.sale_price || 0) + (it.extras_total || 0)) * it.quantity, 0);
+    const newTotalCost = activeItems.reduce((sum, it) => sum + ((it.cost_price || 0) * it.quantity), 0);
+
+    // 2. Recalcula desconto de cupom proporcionalmente (mantém razão original)
+    const oldDiscount = Number(order.discount_value) || 0;
+    const oldSubtotal = (order.total_value || 0) + oldDiscount;
+    let newDiscount = 0;
+    if (oldDiscount > 0 && oldSubtotal > 0) {
+      // Mantém a mesma proporção (funciona pra % e aproxima fixo)
+      newDiscount = Math.round((newSubtotal * (oldDiscount / oldSubtotal)) * 100) / 100;
+      newDiscount = Math.min(newDiscount, newSubtotal); // cap
+    }
+    const newTotal = Math.max(0, newSubtotal - newDiscount);
+
+    // 3. Refund Asaas = diferença real (old_total - new_total)
+    const refundValue = Math.max(0, (order.total_value || 0) - newTotal);
+    const allCancelled = activeItems.length === 0;
+    const newPaymentStatus = allCancelled
+      ? (order.payment_status === 'paid' ? 'refunded' : 'cancelled')
+      : order.payment_status;
+
+    setCancelItemLoading(true);
+    try {
+      // 4. Asaas PRIMEIRO — se falhar, nada é alterado no DB
+      if (order.payment_status === 'paid' && order.asaas_charge_id && refundValue > 0) {
+        await callAsaas('refund', { value: refundValue, reason: cancelItemReason || 'Cancelamento de peça' });
+      }
+
+      // 5. Atualiza pedido (items, totais, desconto recalculado, status se for o último)
+      await supabase.from('presale_orders').update({
+        items: newItems,
+        total_value: newTotal,
+        total_cost: newTotalCost,
+        discount_value: newDiscount,
+        ...(allCancelled ? { payment_status: newPaymentStatus } : {}),
+      }).eq('id', id);
+
+      // 4. Registra devolução
+      await supabase.from('order_returns').insert({
+        order_id: id,
+        order_type: 'presale',
+        order_number: order.order_number,
+        customer_name: order.checkout_name,
+        item_index: cancelItemIndex,
+        product_name: item.product_name,
+        variation: item.variation || null,
+        quantity: item.quantity,
+        unit_price: item.sale_price || 0,
+        refund_value: refundValue,
+        was_delivered: cancelItemDelivered,
+        status: cancelItemDelivered ? 'pending_return' : 'completed',
+        notes: cancelItemReason || null,
+      });
+
+      // 5. Se todas as peças foram canceladas, devolve uso de cupom
+      if (allCancelled) await returnCouponUse(id, 'presale');
+
+      setCancelItemModal(false);
+      toast.success(cancelItemDelivered ? 'Peça cancelada — aguardando devolução física.' : 'Peça cancelada com sucesso.');
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cancelar peça');
+    } finally {
+      setCancelItemLoading(false);
+    }
+  };
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -335,27 +477,39 @@ export default function OrderDetail() {
                     <th className="text-right py-2 font-medium text-muted-foreground">Preço unit.</th>
                     <th className="text-right py-2 font-medium text-muted-foreground">Custo unit.</th>
                     <th className="text-right py-2 font-medium text-muted-foreground">Total</th>
+                    <th className="py-2"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {items.map((item, i) => (
                     <>
-                      <tr key={i}>
-                        <td className="py-2 font-medium">{item.product_name}</td>
+                      <tr key={i} className={item.cancelled ? 'opacity-50' : ''}>
+                        <td className="py-2 font-medium">
+                          <span className={item.cancelled ? 'line-through text-muted-foreground' : ''}>{item.product_name}</span>
+                          {item.cancelled && <span className="ml-2 text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">Cancelado</span>}
+                        </td>
                         <td className="py-2 text-muted-foreground">{item.variation || '-'}</td>
                         <td className="py-2 text-right">{item.quantity}</td>
                         <td className="py-2 text-right">{formatCurrency(item.sale_price)}</td>
                         <td className="py-2 text-right text-red-600">{formatCurrency(item.cost_price)}</td>
                         <td className="py-2 text-right font-semibold">{formatCurrency(((item.sale_price || 0) + (item.extras_total || 0)) * (item.quantity || 1))}</td>
+                        <td className="py-2 text-right">
+                          {!item.cancelled && !['cancelled', 'refunded'].includes(order.payment_status) && (
+                            <button onClick={() => openCancelItem(i)} className="text-xs text-red-500 hover:text-red-700 hover:underline whitespace-nowrap">
+                              Cancelar peça
+                            </button>
+                          )}
+                        </td>
                       </tr>
                       {(item.extras || []).map((extra, j) => (
-                        <tr key={`${i}-x${j}`} className="bg-blue-50/40 text-xs">
+                        <tr key={`${i}-x${j}`} className={`bg-blue-50/40 text-xs${item.cancelled ? ' opacity-50' : ''}`}>
                           <td className="py-1 pl-4 text-blue-700">+ {extra.name}</td>
                           <td className="py-1 text-muted-foreground">—</td>
                           <td className="py-1 text-right text-muted-foreground">{item.quantity}</td>
                           <td className="py-1 text-right text-blue-600">{formatCurrency(extra.price)}</td>
                           <td className="py-1 text-muted-foreground">—</td>
                           <td className="py-1 text-right font-medium text-blue-600">{formatCurrency((extra.price || 0) * (item.quantity || 1))}</td>
+                          <td></td>
                         </tr>
                       ))}
                     </>
@@ -364,10 +518,22 @@ export default function OrderDetail() {
               </table>
             </div>
           )}
-          <div className="border-t mt-4 pt-4 grid grid-cols-3 gap-4 text-center">
+          {order.coupon_code && (
+            <div className="border-t mt-4 pt-3 flex items-center justify-between text-sm bg-amber-50 -mx-6 px-6 py-2">
+              <span className="flex items-center gap-2 text-amber-800">
+                <Tag className="w-3.5 h-3.5" />
+                Cupom aplicado: <span className="font-mono font-bold">{order.coupon_code}</span>
+              </span>
+              <span className="font-semibold text-amber-800">-{formatCurrency(order.discount_value || 0)}</span>
+            </div>
+          )}
+          <div className={`${order.coupon_code ? '' : 'border-t mt-4 pt-4'} grid grid-cols-3 gap-4 text-center ${order.coupon_code ? 'pt-4' : ''}`}>
             <div>
               <p className="text-xs text-muted-foreground">Total do pedido</p>
               <p className="font-bold text-lg">{formatCurrency(order.total_value)}</p>
+              {order.coupon_code && (
+                <p className="text-[10px] text-muted-foreground">já com desconto</p>
+              )}
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Custo total</p>
@@ -380,6 +546,30 @@ export default function OrderDetail() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Desconto manual */}
+      <DiscountInput
+        subtotal={(order.items || []).filter(it => !it.cancelled).reduce((s, it) => s + (it.sale_price || 0) * it.quantity, 0) - (Number(order.discount_value) || 0)}
+        currentDiscount={Number(order.manual_discount) || 0}
+        currentReason={order.discount_reason || ''}
+        lockedReason={order.asaas_charge_id
+          ? 'Já existe uma cobrança gerada no Asaas. Cancele a cobrança atual antes de aplicar desconto.'
+          : null}
+        entityType="presale_order"
+        entityId={order.id}
+        onSave={async (newValue, reason) => {
+          const activeItems = (order.items || []).filter(it => !it.cancelled);
+          const subItens = activeItems.reduce((s, it) => s + (it.sale_price || 0) * it.quantity, 0);
+          const cupom = Number(order.discount_value) || 0;
+          const newTotal = Math.max(0, subItens - cupom - newValue);
+          await PreSaleOrder.update(order.id, {
+            manual_discount: newValue,
+            discount_reason: reason || null,
+            total_value:     newTotal,
+          });
+          await load();
+        }}
+      />
 
       {/* Modal mensagem WhatsApp */}
       <Dialog open={whatsappModal} onOpenChange={setWhatsappModal}>
@@ -498,6 +688,95 @@ export default function OrderDetail() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal cancelar peça individual */}
+      <Dialog open={cancelItemModal} onOpenChange={setCancelItemModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <X className="w-5 h-5" /> Cancelar peça
+            </DialogTitle>
+          </DialogHeader>
+          {cancelItemIndex !== null && items[cancelItemIndex] && (
+            <div className="space-y-4">
+              <div className="bg-gray-50 border rounded-xl px-4 py-3 text-sm">
+                <p className="font-semibold">{items[cancelItemIndex].product_name}</p>
+                {items[cancelItemIndex].variation && <p className="text-muted-foreground">{items[cancelItemIndex].variation}</p>}
+                <p className="text-muted-foreground mt-1">
+                  Qtd: {items[cancelItemIndex].quantity} × {formatCurrency(items[cancelItemIndex].sale_price)}
+                  {' = '}<span className="font-semibold text-gray-800">{formatCurrency(((items[cancelItemIndex].sale_price || 0) + (items[cancelItemIndex].extras_total || 0)) * items[cancelItemIndex].quantity)}</span>
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium mb-2">Esta peça já foi entregue ao cliente?</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setCancelItemDelivered(false)}
+                    className={`py-2 rounded-lg border-2 text-sm font-medium transition-all ${!cancelItemDelivered ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                    Não entregue
+                  </button>
+                  <button onClick={() => setCancelItemDelivered(true)}
+                    className={`py-2 rounded-lg border-2 text-sm font-medium transition-all ${cancelItemDelivered ? 'border-orange-400 bg-orange-50 text-orange-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                    Já entregue
+                  </button>
+                </div>
+                {cancelItemDelivered && (
+                  <p className="text-xs text-orange-600 mt-1.5">⚠ Item ficará pendente na Central de Devoluções até retornar fisicamente.</p>
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-medium mb-1.5">Motivo (opcional)</p>
+                <div className="space-y-1.5">
+                  {CANCEL_REASONS.filter(r => r !== 'Outro').map(r => (
+                    <button key={r} type="button" onClick={() => setCancelItemReason(cancelItemReason === r ? '' : r)}
+                      className={`w-full text-left px-3 py-1.5 rounded-lg border text-sm transition-all ${cancelItemReason === r ? 'border-red-400 bg-red-50 text-red-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-700'}`}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {order.payment_status === 'paid' && order.asaas_charge_id && (() => {
+                const itemPrice = ((items[cancelItemIndex].sale_price || 0) + (items[cancelItemIndex].extras_total || 0)) * items[cancelItemIndex].quantity;
+                const oldDiscount = Number(order.discount_value) || 0;
+                const oldSubtotal = (order.total_value || 0) + oldDiscount;
+                const newSubtotal = oldSubtotal - itemPrice;
+                const newDiscount = oldDiscount > 0 && oldSubtotal > 0
+                  ? Math.min(Math.round((newSubtotal * (oldDiscount / oldSubtotal)) * 100) / 100, newSubtotal)
+                  : 0;
+                const refund = Math.max(0, (order.total_value || 0) - (newSubtotal - newDiscount));
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-700">
+                    Estorno de {formatCurrency(refund)} será processado no Asaas.
+                    {order.coupon_code && (
+                      <p className="text-[11px] text-amber-600 mt-0.5">
+                        (valor proporcional após desconto do cupom {order.coupon_code})
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+              {order.payment_status !== 'paid' && order.asaas_charge_id && (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-700">
+                  ⚠ A cobrança Asaas ainda está com o valor original. Se o cliente ainda não pagou, cancele e gere nova cobrança após o ajuste.
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => setCancelItemModal(false)}>Voltar</Button>
+                <Button
+                  className="flex-1 bg-red-500 hover:bg-red-600 text-white"
+                  onClick={confirmCancelItem}
+                  disabled={cancelItemLoading}
+                >
+                  {cancelItemLoading ? 'Cancelando...' : 'Confirmar'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -641,6 +920,15 @@ export default function OrderDetail() {
                 <Zap className="w-4 h-4" />
                 {asaasLoading ? 'Criando cobrança...' : `Gerar cobrança — ${{ PIX: 'PIX', BOLETO: 'Boleto', CREDIT_CARD: `Cartão ${asaasInstallments}x` }[asaasBilling]}`}
               </Button>
+              <div className="border-t pt-3">
+                <Button
+                  variant="outline"
+                  className="w-full gap-2 text-green-700 border-green-300 hover:bg-green-50"
+                  onClick={openManualPay}
+                >
+                  <HandCoins className="w-4 h-4" /> Registrar pagamento manual (sem Asaas)
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
@@ -728,10 +1016,77 @@ export default function OrderDetail() {
             <Textarea value={internalNotes} onChange={e => setInternalNotes(e.target.value)} className="mt-1" rows={3} placeholder="Anotações internas sobre o pedido..." />
           </div>
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</Button>
+            <Button onClick={handleSaveClick} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</Button>
           </div>
         </CardContent>
       </Card>
+
+      {/* Modal de pagamento manual */}
+      <Dialog open={manualPayModal} onOpenChange={setManualPayModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><HandCoins className="w-4 h-4 text-green-600" /> Registrar pagamento manual</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              Registra o recebimento direto, sem gerar link no Asaas.
+            </p>
+            <div>
+              <Label>Forma de pagamento</Label>
+              <Select value={manualPayForm.method} onValueChange={v => setManualPayForm(f => ({ ...f, method: v }))}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pix_manual">PIX manual</SelectItem>
+                  <SelectItem value="cash">Dinheiro</SelectItem>
+                  <SelectItem value="bank_transfer">Transferência bancária</SelectItem>
+                  <SelectItem value="card_machine">Cartão na máquina</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Valor recebido (R$)</Label>
+                <Input type="number" step="0.01" className="mt-1" value={manualPayForm.value} onChange={e => setManualPayForm(f => ({ ...f, value: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Data do pagamento</Label>
+                <Input type="date" className="mt-1" value={manualPayForm.date} onChange={e => setManualPayForm(f => ({ ...f, date: e.target.value }))} />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setManualPayModal(false)}>Cancelar</Button>
+              <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={recordManualPayment} disabled={manualPaySaving}>
+                {manualPaySaving ? 'Salvando...' : 'Confirmar recebimento'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de confirmação de status sensível */}
+      <Dialog open={saveConfirmModal} onOpenChange={setSaveConfirmModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-500" /> Confirmar mudança de status
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center justify-center gap-3 py-2">
+              <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${order?.payment_status === 'paid' ? 'bg-green-100 text-green-700' : order?.payment_status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`}>
+                {PAYMENT_STATUS[order?.payment_status]?.label || order?.payment_status}
+              </span>
+              <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${paymentStatus === 'paid' ? 'bg-green-100 text-green-700' : paymentStatus === 'cancelled' ? 'bg-red-100 text-red-700' : paymentStatus === 'refunded' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>
+                {PAYMENT_STATUS[paymentStatus]?.label || paymentStatus}
+              </span>
+            </div>
+            <p className="text-sm text-center text-muted-foreground">Tem certeza? Todas as alterações do formulário serão salvas.</p>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setSaveConfirmModal(false)} disabled={saving}>Cancelar</Button>
+              <Button className="flex-1" onClick={handleSave} disabled={saving}>{saving ? 'Salvando...' : 'Confirmar e salvar'}</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

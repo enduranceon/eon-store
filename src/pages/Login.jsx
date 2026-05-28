@@ -19,7 +19,7 @@ export default function Login() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) return toast.error('E-mail ou senha incorretos');
-    navigate('/admin');
+    navigate('/hoje');
   };
 
   return (

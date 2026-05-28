@@ -8,6 +8,8 @@ import { normalizePhone, normalizeEmail } from '@/api/db';
 import { formatCurrency } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import CouponInput from '@/components/CouponInput';
+import { computeDiscount, validateCoupon, recordCouponUse } from '@/lib/coupon';
 
 const extrasTotal = (extras) => (extras || []).reduce((s, e) => s + (e.price || 0), 0);
 
@@ -27,6 +29,7 @@ export default function PublicCheckout() {
   const [submitting, setSubmitting] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
 
   useEffect(() => { PreSaleTrainer.list().then(setTrainers); }, []);
   useEffect(() => { localStorage.setItem(CART_KEY, JSON.stringify(cart)); }, [cart]);
@@ -82,6 +85,25 @@ export default function PublicCheckout() {
       })
       .catch(() => setNotFound(true));
   }, [campaignId]);
+
+  const cartTotal = cart.reduce((acc, i) => acc + (i.sale_price + extrasTotal(i.extras)) * i.quantity, 0);
+  const cartCount = cart.reduce((acc, i) => acc + i.quantity, 0);
+  const cartSavings = cart.reduce((acc, i) => {
+    const reg = i.regular_price || 0;
+    return acc + (reg > i.sale_price ? (reg - i.sale_price) * i.quantity : 0);
+  }, 0);
+
+  // Desconto recalcula automaticamente quando o carrinho muda
+  const discount   = appliedCoupon ? computeDiscount(appliedCoupon, cartTotal) : 0;
+  const finalTotal = Math.max(0, cartTotal - discount);
+
+  // Mantém o cupom consistente quando o subtotal muda
+  useEffect(() => {
+    if (appliedCoupon?.min_purchase && cartTotal < Number(appliedCoupon.min_purchase)) {
+      toast.warning(`Cupom ${appliedCoupon.code} removido — pedido abaixo do mínimo`);
+      setAppliedCoupon(null);
+    }
+  }, [cartTotal, appliedCoupon]);
 
   if (notFound) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -167,13 +189,6 @@ export default function PublicCheckout() {
 
   const removeFromCart = (key) => setCart(prev => prev.filter(i => i.key !== key));
 
-  const cartTotal = cart.reduce((acc, i) => acc + (i.sale_price + extrasTotal(i.extras)) * i.quantity, 0);
-  const cartCount = cart.reduce((acc, i) => acc + i.quantity, 0);
-  const cartSavings = cart.reduce((acc, i) => {
-    const reg = i.regular_price || 0;
-    return acc + (reg > i.sale_price ? (reg - i.sale_price) * i.quantity : 0);
-  }, 0);
-
   const handleSubmit = async () => {
     if (form.full_name.trim().length < 3) return toast.error('Informe seu nome completo');
     const cleanWhatsapp = normalizePhone(form.whatsapp);
@@ -222,8 +237,25 @@ export default function PublicCheckout() {
         };
       });
 
-      const freshTotal = validatedItems.reduce((acc, i) => acc + (i.sale_price + i.extras_total) * i.quantity, 0);
+      const freshSubtotal = validatedItems.reduce((acc, i) => acc + (i.sale_price + i.extras_total) * i.quantity, 0);
       const freshCostTotal = validatedItems.reduce((acc, i) => acc + i.cost_price * i.quantity, 0);
+
+      // Revalida cupom (caso tenha expirado/esgotado entre apply e submit)
+      let finalDiscount = 0;
+      let validatedCoupon = null;
+      if (appliedCoupon) {
+        const recheck = await validateCoupon(appliedCoupon.code, freshSubtotal, cleanWhatsapp);
+        if (!recheck.ok) {
+          toast.error(`Cupom ${appliedCoupon.code}: ${recheck.error}`);
+          setAppliedCoupon(null);
+          setSubmitting(false);
+          return;
+        }
+        validatedCoupon = recheck.coupon;
+        finalDiscount = recheck.discount;
+      }
+      const freshTotal = Math.max(0, freshSubtotal - finalDiscount);
+
       const trainerValue = form.trainer === '__outro' ? '' : form.trainer;
       const cleanEmail = normalizeEmail(form.email);
       const customer = await findOrCreateCustomer({ ...form, whatsapp: cleanWhatsapp, email: cleanEmail, trainer: trainerValue });
@@ -242,7 +274,22 @@ export default function PublicCheckout() {
         payment_method: form.payment_method || null,
         payment_status: 'awaiting_charge',
         delivery_status: 'awaiting_supplier',
+        coupon_code: validatedCoupon?.code || null,
+        discount_value: finalDiscount,
       });
+
+      // Registra uso do cupom (não bloqueia o fluxo se falhar)
+      if (validatedCoupon) {
+        await recordCouponUse({
+          coupon: validatedCoupon,
+          order,
+          orderType: 'presale',
+          customerIdentifier: cleanWhatsapp,
+          customerName: form.full_name,
+          discount: finalDiscount,
+        });
+      }
+
       localStorage.removeItem(CART_KEY);
       navigate(`/confirmacao/${order.id}`, { state: { order, campaignName: campaign.name } });
     } catch (e) {
@@ -475,16 +522,34 @@ export default function PublicCheckout() {
                   </div>
                 ))}
               </div>
-              <div className="px-5 py-4 bg-gray-50 space-y-1">
+              <div className="px-5 py-4 bg-gray-50 space-y-2">
                 {cartSavings > 0 && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-green-600 font-medium flex items-center gap-1"><Tag className="w-3.5 h-3.5" /> Economia da pré-venda</span>
                     <span className="text-green-600 font-bold">-{formatCurrency(cartSavings)}</span>
                   </div>
                 )}
+
+                {/* Cupom de desconto */}
+                <div className="py-1">
+                  <CouponInput
+                    subtotal={cartTotal}
+                    customerIdentifier={normalizePhone(form.whatsapp)}
+                    applied={appliedCoupon ? { code: appliedCoupon.code, discount } : null}
+                    onApply={(c, _d) => setAppliedCoupon(c)}
+                    onRemove={() => setAppliedCoupon(null)}
+                  />
+                </div>
+
+                {discount > 0 && (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">Subtotal</span>
+                    <span className="text-gray-600">{formatCurrency(cartTotal)}</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-gray-900">Total</span>
-                  <span className="text-xl font-bold text-blue-600">{formatCurrency(cartTotal)}</span>
+                  <span className="text-xl font-bold text-blue-600">{formatCurrency(finalTotal)}</span>
                 </div>
               </div>
             </div>
@@ -672,7 +737,7 @@ export default function PublicCheckout() {
 
                     {form.payment_method.startsWith('card_') && (
                       <div className="grid grid-cols-3 gap-2 mt-3">
-                        {Array.from({ length: Math.min(6, Math.max(1, Math.floor(cartTotal / 50))) }, (_, i) => i + 1).map(n => (
+                        {Array.from({ length: Math.min(6, Math.max(1, Math.floor(finalTotal / 50))) }, (_, i) => i + 1).map(n => (
                           <button
                             key={n}
                             type="button"
@@ -686,7 +751,7 @@ export default function PublicCheckout() {
                           >
                             <p>{n}x</p>
                             <p className={cn('font-normal mt-0.5', form.payment_method === `card_${n}x` ? 'text-blue-100' : 'text-gray-400')}>
-                              {formatCurrency(cartTotal / n)}
+                              {formatCurrency(finalTotal / n)}
                             </p>
                           </button>
                         ))}
@@ -707,7 +772,7 @@ export default function PublicCheckout() {
                 {submitting ? (
                   <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Finalizando...</>
                 ) : (
-                  <>Finalizar pedido · {formatCurrency(cartTotal)}</>
+                  <>Finalizar pedido · {formatCurrency(finalTotal)}</>
                 )}
               </button>
 

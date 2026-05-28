@@ -8,6 +8,8 @@ import { normalizePhone, normalizeEmail } from '@/api/db';
 import { formatCurrency } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import CouponInput from '@/components/CouponInput';
+import { computeDiscount, validateCoupon, recordCouponUse } from '@/lib/coupon';
 
 const CART_KEY = 'eon_loja_cart';
 
@@ -21,6 +23,7 @@ export default function PublicStore() {
   });
   const [form, setForm] = useState({ name: '', whatsapp: '', email: '', payment_method: '', delivery_method: '', delivery_city: '' });
   const [submitting, setSubmitting] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
 
   useEffect(() => {
     StockProduct.list()
@@ -49,7 +52,16 @@ export default function PublicStore() {
   const cartTotal = cart.reduce((acc, i) => acc + i.sale_price * i.quantity, 0);
   const cartCount = cart.reduce((acc, i) => acc + i.quantity, 0);
 
-  const maxInstallments = Math.min(6, Math.max(1, Math.floor(cartTotal / 50)));
+  const discount   = appliedCoupon ? computeDiscount(appliedCoupon, cartTotal) : 0;
+  const finalTotal = Math.max(0, cartTotal - discount);
+  const maxInstallments = Math.min(6, Math.max(1, Math.floor(finalTotal / 50)));
+
+  useEffect(() => {
+    if (appliedCoupon?.min_purchase && cartTotal < Number(appliedCoupon.min_purchase)) {
+      toast.warning(`Cupom ${appliedCoupon.code} removido — pedido abaixo do mínimo`);
+      setAppliedCoupon(null);
+    }
+  }, [cartTotal, appliedCoupon]);
 
   const handleSubmit = async () => {
     if (form.name.trim().length < 3) return toast.error('Informe seu nome completo');
@@ -71,8 +83,24 @@ export default function PublicStore() {
         return { product_id: prod.id, product_name: prod.name, quantity: i.quantity, sale_price: prod.sale_price, cost_price: prod.cost_price || 0 };
       });
 
-      const total = validatedItems.reduce((acc, i) => acc + i.sale_price * i.quantity, 0);
+      const subtotal = validatedItems.reduce((acc, i) => acc + i.sale_price * i.quantity, 0);
       const cleanEmail = normalizeEmail(form.email);
+
+      // Revalida cupom
+      let finalDiscount = 0;
+      let validatedCoupon = null;
+      if (appliedCoupon) {
+        const recheck = await validateCoupon(appliedCoupon.code, subtotal, cleanWhatsapp);
+        if (!recheck.ok) {
+          toast.error(`Cupom ${appliedCoupon.code}: ${recheck.error}`);
+          setAppliedCoupon(null);
+          setSubmitting(false);
+          return;
+        }
+        validatedCoupon = recheck.coupon;
+        finalDiscount = recheck.discount;
+      }
+      const total = Math.max(0, subtotal - finalDiscount);
 
       const order = await StockOrder.create({
         customer_name: form.name,
@@ -85,7 +113,20 @@ export default function PublicStore() {
         delivery_status: 'awaiting_delivery',
         delivery_method: form.delivery_method,
         delivery_city: form.delivery_city || null,
+        coupon_code: validatedCoupon?.code || null,
+        discount_value: finalDiscount,
       });
+
+      if (validatedCoupon) {
+        await recordCouponUse({
+          coupon: validatedCoupon,
+          order,
+          orderType: 'stock',
+          customerIdentifier: cleanWhatsapp,
+          customerName: form.name,
+          discount: finalDiscount,
+        });
+      }
 
       localStorage.removeItem(CART_KEY);
       navigate(`/loja/confirmacao/${order.id}`, { state: { order } });
@@ -258,9 +299,24 @@ export default function PublicStore() {
                   </div>
                 ))}
               </div>
-              <div className="px-5 py-4 bg-gray-50 flex items-center justify-between">
-                <span className="font-bold text-gray-900">Total</span>
-                <span className="text-xl font-bold text-blue-600">{formatCurrency(cartTotal)}</span>
+              <div className="px-5 py-4 bg-gray-50 space-y-2">
+                <CouponInput
+                  subtotal={cartTotal}
+                  customerIdentifier={normalizePhone(form.whatsapp)}
+                  applied={appliedCoupon ? { code: appliedCoupon.code, discount } : null}
+                  onApply={(c, _d) => setAppliedCoupon(c)}
+                  onRemove={() => setAppliedCoupon(null)}
+                />
+                {discount > 0 && (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">Subtotal</span>
+                    <span className="text-gray-600">{formatCurrency(cartTotal)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-900">Total</span>
+                  <span className="text-xl font-bold text-blue-600">{formatCurrency(finalTotal)}</span>
+                </div>
               </div>
             </div>
 
@@ -347,7 +403,7 @@ export default function PublicStore() {
                               form.payment_method === `card_${n}x` ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-200 text-gray-700 hover:border-blue-300 bg-white'
                             )}>
                             <p>{n}x</p>
-                            <p className={cn('font-normal mt-0.5', form.payment_method === `card_${n}x` ? 'text-blue-100' : 'text-gray-400')}>{formatCurrency(cartTotal / n)}</p>
+                            <p className={cn('font-normal mt-0.5', form.payment_method === `card_${n}x` ? 'text-blue-100' : 'text-gray-400')}>{formatCurrency(finalTotal / n)}</p>
                           </button>
                         ))}
                       </div>
@@ -361,7 +417,7 @@ export default function PublicStore() {
             <div className="space-y-3">
               <button onClick={handleSubmit} disabled={submitting}
                 className="w-full h-14 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-2xl font-bold text-base transition-colors flex items-center justify-center gap-2">
-                {submitting ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />Finalizando...</> : <>Finalizar pedido · {formatCurrency(cartTotal)}</>}
+                {submitting ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />Finalizando...</> : <>Finalizar pedido · {formatCurrency(finalTotal)}</>}
               </button>
               <div className="flex items-center justify-center gap-4 text-xs text-gray-400">
                 <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Dados protegidos</span>

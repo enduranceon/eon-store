@@ -88,7 +88,7 @@ export default function CampaignReport() {
     const qty = Math.max(0, parseInt(value) || 0);
     const updated = {
       ...receiptsRef.current,
-      [key]: { qty, updated_at: new Date().toISOString().split('T')[0] },
+      [key]: { qty, updated_at: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })() },
     };
     setReceipts(updated);
     receiptsRef.current = updated;
