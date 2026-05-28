@@ -407,7 +407,7 @@ function SalesTab() {
             .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, items, created_date')
             .order('created_date', { ascending: false }),
           supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at')
+            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
             .neq('status', 'cancelled')
             .order('created_at', { ascending: false }),
           supabase.from('assessment_plans').select('id, price_total, name'),
@@ -427,12 +427,14 @@ function SalesTab() {
         }));
         const contracts = (contractRes.data || []).map(c => {
           const plan = plansMap[c.plan_id];
-          const base = plan ? Number(plan.price_total) : 0;
+          // Snapshot preserva o valor original mesmo se o plano for editado
+          const snapPrice = c.plan_snapshot?.price_total;
+          const base = snapPrice != null ? Number(snapPrice) : (plan ? Number(plan.price_total) : 0);
           const total_value = Math.max(0, base + (Number(c.enrollment_fee) || 0) - (Number(c.manual_discount) || 0));
           return {
             id: c.id, order_number: c.contract_number,
             customer: customersMap[c.customer_id]?.full_name || '—',
-            plan_name: plan?.name || '—',
+            plan_name: c.plan_snapshot?.name || plan?.name || '—',
             total_value, payment_status: c.payment_status,
             payment_method: c.payment_method, payment_date: c.payment_date,
             due_date: c.due_date, asaas_charge_id: c.asaas_charge_id,

@@ -257,7 +257,7 @@ export default function Financial() {
             .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments')
+            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, plan_snapshot')
             .neq('status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('assessment_plans').select('id, price_total, name, revenue_center_id'),
           supabase.from('presale_customers').select('id, full_name'),
@@ -277,7 +277,9 @@ export default function Financial() {
         const stock     = (stockRes.data     || []).map(o => ({ ...o, type: 'stock',    customer: o.customer_name,  revenue_center_id: orderCenter(o.items) }));
         const contracts = (contractRes.data  || []).map(c => {
           const plan = plansMap[c.plan_id];
-          const base = plan ? Number(plan.price_total) : 0;
+          // Preserva histórico financeiro: snapshot tem prioridade sobre o plano vivo
+          const snapPrice = c.plan_snapshot?.price_total;
+          const base = snapPrice != null ? Number(snapPrice) : (plan ? Number(plan.price_total) : 0);
           const total_value = Math.max(0, base + (Number(c.enrollment_fee) || 0) - (Number(c.manual_discount) || 0));
           return {
             id: c.id, order_number: c.contract_number,
@@ -285,7 +287,8 @@ export default function Financial() {
             total_value, payment_status: c.payment_status, payment_method: c.payment_method,
             payment_date: c.payment_date, due_date: c.due_date,
             asaas_charge_id: c.asaas_charge_id, manual_fee: c.manual_fee,
-            type: 'contract', revenue_center_id: plan?.revenue_center_id || null,
+            type: 'contract',
+            revenue_center_id: c.plan_snapshot?.revenue_center_id || plan?.revenue_center_id || null,
             installments: c.installments || 1,
           };
         });

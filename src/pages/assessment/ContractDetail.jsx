@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   QrCode, RefreshCw, History, Pause, XCircle, AlertTriangle, RotateCcw, ArrowUpRight, ArrowDownRight,
-  HandCoins,
+  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import {
   AssessmentContract, PreSaleCustomer, AssessmentCoach, AssessmentPlan, AssessmentModality,
-  AssessmentLeave, AssessmentContractCoachHist,
+  AssessmentLeave, AssessmentContractCoachHist, AssessmentContractEvent,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
@@ -56,6 +56,86 @@ const PAY = {
   partially_refunded: { label: 'Est. parcial', badge: 'warning' },
 };
 
+// ─── Timeline de eventos ─────────────────────────────────────────────────────
+const EVENT_META = {
+  created:                  { icon: Plus,       color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Contrato criado' },
+  coach_changed:            { icon: UserCheck,  color: 'text-purple-600', bg: 'bg-purple-50', label: 'Coach trocado' },
+  plan_changed:             { icon: PenLine,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Plano alterado' },
+  discount_applied:         { icon: HandCoins,  color: 'text-green-600',  bg: 'bg-green-50',  label: 'Desconto aplicado' },
+  leave_started:            { icon: Pause,      color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Licença iniciada' },
+  leave_ended:              { icon: RotateCcw,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Licença encerrada' },
+  charge_generated:         { icon: Zap,        color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Cobrança gerada' },
+  manual_payment_recorded:  { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Pagamento manual' },
+  renewed:                  { icon: RefreshCcw, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovado' },
+  cancelled:                { icon: Ban,        color: 'text-red-600',    bg: 'bg-red-50',    label: 'Cancelado' },
+  refund_completed:         { icon: HandCoins,  color: 'text-purple-600', bg: 'bg-purple-50', label: 'Estorno realizado' },
+};
+
+function formatEventSummary(ev) {
+  const p = ev.payload || {};
+  switch (ev.event_type) {
+    case 'created':
+      return p.via === 'renewal'
+        ? `Criado como renovação de ${p.parent_contract_num || '—'}`
+        : (p.prior_cancelled > 0 ? `Aluno já cancelou ${p.prior_cancelled}x antes` : 'Contrato inicial');
+    case 'coach_changed':
+      return `${p.from_coach_name || '—'} → ${p.to_coach_name || '—'}`;
+    case 'leave_started':
+      return `${p.days} dia${p.days !== 1 ? 's' : ''}${p.reason ? ' · ' + p.reason : ''}`;
+    case 'leave_ended':
+      return `Após ${p.days || '?'} dia(s)`;
+    case 'charge_generated':
+      return `${p.billing_type || ''}${p.installments > 1 ? ` · ${p.installments}x` : ''}`;
+    case 'manual_payment_recorded':
+      return `${p.method || ''}${p.value ? ' · R$ ' + Number(p.value).toFixed(2) : ''}`;
+    case 'renewed':
+      return `Novo contrato ${p.new_contract_number || ''}`;
+    case 'cancelled':
+      return `Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`;
+    default:
+      return ev.notes || '';
+  }
+}
+
+function ContractTimeline({ events }) {
+  if (!events?.length) {
+    return (
+      <p className="text-sm text-muted-foreground text-center py-3">
+        Nenhum evento registrado ainda.
+      </p>
+    );
+  }
+  return (
+    <ol className="relative border-l-2 border-gray-200 ml-3 space-y-3">
+      {events.map(ev => {
+        const meta = EVENT_META[ev.event_type] || {
+          icon: Activity, color: 'text-gray-500', bg: 'bg-gray-100', label: ev.event_type,
+        };
+        const Icon = meta.icon;
+        const summary = formatEventSummary(ev);
+        const date = ev.created_at ? new Date(ev.created_at) : null;
+        return (
+          <li key={ev.id} className="pl-5 relative">
+            <span className={`absolute -left-[14px] top-0 w-6 h-6 rounded-full ${meta.bg} flex items-center justify-center ring-2 ring-white`}>
+              <Icon className={`w-3.5 h-3.5 ${meta.color}`} />
+            </span>
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="font-semibold text-sm">{meta.label}</p>
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                {date ? date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+              </span>
+            </div>
+            {summary && <p className="text-xs text-muted-foreground mt-0.5">{summary}</p>}
+            {ev.notes && ev.event_type !== 'leave_started' && (
+              <p className="text-xs text-gray-700 italic mt-0.5">"{ev.notes}"</p>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function ContractDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -67,6 +147,7 @@ export default function ContractDetail() {
   const [coaches, setCoaches]   = useState([]);
   const [history, setHistory]   = useState([]);
   const [leaves, setLeaves]     = useState([]);
+  const [events, setEvents]     = useState([]);
   const [parentContract, setParentContract] = useState(null);
   const [loading, setLoading]   = useState(true);
 
@@ -93,17 +174,19 @@ export default function ContractDetail() {
     try {
       const c = await AssessmentContract.get(id);
       setContract(c);
-      const [s, co, p, allC, h, l] = await Promise.all([
+      const [s, co, p, allC, h, l, ev] = await Promise.all([
         PreSaleCustomer.get(c.customer_id).catch(() => null),
         c.coach_id ? AssessmentCoach.get(c.coach_id).catch(() => null) : Promise.resolve(null),
         AssessmentPlan.get(c.plan_id).catch(() => null),
         AssessmentCoach.filter({ active: true }, 'name').catch(() => []),
         AssessmentContractCoachHist.filter({ contract_id: id }).catch(() => []),
         AssessmentLeave.filter({ contract_id: id }, '-start_date').catch(() => []),
+        AssessmentContractEvent.filter({ contract_id: id }, '-created_at').catch(() => []),
       ]);
       setStudent(s); setCoach(co); setPlan(p); setCoaches(allC);
       setHistory(h.sort((a, b) => (a.started_at || '').localeCompare(b.started_at || '')));
       setLeaves(l);
+      setEvents(ev);
       if (p) {
         const mod = await AssessmentModality.get(p.modality_id).catch(() => null);
         setModality(mod);
@@ -124,6 +207,23 @@ export default function ContractDetail() {
   };
 
   useEffect(() => { load(); }, [id]);
+
+  // Lê valor do plano: prefere o snapshot gravado no contrato (histórico preservado),
+  // cai pro plano vivo se snapshot ausente (contratos legados pré-backfill).
+  const planVal = (field) => {
+    const snap = contract?.plan_snapshot;
+    if (snap && snap[field] != null) return snap[field];
+    return plan?.[field];
+  };
+
+  // Registra evento de auditoria — best-effort, nunca quebra a ação principal
+  const logEvent = async (event_type, payload = {}, notes = null) => {
+    try {
+      await AssessmentContractEvent.create({ contract_id: id, event_type, payload, notes });
+    } catch (e) {
+      console.warn(`[contract_event] falha ao registrar ${event_type}:`, e.message);
+    }
+  };
 
   // ───────── ACTIONS ─────────
   // Abre modal de confirmação (não chama Asaas ainda)
@@ -156,6 +256,11 @@ export default function ContractDetail() {
         throw new Error(realMessage);
       }
       if (data?.error) throw new Error(data.error);
+      await logEvent('charge_generated', {
+        billing_type,
+        installments: contract.installments,
+        asaas_charge_id: data?.asaas_charge_id || null,
+      });
       toast.success('Cobrança gerada!');
       setChargeConfirmModal(null);
       load();
@@ -166,7 +271,15 @@ export default function ContractDetail() {
   const changeCoach = async () => {
     if (!newCoachId || newCoachId === contract.coach_id) return setChangeCoachModal(false);
     try {
+      const oldCoach = coach;
+      const newCoach = coaches.find(c => c.id === newCoachId);
       await AssessmentContract.update(id, { coach_id: newCoachId });
+      await logEvent('coach_changed', {
+        from_coach_id:   contract.coach_id,
+        from_coach_name: oldCoach?.name || null,
+        to_coach_id:     newCoachId,
+        to_coach_name:   newCoach?.name || null,
+      });
       toast.success('Coach trocado!'); setChangeCoachModal(false); load();
     } catch (e) { toast.error(e.message); }
   };
@@ -198,6 +311,14 @@ export default function ContractDetail() {
           end_date: newEndStr,
         }),
       ]);
+      await logEvent('leave_started', {
+        leave_start: leaveForm.start_date,
+        leave_end:   leaveForm.end_date,
+        days,
+        reason:      leaveForm.reason || null,
+        old_end_date: contract.end_date,
+        new_end_date: newEndStr,
+      });
       toast.success(`Licença registrada (${days} dias). Novo vencimento: ${formatDate(newEndStr)}.`);
       setLeaveModal(false);
       setLeaveForm({ start_date: todayLocalStr(), end_date: todayLocalStr(), reason: '' });
@@ -214,6 +335,11 @@ export default function ContractDetail() {
         AssessmentLeave.update(leave.id, { status: 'finished' }),
         AssessmentContract.update(id, { status: newStatus }),
       ]);
+      await logEvent('leave_ended', {
+        leave_id: leave.id,
+        days:     leave.days,
+        new_status: newStatus,
+      });
       toast.success(`Licença encerrada. Aluno ${newStatus === 'active' ? 'retornou ao plano ativo' : 'com contrato vencido'}.`);
       load();
     } catch (e) { toast.error(e.message); }
@@ -227,7 +353,7 @@ export default function ContractDetail() {
     const end   = new Date(contract.end_date + 'T00:00:00');
     const totalDays   = Math.max(1, Math.round((end - start) / 86400000) + 1);
     const remainingDays = Math.max(0, Math.round((end - today) / 86400000) + 1);
-    const remaining = Number(plan.price_total) * (remainingDays / totalDays);
+    const remaining = Number(planVal('price_total') || 0) * (remainingDays / totalDays);
     const fee = remaining * (Number(cancelFeePct) / 100);
     const refund = Math.max(0, remaining - fee);
     return { remainingDays, remaining: Math.round(remaining * 100) / 100, fee: Math.round(fee * 100) / 100, refund: Math.round(refund * 100) / 100 };
@@ -267,6 +393,15 @@ export default function ContractDetail() {
         refund_status: c.refund > 0 ? 'pending' : null,
         refund_amount: c.refund > 0 ? c.refund  : null,
       });
+      await logEvent('cancelled', {
+        remaining_days:      c.remainingDays,
+        remaining_value:     c.remaining,
+        cancellation_fee:    c.fee,
+        cancellation_fee_pct: Number(cancelFeePct),
+        refund_amount:       c.refund,
+        cancellation_reason: cancelReason || null,
+        payment_status_before: contract.payment_status,
+      }, cancelReason || null);
       toast.success(c.refund > 0 ? 'Contrato cancelado. Estorno registrado como pendente.' : 'Contrato cancelado.');
       setCancelModal(false); load();
     } catch (e) { toast.error(e.message); }
@@ -291,7 +426,7 @@ export default function ContractDetail() {
       const confirmed = confirm(
         `⚠️ Atenção:\n\n` +
         `Este contrato ainda tem pagamento em aberto (status: ${statusLabel}).\n` +
-        `Valor: ${formatCurrency(plan.price_total)}\n\n` +
+        `Valor: ${formatCurrency(planVal('price_total'))}\n\n` +
         `Renovar mesmo assim?\n\n` +
         `(O contrato atual permanecerá com a cobrança pendente — ele aparecerá em "Pagamentos em aberto" no perfil do aluno até ser resolvido)`
       );
@@ -317,6 +452,30 @@ export default function ContractDetail() {
         notes:              `Renovação manual de ${contract.contract_number}`,
       });
       await AssessmentContract.update(id, { renewal_generated: true, status: 'finished' });
+      await logEvent('renewed', {
+        new_contract_id:     created.id,
+        new_contract_number: created.contract_number,
+        new_start: newStart,
+        new_end:   newEnd,
+        plan_id:   contract.plan_id,
+        installments: contract.installments,
+        had_open_payment: hasOpenPayment,
+      });
+      // Registra também no novo contrato pra rastrear que ele é uma renovação
+      try {
+        await AssessmentContractEvent.create({
+          contract_id: created.id,
+          event_type:  'created',
+          payload: {
+            via:                  'renewal',
+            parent_contract_id:   contract.id,
+            parent_contract_num:  contract.contract_number,
+            plan_id:              contract.plan_id,
+            installments:         contract.installments,
+          },
+          notes: `Renovação de ${contract.contract_number}`,
+        });
+      } catch { /* best-effort */ }
       toast.success(`Contrato ${created.contract_number} criado!`);
       setRenewModal(false);
       navigate(`/assessoria/contratos/${created.id}`);
@@ -333,7 +492,7 @@ export default function ContractDetail() {
   };
 
   const openManualPay = () => {
-    const baseV = Number(plan?.price_total) || 0;
+    const baseV = Number(planVal('price_total')) || 0;
     const enrV  = Number(contract.enrollment_fee) || 0;
     const discV = Number(contract.manual_discount) || 0;
     const credV = Number(contract.credit_balance) || 0;
@@ -361,6 +520,13 @@ export default function ContractDetail() {
         manual_payment:  true,
         manual_fee:      feeValue > 0 ? feeValue : null,
       });
+      await logEvent('manual_payment_recorded', {
+        method:       manualPayForm.method,
+        date:         manualPayForm.date,
+        value:        Number(manualPayForm.value),
+        fee:          feeValue,
+        fee_mode:     manualPayForm.feeMode,
+      });
       toast.success('Pagamento registrado!');
       setManualPayModal(false);
       load();
@@ -377,7 +543,7 @@ export default function ContractDetail() {
 
   const buildMessage = () => {
     if (!contract || !student || !plan || !modality) return '';
-    const total = plan.price_total - (contract.credit_balance || 0);
+    const total = Number(planVal('price_total') || 0) - (contract.credit_balance || 0);
     const pix = contract.asaas_pix_copy;
     const link = contract.asaas_payment_link;
     let m = `Olá, ${student.full_name.split(' ')[0]}! 👋\n\n`;
@@ -503,8 +669,8 @@ export default function ContractDetail() {
             <div><p className="text-xs text-muted-foreground">Modalidade</p><p className="font-semibold capitalize">{modality?.name}</p></div>
             <div><p className="text-xs text-muted-foreground">Período</p><p className="font-semibold">{periodLabel(plan)}</p></div>
             <div><p className="text-xs text-muted-foreground">Parcelas</p><p className="font-semibold">{contract.installments}x</p></div>
-            <div><p className="text-xs text-muted-foreground">Mensal</p><p className="font-semibold">{formatCurrency(plan?.price_monthly)}</p></div>
-            <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">{formatCurrency(plan?.price_total)}</p></div>
+            <div><p className="text-xs text-muted-foreground">Mensal</p><p className="font-semibold">{formatCurrency(planVal('price_monthly'))}</p></div>
+            <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">{formatCurrency(planVal('price_total'))}</p></div>
             {contract.credit_balance > 0 && <div><p className="text-xs text-muted-foreground">Crédito</p><p className="font-semibold text-green-600">-{formatCurrency(contract.credit_balance)}</p></div>}
           </div>
           <div className="border-t mt-4 pt-3 flex items-center justify-between text-sm flex-wrap gap-2">
@@ -603,6 +769,24 @@ export default function ContractDetail() {
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Timeline de eventos */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Activity className="w-4 h-4 text-blue-600" />
+            Histórico do contrato
+            {events.length > 0 && (
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                {events.length} evento{events.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ContractTimeline events={events} />
         </CardContent>
       </Card>
 

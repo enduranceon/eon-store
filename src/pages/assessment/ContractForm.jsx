@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, FileText, Save, Check, ChevronRight, Users, Calendar, RotateCcw, BadgeDollarSign, Plus, UserPlus } from 'lucide-react';
+import { ArrowLeft, FileText, Save, Check, ChevronRight, Users, Calendar, RotateCcw, BadgeDollarSign, Plus, UserPlus, AlertTriangle, BadgeCheck, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import {
   AssessmentContract, PreSaleCustomer, AssessmentCoach, AssessmentPlan, AssessmentModality,
+  AssessmentContractEvent,
 } from '@/api/entities';
+import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
@@ -103,9 +105,10 @@ export default function ContractForm() {
   const [newCustomer, setNewCustomer] = useState({ full_name: '', whatsapp: '', email: '', cpf: '' });
   const [creatingCustomer, setCreatingCustomer] = useState(false);
 
-  // Step: 'plan' | 'details'
+  // Step: 'plan' | 'details' | 'review'
   const [step, setStep] = useState('plan');
   const [selectedPlan, setSelectedPlan] = useState(null);
+  const [priorContracts, setPriorContracts] = useState({ total: 0, cancelled: 0, loading: false });
 
   const [form, setForm] = useState({
     customer_id: preselectedId,
@@ -214,6 +217,46 @@ export default function ContractForm() {
     } finally { setCreatingCustomer(false); }
   };
 
+  // Avança para a tela de revisão. Antes, busca contratos anteriores do aluno
+  // pra alertar sobre histórico de cancelamentos.
+  const goToReview = async () => {
+    if (!form.customer_id) return toast.error('Selecione um aluno');
+    if (!form.coach_id) return toast.error('Selecione um coach');
+    if (!selectedPlan) return toast.error('Plano inválido');
+    if (!form.start_date) return toast.error('Data de início obrigatória');
+
+    setPriorContracts(p => ({ ...p, loading: true }));
+    try {
+      const { data } = await supabase
+        .from('assessment_contracts')
+        .select('id, status')
+        .eq('customer_id', form.customer_id);
+      const total = data?.length || 0;
+      const cancelled = (data || []).filter(c => c.status === 'cancelled').length;
+      setPriorContracts({ total, cancelled, loading: false });
+    } catch {
+      setPriorContracts({ total: 0, cancelled: 0, loading: false });
+    }
+    setStep('review');
+  };
+
+  // Constrói o snapshot do plano: tudo que precisa ser preservado mesmo
+  // que o plano seja editado no futuro.
+  const buildPlanSnapshot = (plan) => ({
+    plan_id:           plan.id,
+    name:              plan.name || null,
+    modality_id:       plan.modality_id,
+    price_total:       Number(plan.price_total) || 0,
+    price_monthly:     Number(plan.price_monthly) || 0,
+    enrollment_fee:    Number(plan.enrollment_fee) || 0,
+    max_installments:  plan.max_installments,
+    period_months:     plan.period_months || getPlanMonths(plan),
+    period:            plan.period,
+    revenue_center_id: plan.revenue_center_id || null,
+    snapshot_at:       new Date().toISOString(),
+    snapshot_source:   'contract_create',
+  });
+
   const save = async () => {
     if (!form.customer_id) return toast.error('Selecione um aluno');
     if (!form.coach_id) return toast.error('Selecione um coach');
@@ -230,6 +273,7 @@ export default function ContractForm() {
         customer_id:       form.customer_id,
         coach_id:          form.coach_id,
         plan_id:           selectedPlan.id,
+        plan_snapshot:     buildPlanSnapshot(selectedPlan),
         start_date:        form.start_date,
         end_date:          endDate,
         original_end_date: endDate,
@@ -241,6 +285,32 @@ export default function ContractForm() {
         auto_renewal:      !!form.auto_renewal,
         notes:             form.notes || null,
       });
+
+      // Registra evento de criação (auditoria) — best-effort, não bloqueia.
+      try {
+        await AssessmentContractEvent.create({
+          contract_id: created.id,
+          event_type:  'created',
+          payload: {
+            plan_snapshot: buildPlanSnapshot(selectedPlan),
+            coach_id:        form.coach_id,
+            installments,
+            enrollment_fee:  enrollmentFee,
+            manual_discount: manualDiscount,
+            discount_reason: form.discount_reason || null,
+            auto_renewal:    !!form.auto_renewal,
+            total_value:     Number(selectedPlan.price_total) + enrollmentFee - manualDiscount,
+            prior_contracts: priorContracts.total,
+            prior_cancelled: priorContracts.cancelled,
+          },
+          notes: priorContracts.cancelled > 0
+            ? `Aluno tem ${priorContracts.cancelled} contrato(s) cancelado(s) anteriormente`
+            : null,
+        });
+      } catch (eventErr) {
+        console.warn('[contract_event] falha ao registrar criação:', eventErr.message);
+      }
+
       toast.success(`Contrato ${created.contract_number} criado!`);
       navigate(`/assessoria/contratos/${created.id}`);
     } catch (e) { toast.error(e.message || 'Erro ao criar contrato'); }
@@ -257,7 +327,7 @@ export default function ContractForm() {
           </Button>
           <div>
             <h2 className="text-xl font-bold">Novo contrato</h2>
-            <p className="text-sm text-muted-foreground">Passo 1 de 2 — Escolha o plano</p>
+            <p className="text-sm text-muted-foreground">Passo 1 de 3 — Escolha o plano</p>
           </div>
         </div>
 
@@ -303,8 +373,146 @@ export default function ContractForm() {
     );
   }
 
-  // ── STEP 2: Detalhes ───────────────────────────────────────────────────────
+  // ── STEP 3: Revisão ────────────────────────────────────────────────────────
   const planModality = modalities.find(m => m.id === selectedPlan?.modality_id);
+
+  if (step === 'review') {
+    const planName = selectedPlan?.name?.trim()
+      || `${planModality?.name || 'Plano'} · ${planPeriodLabel(selectedPlan)}`;
+    const subtotal     = Number(selectedPlan?.price_total || 0) + (Number(form.enrollment_fee) || 0);
+    const total        = Math.max(0, subtotal - (Number(form.manual_discount) || 0));
+    const installments = Math.min(Math.max(Number(form.installments) || 1, 1), selectedPlan?.max_installments || 1);
+    const valuePerInst = installments > 0 ? total / installments : total;
+    const coach        = coaches.find(c => c.id === form.coach_id);
+
+    return (
+      <div className="max-w-2xl mx-auto space-y-5 pb-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => setStep('details')}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <h2 className="text-xl font-bold">Novo contrato</h2>
+            <p className="text-sm text-muted-foreground">Passo 3 de 3 — Revise antes de salvar</p>
+          </div>
+        </div>
+
+        {/* Alertas */}
+        {priorContracts.cancelled > 0 && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-amber-900">
+              <p className="font-semibold">Atenção — histórico do aluno</p>
+              <p className="text-xs mt-0.5">
+                Esse aluno já teve <b>{priorContracts.cancelled}</b> contrato{priorContracts.cancelled !== 1 ? 's' : ''} cancelado{priorContracts.cancelled !== 1 ? 's' : ''} antes.
+                {priorContracts.total > priorContracts.cancelled && ` · ${priorContracts.total - priorContracts.cancelled} ativo/finalizado`}
+              </p>
+            </div>
+          </div>
+        )}
+        {selectedCustomer && !selectedCustomer.cpf && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-amber-900">
+              <p className="font-semibold">Aluno sem CPF</p>
+              <p className="text-xs mt-0.5">Você poderá criar o contrato, mas precisará do CPF antes de gerar cobrança no Asaas.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Resumo */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BadgeCheck className="w-4 h-4 text-blue-600" /> Resumo do contrato
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="grid grid-cols-[120px_1fr] gap-y-2 gap-x-3">
+              <span className="text-muted-foreground">Aluno</span>
+              <span className="font-semibold">
+                {selectedCustomer?.full_name || '—'}
+                {selectedCustomer?.whatsapp && (
+                  <span className="text-xs text-muted-foreground font-normal ml-2">{selectedCustomer.whatsapp}</span>
+                )}
+              </span>
+
+              <span className="text-muted-foreground">Plano</span>
+              <span>
+                <span className="font-semibold">{planName}</span>
+                <span className="text-xs text-muted-foreground ml-2 capitalize">{planModality?.name} · {planPeriodLabel(selectedPlan)}</span>
+              </span>
+
+              <span className="text-muted-foreground">Coach</span>
+              <span className="font-medium">
+                {coach?.name || '—'}
+                {coach?.role && <span className="text-xs text-muted-foreground capitalize ml-1.5">({coach.role})</span>}
+              </span>
+
+              <span className="text-muted-foreground">Vigência</span>
+              <span>{form.start_date} → {endDate}</span>
+
+              <span className="text-muted-foreground">Renovação</span>
+              <span className={form.auto_renewal ? 'text-green-700 font-medium' : 'text-gray-500'}>
+                {form.auto_renewal ? 'Automática ao vencer' : 'Manual (operador decide)'}
+              </span>
+            </div>
+
+            <div className="border-t pt-3 space-y-2">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Valor do plano</span>
+                <span className="font-medium">{formatCurrency(selectedPlan.price_total)}</span>
+              </div>
+              {Number(form.enrollment_fee) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">+ Matrícula</span>
+                  <span className="font-medium text-amber-700">{formatCurrency(form.enrollment_fee)}</span>
+                </div>
+              )}
+              {Number(form.manual_discount) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">− Desconto</span>
+                  <span className="font-medium text-green-700">−{formatCurrency(form.manual_discount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t pt-2 text-base">
+                <span className="font-semibold">Total a cobrar</span>
+                <span className="font-bold text-blue-700">{formatCurrency(total)}</span>
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Parcelamento</span>
+                <span>{installments}x de {formatCurrency(valuePerInst)}</span>
+              </div>
+            </div>
+
+            {form.discount_reason && Number(form.manual_discount) > 0 && (
+              <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs">
+                <span className="text-muted-foreground">Motivo do desconto: </span>
+                <span className="text-green-900 font-medium">{form.discount_reason}</span>
+              </div>
+            )}
+            {form.notes && (
+              <div className="bg-gray-50 border rounded-lg px-3 py-2 text-xs">
+                <span className="text-muted-foreground">Notas internas: </span>
+                <span>{form.notes}</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="flex gap-2 justify-end pb-4">
+          <Button variant="outline" onClick={() => setStep('details')} disabled={saving}>
+            Voltar e editar
+          </Button>
+          <Button onClick={save} disabled={saving} size="lg">
+            <Save className="w-4 h-4 mr-1.5" /> {saving ? 'Criando...' : 'Confirmar e criar contrato'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── STEP 2: Detalhes ───────────────────────────────────────────────────────
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
@@ -314,7 +522,7 @@ export default function ContractForm() {
         </Button>
         <div>
           <h2 className="text-xl font-bold">Novo contrato</h2>
-          <p className="text-sm text-muted-foreground">Passo 2 de 2 — Detalhes</p>
+          <p className="text-sm text-muted-foreground">Passo 2 de 3 — Detalhes</p>
         </div>
       </div>
 
@@ -569,8 +777,9 @@ export default function ContractForm() {
 
       <div className="flex gap-2 justify-end pb-4">
         <Button variant="outline" onClick={() => setStep('plan')}>Voltar</Button>
-        <Button onClick={save} disabled={saving} size="lg">
-          <Save className="w-4 h-4 mr-1.5" /> {saving ? 'Criando...' : 'Criar contrato'}
+        <Button onClick={goToReview} disabled={priorContracts.loading} size="lg">
+          {priorContracts.loading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
+          Próximo — Revisar <ChevronRight className="w-4 h-4 ml-1" />
         </Button>
       </div>
 

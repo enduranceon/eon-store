@@ -153,6 +153,7 @@ const TABLE_MAP = {
   AssessmentContract:           'assessment_contracts',
   AssessmentContractCoachHist:  'assessment_contract_coach_history',
   AssessmentLeave:              'assessment_leaves',
+  AssessmentContractEvent:      'assessment_contract_event',
   PayoutRoleModalityRate:       'payout_role_modality_rates',
   PayoutGrowthTier:             'payout_growth_tiers',
   PayoutMonthlyClosing:         'payout_monthly_closings',
