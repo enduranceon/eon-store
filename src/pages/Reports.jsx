@@ -408,7 +408,7 @@ function SalesTab() {
             .order('created_date', { ascending: false }),
           supabase.from('assessment_contracts')
             .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
-            .neq('status', 'cancelled')
+            .neq('status', 'cancelled').neq('status', 'draft')
             .order('created_at', { ascending: false }),
           supabase.from('assessment_plans').select('id, price_total, name'),
           supabase.from('presale_customers').select('id, full_name'),

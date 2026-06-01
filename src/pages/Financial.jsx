@@ -258,7 +258,7 @@ export default function Financial() {
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('assessment_contracts')
             .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, plan_snapshot')
-            .neq('status', 'cancelled').neq('payment_status', 'refunded'),
+            .neq('status', 'cancelled').neq('status', 'draft').neq('payment_status', 'refunded'),
           supabase.from('assessment_plans').select('id, price_total, name, revenue_center_id'),
           supabase.from('presale_customers').select('id, full_name'),
           supabase.from('revenue_centers').select('id, name, color'),

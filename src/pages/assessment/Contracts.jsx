@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Search, FileText, ChevronRight, Filter } from 'lucide-react';
+import { Plus, Search, FileText, ChevronRight, Filter, RefreshCcw } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -71,7 +71,11 @@ export default function Contracts() {
     };
   });
 
+  // Drafts (rascunhos de renovação) vão pra página dedicada — escondemos aqui
+  const drafts = enriched.filter(c => c.status === 'draft');
+
   const filtered = enriched.filter(c => {
+    if (c.status === 'draft') return false;
     if (statusF !== 'all' && c.status !== statusF) return false;
     if (modalityF !== 'all' && c.modality?.id !== modalityF) return false;
     if (coachF !== 'all' && c.coach_id !== coachF) return false;
@@ -93,6 +97,25 @@ export default function Contracts() {
         </div>
         <Button onClick={() => navigate('/assessoria/contratos/novo')}><Plus className="w-4 h-4 mr-2" /> Novo contrato</Button>
       </div>
+
+      {/* Faixa de drafts pendentes */}
+      {drafts.length > 0 && (
+        <Card className="border-blue-300 bg-blue-50/40 cursor-pointer hover:bg-blue-50 transition-colors"
+          onClick={() => navigate('/assessoria/renovacoes')}>
+          <CardContent className="p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-blue-100"><RefreshCcw className="w-4 h-4 text-blue-700" /></div>
+              <div>
+                <p className="text-sm font-semibold text-blue-900">
+                  {drafts.length} renovação{drafts.length !== 1 ? 'ões' : ''} aguardando aprovação
+                </p>
+                <p className="text-xs text-blue-700">Clique para revisar e ativar</p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-blue-700" />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filtros */}
       <div className="flex flex-wrap gap-2 items-center">
@@ -158,7 +181,7 @@ export default function Contracts() {
                       <p className="capitalize font-medium">{c.modality?.name}</p>
                       <p className="text-muted-foreground capitalize">{c.plan?.period}</p>
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold">{formatCurrency(c.plan?.price_total)}</td>
+                    <td className="px-4 py-3 text-right font-semibold">{formatCurrency(c.plan_snapshot?.price_total ?? c.plan?.price_total)}</td>
                     <td className="px-4 py-3 text-right text-xs text-muted-foreground">{formatDate(c.end_date)}</td>
                     <td className="px-4 py-3 text-center"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span></td>
                     <td className="px-4 py-3 text-center"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${pa.cls}`}>{pa.label}</span></td>

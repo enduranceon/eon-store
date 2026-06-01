@@ -5,7 +5,7 @@ import {
   Users, TrendingUp, BarChart3,
   ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
-  ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap,
+  ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw,
 } from 'lucide-react';
 import { cn, todayLocalStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
@@ -20,6 +20,7 @@ const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge
 const ASSESSORIA_ITEMS = [
   { label: 'Painel',         icon: Activity,      to: '/assessoria',              exact: true },
   { label: 'Contratos',      icon: FileText,      to: '/assessoria/contratos',    badge: 'assessoria' },
+  { label: 'Renovações',     icon: RefreshCcw,    to: '/assessoria/renovacoes',   badge: 'renewals' },
   { label: 'Alunos',         icon: Users,         to: '/assessoria/alunos' },
   { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },
   { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
@@ -136,7 +137,7 @@ function CollapseSection({ label, icon: Icon, items, isActive, badges, onClick, 
 
 export default function Sidebar({ open, onClose, onSignOut }) {
   const location = useLocation();
-  const [badges, setBadges] = useState({ orders: 0, clients: 0, today: 0, assessoria: 0 });
+  const [badges, setBadges] = useState({ orders: 0, clients: 0, today: 0, assessoria: 0, renewals: 0 });
 
   const isActive = (to, exact) => {
     if (exact) return location.pathname === to;
@@ -152,7 +153,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         const in14 = new Date(); in14.setDate(in14.getDate() + 14);
         const in14Str = in14.toISOString().split('T')[0];
 
-        const [presaleOrders, stockOrders, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds] = await Promise.all([
+        const [presaleOrders, stockOrders, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts] = await Promise.all([
           supabase.from('presale_orders').select('id, payment_status, due_date')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('stock_orders').select('id, payment_status, due_date')
@@ -167,6 +168,8 @@ export default function Sidebar({ open, onClose, onSignOut }) {
             .eq('status', 'active').lte('end_date', in14Str).gte('end_date', todayStr),
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('refund_status', 'pending'),
+          supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
+            .eq('status', 'draft'),
         ]);
 
         const allOrders = [...(presaleOrders.data || []), ...(stockOrders.data || [])];
@@ -181,6 +184,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           clients:    clientsRes.count || 0,
           today:      todayCount,
           assessoria: (contractsOverdue.count || 0) + (contractsExpiring.count || 0),
+          renewals:   renewalDrafts.count || 0,
         });
       } catch { /* silencioso */ }
     };

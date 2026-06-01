@@ -141,7 +141,7 @@ export default function Today() {
             .neq('payment_status', 'refunded'),
           supabase.from('assessment_contracts')
             .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, due_date, end_date, status, asaas_charge_id, enrollment_fee, manual_discount, refund_status, refund_amount')
-            .not('status', 'in', '("cancelled","finished")')
+            .not('status', 'in', '("cancelled","finished","draft")')
             .neq('payment_status', 'refunded'),
           supabase.from('assessment_plans').select('id, price_total'),
           supabase.from('presale_customers').select('id, full_name'),
