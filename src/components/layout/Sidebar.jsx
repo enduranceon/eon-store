@@ -53,6 +53,7 @@ const CONFIG_ITEMS = [
   { label: 'Fornecedores',      icon: Truck,           to: '/fornecedores' },
   { label: 'Cupons',            icon: Ticket,          to: '/cupons' },
   { label: 'Centros receita',   icon: Palette,         to: '/centros-receita' },
+  { label: 'Métodos pagamento', icon: DollarSign,      to: '/configuracoes/pagamento' },
   { label: 'Config. assessoria',icon: Settings,        to: '/assessoria/configuracoes' },
 ];
 

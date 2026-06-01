@@ -28,6 +28,7 @@ export const AssessmentContract          = db.entities.AssessmentContract;
 export const AssessmentContractCoachHist = db.entities.AssessmentContractCoachHist;
 export const AssessmentLeave             = db.entities.AssessmentLeave;
 export const AssessmentContractEvent     = db.entities.AssessmentContractEvent;
+export const PaymentMethodConfig         = db.entities.PaymentMethodConfig;
 export const PayoutRoleModalityRate      = db.entities.PayoutRoleModalityRate;
 export const PayoutGrowthTier            = db.entities.PayoutGrowthTier;
 export const PayoutMonthlyClosing        = db.entities.PayoutMonthlyClosing;

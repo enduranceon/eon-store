@@ -32,7 +32,7 @@ const TABLES_WITH_UPDATED_AT = new Set([
   'payout_growth_tiers', 'payout_role_modality_rates',
   'payout_monthly_closings', 'payout_monthly_statement_items',
   'renewal_rules', 'revenue_centers',
-  'contract_renewal_actions', 'discount_log',
+  'contract_renewal_actions', 'discount_log', 'payment_methods',
 ]);
 
 function getUpdatedColumn(tableName) {
@@ -154,6 +154,7 @@ const TABLE_MAP = {
   AssessmentContractCoachHist:  'assessment_contract_coach_history',
   AssessmentLeave:              'assessment_leaves',
   AssessmentContractEvent:      'assessment_contract_event',
+  PaymentMethodConfig:          'payment_methods',
   PayoutRoleModalityRate:       'payout_role_modality_rates',
   PayoutGrowthTier:             'payout_growth_tiers',
   PayoutMonthlyClosing:         'payout_monthly_closings',
