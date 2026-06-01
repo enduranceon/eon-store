@@ -11,7 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { suggestFeePercent } from '@/lib/payment-methods';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
@@ -52,7 +53,7 @@ export default function OrderDetail() {
   const [saving, setSaving] = useState(false);
   const [saveConfirmModal, setSaveConfirmModal] = useState(false);
   const [manualPayModal, setManualPayModal] = useState(false);
-  const [manualPayForm, setManualPayForm] = useState({ method: 'pix_manual', date: '', value: '' });
+  const [manualPayForm, setManualPayForm] = useState({ method: 'pix_manual', date: '', value: '', fee: '0', feeMode: 'value' });
   const [manualPaySaving, setManualPaySaving] = useState(false);
   const [whatsappModal, setWhatsappModal] = useState(false);
   const [whatsappMsg, setWhatsappMsg] = useState('');
@@ -118,7 +119,13 @@ export default function OrderDetail() {
 
   const openManualPay = () => {
     const total = order?.total_value ? Number(order.total_value).toFixed(2) : '';
-    setManualPayForm({ method: 'pix_manual', date: new Date().toISOString().split('T')[0], value: total });
+    setManualPayForm({
+      method:  'pix_manual',
+      date:    todayLocalStr(),
+      value:   total,
+      fee:     '0',     // PIX manual padrão = sem taxa
+      feeMode: 'value',
+    });
     setManualPayModal(true);
   };
 
@@ -127,10 +134,13 @@ export default function OrderDetail() {
     if (!manualPayForm.value || isNaN(Number(manualPayForm.value))) return toast.error('Informe o valor recebido');
     setManualPaySaving(true);
     try {
+      const feeValue = Number(manualPayForm.fee) || 0;
       await PreSaleOrder.update(id, {
         payment_status: 'paid',
         payment_method: manualPayForm.method,
         payment_date:   manualPayForm.date,
+        manual_payment: true,
+        manual_fee:     feeValue > 0 ? feeValue : null,
       });
       toast.success('Pagamento registrado!');
       setManualPayModal(false);
@@ -1023,36 +1033,91 @@ export default function OrderDetail() {
 
       {/* Modal de pagamento manual */}
       <Dialog open={manualPayModal} onOpenChange={setManualPayModal}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><HandCoins className="w-4 h-4 text-green-600" /> Registrar pagamento manual</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HandCoins className="w-4 h-4 text-green-600" /> Registrar pagamento manual
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-              Registra o recebimento direto, sem gerar link no Asaas.
+              Sem Asaas. Registra diretamente que o pagamento foi recebido.
             </p>
             <div>
               <Label>Forma de pagamento</Label>
-              <Select value={manualPayForm.method} onValueChange={v => setManualPayForm(f => ({ ...f, method: v }))}>
+              <Select value={manualPayForm.method}
+                onValueChange={v => {
+                  const sug = suggestFeePercent(v);
+                  const valor = Number(manualPayForm.value) || 0;
+                  const taxaSugerida = (valor * sug / 100).toFixed(2);
+                  setManualPayForm(f => ({ ...f, method: v, fee: taxaSugerida }));
+                }}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="pix_manual">PIX manual</SelectItem>
                   <SelectItem value="cash">Dinheiro</SelectItem>
                   <SelectItem value="bank_transfer">Transferência bancária</SelectItem>
-                  <SelectItem value="card_machine">Cartão na máquina</SelectItem>
+                  <SelectItem value="card_machine">Cartão na máquina (Cielo, Stone, etc.)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Valor recebido (R$)</Label>
-                <Input type="number" step="0.01" className="mt-1" value={manualPayForm.value} onChange={e => setManualPayForm(f => ({ ...f, value: e.target.value }))} />
+                <Input type="number" step="0.01" className="mt-1"
+                  value={manualPayForm.value}
+                  onChange={e => setManualPayForm(f => ({ ...f, value: e.target.value }))} />
               </div>
               <div>
                 <Label>Data do pagamento</Label>
-                <Input type="date" className="mt-1" value={manualPayForm.date} onChange={e => setManualPayForm(f => ({ ...f, date: e.target.value }))} />
+                <Input type="date" className="mt-1"
+                  value={manualPayForm.date}
+                  onChange={e => setManualPayForm(f => ({ ...f, date: e.target.value }))}
+                  max={todayLocalStr()} />
               </div>
             </div>
+
+            {/* Taxa cobrada (default sugerido pelo método; editável) */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <Label>Taxa cobrada (R$)</Label>
+                {(() => {
+                  const sug = suggestFeePercent(manualPayForm.method);
+                  const valor = Number(manualPayForm.value) || 0;
+                  const taxaSugerida = (valor * sug / 100).toFixed(2);
+                  const atual = Number(manualPayForm.fee) || 0;
+                  if (sug > 0 && Math.abs(atual - Number(taxaSugerida)) > 0.01) {
+                    return (
+                      <button type="button"
+                        onClick={() => setManualPayForm(f => ({ ...f, fee: taxaSugerida }))}
+                        className="text-xs text-blue-600 hover:underline">
+                        Usar padrão ({sug.toFixed(2)}% = {formatCurrency(Number(taxaSugerida))})
+                      </button>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+              <Input type="number" step="0.01" min="0" className="mt-1"
+                value={manualPayForm.fee || '0'}
+                onChange={e => setManualPayForm(f => ({ ...f, fee: e.target.value }))} />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {(() => {
+                  const valor = Number(manualPayForm.value) || 0;
+                  const taxa  = Number(manualPayForm.fee)   || 0;
+                  const liquido = Math.max(0, valor - taxa);
+                  const pct = valor > 0 ? (taxa / valor * 100).toFixed(2) : '0';
+                  return (
+                    <>Taxa = <strong>{pct}%</strong> · Líquido a receber: <strong>{formatCurrency(liquido)}</strong></>
+                  );
+                })()}
+              </p>
+            </div>
+
             <div className="flex gap-2 pt-1">
-              <Button variant="outline" className="flex-1" onClick={() => setManualPayModal(false)}>Cancelar</Button>
+              <Button variant="outline" className="flex-1" onClick={() => setManualPayModal(false)} disabled={manualPaySaving}>
+                Cancelar
+              </Button>
               <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={recordManualPayment} disabled={manualPaySaving}>
                 {manualPaySaving ? 'Salvando...' : 'Confirmar recebimento'}
               </Button>

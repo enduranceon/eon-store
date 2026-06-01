@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag, HandCoins } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,7 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { suggestFeePercent } from '@/lib/payment-methods';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
@@ -85,6 +86,11 @@ export default function StockOrderDetail() {
   const [cancelItemReason, setCancelItemReason] = useState('');
   const [cancelItemLoading, setCancelItemLoading] = useState(false);
 
+  // Pagamento manual
+  const [manualPayModal, setManualPayModal] = useState(false);
+  const [manualPaySaving, setManualPaySaving] = useState(false);
+  const [manualPayForm, setManualPayForm] = useState({ method: 'pix_manual', date: '', value: '', fee: '0', feeMode: 'value' });
+
   const load = async () => {
     try {
       const o = await StockOrder.get(id);
@@ -142,6 +148,38 @@ export default function StockOrderDetail() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const openManualPay = () => {
+    const total = order?.total_value ? Number(order.total_value).toFixed(2) : '';
+    setManualPayForm({
+      method:  'pix_manual',
+      date:    todayLocalStr(),
+      value:   total,
+      fee:     '0',
+      feeMode: 'value',
+    });
+    setManualPayModal(true);
+  };
+
+  const recordManualPayment = async () => {
+    if (!manualPayForm.date) return toast.error('Informe a data do pagamento');
+    if (!manualPayForm.value || isNaN(Number(manualPayForm.value))) return toast.error('Informe o valor recebido');
+    setManualPaySaving(true);
+    try {
+      const feeValue = Number(manualPayForm.fee) || 0;
+      await StockOrder.update(id, {
+        payment_status: 'paid',
+        payment_method: manualPayForm.method,
+        payment_date:   manualPayForm.date,
+        manual_payment: true,
+        manual_fee:     feeValue > 0 ? feeValue : null,
+      });
+      toast.success('Pagamento registrado!');
+      setManualPayModal(false);
+      load();
+    } catch (e) { toast.error(e.message); }
+    finally { setManualPaySaving(false); }
   };
 
   const callAsaas = async (action, extra = {}) => {
@@ -479,6 +517,100 @@ export default function StockOrderDetail() {
         }}
       />
 
+      {/* Modal de pagamento manual */}
+      <Dialog open={manualPayModal} onOpenChange={setManualPayModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HandCoins className="w-4 h-4 text-green-600" /> Registrar pagamento manual
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              Sem Asaas. Registra diretamente que o pagamento foi recebido.
+            </p>
+            <div>
+              <Label>Forma de pagamento</Label>
+              <Select value={manualPayForm.method}
+                onValueChange={v => {
+                  const sug = suggestFeePercent(v);
+                  const valor = Number(manualPayForm.value) || 0;
+                  const taxaSugerida = (valor * sug / 100).toFixed(2);
+                  setManualPayForm(f => ({ ...f, method: v, fee: taxaSugerida }));
+                }}>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pix_manual">PIX manual</SelectItem>
+                  <SelectItem value="cash">Dinheiro</SelectItem>
+                  <SelectItem value="bank_transfer">Transferência bancária</SelectItem>
+                  <SelectItem value="card_machine">Cartão na máquina (Cielo, Stone, etc.)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Valor recebido (R$)</Label>
+                <Input type="number" step="0.01" className="mt-1"
+                  value={manualPayForm.value}
+                  onChange={e => setManualPayForm(f => ({ ...f, value: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Data do pagamento</Label>
+                <Input type="date" className="mt-1"
+                  value={manualPayForm.date}
+                  onChange={e => setManualPayForm(f => ({ ...f, date: e.target.value }))}
+                  max={todayLocalStr()} />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <Label>Taxa cobrada (R$)</Label>
+                {(() => {
+                  const sug = suggestFeePercent(manualPayForm.method);
+                  const valor = Number(manualPayForm.value) || 0;
+                  const taxaSugerida = (valor * sug / 100).toFixed(2);
+                  const atual = Number(manualPayForm.fee) || 0;
+                  if (sug > 0 && Math.abs(atual - Number(taxaSugerida)) > 0.01) {
+                    return (
+                      <button type="button"
+                        onClick={() => setManualPayForm(f => ({ ...f, fee: taxaSugerida }))}
+                        className="text-xs text-blue-600 hover:underline">
+                        Usar padrão ({sug.toFixed(2)}% = {formatCurrency(Number(taxaSugerida))})
+                      </button>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+              <Input type="number" step="0.01" min="0" className="mt-1"
+                value={manualPayForm.fee || '0'}
+                onChange={e => setManualPayForm(f => ({ ...f, fee: e.target.value }))} />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {(() => {
+                  const valor = Number(manualPayForm.value) || 0;
+                  const taxa  = Number(manualPayForm.fee)   || 0;
+                  const liquido = Math.max(0, valor - taxa);
+                  const pct = valor > 0 ? (taxa / valor * 100).toFixed(2) : '0';
+                  return (
+                    <>Taxa = <strong>{pct}%</strong> · Líquido a receber: <strong>{formatCurrency(liquido)}</strong></>
+                  );
+                })()}
+              </p>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setManualPayModal(false)} disabled={manualPaySaving}>
+                Cancelar
+              </Button>
+              <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={recordManualPayment} disabled={manualPaySaving}>
+                {manualPaySaving ? 'Salvando...' : 'Confirmar recebimento'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Modal WhatsApp */}
       <Dialog open={whatsappModal} onOpenChange={setWhatsappModal}>
         <DialogContent className="max-w-md">
@@ -757,6 +889,14 @@ export default function StockOrderDetail() {
               <Button className="w-full gap-2" onClick={() => createAsaasCharge(asaasBilling)} disabled={asaasLoading}>
                 <Zap className="w-4 h-4" />
                 {asaasLoading ? 'Criando cobrança...' : `Gerar cobrança — ${{ PIX: 'PIX', BOLETO: 'Boleto', CREDIT_CARD: `Cartão ${asaasInstallments}x` }[asaasBilling]}`}
+              </Button>
+              <div className="relative flex items-center gap-3 py-1">
+                <div className="flex-1 h-px bg-gray-200" />
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">ou</span>
+                <div className="flex-1 h-px bg-gray-200" />
+              </div>
+              <Button variant="outline" className="w-full gap-2 border-green-300 text-green-700 hover:bg-green-50" onClick={openManualPay}>
+                <HandCoins className="w-4 h-4" /> Registrar pagamento manual (sem Asaas)
               </Button>
             </div>
           )}
