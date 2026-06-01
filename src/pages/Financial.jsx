@@ -210,6 +210,8 @@ export default function Financial() {
   const [refundDoneModal, setRefundDoneModal] = useState(null); // { contract } | null
   const [refundDoneForm, setRefundDoneForm]   = useState({ date: '', notes: '' });
   const [savingRefund, setSavingRefund]       = useState(false);
+  const [asaasPayments, setAsaasPayments] = useState([]);     // cache local (asaas_payments)
+  const [syncingAsaas, setSyncingAsaas]   = useState(false);
 
   // ── Fetch Asaas ───────────────────────────────────────────────
   const fetchReceivables = async (force = false) => {
@@ -249,7 +251,13 @@ export default function Financial() {
     const load = async () => {
       setLoading(true);
       try {
-        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes] = await Promise.all([
+        // Janela ampla pra puxar pagamentos: hoje − 7 meses para cobrir gráfico de 6 meses
+        const sevenMonthsAgo = new Date();
+        sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
+        sevenMonthsAgo.setDate(1);
+        const apFromStr = toLocalDateStr(sevenMonthsAgo);
+
+        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes, paymentsRes] = await Promise.all([
           supabase.from('presale_orders')
             .select('id, order_number, checkout_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
@@ -263,7 +271,14 @@ export default function Financial() {
           supabase.from('presale_customers').select('id, full_name'),
           supabase.from('revenue_centers').select('id, name, color'),
           supabase.from('stock_products').select('id, revenue_center_id'),
+          // Pagamentos reais do Asaas — fonte de verdade do fluxo de caixa
+          supabase.from('asaas_payments')
+            .select('id, asaas_payment_id, order_id, order_type, status, value, net_value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
+            .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
+            .gte('credit_date', apFromStr)
+            .order('credit_date', { ascending: false }),
         ]);
+        setAsaasPayments(paymentsRes.data || []);
 
         const plansMap         = Object.fromEntries((plansRes.data         || []).map(p => [p.id, p]));
         const customersMap     = Object.fromEntries((customersRes.data     || []).map(c => [c.id, c]));
@@ -327,6 +342,38 @@ export default function Financial() {
   const lastMonthStart = getLastMonthStart();
   const lastMonthEnd   = getLastMonthEnd();
 
+  // Set de order_id (qualquer tipo) que tem pagamentos reais cacheados.
+  // Pra esses, asaas_payments é fonte de verdade; orders pulam o fallback.
+  const ordersWithAsaasCache = useMemo(() => {
+    const set = new Set();
+    for (const p of asaasPayments) if (p.order_id) set.add(p.order_id);
+    return set;
+  }, [asaasPayments]);
+
+  // Calcula bruto + líquido recebidos num período (yyyymm) ou entre 2 datas
+  const sumReceived = (predicateAsaas, predicateOrder) => {
+    // 1) Fonte de verdade: net_value dos pagamentos Asaas
+    let bruto = 0, liquido = 0;
+    for (const p of asaasPayments) {
+      if (!predicateAsaas(p)) continue;
+      const v  = Number(p.value) || 0;
+      const nv = p.net_value != null ? Number(p.net_value) : v;
+      bruto   += v;
+      liquido += nv;
+    }
+    // 2) Fallback: orders pagos que NÃO têm cache (pagamentos manuais ou ainda não sincronizados)
+    for (const o of orders) {
+      if (o.payment_status !== 'paid') continue;
+      if (ordersWithAsaasCache.has(o.id)) continue;
+      if (!predicateOrder(o)) continue;
+      const mVal = effectiveMonthlyValue(o);
+      const mFee = effectiveMonthlyFee(o);
+      bruto   += mVal;
+      liquido += (mVal - mFee);
+    }
+    return { bruto, liquido };
+  };
+
   const activeOrders = orders.filter(o => o.payment_status !== 'paid');
 
   const paidThisMonth = orders
@@ -341,12 +388,20 @@ export default function Financial() {
   const chargedNoDate = activeOrders.filter(o => !o.due_date && o.asaas_charge_id);
   const noCharge   = activeOrders.filter(o => ['awaiting_charge', 'message_sent'].includes(o.payment_status));
 
-  // KPI valores — contratos parcelados contribuem apenas 1 parcela/mês
-  const receivedMonth = paidThisMonth.reduce((s, o) => s + effectiveMonthlyValue(o), 0);
-  const feesMonth     = paidThisMonth.reduce((s, o) => s + effectiveMonthlyFee(o), 0);
-  const netMonth      = receivedMonth - feesMonth;
-  const receivedLast  = paidLastMonth.reduce((s, o) => s + effectiveMonthlyValue(o), 0);
-  const netLast       = receivedLast  - paidLastMonth.reduce((s, o) => s + effectiveMonthlyFee(o), 0);
+  // KPI valores: combina asaas_payments (real) + orders manuais (fallback)
+  const monthResult = sumReceived(
+    p => p.credit_date >= monthStart,
+    o => o.payment_date >= monthStart,
+  );
+  const lastResult = sumReceived(
+    p => p.credit_date >= lastMonthStart && p.credit_date <= lastMonthEnd,
+    o => o.payment_date >= lastMonthStart && o.payment_date <= lastMonthEnd,
+  );
+  const receivedMonth = monthResult.bruto;
+  const feesMonth     = monthResult.bruto - monthResult.liquido;
+  const netMonth      = monthResult.liquido;
+  const receivedLast  = lastResult.bruto;
+  const netLast       = lastResult.liquido;
 
   const toReceive    = orders.filter(o => ['charge_sent', 'partially_paid'].includes(o.payment_status)).reduce((s, o) => s + (o.total_value || 0), 0);
   const overdueTotal = overdue.reduce((s, o) => s + (o.total_value || 0), 0);
@@ -360,6 +415,7 @@ export default function Financial() {
   const pipelineTotal = overdueTotal + toReceive + upcomingTotal + noChargeTotal;
 
   // ── Gráfico: últimos 6 meses ──────────────────────────────────
+  // Combina asaas_payments (real, via credit_date) + orders manuais sem cache
   const chartData = useMemo(() => {
     const now = new Date();
     const months = [];
@@ -368,12 +424,30 @@ export default function Financial() {
       months.push(toLocalDateStr(d).slice(0, 7));
     }
     return months.map(ym => {
-      const paid = orders.filter(o => o.payment_status === 'paid' && o.payment_date?.startsWith(ym));
-      const gross = paid.reduce((s, o) => s + effectiveMonthlyValue(o), 0);
-      const fees  = paid.reduce((s, o) => s + effectiveMonthlyFee(o), 0);
-      return { month: monthLabel(ym), ym, bruto: gross, liquido: gross - fees, count: paid.length };
+      let bruto = 0, liquido = 0, count = 0;
+      // 1) Asaas payments — fonte de verdade
+      for (const p of asaasPayments) {
+        if (!p.credit_date?.startsWith(ym)) continue;
+        const v  = Number(p.value) || 0;
+        const nv = p.net_value != null ? Number(p.net_value) : v;
+        bruto   += v;
+        liquido += nv;
+        count++;
+      }
+      // 2) Orders manuais (sem cache Asaas)
+      for (const o of orders) {
+        if (o.payment_status !== 'paid') continue;
+        if (ordersWithAsaasCache.has(o.id)) continue;
+        if (!o.payment_date?.startsWith(ym)) continue;
+        const mVal = effectiveMonthlyValue(o);
+        const mFee = effectiveMonthlyFee(o);
+        bruto   += mVal;
+        liquido += (mVal - mFee);
+        count++;
+      }
+      return { month: monthLabel(ym), ym, bruto, liquido, count };
     });
-  }, [orders]);
+  }, [orders, asaasPayments, ordersWithAsaasCache]);
 
   const maxChart = useMemo(() => Math.max(...chartData.map(d => d.bruto), 1), [chartData]);
   const currentYM = monthStart.slice(0, 7);
@@ -412,6 +486,37 @@ export default function Financial() {
       .filter(c => c.value > 0).sort((a, b) => b.value - a.value);
     return { rows, semCentro };
   }, [centers, paidThisMonth]);
+
+  // Backfill manual: chama edge function que busca parcelas no Asaas e upserta o cache
+  const syncAsaasPayments = async () => {
+    setSyncingAsaas(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-asaas-payments', {
+        body: { since_days: 365 },
+      });
+      if (error) {
+        let msg = error.message;
+        try { if (error.context?.json) { const b = await error.context.json(); if (b?.error) msg = b.error; } } catch { /* */ }
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      toast.success(`Sincronizado! ${data.upserted} pagamentos atualizados de ${data.scanned} cobranças.`);
+      // Recarrega cache local
+      const sevenMonthsAgo = new Date();
+      sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
+      sevenMonthsAgo.setDate(1);
+      const { data: payments } = await supabase.from('asaas_payments')
+        .select('id, asaas_payment_id, order_id, order_type, status, value, net_value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
+        .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
+        .gte('credit_date', toLocalDateStr(sevenMonthsAgo))
+        .order('credit_date', { ascending: false });
+      setAsaasPayments(payments || []);
+    } catch (e) {
+      toast.error('Erro ao sincronizar: ' + (e.message || ''));
+    } finally {
+      setSyncingAsaas(false);
+    }
+  };
 
   const openRefundDone = (contract) => {
     setRefundDoneForm({ date: todayLocalStr(), notes: '' });
@@ -453,14 +558,25 @@ export default function Financial() {
     <div className="space-y-6">
 
       {/* ── Cabeçalho ─────────────────────────────────────────── */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <Wallet className="w-5 h-5 text-blue-600" />
             Fluxo de Caixa
           </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Loja · Pré-venda · Assessoria</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Loja · Pré-venda · Assessoria
+            {asaasPayments.length > 0 && (
+              <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
+                <Zap className="w-3 h-3" /> {asaasPayments.length} pagamentos Asaas sincronizados
+              </span>
+            )}
+          </p>
         </div>
+        <Button variant="outline" size="sm" onClick={syncAsaasPayments} disabled={syncingAsaas}>
+          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncingAsaas ? 'animate-spin' : ''}`} />
+          {syncingAsaas ? 'Sincronizando...' : 'Sincronizar Asaas'}
+        </Button>
       </div>
 
       {/* ── KPI Cards ─────────────────────────────────────────── */}
@@ -553,7 +669,7 @@ export default function Financial() {
             <BarChart3 className="w-4 h-4 text-blue-600" />
             Recebimentos — últimos 6 meses
           </CardTitle>
-          <p className="text-xs text-muted-foreground">Valor bruto por mês — contratos parcelados contam apenas a parcela do mês</p>
+          <p className="text-xs text-muted-foreground">Valor bruto por mês — parcelas Asaas reais (via credit_date) + pagamentos manuais</p>
         </CardHeader>
         <CardContent>
           {chartData.every(d => d.bruto === 0) ? (
