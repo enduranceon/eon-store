@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, DollarSign, User, Plus, ChevronDown, ChevronRight } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft, CheckCircle2, User, Plus, ChevronDown, ChevronRight,
+  Lock, Banknote, Info, AlertTriangle, RotateCcw, Trash2,
+} from 'lucide-react';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,9 +26,9 @@ const SOURCE = {
 };
 
 const STATUS = {
-  pending_approval: { label: 'Pendente aprovação', cls: 'bg-amber-100 text-amber-700' },
-  approved:         { label: 'Aprovado',           cls: 'bg-blue-100 text-blue-700' },
-  paid:             { label: 'Pago',               cls: 'bg-green-100 text-green-700' },
+  pending_approval: { label: 'Em revisão',  cls: 'bg-amber-100 text-amber-700' },
+  approved:         { label: 'Aprovado',    cls: 'bg-blue-100 text-blue-700' },
+  paid:             { label: 'Pago',        cls: 'bg-green-100 text-green-700' },
 };
 
 export default function ClosingDetail() {
@@ -35,9 +38,13 @@ export default function ClosingDetail() {
   const [items, setItems]       = useState([]);
   const [coaches, setCoaches]   = useState([]);
   const [expanded, setExpanded] = useState({}); // coach_id → bool
+  const [expandedItem, setExpandedItem] = useState({}); // item_id → bool
   const [adjustModal, setAdjustModal] = useState(false);
-  const [adjustForm, setAdjustForm] = useState({ coach_id: '', amount: '', description: '' });
+  const [adjustForm, setAdjustForm] = useState({ coach_id: '', amount: '', description: '', adjustment_reason: '' });
+  const [savingAdjust, setSavingAdjust] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [markingPaid, setMarkingPaid] = useState(false);
+  const [reopening, setReopening] = useState(false);
 
   const load = async () => {
     try {
@@ -61,9 +68,12 @@ export default function ClosingDetail() {
   }).filter(g => g.items.length > 0).sort((a, b) => b.subtotal - a.subtotal);
 
   const total = items.reduce((s, i) => s + Number(i.amount), 0);
+  const adjustmentsTotal = items
+    .filter(i => i.source_type === 'manual_adjustment')
+    .reduce((s, i) => s + Number(i.amount), 0);
 
   const approve = async () => {
-    if (!confirm('Aprovar fechamento? Coaches passarão a visualizar o extrato.')) return;
+    if (!confirm('Aprovar fechamento?\n\nOs valores ficam congelados e coaches passam a visualizar o extrato. Você ainda pode reabrir se precisar ajustar.')) return;
     setApproving(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -72,50 +82,140 @@ export default function ClosingDetail() {
         approved_at: new Date().toISOString(),
         approved_by: user?.id || null,
       });
-      toast.success('Fechamento aprovado!'); load();
+      toast.success('Fechamento aprovado e congelado!'); load();
     } catch (e) { toast.error(e.message); }
     finally { setApproving(false); }
   };
 
+  const markAsPaid = async () => {
+    if (!confirm('Marcar como pago?\n\nIndica que os repasses foram efetivados. Após isso, o fechamento fica permanentemente bloqueado para edição.')) return;
+    setMarkingPaid(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      await PayoutMonthlyClosing.update(id, {
+        status: 'paid',
+        paid_at: new Date().toISOString(),
+        paid_by: user?.id || null,
+      });
+      toast.success('Fechamento marcado como pago!'); load();
+    } catch (e) { toast.error(e.message); }
+    finally { setMarkingPaid(false); }
+  };
+
+  const reopen = async () => {
+    if (!confirm('Reabrir fechamento aprovado?\n\nVolta para "em revisão" e libera novamente para edição. Use apenas se precisar corrigir algo antes do pagamento.')) return;
+    setReopening(true);
+    try {
+      await PayoutMonthlyClosing.update(id, {
+        status: 'pending_approval',
+        approved_at: null,
+        approved_by: null,
+      });
+      toast.success('Fechamento reaberto para edição'); load();
+    } catch (e) { toast.error(e.message); }
+    finally { setReopening(false); }
+  };
+
   const addAdjust = async () => {
-    if (!adjustForm.coach_id || !adjustForm.amount) return toast.error('Coach e valor obrigatórios');
+    if (!adjustForm.coach_id) return toast.error('Selecione o coach');
+    if (!adjustForm.amount || isNaN(Number(adjustForm.amount))) return toast.error('Valor inválido');
+    if (!adjustForm.adjustment_reason?.trim()) return toast.error('Motivo do ajuste é obrigatório');
+    setSavingAdjust(true);
     try {
       await PayoutMonthlyStatementItem.create({
-        closing_id: id,
-        coach_id: adjustForm.coach_id,
+        closing_id:  id,
+        coach_id:    adjustForm.coach_id,
         source_type: 'manual_adjustment',
-        description: adjustForm.description || 'Ajuste manual',
-        amount: Number(adjustForm.amount),
+        description: adjustForm.description?.trim() || 'Ajuste manual',
+        amount:      Number(adjustForm.amount),
+        adjustment_reason: adjustForm.adjustment_reason.trim(),
       });
       toast.success('Ajuste adicionado!');
       setAdjustModal(false);
-      setAdjustForm({ coach_id: '', amount: '', description: '' });
+      setAdjustForm({ coach_id: '', amount: '', description: '', adjustment_reason: '' });
       load();
     } catch (e) { toast.error(e.message); }
+    finally { setSavingAdjust(false); }
+  };
+
+  const removeAdjust = async (item) => {
+    if (!confirm(`Remover ajuste de ${formatCurrency(item.amount)}?`)) return;
+    try {
+      await PayoutMonthlyStatementItem.delete(item.id);
+      toast.success('Ajuste removido'); load();
+    } catch (e) {
+      // Mensagem do trigger é amigável
+      toast.error(e.message?.replace(/^.*Não/, 'Não') || 'Erro ao remover');
+    }
   };
 
   if (!closing) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const st = STATUS[closing.status] || {};
   const competenceLabel = closing.competence ? `${closing.competence.split('-')[1]}/${closing.competence.split('-')[0]}` : '';
-  const canEdit = closing.status === 'pending_approval';
+  const isLocked = closing.status === 'approved' || closing.status === 'paid';
+  const isDraft  = closing.status === 'pending_approval';
+  const isPaid   = closing.status === 'paid';
 
   return (
     <div className="max-w-4xl mx-auto space-y-5">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Button variant="ghost" size="icon" onClick={() => navigate('/assessoria/fechamento')}><ArrowLeft className="w-4 h-4" /></Button>
         <div>
           <h2 className="text-xl font-bold">Fechamento {competenceLabel}</h2>
-          <p className="text-sm text-muted-foreground">Gerado em {formatDate(closing.generated_at?.split('T')[0])}</p>
+          <p className="text-sm text-muted-foreground">
+            Gerado em {formatDate(closing.generated_at?.split('T')[0])}
+            {closing.approved_at && <> · Aprovado em {formatDate(closing.approved_at?.split('T')[0])}</>}
+            {closing.paid_at && <> · Pago em {formatDate(closing.paid_at?.split('T')[0])}</>}
+          </p>
         </div>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
           <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${st.cls}`}>{st.label}</span>
-          {canEdit && <Button onClick={approve} disabled={approving} className="bg-green-600 hover:bg-green-700"><CheckCircle2 className="w-4 h-4 mr-1.5" /> {approving ? 'Aprovando...' : 'Aprovar fechamento'}</Button>}
+          {isLocked && (
+            <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+              <Lock className="w-3 h-3" /> Imutável
+            </span>
+          )}
+          {isDraft && (
+            <Button onClick={approve} disabled={approving} className="bg-green-600 hover:bg-green-700">
+              <CheckCircle2 className="w-4 h-4 mr-1.5" /> {approving ? 'Aprovando...' : 'Aprovar'}
+            </Button>
+          )}
+          {closing.status === 'approved' && (
+            <>
+              <Button onClick={reopen} variant="outline" size="sm" disabled={reopening}>
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> {reopening ? 'Reabrindo...' : 'Reabrir'}
+              </Button>
+              <Button onClick={markAsPaid} disabled={markingPaid} className="bg-blue-600 hover:bg-blue-700">
+                <Banknote className="w-4 h-4 mr-1.5" /> {markingPaid ? 'Salvando...' : 'Marcar como pago'}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
+      {/* Banner imutabilidade */}
+      {isLocked && (
+        <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${
+          isPaid ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'
+        }`}>
+          {isPaid ? <Banknote className="w-5 h-5 text-green-700 shrink-0 mt-0.5" />
+                  : <Lock className="w-5 h-5 text-blue-700 shrink-0 mt-0.5" />}
+          <div className="text-sm">
+            <p className={`font-semibold ${isPaid ? 'text-green-900' : 'text-blue-900'}`}>
+              {isPaid ? 'Fechamento pago e finalizado' : 'Fechamento aprovado'}
+            </p>
+            <p className={isPaid ? 'text-green-700 text-xs' : 'text-blue-700 text-xs'}>
+              {isPaid
+                ? 'Os repasses foram efetivados. Este fechamento é permanente e não pode ser alterado.'
+                : 'Os valores estão congelados. Reabra para fazer ajustes antes do pagamento.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Total a pagar</p>
           <p className="text-2xl font-bold text-green-600">{formatCurrency(total)}</p>
@@ -125,14 +225,22 @@ export default function ClosingDetail() {
           <p className="text-2xl font-bold">{grouped.length}</p>
         </CardContent></Card>
         <Card><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">Itens no extrato</p>
+          <p className="text-xs text-muted-foreground">Itens</p>
           <p className="text-2xl font-bold">{items.length}</p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground">Ajustes manuais</p>
+          <p className={`text-2xl font-bold ${adjustmentsTotal >= 0 ? 'text-amber-700' : 'text-red-700'}`}>
+            {adjustmentsTotal !== 0 ? formatCurrency(adjustmentsTotal) : '—'}
+          </p>
         </CardContent></Card>
       </div>
 
-      {canEdit && (
+      {isDraft && (
         <div className="flex justify-end">
-          <Button size="sm" variant="outline" onClick={() => setAdjustModal(true)}><Plus className="w-3.5 h-3.5 mr-1" /> Ajuste manual</Button>
+          <Button size="sm" variant="outline" onClick={() => setAdjustModal(true)}>
+            <Plus className="w-3.5 h-3.5 mr-1" /> Ajuste manual
+          </Button>
         </div>
       )}
 
@@ -161,31 +269,111 @@ export default function ClosingDetail() {
                 </button>
                 {isOpen && (
                   <CardContent className="pt-0">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-xs text-muted-foreground border-b">
-                          <th className="text-left py-2">Origem</th>
-                          <th className="text-left py-2">Descrição</th>
-                          <th className="text-right py-2">Dias</th>
-                          <th className="text-right py-2">Pró-rata</th>
-                          <th className="text-right py-2">Valor</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {list.map(it => {
-                          const so = SOURCE[it.source_type] || { label: it.source_type, cls: '' };
-                          return (
-                            <tr key={it.id}>
-                              <td className="py-2"><span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${so.cls}`}>{so.label}</span></td>
-                              <td className="py-2">{it.description}</td>
-                              <td className="py-2 text-right text-xs text-muted-foreground">{it.valid_days ? `${it.valid_days}/${it.month_days}` : '—'}</td>
-                              <td className="py-2 text-right text-xs text-muted-foreground">{it.prorata_factor ? (it.prorata_factor * 100).toFixed(0) + '%' : '—'}</td>
-                              <td className="py-2 text-right font-semibold">{formatCurrency(it.amount)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                    <div className="divide-y border-t">
+                      {list.map(it => {
+                        const so = SOURCE[it.source_type] || { label: it.source_type, cls: '' };
+                        const isManual = it.source_type === 'manual_adjustment';
+                        const itemOpen = expandedItem[it.id];
+                        const hasSnapshot = it.rate_applied != null || it.tier_applied != null || it.base_value != null;
+                        return (
+                          <div key={it.id} className="py-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${so.cls}`}>{so.label}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm truncate">{it.description}</p>
+                                {it.valid_days != null && (
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {it.valid_days}/{it.month_days} dias
+                                    {it.prorata_factor != null && ` · pró-rata ${(Number(it.prorata_factor) * 100).toFixed(0)}%`}
+                                  </p>
+                                )}
+                              </div>
+                              <span className={`font-semibold shrink-0 text-sm ${Number(it.amount) < 0 ? 'text-red-700' : ''}`}>
+                                {formatCurrency(it.amount)}
+                              </span>
+                              {hasSnapshot && (
+                                <button
+                                  onClick={() => setExpandedItem(e => ({ ...e, [it.id]: !e[it.id] }))}
+                                  className="text-muted-foreground hover:text-gray-700 p-0.5"
+                                  title="Ver detalhes do cálculo"
+                                >
+                                  <Info className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {isManual && isDraft && (
+                                <button
+                                  onClick={() => removeAdjust(it)}
+                                  className="text-red-500 hover:bg-red-50 p-1 rounded"
+                                  title="Remover ajuste"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                            {itemOpen && hasSnapshot && (
+                              <div className="mt-2 ml-12 bg-gray-50 border rounded-lg p-2.5 text-xs space-y-1">
+                                {it.base_value != null && (
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Valor base</span>
+                                    <span className="font-medium">{formatCurrency(it.base_value)}</span>
+                                  </div>
+                                )}
+                                {it.rate_applied != null && (
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Taxa aplicada</span>
+                                    <span className="font-medium">{formatCurrency(it.rate_applied)}</span>
+                                  </div>
+                                )}
+                                {it.prorata_factor != null && (
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">× pró-rata</span>
+                                    <span className="font-medium">{(Number(it.prorata_factor) * 100).toFixed(2)}%</span>
+                                  </div>
+                                )}
+                                {it.tier_applied && (
+                                  <div className="border-t pt-1 mt-1">
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">Tier aplicado</span>
+                                      <span className="font-medium">{it.tier_applied.name || '—'}</span>
+                                    </div>
+                                    {it.tier_applied.total_active_at_close != null && (
+                                      <div className="flex justify-between text-[11px]">
+                                        <span className="text-muted-foreground">Total atletas no fechamento</span>
+                                        <span>{it.tier_applied.total_active_at_close}</span>
+                                      </div>
+                                    )}
+                                    {Number(it.tier_applied.increment_per_athlete) > 0 && (
+                                      <div className="flex justify-between text-[11px]">
+                                        <span className="text-muted-foreground">+ Incremento por atleta</span>
+                                        <span>{formatCurrency(it.tier_applied.increment_per_athlete)}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {it.leadership_bonus > 0 && (
+                                  <div className="flex justify-between border-t pt-1 mt-1">
+                                    <span className="text-muted-foreground">Bônus liderança</span>
+                                    <span className="font-medium">{formatCurrency(it.leadership_bonus)}</span>
+                                  </div>
+                                )}
+                                {it.adjustment_reason && (
+                                  <div className="border-t pt-1 mt-1">
+                                    <span className="text-muted-foreground">Motivo do ajuste:</span>
+                                    <p className="text-gray-700 italic">"{it.adjustment_reason}"</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {/* Ajuste manual: motivo sempre visível resumido */}
+                            {isManual && it.adjustment_reason && !itemOpen && (
+                              <p className="ml-12 mt-0.5 text-[11px] text-amber-700 italic truncate">
+                                "{it.adjustment_reason}"
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </CardContent>
                 )}
               </Card>
@@ -195,22 +383,62 @@ export default function ClosingDetail() {
       )}
 
       {/* Modal ajuste */}
-      <Dialog open={adjustModal} onOpenChange={setAdjustModal}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Ajuste manual</DialogTitle></DialogHeader>
+      <Dialog open={adjustModal} onOpenChange={open => !open && !savingAdjust && setAdjustModal(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5 text-amber-600" /> Ajuste manual
+            </DialogTitle>
+          </DialogHeader>
           <div className="space-y-3">
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-900">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Ajustes manuais entram como item separado no extrato e mantêm o cálculo automático intacto.</span>
+            </div>
             <div>
-              <Label>Coach</Label>
+              <Label>Coach *</Label>
               <Select value={adjustForm.coach_id} onValueChange={v => setAdjustForm(f => ({ ...f, coach_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                 <SelectContent>
                   {coaches.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>Valor (use negativo pra descontar)</Label><Input type="number" step="0.01" value={adjustForm.amount} onChange={e => setAdjustForm(f => ({ ...f, amount: e.target.value }))} /></div>
-            <div><Label>Descrição</Label><Textarea rows={2} value={adjustForm.description} onChange={e => setAdjustForm(f => ({ ...f, description: e.target.value }))} placeholder="Motivo do ajuste..." /></div>
-            <div className="flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setAdjustModal(false)}>Cancelar</Button><Button className="flex-1" onClick={addAdjust}>Adicionar</Button></div>
+            <div>
+              <Label>Valor *</Label>
+              <Input className="mt-1" type="number" step="0.01"
+                value={adjustForm.amount}
+                onChange={e => setAdjustForm(f => ({ ...f, amount: e.target.value }))}
+                placeholder="Use negativo para descontar"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Valor positivo soma ao extrato. Valor negativo desconta.
+              </p>
+            </div>
+            <div>
+              <Label>Motivo do ajuste *</Label>
+              <Textarea rows={2} className="mt-1"
+                value={adjustForm.adjustment_reason}
+                onChange={e => setAdjustForm(f => ({ ...f, adjustment_reason: e.target.value }))}
+                placeholder="Ex: Reembolso de aula extra, correção do mês anterior..."
+              />
+            </div>
+            <div>
+              <Label>Descrição (curta)</Label>
+              <Input className="mt-1"
+                value={adjustForm.description}
+                onChange={e => setAdjustForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="Resumo que aparece no extrato"
+              />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setAdjustModal(false)} disabled={savingAdjust}>
+                Cancelar
+              </Button>
+              <Button className="flex-1" onClick={addAdjust} disabled={savingAdjust}>
+                {savingAdjust ? 'Salvando...' : 'Adicionar'}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

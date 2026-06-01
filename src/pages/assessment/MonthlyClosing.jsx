@@ -12,9 +12,9 @@ import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const STATUS = {
-  pending_approval: { label: 'Pendente aprovação', cls: 'bg-amber-100 text-amber-700' },
-  approved:         { label: 'Aprovado',           cls: 'bg-blue-100 text-blue-700' },
-  paid:             { label: 'Pago',               cls: 'bg-green-100 text-green-700' },
+  pending_approval: { label: 'Em revisão', cls: 'bg-amber-100 text-amber-700' },
+  approved:         { label: 'Aprovado',   cls: 'bg-blue-100 text-blue-700' },
+  paid:             { label: 'Pago',       cls: 'bg-green-100 text-green-700' },
 };
 
 export default function MonthlyClosing() {
