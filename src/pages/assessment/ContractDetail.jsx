@@ -160,6 +160,7 @@ export default function ContractDetail() {
   const [leaveModal, setLeaveModal] = useState(false);
   const [leaveForm, setLeaveForm] = useState({ start_date: todayLocalStr(), end_date: todayLocalStr(), reason: '' });
   const [cancelModal, setCancelModal]   = useState(false);
+  const [cancelDate, setCancelDate] = useState(todayLocalStr());  // Data de cancelamento (pode ser retroativa)
   const [cancelFeePct, setCancelFeePct] = useState(20);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelInstData, setCancelInstData]         = useState(null);  // parcelas Asaas
@@ -350,13 +351,15 @@ export default function ContractDetail() {
   };
 
   // Calcula valor restante proporcional aos dias não usufruídos
-  const cancellationCalc = () => {
+  // Usa cancelDate (data de cancelamento, pode ser retroativa) ou today como data de corte
+  const cancellationCalc = (cancelDateStr = null) => {
     if (!contract || !plan) return { remaining: 0, fee: 0, refund: 0 };
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const cutoffDate = cancelDateStr ? new Date(cancelDateStr + 'T00:00:00') : new Date();
+    cutoffDate.setHours(0, 0, 0, 0);
     const start = new Date(contract.start_date + 'T00:00:00');
     const end   = new Date(contract.end_date + 'T00:00:00');
     const totalDays   = Math.max(1, Math.round((end - start) / 86400000) + 1);
-    const remainingDays = Math.max(0, Math.round((end - today) / 86400000) + 1);
+    const remainingDays = Math.max(0, Math.round((end - cutoffDate) / 86400000) + 1);
     const remaining = Number(planVal('price_total') || 0) * (remainingDays / totalDays);
     const fee = remaining * (Number(cancelFeePct) / 100);
     const refund = Math.max(0, remaining - fee);
@@ -386,11 +389,14 @@ export default function ContractDetail() {
   };
 
   const cancelContract = async () => {
-    const c = cancellationCalc();
-    if (!confirm(`Cancelar contrato com multa de ${formatCurrency(c.fee)} (${cancelFeePct}%)? Estorno: ${formatCurrency(c.refund)}.`)) return;
+    const c = cancellationCalc(cancelDate);
+    const isRetroactive = cancelDate < todayLocalStr();
+    const retroactiveNote = isRetroactive ? ` (retroativo de ${formatDate(cancelDate)})` : '';
+    if (!confirm(`Cancelar contrato com multa de ${formatCurrency(c.fee)} (${cancelFeePct}%)? Estorno: ${formatCurrency(c.refund)}.${retroactiveNote}`)) return;
     try {
       await AssessmentContract.update(id, {
         status:              'cancelled',
+        cancellation_date:   cancelDate,  // Data de cancelamento (pode ser retroativa)
         cancellation_fee:    c.fee,
         cancellation_reason: cancelReason || null,
         // Controle de estorno pendente
@@ -404,10 +410,15 @@ export default function ContractDetail() {
         cancellation_fee_pct: Number(cancelFeePct),
         refund_amount:       c.refund,
         cancellation_reason: cancelReason || null,
+        cancellation_date:   cancelDate,  // Data quando foi cancelado
         payment_status_before: contract.payment_status,
       }, cancelReason || null);
       toast.success(c.refund > 0 ? 'Contrato cancelado. Estorno registrado como pendente.' : 'Contrato cancelado.');
-      setCancelModal(false); load();
+      setCancelModal(false);
+      // Reset cancel form
+      setCancelDate(todayLocalStr());
+      setCancelReason('');
+      load();
     } catch (e) { toast.error(e.message); }
   };
 
@@ -584,7 +595,8 @@ export default function ContractDetail() {
 
   const ps = PAY[contract.payment_status] || { label: contract.payment_status, badge: 'secondary' };
   const st = STATUS[contract.status] || { label: contract.status, badge: 'secondary' };
-  const calc = cancellationCalc();
+  // Quando modal de cancelamento está aberta, usa cancelDate; senão usa hoje
+  const calc = cancelModal ? cancellationCalc(cancelDate) : cancellationCalc();
   const canCancel = !['cancelled', 'finished'].includes(contract.status);
 
   return (
@@ -1089,6 +1101,20 @@ export default function ContractDetail() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+
+            {/* Data de cancelamento (pode ser retroativa) */}
+            <div>
+              <Label>Data do cancelamento (quando foi solicitado)</Label>
+              <Input type="date" className="mt-1"
+                min={contract.start_date}
+                max={todayLocalStr()}
+                value={cancelDate}
+                onChange={e => { setCancelDate(e.target.value); }}
+              />
+              {cancelDate < todayLocalStr() && (
+                <p className="text-xs text-amber-600 mt-1">⚠️ Cancelamento retroativo — ajusta cálculo e relatórios</p>
+              )}
+            </div>
 
             {/* Resumo proporcional */}
             <div className="bg-gray-50 border rounded-xl p-3 text-sm grid grid-cols-2 gap-y-1">

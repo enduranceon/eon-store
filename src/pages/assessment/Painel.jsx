@@ -449,9 +449,13 @@ export default function Painel() {
       const cRenov     = cContracts.filter(c =>
         utcToLocalDateStr(c.created_at) >= monthStart && !!c.parent_contract_id
       );
-      const cSaidas    = cContracts.filter(c =>
-        c.status === 'cancelled' && utcToLocalDateStr(c.updated_at) >= monthStart
-      );
+      // Use cancellation_date se disponível (data de negócio do cancelamento),
+      // senão usa updated_at (para contratos antigos que não têm cancellation_date)
+      const cSaidas    = cContracts.filter(c => {
+        if (c.status !== 'cancelled') return false;
+        const cancelDate = c.cancellation_date || utcToLocalDateStr(c.updated_at);
+        return cancelDate >= monthStart;
+      });
       const cMrr = cAtivos.reduce((acc, c) => {
         const p = plans.find(pl => pl.id === c.plan_id);
         return acc + (p ? Number(p.price_monthly) : 0);
