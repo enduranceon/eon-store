@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -57,6 +57,10 @@ export default function OrderDetail() {
   const [manualPayForm, setManualPayForm] = useState({ method_id: '', date: '', value: '' });
   const [methodGroups, setMethodGroups] = useState([]);  // [[group_name, [methods...]], ...]
   const [manualPaySaving, setManualPaySaving] = useState(false);
+  // Accordion do card Pagamento: 'asaas' | 'whatsapp' | 'manual' | null
+  const [payAction, setPayAction] = useState(null);
+  // Modal de "Enviar comprovante após pagamento manual"
+  const [postPayWhatsModal, setPostPayWhatsModal] = useState(false);
   const [whatsappModal, setWhatsappModal] = useState(false);
   const [whatsappMsg, setWhatsappMsg] = useState('');
   const [whatsappManualLink, setWhatsappManualLink] = useState('');
@@ -166,12 +170,36 @@ export default function OrderDetail() {
       );
       toast.success(`Pagamento registrado!${result.installments > 1 ? ` ${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
       setManualPayModal(false);
+      // Sugere enviar comprovante via WhatsApp (só se tem WhatsApp do cliente)
+      if (order?.checkout_whatsapp) {
+        setPostPayWhatsModal(true);
+      }
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao registrar pagamento');
     } finally {
       setManualPaySaving(false);
     }
+  };
+
+  // Atalho do modal de WhatsApp manual → registrar pagamento
+  const switchToManualPay = () => {
+    setWhatsappModal(false);
+    openManualPay();
+  };
+
+  // Confirma envio de comprovante após pagamento manual
+  const sendPaymentConfirmation = () => {
+    setPostPayWhatsModal(false);
+    const msg =
+      `Olá, ${order.checkout_name}! 👋\n\n` +
+      `Confirmamos o recebimento do pagamento do seu pedido *${order.order_number}*!\n\n` +
+      `💰 Valor: ${formatCurrency(order.total_value || 0)}\n` +
+      `📅 Pago em: ${formatDate(manualPayForm.date || todayLocalStr())}\n\n` +
+      `Em breve seu pedido será preparado para entrega. Qualquer dúvida, estamos por aqui!\n\n` +
+      `🔍 *Acompanhe seu pedido:*\n${window.location.origin}/p/${order.id}`;
+    const phone = '55' + (order.checkout_whatsapp || '').replace(/\D/g, '');
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   const SENSITIVE_PAYMENT = new Set(['paid', 'cancelled', 'refunded', 'partially_paid']);
@@ -505,12 +533,6 @@ export default function OrderDetail() {
         <div className="ml-auto flex items-center gap-2">
           <Badge variant={ps.badge}>{ps.label}</Badge>
           <Badge variant={ds.badge}>{ds.label}</Badge>
-          {order.checkout_whatsapp && (
-            <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white gap-1.5" onClick={openWhatsApp}>
-              <MessageCircle className="w-4 h-4" />
-              Cobrar via WhatsApp
-            </Button>
-          )}
         </div>
       </div>
 
@@ -737,6 +759,45 @@ export default function OrderDetail() {
               Mensagem enviada — aguardando resposta
             </Button>
           )}
+          {/* Atalho: se já está cobrando manualmente e o cliente confirmar pagamento */}
+          {!order.asaas_charge_id && order.payment_status !== 'paid' && (
+            <Button
+              variant="outline"
+              className="w-full text-amber-700 border-amber-300 hover:bg-amber-50"
+              onClick={switchToManualPay}
+            >
+              <HandCoins className="w-4 h-4 mr-1.5" />
+              Cliente já pagou? Registrar pagamento manual
+            </Button>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: oferecer enviar comprovante após registrar pagamento manual */}
+      <Dialog open={postPayWhatsModal} onOpenChange={setPostPayWhatsModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Check className="w-5 h-5 text-green-600" /> Pagamento registrado
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Quer enviar uma confirmação por WhatsApp para o cliente?
+            </p>
+            <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-700 border">
+              ✅ Confirmamos o recebimento do pagamento do pedido <strong>{order.order_number}</strong>...
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setPostPayWhatsModal(false)}>
+                Agora não
+              </Button>
+              <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={sendPaymentConfirmation}>
+                <MessageCircle className="w-4 h-4 mr-1.5" />
+                Enviar
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -919,11 +980,11 @@ export default function OrderDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Cobrança Asaas */}
+      {/* Pagamento */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
-            <Zap className="w-4 h-4 text-blue-600" /> Cobrança Asaas
+            <HandCoins className="w-4 h-4 text-blue-600" /> Pagamento
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -995,7 +1056,7 @@ export default function OrderDetail() {
               </Button>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {/* Preferência do cliente */}
               {order.payment_method && (
                 <div className="flex items-center gap-2 text-sm bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
@@ -1007,66 +1068,120 @@ export default function OrderDetail() {
                   }[order.payment_method] || order.payment_method}</span>
                 </div>
               )}
-              {/* CPF + Vencimento */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>CPF do cliente <span className="text-xs text-muted-foreground font-normal">(do perfil)</span></Label>
-                  <Input className="mt-1 font-mono" placeholder="000.000.000-00" value={asaasCpf} onChange={e => setAsaasCpf(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Vencimento</Label>
-                  <Input type="date" className="mt-1" value={asaasDueDate} onChange={e => setAsaasDueDate(e.target.value)} />
-                </div>
-              </div>
-              {/* Seletor de método */}
-              <div>
-                <Label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Forma de cobrança</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { key: 'PIX',         icon: <QrCode className="w-4 h-4" />,   label: 'PIX' },
-                    { key: 'BOLETO',      icon: <FileText className="w-4 h-4" />, label: 'Boleto' },
-                    { key: 'CREDIT_CARD', icon: <Zap className="w-4 h-4" />,      label: order.payment_method?.startsWith('card_') ? `Cartão (${order.payment_method.replace('card_', '')})` : 'Cartão' },
-                  ].map(opt => (
-                    <button key={opt.key} type="button" onClick={() => setAsaasBilling(opt.key)}
-                      className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ${
-                        asaasBilling === opt.key
-                          ? 'border-blue-500 bg-blue-500 text-white'
-                          : 'border-gray-200 text-gray-600 hover:border-blue-300 bg-white'
-                      }`}>
-                      {opt.icon}{opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {asaasBilling === 'CREDIT_CARD' && (
-                <div>
-                  <Label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Parcelas</Label>
-                  <div className="grid grid-cols-6 gap-1.5">
-                    {[1,2,3,4,5,6].map(n => (
-                      <button key={n} type="button" onClick={() => setAsaasInstallments(n)}
-                        className={`py-2 rounded-lg border-2 text-sm font-semibold transition-all ${
-                          asaasInstallments === n
-                            ? 'border-blue-500 bg-blue-500 text-white'
-                            : 'border-gray-200 text-gray-600 hover:border-blue-300 bg-white'
-                        }`}>
-                        {n}x
-                      </button>
-                    ))}
+
+              {/* Três ações principais (accordion) */}
+              <p className="text-xs text-muted-foreground">Como vai cobrar?</p>
+
+              {/* AÇÃO 1 — Cobrança Asaas */}
+              <div className="border rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setPayAction(payAction === 'asaas' ? null : 'asaas')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
+                    payAction === 'asaas' ? 'bg-blue-50' : 'hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                    <Zap className="w-4 h-4 text-blue-600" />
                   </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold">Gerar cobrança no Asaas</p>
+                    <p className="text-xs text-muted-foreground">PIX, Boleto ou Cartão — link enviado pelo gateway</p>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${payAction === 'asaas' ? 'rotate-90' : ''}`} />
+                </button>
+                {payAction === 'asaas' && (
+                  <div className="border-t bg-white px-4 py-3 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs">CPF do cliente</Label>
+                        <Input className="mt-1 font-mono text-sm" placeholder="000.000.000-00" value={asaasCpf} onChange={e => setAsaasCpf(e.target.value)} />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Vencimento</Label>
+                        <Input type="date" className="mt-1 text-sm" value={asaasDueDate} onChange={e => setAsaasDueDate(e.target.value)} />
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Forma</Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { key: 'PIX',         icon: <QrCode className="w-4 h-4" />,   label: 'PIX' },
+                          { key: 'BOLETO',      icon: <FileText className="w-4 h-4" />, label: 'Boleto' },
+                          { key: 'CREDIT_CARD', icon: <Zap className="w-4 h-4" />,      label: 'Cartão' },
+                        ].map(opt => (
+                          <button key={opt.key} type="button" onClick={() => setAsaasBilling(opt.key)}
+                            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg border-2 text-sm font-semibold transition-all ${
+                              asaasBilling === opt.key
+                                ? 'border-blue-500 bg-blue-500 text-white'
+                                : 'border-gray-200 text-gray-600 hover:border-blue-300 bg-white'
+                            }`}>
+                            {opt.icon}{opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {asaasBilling === 'CREDIT_CARD' && (
+                      <div>
+                        <Label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Parcelas</Label>
+                        <div className="grid grid-cols-6 gap-1.5">
+                          {[1,2,3,4,5,6].map(n => (
+                            <button key={n} type="button" onClick={() => setAsaasInstallments(n)}
+                              className={`py-1.5 rounded-lg border-2 text-sm font-semibold transition-all ${
+                                asaasInstallments === n
+                                  ? 'border-blue-500 bg-blue-500 text-white'
+                                  : 'border-gray-200 text-gray-600 hover:border-blue-300 bg-white'
+                              }`}>
+                              {n}x
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <Button className="w-full gap-2" onClick={() => createAsaasCharge(asaasBilling)} disabled={asaasLoading}>
+                      <Zap className="w-4 h-4" />
+                      {asaasLoading ? 'Criando...' : `Gerar cobrança — ${{ PIX: 'PIX', BOLETO: 'Boleto', CREDIT_CARD: `Cartão ${asaasInstallments}x` }[asaasBilling]}`}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* AÇÃO 2 — WhatsApp (sem Asaas, com link externo opcional) */}
+              {order.checkout_whatsapp && (
+                <div className="border rounded-xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={openWhatsApp}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+                      <MessageCircle className="w-4 h-4 text-green-600" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold">Enviar mensagem por WhatsApp</p>
+                      <p className="text-xs text-muted-foreground">Cobrar com link externo (Stone, PagSeguro…) ou só perguntar como pagar</p>
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-muted-foreground" />
+                  </button>
                 </div>
               )}
-              <Button className="w-full gap-2" onClick={() => createAsaasCharge(asaasBilling)} disabled={asaasLoading}>
-                <Zap className="w-4 h-4" />
-                {asaasLoading ? 'Criando cobrança...' : `Gerar cobrança — ${{ PIX: 'PIX', BOLETO: 'Boleto', CREDIT_CARD: `Cartão ${asaasInstallments}x` }[asaasBilling]}`}
-              </Button>
-              <div className="border-t pt-3">
-                <Button
-                  variant="outline"
-                  className="w-full gap-2 text-green-700 border-green-300 hover:bg-green-50"
+
+              {/* AÇÃO 3 — Pagamento manual */}
+              <div className="border rounded-xl overflow-hidden">
+                <button
+                  type="button"
                   onClick={openManualPay}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
                 >
-                  <HandCoins className="w-4 h-4" /> Registrar pagamento manual (sem Asaas)
-                </Button>
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                    <HandCoins className="w-4 h-4 text-amber-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold">Já recebi por fora</p>
+                    <p className="text-xs text-muted-foreground">Registrar pagamento manual (dinheiro, PIX direto, maquininha…)</p>
+                  </div>
+                  <ExternalLink className="w-4 h-4 text-muted-foreground" />
+                </button>
               </div>
             </div>
           )}
