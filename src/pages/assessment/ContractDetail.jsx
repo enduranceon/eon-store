@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   QrCode, RefreshCw, History, Pause, XCircle, AlertTriangle, RotateCcw, ArrowUpRight, ArrowDownRight,
-  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban,
+  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, CreditCard,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -506,9 +506,10 @@ export default function ContractDetail() {
       const allMethods = groups.flatMap(([, list]) => list);
       const defaultMethod = allMethods.find(m => m.internal_code === 'pix_manual') || allMethods[0];
       setManualPayForm({
-        method_id: defaultMethod?.id || '',
-        date:      todayLocalStr(),
-        value:     total.toFixed(2),
+        method_id:    defaultMethod?.id || '',
+        date:         todayLocalStr(),
+        value:        total.toFixed(2),
+        installments: 1,
       });
       setManualPayModal(true);
     } catch (e) {
