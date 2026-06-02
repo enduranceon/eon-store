@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ShoppingCart, Search, AlertTriangle, ArrowRight } from 'lucide-react';
+import { ShoppingCart, Search, AlertTriangle, ArrowRight, HandCoins } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,8 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PreSaleOrder, PreSaleCampaign } from '@/api/entities';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { PAYMENT_METHODS } from '@/lib/payment-methods';
+import { loadActivePaymentMethods, calcFee, createManualInstallments } from '@/lib/manual-payment';
+import ManualPaymentForm from '@/components/ManualPaymentForm';
 import { toast } from 'sonner';
 
 // Status que exigem confirmação antes de salvar
@@ -60,6 +61,12 @@ export default function Orders() {
   const [campaignFilter, setCampaignFilter] = useState('all');
   const [pendingChange, setPendingChange] = useState(null); // { orderId, field, oldValue, newValue }
   const [confirming, setConfirming] = useState(false);
+  // Estados para o modal de pagamento manual
+  const [manualPayModal, setManualPayModal] = useState(false);
+  const [manualPayOrder, setManualPayOrder] = useState(null);
+  const [manualPayForm, setManualPayForm] = useState({ method_id: '', date: '', value: '' });
+  const [methodGroups, setMethodGroups] = useState([]);
+  const [manualPaySaving, setManualPaySaving] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -86,35 +93,73 @@ export default function Orders() {
   };
 
   // Intercepta mudanças sensíveis de pagamento; deixa delivery passar direto
-  const handleStatusChange = (orderId, field, oldValue, newValue) => {
-    if (field === 'payment_status' && SENSITIVE_PAYMENT.has(newValue) && newValue !== oldValue) {
-      setPendingChange({
-        orderId, field, oldValue, newValue,
-        payment_method: newValue === 'paid' ? 'pix_manual' : null,
-        payment_date:   newValue === 'paid' ? todayLocalStr() : null,
-      });
+  const handleStatusChange = async (orderId, field, oldValue, newValue) => {
+    if (field === 'payment_status' && newValue === 'paid' && newValue !== oldValue) {
+      // Abre modal de pagamento manual completo
+      const order = orders.find(o => o.id === orderId);
+      try {
+        const groups = await loadActivePaymentMethods();
+        setMethodGroups(groups);
+        const allMethods = groups.flatMap(([, list]) => list);
+        const defaultMethod = allMethods.find(m => m.internal_code === 'pix_manual') || allMethods[0];
+        setManualPayForm({
+          method_id: defaultMethod?.id || '',
+          date:      todayLocalStr(),
+          value:     order?.total_value ? Number(order.total_value).toFixed(2) : '',
+        });
+        setManualPayOrder(order);
+        setManualPayModal(true);
+      } catch (e) {
+        toast.error('Erro ao carregar métodos: ' + e.message);
+      }
+    } else if (field === 'payment_status' && SENSITIVE_PAYMENT.has(newValue) && newValue !== oldValue) {
+      setPendingChange({ orderId, field, oldValue, newValue });
     } else {
       commitUpdate(orderId, field, newValue);
+    }
+  };
+
+  const confirmManualPayment = async () => {
+    if (!manualPayOrder) return;
+    if (!manualPayForm.method_id) return toast.error('Selecione um método');
+    if (!manualPayForm.date)      return toast.error('Informe a data do pagamento');
+    if (!manualPayForm.value || isNaN(Number(manualPayForm.value))) return toast.error('Informe o valor recebido');
+    const method = methodGroups.flatMap(([, list]) => list).find(m => m.id === manualPayForm.method_id);
+    if (!method) return toast.error('Método inválido');
+
+    setManualPaySaving(true);
+    try {
+      const totalV = Number(manualPayForm.value);
+      const fee    = calcFee(method, totalV);
+      // 1. Marca como pago
+      await PreSaleOrder.update(manualPayOrder.id, {
+        payment_status: 'paid',
+        payment_method: method.internal_code || method.kind,
+        payment_date:   manualPayForm.date,
+        manual_payment: true,
+        manual_fee:     fee > 0 ? Math.round(fee * 100) / 100 : null,
+      });
+      // 2. Cria parcelas projetadas no fluxo de caixa
+      const result = await createManualInstallments(
+        method, manualPayForm.date,
+        { order_id: manualPayOrder.id, order_type: 'presale', external_reference: manualPayOrder.order_number },
+        totalV,
+      );
+      toast.success(`Pagamento registrado!${result.installments > 1 ? ` ${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
+      setManualPayModal(false);
+      setManualPayOrder(null);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao registrar pagamento');
+    } finally {
+      setManualPaySaving(false);
     }
   };
 
   const confirmChange = async () => {
     if (!pendingChange) return;
     setConfirming(true);
-    const extras = {};
-    if (pendingChange.newValue === 'paid') {
-      if (!pendingChange.payment_method) {
-        setConfirming(false);
-        return toast.error('Selecione a forma de pagamento');
-      }
-      if (!pendingChange.payment_date) {
-        setConfirming(false);
-        return toast.error('Informe a data do pagamento');
-      }
-      extras.payment_method = pendingChange.payment_method;
-      extras.payment_date   = pendingChange.payment_date;
-    }
-    await commitUpdate(pendingChange.orderId, pendingChange.field, pendingChange.newValue, extras);
+    await commitUpdate(pendingChange.orderId, pendingChange.field, pendingChange.newValue);
     setConfirming(false);
     setPendingChange(null);
   };
@@ -229,9 +274,30 @@ export default function Orders() {
         </div>
       )}
 
-      {/* Modal de confirmação de mudança de status */}
+      {/* Modal de pagamento manual — abre ao marcar como Pago */}
+      <Dialog open={manualPayModal} onOpenChange={open => { if (!open && !manualPaySaving) { setManualPayModal(false); setManualPayOrder(null); } }}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HandCoins className="w-4 h-4 text-green-600" />
+              Registrar pagamento
+              {manualPayOrder && <span className="font-mono text-sm font-normal text-muted-foreground">— {manualPayOrder.order_number}</span>}
+            </DialogTitle>
+          </DialogHeader>
+          <ManualPaymentForm
+            form={manualPayForm}
+            setForm={setManualPayForm}
+            methodGroups={methodGroups}
+            saving={manualPaySaving}
+            onSave={confirmManualPayment}
+            onCancel={() => { setManualPayModal(false); setManualPayOrder(null); }}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de confirmação para outros status sensíveis (cancelado, reembolsado) */}
       <Dialog open={!!pendingChange} onOpenChange={open => { if (!open && !confirming) setPendingChange(null); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-500" /> Confirmar mudança de status
@@ -248,64 +314,14 @@ export default function Orders() {
                   {PAYMENT_STATUS[pendingChange.newValue]?.label || pendingChange.newValue}
                 </span>
               </div>
-
-              {/* Forma de pagamento — só aparece quando marcando como PAGO */}
-              {pendingChange.newValue === 'paid' && (
-                <div>
-                  <p className="text-sm font-medium mb-2">Como foi pago? *</p>
-                  <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mt-1">Manual (sem taxa)</p>
-                    {PAYMENT_METHODS.filter(m => m.group === 'manual').map(m => (
-                      <button key={m.value} type="button"
-                        onClick={() => setPendingChange(p => ({ ...p, payment_method: m.value }))}
-                        className={`w-full text-left p-2 rounded-lg border-2 transition-all ${
-                          pendingChange.payment_method === m.value
-                            ? 'border-blue-500 bg-blue-50'
-                            : 'border-gray-200 hover:border-blue-300'
-                        }`}>
-                        <p className="text-sm font-medium">{m.label}</p>
-                        <p className="text-[11px] text-muted-foreground">{m.description}</p>
-                      </button>
-                    ))}
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mt-2">Via Asaas (com taxa)</p>
-                    {PAYMENT_METHODS.filter(m => m.group === 'asaas').map(m => (
-                      <button key={m.value} type="button"
-                        onClick={() => setPendingChange(p => ({ ...p, payment_method: m.value }))}
-                        className={`w-full text-left p-2 rounded-lg border-2 transition-all ${
-                          pendingChange.payment_method === m.value
-                            ? 'border-blue-500 bg-blue-50'
-                            : 'border-gray-200 hover:border-blue-300'
-                        }`}>
-                        <p className="text-sm font-medium">{m.label}</p>
-                        <p className="text-[11px] text-muted-foreground">{m.description}</p>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mt-3">
-                    <p className="text-xs font-medium mb-1">Data do pagamento</p>
-                    <Input type="date"
-                      value={pendingChange.payment_date || todayLocalStr()}
-                      onChange={e => setPendingChange(p => ({ ...p, payment_date: e.target.value }))}
-                      max={todayLocalStr()} />
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      Default é hoje, mas você pode ajustar se o pagamento foi em outra data.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {pendingChange.newValue !== 'paid' && (
-                <p className="text-sm text-center text-muted-foreground">
-                  Essa ação será salva diretamente no banco de dados.
-                </p>
-              )}
-
+              <p className="text-sm text-center text-muted-foreground">
+                Essa ação será salva diretamente no banco de dados.
+              </p>
               <div className="flex gap-2">
                 <Button variant="outline" className="flex-1" onClick={() => setPendingChange(null)} disabled={confirming}>
                   Cancelar
                 </Button>
-                <Button className="flex-1" onClick={confirmChange}
-                  disabled={confirming || (pendingChange.newValue === 'paid' && !pendingChange.payment_method)}>
+                <Button className="flex-1" onClick={confirmChange} disabled={confirming}>
                   {confirming ? 'Salvando...' : 'Confirmar'}
                 </Button>
               </div>

@@ -149,55 +149,28 @@ export default function OrderDetail() {
     try {
       const totalV = Number(manualPayForm.value);
       const fee    = calcFee(method, totalV);
-
-      // Se é método Asaas, gera cobrança no Asaas primeiro
-      if (method.source === 'asaas') {
-        if (!asaasCpf) return toast.error('Informe o CPF do cliente para criar cobrança Asaas');
-        const cpfClean = asaasCpf.replace(/\D/g, '');
-        if (cpfClean.length < 11) return toast.error('CPF inválido (11 dígitos)');
-
-        // Mapeia kind para billing_type do Asaas
-        const billingMap = {
-          'pix': 'PIX',
-          'boleto': 'BOLETO',
-          'card': 'CREDIT_CARD',
-        };
-        const billingType = billingMap[method.kind] || 'PIX';
-        const installments = method.installments || 1;
-
-        // Cria cobrança no Asaas
-        await callAsaas('create', {
-          cpf: asaasCpf,
-          billing_type: billingType,
-          due_date: manualPayForm.date,
-          installments: installments
-        });
-      }
-
-      // 1. Atualiza order (agora com payment_status charge_sent ou paid conforme o método)
-      const finalPaymentStatus = method.source === 'asaas' ? 'charge_sent' : 'paid';
+      // 1. Marca como pago com os dados do método
       await PreSaleOrder.update(id, {
-        payment_status: finalPaymentStatus,
+        payment_status: 'paid',
         payment_method: method.internal_code || method.kind,
         payment_date:   manualPayForm.date,
-        manual_payment: method.source === 'manual',
+        manual_payment: true,
         manual_fee:     fee > 0 ? Math.round(fee * 100) / 100 : null,
       });
-
-      // 2. Cria parcelas projetadas em asaas_payments
+      // 2. Cria parcelas projetadas no fluxo de caixa
       const result = await createManualInstallments(
         method, manualPayForm.date,
         { order_id: id, order_type: 'presale', external_reference: order?.order_number },
         totalV,
       );
-
-      toast.success(`Cobrança criada! ${result.installments > 1 ? `${result.installments} parcelas projetadas.` : ''}`);
+      toast.success(`Pagamento registrado!${result.installments > 1 ? ` ${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
       setManualPayModal(false);
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao registrar pagamento');
+    } finally {
+      setManualPaySaving(false);
     }
-    finally { setManualPaySaving(false); }
   };
 
   const SENSITIVE_PAYMENT = new Set(['paid', 'cancelled', 'refunded', 'partially_paid']);
@@ -1090,48 +1063,14 @@ export default function OrderDetail() {
               <HandCoins className="w-4 h-4 text-green-600" /> Registrar pagamento manual
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <ManualPaymentForm
-              form={manualPayForm}
-              setForm={setManualPayForm}
-              methodGroups={methodGroups}
-              saving={manualPaySaving}
-              onSave={recordManualPayment}
-              onCancel={() => setManualPayModal(false)}
-            />
-
-            {/* Se for método Asaas, mostrar campos de CPF e vencimento */}
-            {manualPayForm.method_id && (() => {
-              const method = methodGroups.flatMap(([, list]) => list).find(m => m.id === manualPayForm.method_id);
-              return method?.source === 'asaas' ? (
-                <div className="border-t pt-3 space-y-3">
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800">
-                    <strong>Método Asaas:</strong> CPF e vencimento são necessários para criar a cobrança.
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label>CPF do cliente</Label>
-                      <Input
-                        className="mt-1 font-mono text-sm"
-                        placeholder="000.000.000-00"
-                        value={asaasCpf}
-                        onChange={e => setAsaasCpf(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>Vencimento</Label>
-                      <Input
-                        type="date"
-                        className="mt-1"
-                        value={asaasDueDate}
-                        onChange={e => setAsaasDueDate(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ) : null;
-            })()}
-          </div>
+          <ManualPaymentForm
+            form={manualPayForm}
+            setForm={setManualPayForm}
+            methodGroups={methodGroups}
+            saving={manualPaySaving}
+            onSave={recordManualPayment}
+            onCancel={() => setManualPayModal(false)}
+          />
         </DialogContent>
       </Dialog>
 
