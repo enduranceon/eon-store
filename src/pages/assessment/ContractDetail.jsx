@@ -828,19 +828,24 @@ export default function ContractDetail() {
         }}
       />
 
-      {/* Status do pagamento (read-only + detalhamento) — só aparece quando PAID */}
-      {contract.payment_status === 'paid' && (() => {
+      {/* Status do pagamento (read-only + detalhamento) — aparece quando PAID ou REFUNDED */}
+      {['paid', 'refunded'].includes(contract.payment_status) && (() => {
         const activeInstallments = paymentInstallments.filter(p => !['CANCELLED','REFUNDED'].includes(p.status));
         const totalGross = activeInstallments.reduce((s,p) => s + (Number(p.value) || 0), 0);
         const totalNet   = activeInstallments.reduce((s,p) => s + (Number(p.net_value) || 0), 0);
         const totalFee   = totalGross - totalNet;
-        const registeredAt = activeInstallments[0]?.last_synced_at || activeInstallments[0]?.created_at;
+        const registeredAt = activeInstallments[0]?.last_synced_at || activeInstallments[0]?.created_at
+                          || paymentInstallments[0]?.last_synced_at || paymentInstallments[0]?.created_at;
         const sourceLabel = contract.manual_payment ? 'Registro manual' : 'Cobrança Asaas';
         const sourceBadgeColor = contract.manual_payment ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
         const methodLabel = getPaymentMethodLabel(contract.payment_method);
         const planTotal = Number(planVal('price_total')) || 0;
         const enroll    = Number(contract.enrollment_fee) || 0;
         const totalPaid = planTotal + enroll - (Number(contract.manual_discount) || 0);
+        const isRefunded = contract.payment_status === 'refunded';
+        const blockColors = isRefunded
+          ? { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', valueText: 'text-purple-800' }
+          : { bg: 'bg-green-50',  border: 'border-green-200',  text: 'text-green-700',  valueText: 'text-green-800' };
         return (
           <Card>
             <CardHeader className="pb-2">
@@ -850,15 +855,17 @@ export default function ContractDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Bloco verde de destaque */}
-              <div className="bg-green-50 border border-green-200 rounded-xl p-3 space-y-2">
+              {/* Bloco de destaque (verde=pago, roxo=estornado) */}
+              <div className={`${blockColors.bg} border ${blockColors.border} rounded-xl p-3 space-y-2`}>
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-xs text-green-700 font-medium uppercase tracking-wide">Pago</p>
-                    <p className="text-lg font-bold text-green-800 mt-0.5">
+                    <p className={`text-xs ${blockColors.text} font-medium uppercase tracking-wide`}>
+                      {isRefunded ? 'Estornado' : 'Pago'}
+                    </p>
+                    <p className={`text-lg font-bold ${blockColors.valueText} mt-0.5`}>
                       {formatCurrency(totalPaid)}
                     </p>
-                    <p className="text-xs text-green-700 mt-0.5">
+                    <p className={`text-xs ${blockColors.text} mt-0.5`}>
                       {methodLabel}
                       {' · '}
                       <span className="font-medium">{contract.payment_date ? formatDate(contract.payment_date) : '—'}</span>
@@ -869,9 +876,14 @@ export default function ContractDetail() {
                   </span>
                 </div>
                 {registeredAt && (
-                  <p className="text-[11px] text-green-600 flex items-center gap-1">
+                  <p className={`text-[11px] ${blockColors.text} flex items-center gap-1`}>
                     <Calendar className="w-3 h-3" />
                     Registrado em {new Date(registeredAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                  </p>
+                )}
+                {isRefunded && contract.cancellation_reason && (
+                  <p className={`text-[11px] ${blockColors.text}`}>
+                    <strong>Motivo:</strong> {contract.cancellation_reason}
                   </p>
                 )}
               </div>
@@ -936,7 +948,8 @@ export default function ContractDetail() {
         );
       })()}
 
-      {/* Cobrança Asaas */}
+      {/* Cobrança Asaas — só aparece se ainda há ação a tomar */}
+      {!['paid', 'refunded', 'cancelled'].includes(contract.payment_status) && contract.status !== 'cancelled' && (
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Zap className="w-4 h-4 text-blue-600" /> Cobrança Asaas</CardTitle></CardHeader>
         <CardContent>
@@ -993,6 +1006,20 @@ export default function ContractDetail() {
           )}
         </CardContent>
       </Card>
+      )}
+
+      {/* Aviso simples para contratos cancelados */}
+      {(contract.status === 'cancelled' || contract.payment_status === 'cancelled') && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="py-3 px-4 flex items-center gap-2 text-sm">
+            <Ban className="w-4 h-4 text-red-600 shrink-0" />
+            <span className="text-red-800">
+              <strong>Contrato cancelado.</strong>
+              {contract.cancellation_reason && ` Motivo: ${contract.cancellation_reason}`}
+            </span>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Timeline de eventos */}
       <Card>

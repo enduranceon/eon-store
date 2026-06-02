@@ -869,7 +869,8 @@ export default function StockOrderDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Cobrança Asaas */}
+      {/* Cobrança Asaas — só aparece se ainda há ação a tomar */}
+      {!['paid', 'refunded', 'cancelled'].includes(order.payment_status) && (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2"><Zap className="w-4 h-4 text-blue-600" /> Cobrança Asaas</CardTitle>
@@ -987,8 +988,23 @@ export default function StockOrderDetail() {
           )}
         </CardContent>
       </Card>
+      )}
+
+      {/* Aviso simples para pedidos cancelados */}
+      {order.payment_status === 'cancelled' && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="py-3 px-4 flex items-center gap-2 text-sm">
+            <X className="w-4 h-4 text-red-600 shrink-0" />
+            <span className="text-red-800">
+              <strong>Pedido cancelado.</strong>
+              {order.cancellation_reason && ` Motivo: ${order.cancellation_reason}`}
+            </span>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Status do pagamento (read-only + detalhamento) */}
+      {['paid', 'refunded'].includes(order.payment_status) && (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
@@ -997,42 +1013,52 @@ export default function StockOrderDetail() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {order.payment_status === 'paid' ? (
-            <>
-              {(() => {
-                const activeInstallments = paymentInstallments.filter(p => !['CANCELLED','REFUNDED'].includes(p.status));
-                const totalGross = activeInstallments.reduce((s,p) => s + (Number(p.value) || 0), 0);
-                const totalNet   = activeInstallments.reduce((s,p) => s + (Number(p.net_value) || 0), 0);
-                const totalFee   = totalGross - totalNet;
-                const registeredAt = activeInstallments[0]?.last_synced_at || activeInstallments[0]?.created_at;
-                const sourceLabel  = order.manual_payment ? 'Registro manual' : 'Cobrança Asaas';
-                const sourceBadgeColor = order.manual_payment ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
-                return (
-                  <>
-                    <div className="bg-green-50 border border-green-200 rounded-xl p-3 space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs text-green-700 font-medium uppercase tracking-wide">Pago</p>
-                          <p className="text-lg font-bold text-green-800 mt-0.5">
-                            {formatCurrency(order.total_value)}
-                          </p>
-                          <p className="text-xs text-green-700 mt-0.5">
-                            {PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method}
-                            {' · '}
-                            <span className="font-medium">{order.payment_date ? formatDate(order.payment_date) : '—'}</span>
-                          </p>
-                        </div>
-                        <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${sourceBadgeColor}`}>
-                          {sourceLabel}
-                        </span>
-                      </div>
-                      {registeredAt && (
-                        <p className="text-[11px] text-green-600 flex items-center gap-1">
-                          <Calendar className="w-3 h-3" />
-                          Registrado em {new Date(registeredAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+          {(() => {
+              const activeInstallments = paymentInstallments.filter(p => !['CANCELLED','REFUNDED'].includes(p.status));
+              const totalGross = activeInstallments.reduce((s,p) => s + (Number(p.value) || 0), 0);
+              const totalNet   = activeInstallments.reduce((s,p) => s + (Number(p.net_value) || 0), 0);
+              const totalFee   = totalGross - totalNet;
+              const registeredAt = activeInstallments[0]?.last_synced_at || activeInstallments[0]?.created_at
+                                || paymentInstallments[0]?.last_synced_at || paymentInstallments[0]?.created_at;
+              const sourceLabel  = order.manual_payment ? 'Registro manual' : 'Cobrança Asaas';
+              const sourceBadgeColor = order.manual_payment ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
+              const isRefunded = order.payment_status === 'refunded';
+              const blockColors = isRefunded
+                ? { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', valueText: 'text-purple-800' }
+                : { bg: 'bg-green-50',  border: 'border-green-200',  text: 'text-green-700',  valueText: 'text-green-800' };
+              return (
+                <>
+                  <div className={`${blockColors.bg} border ${blockColors.border} rounded-xl p-3 space-y-2`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className={`text-xs ${blockColors.text} font-medium uppercase tracking-wide`}>
+                          {isRefunded ? 'Estornado' : 'Pago'}
                         </p>
-                      )}
+                        <p className={`text-lg font-bold ${blockColors.valueText} mt-0.5`}>
+                          {formatCurrency(order.total_value)}
+                        </p>
+                        <p className={`text-xs ${blockColors.text} mt-0.5`}>
+                          {PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method}
+                          {' · '}
+                          <span className="font-medium">{order.payment_date ? formatDate(order.payment_date) : '—'}</span>
+                        </p>
+                      </div>
+                      <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${sourceBadgeColor}`}>
+                        {sourceLabel}
+                      </span>
                     </div>
+                    {registeredAt && (
+                      <p className={`text-[11px] ${blockColors.text} flex items-center gap-1`}>
+                        <Calendar className="w-3 h-3" />
+                        Registrado em {new Date(registeredAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                      </p>
+                    )}
+                    {isRefunded && order.cancellation_reason && (
+                      <p className={`text-[11px] ${blockColors.text}`}>
+                        <strong>Motivo:</strong> {order.cancellation_reason}
+                      </p>
+                    )}
+                  </div>
 
                     {(totalFee > 0 || totalGross > 0) && (
                       <div className="grid grid-cols-3 gap-2 text-center text-sm">
@@ -1091,29 +1117,24 @@ export default function StockOrderDetail() {
                 );
               })()}
 
-              {order.manual_payment && (
-                <div className="pt-2 border-t">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-amber-700 border-amber-300 hover:bg-amber-50"
-                    onClick={() => setReopenModal(true)}
-                  >
-                    <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
-                  </Button>
-                  <p className="text-[11px] text-muted-foreground mt-1.5">
-                    Desfaz o registro manual (use se foi erro).
-                  </p>
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Para alterar o pagamento, use as opções no card <strong>Pagamento</strong> acima.
-            </p>
+          {order.payment_status === 'paid' && order.manual_payment && (
+            <div className="pt-2 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                onClick={() => setReopenModal(true)}
+              >
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
+              </Button>
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                Desfaz o registro manual (use se foi erro).
+              </p>
+            </div>
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Entrega + observações */}
       <Card>
