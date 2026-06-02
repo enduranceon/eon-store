@@ -14,6 +14,14 @@ import { toast } from 'sonner';
 
 const SENSITIVE_PAYMENT = new Set(['cancelled', 'refunded', 'partially_paid']);
 
+// Transições permitidas inline. Demais exigem abrir o pedido.
+const SOFT_TRANSITIONS = {
+  awaiting_charge: ['message_sent', 'charge_sent'],
+  message_sent:    ['awaiting_charge', 'charge_sent'],
+  charge_sent:     ['awaiting_charge', 'message_sent'],
+  overdue:         ['message_sent', 'charge_sent'],
+};
+
 const PAYMENT_STATUS = {
   awaiting_charge: { label: 'Ag. cobrança',      color: 'bg-gray-100 text-gray-700' },
   message_sent:    { label: 'Mensagem enviada',   color: 'bg-orange-100 text-orange-700' },
@@ -31,8 +39,11 @@ const DELIVERY_STATUS = {
   cancelled:         { label: 'Cancelado',           color: 'bg-red-100 text-red-700' },
 };
 
-function StatusSelect({ value, options, onChange }) {
+function StatusSelect({ value, options, onChange, allowedKeys = null }) {
   const current = options[value] || { label: value || '—', color: 'bg-gray-100 text-gray-600' };
+  const visibleOptions = allowedKeys
+    ? Object.fromEntries(Object.entries(options).filter(([k]) => k === value || allowedKeys.includes(k)))
+    : options;
   return (
     <div className="relative" onClick={e => e.stopPropagation()}>
       <select
@@ -41,7 +52,7 @@ function StatusSelect({ value, options, onChange }) {
         className={`appearance-none text-xs font-medium px-2.5 py-1.5 rounded-full border-0 cursor-pointer pr-6 ${current.color}`}
         style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b7280'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}
       >
-        {Object.entries(options).map(([k, v]) => (
+        {Object.entries(visibleOptions).map(([k, v]) => (
           <option key={k} value={k}>{v.label}</option>
         ))}
       </select>
@@ -80,6 +91,15 @@ export default function StockOrders() {
   };
 
   const handleStatusChange = async (orderId, field, oldValue, newValue) => {
+    // Só permite transições "soft" + paid pela listagem. Demais exigem abrir o pedido.
+    if (field === 'payment_status' && newValue !== oldValue) {
+      const allowedSoft = SOFT_TRANSITIONS[oldValue] || [];
+      const isAllowed = allowedSoft.includes(newValue) || newValue === 'paid';
+      if (!isAllowed) {
+        toast.error('Esta mudança não pode ser feita pela listagem. Abra o pedido para usar a ação correta (cancelar, estornar, reabrir, etc).');
+        return;
+      }
+    }
     if (field === 'payment_status' && newValue === 'paid' && newValue !== oldValue) {
       const order = orders.find(o => o.id === orderId);
       // Bloqueia "Pago" inline se já tem cobrança Asaas ativa (evita duplicação no fluxo de caixa)
@@ -233,6 +253,7 @@ export default function StockOrders() {
                     <StatusSelect
                       value={o.payment_status}
                       options={PAYMENT_STATUS}
+                      allowedKeys={[...(SOFT_TRANSITIONS[o.payment_status] || []), 'paid']}
                       onChange={v => handleStatusChange(o.id, 'payment_status', o.payment_status, v)}
                     />
                   </td>

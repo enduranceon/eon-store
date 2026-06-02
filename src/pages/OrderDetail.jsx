@@ -61,6 +61,9 @@ export default function OrderDetail() {
   const [payAction, setPayAction] = useState(null);
   // Modal de "Enviar comprovante após pagamento manual"
   const [postPayWhatsModal, setPostPayWhatsModal] = useState(false);
+  // Modal de "Reabrir pagamento" (reverter pagamento manual)
+  const [reopenModal, setReopenModal] = useState(false);
+  const [reopenLoading, setReopenLoading] = useState(false);
   const [whatsappModal, setWhatsappModal] = useState(false);
   const [whatsappMsg, setWhatsappMsg] = useState('');
   const [whatsappManualLink, setWhatsappManualLink] = useState('');
@@ -202,39 +205,21 @@ export default function OrderDetail() {
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
-  const SENSITIVE_PAYMENT = new Set(['paid', 'cancelled', 'refunded', 'partially_paid']);
-
-  const handleSaveClick = () => {
-    if (order && SENSITIVE_PAYMENT.has(paymentStatus) && paymentStatus !== order.payment_status) {
-      setSaveConfirmModal(true);
-    } else {
-      handleSave();
-    }
-  };
-
+  // Salva apenas campos de entrega e observações.
+  // Pagamento (status/método/data) só muda via ações específicas:
+  //   - Registrar pagamento manual
+  //   - Cancelar Asaas / Estornar
+  //   - Reabrir pagamento
+  const handleSaveClick = () => handleSave();
   const handleSave = async () => {
-    setSaveConfirmModal(false);
     setSaving(true);
     try {
-      const wasActive = !['cancelled', 'refunded'].includes(order.payment_status);
-      const willBeCancelled = ['cancelled', 'refunded'].includes(paymentStatus);
-
       await PreSaleOrder.update(id, {
-        payment_status: paymentStatus,
         delivery_status: deliveryStatus,
-        internal_notes: internalNotes,
-        payment_date: paymentDate || null,
-        delivery_date: deliveryDate || null,
-        payment_method: paymentMethod || null,
-        cancellation_reason: cancellationReason || null,
+        delivery_date:   deliveryDate || null,
+        internal_notes:  internalNotes,
       });
-
-      // Devolve uso de cupom se mudou para cancelado/estornado manualmente
-      if (wasActive && willBeCancelled && order.coupon_code) {
-        await returnCouponUse(id, 'presale');
-      }
-
-      toast.success('Pedido atualizado!');
+      toast.success('Atualizações salvas!');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -407,6 +392,37 @@ export default function OrderDetail() {
   const openWhatsAppDirect = () => {
     const phone = '55' + (order.checkout_whatsapp || '').replace(/\D/g, '');
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
+  };
+
+  // Reabre pagamento manual: desfaz o registro e volta a awaiting_charge.
+  // Só funciona se foi manual_payment (Asaas exige estorno via API).
+  const reopenPayment = async () => {
+    setReopenLoading(true);
+    try {
+      // 1. Apaga parcelas manuais em asaas_payments
+      await supabase.from('asaas_payments')
+        .delete()
+        .eq('order_id', id)
+        .eq('order_type', 'presale')
+        .eq('source', 'manual');
+
+      // 2. Reseta order
+      await PreSaleOrder.update(id, {
+        payment_status: 'awaiting_charge',
+        payment_date:   null,
+        payment_method: null,
+        manual_payment: false,
+        manual_fee:     null,
+      });
+
+      toast.success('Pagamento revertido. Pedido voltou para "Aguardando cobrança".');
+      setReopenModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao reabrir pagamento');
+    } finally {
+      setReopenLoading(false);
+    }
   };
 
   const markMessageSent = async () => {
@@ -1188,68 +1204,61 @@ export default function OrderDetail() {
         </CardContent>
       </Card>
 
-      {/* Controles de status */}
+      {/* Status do pagamento (read-only) */}
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">Atualizar Status</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Status de Pagamento</Label>
-              <Select value={paymentStatus} onValueChange={setPaymentStatus}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(PAYMENT_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Forma de Pagamento</Label>
-              <Select value={paymentMethod || 'none'} onValueChange={v => setPaymentMethod(v === 'none' ? '' : v)}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Não confirmado</SelectItem>
-                  <SelectItem value="pix_boleto">PIX ou Boleto (preferência do cliente)</SelectItem>
-                  <SelectItem value="pix">PIX</SelectItem>
-                  <SelectItem value="boleto">Boleto</SelectItem>
-                  <SelectItem value="card_1x">Cartão 1x</SelectItem>
-                  <SelectItem value="card_2x">Cartão 2x</SelectItem>
-                  <SelectItem value="card_3x">Cartão 3x</SelectItem>
-                  <SelectItem value="card_4x">Cartão 4x</SelectItem>
-                  <SelectItem value="card_5x">Cartão 5x</SelectItem>
-                  <SelectItem value="card_6x">Cartão 6x</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Data de Pagamento</Label>
-              <Input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} className="mt-1" />
-            </div>
-          </div>
-          {/* Motivo do cancelamento — aparece quando status for cancelado ou reembolsado */}
-          {['cancelled', 'refunded'].includes(paymentStatus) && (
-            <div>
-              <Label>Motivo do cancelamento / estorno</Label>
-              <div className="grid grid-cols-2 gap-1.5 mt-1.5 mb-2">
-                {CANCEL_REASONS.map(r => (
-                  <button key={r} type="button" onClick={() => setCancellationReason(r)}
-                    className={`text-left px-3 py-1.5 rounded-lg border text-sm transition-all ${
-                      cancellationReason === r ? 'border-red-400 bg-red-50 text-red-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-600'
-                    }`}>
-                    {r}
-                  </button>
-                ))}
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            Status do pagamento
+            <Badge variant={ps.badge}>{ps.label}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {order.payment_status === 'paid' ? (
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">Forma</p>
+                <p className="font-medium mt-0.5">{order.payment_method ? (PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method) : '—'}</p>
               </div>
-              <Textarea
-                placeholder="Detalhes do motivo (opcional)..."
-                value={cancellationReason}
-                onChange={e => setCancellationReason(e.target.value)}
-                rows={2}
-                className="mt-1"
-              />
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">Recebido em</p>
+                <p className="font-medium mt-0.5">{order.payment_date ? formatDate(order.payment_date) : '—'}</p>
+              </div>
+              {order.manual_fee != null && (
+                <div className="col-span-2">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Taxa registrada</p>
+                  <p className="font-medium mt-0.5">{formatCurrency(order.manual_fee)}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Para alterar o pagamento, use as opções no card <strong>Pagamento</strong> acima.
+            </p>
+          )}
+
+          {/* Botão Reabrir — só para pagamentos manuais já registrados */}
+          {order.payment_status === 'paid' && order.manual_payment && (
+            <div className="pt-2 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                onClick={() => setReopenModal(true)}
+              >
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
+              </Button>
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                Desfaz o registro manual (use se foi erro).
+              </p>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Entrega + observações */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Entrega e observações</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Status de Entrega</Label>
@@ -1294,28 +1303,36 @@ export default function OrderDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal de confirmação de status sensível */}
-      <Dialog open={saveConfirmModal} onOpenChange={setSaveConfirmModal}>
+      {/* Modal de reabrir pagamento */}
+      <Dialog open={reopenModal} onOpenChange={open => !open && !reopenLoading && setReopenModal(false)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-500" /> Confirmar mudança de status
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <RotateCcw className="w-5 h-5" /> Reabrir pagamento
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center justify-center gap-3 py-2">
-              <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${order?.payment_status === 'paid' ? 'bg-green-100 text-green-700' : order?.payment_status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'}`}>
-                {PAYMENT_STATUS[order?.payment_status]?.label || order?.payment_status}
-              </span>
-              <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
-              <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${paymentStatus === 'paid' ? 'bg-green-100 text-green-700' : paymentStatus === 'cancelled' ? 'bg-red-100 text-red-700' : paymentStatus === 'refunded' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>
-                {PAYMENT_STATUS[paymentStatus]?.label || paymentStatus}
-              </span>
+          <div className="space-y-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+              <p className="font-semibold text-amber-900">Atenção</p>
+              <p className="text-amber-800 mt-1">
+                Isso vai <strong>desfazer</strong> o registro de pagamento manual:
+              </p>
+              <ul className="mt-2 ml-4 text-xs text-amber-700 list-disc space-y-0.5">
+                <li>Apaga as parcelas projetadas no fluxo de caixa</li>
+                <li>Status volta para <strong>Aguardando cobrança</strong></li>
+                <li>Forma, data e taxa são removidos</li>
+              </ul>
+              <p className="text-xs text-amber-700 mt-2">
+                Use só se foi um registro errado. Para estornar pagamento real, use o fluxo de cancelamento.
+              </p>
             </div>
-            <p className="text-sm text-center text-muted-foreground">Tem certeza? Todas as alterações do formulário serão salvas.</p>
             <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setSaveConfirmModal(false)} disabled={saving}>Cancelar</Button>
-              <Button className="flex-1" onClick={handleSave} disabled={saving}>{saving ? 'Salvando...' : 'Confirmar e salvar'}</Button>
+              <Button variant="outline" className="flex-1" onClick={() => setReopenModal(false)} disabled={reopenLoading}>
+                Voltar
+              </Button>
+              <Button className="flex-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={reopenPayment} disabled={reopenLoading}>
+                {reopenLoading ? 'Revertendo...' : 'Confirmar reabertura'}
+              </Button>
             </div>
           </div>
         </DialogContent>
