@@ -20,7 +20,7 @@ import {
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { suggestFeePercent } from '@/lib/payment-methods';
-import { loadActivePaymentMethods, calcFee, createManualInstallments } from '@/lib/manual-payment';
+import { loadActivePaymentMethods, calcFee, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 
@@ -744,6 +744,16 @@ export default function ContractDetail() {
             manual_discount: newValue,
             discount_reason: reason || null,
           });
+          // Recalcula parcelas manuais se já estava pago manualmente
+          if (contract.manual_payment && contract.payment_status === 'paid') {
+            const basePrice = Number(planVal('price_total')) || 0;
+            const enroll    = Number(contract.enrollment_fee) || 0;
+            const newTotal  = Math.max(0, basePrice + enroll - newValue);
+            await adjustManualInstallmentsValue(
+              { order_id: contract.id, order_type: 'contract' },
+              newTotal,
+            );
+          }
           await load();
         }}
       />

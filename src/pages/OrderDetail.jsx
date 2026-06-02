@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { loadActivePaymentMethods, calcFee, projectInstallments, createManualInstallments } from '@/lib/manual-payment';
+import { loadActivePaymentMethods, calcFee, projectInstallments, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
@@ -453,6 +453,15 @@ export default function OrderDetail() {
         ...(allCancelled ? { payment_status: newPaymentStatus } : {}),
       }).eq('id', id);
 
+      // 5b. Se o pagamento foi manual, recalcula parcelas em asaas_payments
+      // (Asaas real é tratado via API refund acima; trigger SQL cuida do cancelamento total)
+      if (order.manual_payment && !allCancelled) {
+        await adjustManualInstallmentsValue(
+          { order_id: id, order_type: 'presale' },
+          newTotal,
+        );
+      }
+
       // 4. Registra devolução
       await supabase.from('order_returns').insert({
         order_id: id,
@@ -659,6 +668,13 @@ export default function OrderDetail() {
             discount_reason: reason || null,
             total_value:     newTotal,
           });
+          // Recalcula parcelas manuais se já estava pago manualmente
+          if (order.manual_payment && order.payment_status === 'paid') {
+            await adjustManualInstallmentsValue(
+              { order_id: order.id, order_type: 'presale' },
+              newTotal,
+            );
+          }
           await load();
         }}
       />

@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { loadActivePaymentMethods, calcFee, createManualInstallments } from '@/lib/manual-payment';
+import { loadActivePaymentMethods, calcFee, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
@@ -416,6 +416,14 @@ export default function StockOrderDetail() {
         ...(allCancelled ? { payment_status: newPaymentStatus } : {}),
       }).eq('id', id);
 
+      // 3b. Se o pagamento foi manual, recalcula parcelas em asaas_payments
+      if (order.manual_payment && !allCancelled) {
+        await adjustManualInstallmentsValue(
+          { order_id: id, order_type: 'stock' },
+          newTotal,
+        );
+      }
+
       // 4. Reposição automática de estoque se não foi entregue
       if (!cancelItemDelivered && item.product_id) {
         const { data: prod } = await supabase
@@ -593,6 +601,13 @@ export default function StockOrderDetail() {
             discount_reason: reason || null,
             total_value:     newTotal,
           });
+          // Recalcula parcelas manuais se já estava pago manualmente
+          if (order.manual_payment && order.payment_status === 'paid') {
+            await adjustManualInstallmentsValue(
+              { order_id: order.id, order_type: 'stock' },
+              newTotal,
+            );
+          }
           await load();
         }}
       />

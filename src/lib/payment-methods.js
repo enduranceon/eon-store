@@ -13,10 +13,29 @@ export const PAYMENT_METHODS = [
   { value: 'credit_card',   label: 'Cartão de crédito', description: 'Crédito 1x via gateway',                     group: 'asaas',  fee: 'credit_1x' },
 ];
 
-// Lookup rápido
-export const PAYMENT_METHOD_LABELS = Object.fromEntries(
-  PAYMENT_METHODS.map(m => [m.value, m.label])
-);
+// Lookup rápido — inclui os internal_codes da nova tabela payment_methods
+// para evitar códigos "crus" aparecendo em telas legacy (Reports, PublicOrderTracking, etc.)
+export const PAYMENT_METHOD_LABELS = {
+  ...Object.fromEntries(PAYMENT_METHODS.map(m => [m.value, m.label])),
+  // Internal codes da tabela payment_methods (banco)
+  pix_asaas:      'PIX (via Asaas)',
+  boleto_asaas:   'Boleto (via Asaas)',
+  card_asaas_3x:  'Cartão Asaas 3x',
+  card_asaas_12x: 'Cartão Asaas 12x',
+  // Preferências de checkout que faltavam no map original
+  pix_boleto:     'PIX ou Boleto',
+  card_2x:        'Cartão 2x',
+  card_3x:        'Cartão 3x',
+  card_4x:        'Cartão 4x',
+  card_5x:        'Cartão 5x',
+  card_6x:        'Cartão 6x',
+  card_7x:        'Cartão 7x',
+  card_8x:        'Cartão 8x',
+  card_9x:        'Cartão 9x',
+  card_10x:       'Cartão 10x',
+  card_11x:       'Cartão 11x',
+  card_12x:       'Cartão 12x',
+};
 
 // Calcula taxa do gateway Asaas
 // PIX: 0,99% · Boleto: R$ 3,49 fixo · Cartão: 2,99% na 1x + 0,5% por parcela adicional
@@ -28,14 +47,23 @@ export function calcGatewayFee(totalValue, paymentMethod, manualFee = null) {
     return Number(manualFee) || 0;
   }
   if (!paymentMethod || !totalValue) return 0;
-  if (paymentMethod === 'pix')    return totalValue * 0.0099;
-  if (paymentMethod === 'boleto') return 3.49;
-  if (paymentMethod.startsWith('card_')) {
-    const m = paymentMethod.match(/card_(\d+)x/);
+
+  // Normaliza códigos novos (internal_codes da tabela payment_methods)
+  // para reaproveitar a lógica legacy
+  let pm = paymentMethod;
+  if (pm === 'pix_asaas')    pm = 'pix';
+  if (pm === 'boleto_asaas') pm = 'boleto';
+  const asaasCard = pm.match(/^card_asaas_(\d+)x$/);
+  if (asaasCard) pm = `card_${asaasCard[1]}x`;
+
+  if (pm === 'pix')    return totalValue * 0.0099;
+  if (pm === 'boleto') return 3.49;
+  if (pm.startsWith('card_')) {
+    const m = pm.match(/card_(\d+)x/);
     const n = m ? parseInt(m[1]) : 1;
     return totalValue * (0.0299 + (n - 1) * 0.005);
   }
-  if (paymentMethod === 'credit_card') return totalValue * 0.0299;
+  if (pm === 'credit_card') return totalValue * 0.0299;
   return 0;
 }
 
