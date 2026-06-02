@@ -80,12 +80,24 @@ export async function createManualInstallments(methodConfig, paymentDate, orderR
   const valuePerInst = totalV / parcels.length;
   const netPerInst = netTotal / parcels.length;
 
-  // Limpa quaisquer parcelas manuais anteriores para este order/contract (evita duplicação ao re-registrar)
+  // Limpa parcelas anteriores antes de re-inserir.
+  // - Manuais: sempre deletadas (re-registro substitui)
+  // - Asaas PENDING/OVERDUE: deletadas (cliente pagou por fora; cobrança Asaas pendente
+  //   é descartada para evitar duplicação caso o webhook chegue depois)
+  // - Asaas RECEIVED/CONFIRMED: PROTEGIDAS (Asaas já recebeu de verdade; nesse caso
+  //   o front deveria ter bloqueado o registro manual)
   await supabase.from('asaas_payments')
     .delete()
     .eq('order_id', orderRef.order_id)
     .eq('order_type', orderRef.order_type)
     .eq('source', 'manual');
+
+  await supabase.from('asaas_payments')
+    .delete()
+    .eq('order_id', orderRef.order_id)
+    .eq('order_type', orderRef.order_type)
+    .eq('source', 'asaas')
+    .in('status', ['PENDING', 'OVERDUE']);
 
   const rows = parcels.map(p => ({
     asaas_payment_id:    `manual_${orderRef.order_id}_${p.number}_${Date.now()}`,

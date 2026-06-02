@@ -81,8 +81,13 @@ export default function StockOrders() {
 
   const handleStatusChange = async (orderId, field, oldValue, newValue) => {
     if (field === 'payment_status' && newValue === 'paid' && newValue !== oldValue) {
-      // Abre modal de pagamento manual completo
       const order = orders.find(o => o.id === orderId);
+      // Bloqueia "Pago" inline se já tem cobrança Asaas ativa (evita duplicação no fluxo de caixa)
+      if (order?.asaas_charge_id) {
+        toast.error('Este pedido tem cobrança Asaas ativa. Cancele a cobrança ou aguarde a confirmação do gateway antes de marcar como pago manualmente. Acesse o pedido para mais opções.');
+        return;
+      }
+      // Abre modal de pagamento manual completo
       try {
         const groups = await loadActivePaymentMethods();
         setMethodGroups(groups);
