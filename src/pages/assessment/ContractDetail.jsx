@@ -139,6 +139,7 @@ function ContractTimeline({ events }) {
 }
 
 export default function ContractDetail() {
+  // Contract detail page — handles assessment contracts with full event timeline
   const { id } = useParams();
   const navigate = useNavigate();
   const [contract, setContract] = useState(null);
