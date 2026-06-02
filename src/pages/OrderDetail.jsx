@@ -64,6 +64,8 @@ export default function OrderDetail() {
   // Modal de "Reabrir pagamento" (reverter pagamento manual)
   const [reopenModal, setReopenModal] = useState(false);
   const [reopenLoading, setReopenLoading] = useState(false);
+  // Parcelas projetadas (asaas_payments) — mostra detalhamento do pagamento
+  const [paymentInstallments, setPaymentInstallments] = useState([]);
   const [whatsappModal, setWhatsappModal] = useState(false);
   const [whatsappMsg, setWhatsappMsg] = useState('');
   const [whatsappManualLink, setWhatsappManualLink] = useState('');
@@ -123,6 +125,15 @@ export default function OrderDetail() {
       setCustomer(c);
       if (c.cpf) setAsaasCpf(c.cpf);
     }).catch(() => {});
+
+    // Carrega parcelas projetadas (asaas_payments) — só "ativas"
+    supabase.from('asaas_payments')
+      .select('*')
+      .eq('order_id', id)
+      .eq('order_type', 'presale')
+      .order('installment_number', { ascending: true })
+      .then(({ data }) => setPaymentInstallments(data || []))
+      .catch(() => setPaymentInstallments([]));
   };
 
   useEffect(() => { load(); }, [id]);
@@ -1204,7 +1215,7 @@ export default function OrderDetail() {
         </CardContent>
       </Card>
 
-      {/* Status do pagamento (read-only) */}
+      {/* Status do pagamento (read-only + detalhamento) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
@@ -1212,45 +1223,126 @@ export default function OrderDetail() {
             <Badge variant={ps.badge}>{ps.label}</Badge>
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-4">
           {order.payment_status === 'paid' ? (
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Forma</p>
-                <p className="font-medium mt-0.5">{order.payment_method ? (PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method) : '—'}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide">Recebido em</p>
-                <p className="font-medium mt-0.5">{order.payment_date ? formatDate(order.payment_date) : '—'}</p>
-              </div>
-              {order.manual_fee != null && (
-                <div className="col-span-2">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Taxa registrada</p>
-                  <p className="font-medium mt-0.5">{formatCurrency(order.manual_fee)}</p>
+            <>
+              {/* Linha do tempo: registro */}
+              {(() => {
+                const activeInstallments = paymentInstallments.filter(p => !['CANCELLED','REFUNDED'].includes(p.status));
+                const totalGross = activeInstallments.reduce((s,p) => s + (Number(p.value) || 0), 0);
+                const totalNet   = activeInstallments.reduce((s,p) => s + (Number(p.net_value) || 0), 0);
+                const totalFee   = totalGross - totalNet;
+                const registeredAt = activeInstallments[0]?.last_synced_at || activeInstallments[0]?.created_at;
+                const sourceLabel  = order.manual_payment ? 'Registro manual' : 'Cobrança Asaas';
+                const sourceBadgeColor = order.manual_payment ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
+                return (
+                  <>
+                    {/* Resumo */}
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-3 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs text-green-700 font-medium uppercase tracking-wide">Pago</p>
+                          <p className="text-lg font-bold text-green-800 mt-0.5">
+                            {formatCurrency(order.total_value)}
+                          </p>
+                          <p className="text-xs text-green-700 mt-0.5">
+                            {PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method}
+                            {' · '}
+                            <span className="font-medium">{order.payment_date ? formatDate(order.payment_date) : '—'}</span>
+                          </p>
+                        </div>
+                        <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${sourceBadgeColor}`}>
+                          {sourceLabel}
+                        </span>
+                      </div>
+                      {registeredAt && (
+                        <p className="text-[11px] text-green-600 flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          Registrado em {new Date(registeredAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Breakdown bruto/taxa/líquido */}
+                    {(totalFee > 0 || totalGross > 0) && (
+                      <div className="grid grid-cols-3 gap-2 text-center text-sm">
+                        <div className="bg-gray-50 border rounded-lg py-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Bruto</p>
+                          <p className="font-semibold mt-0.5">{formatCurrency(totalGross)}</p>
+                        </div>
+                        <div className="bg-gray-50 border rounded-lg py-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Taxa</p>
+                          <p className="font-semibold mt-0.5 text-red-600">−{formatCurrency(totalFee)}</p>
+                        </div>
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-lg py-2">
+                          <p className="text-[10px] text-emerald-700 uppercase tracking-wide">Líquido</p>
+                          <p className="font-bold mt-0.5 text-emerald-700">{formatCurrency(totalNet)}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Parcelas projetadas */}
+                    {activeInstallments.length > 0 && (
+                      <div className="border rounded-xl overflow-hidden">
+                        <div className="bg-blue-50 border-b border-blue-200 px-3 py-2 text-xs font-semibold text-blue-900 flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5" />
+                          {activeInstallments.length === 1
+                            ? 'Recebimento no fluxo de caixa'
+                            : `${activeInstallments.length} parcelas no fluxo de caixa`}
+                        </div>
+                        <div className="divide-y">
+                          {activeInstallments.map(p => {
+                            const isPaid = ['RECEIVED','CONFIRMED','RECEIVED_IN_CASH'].includes(p.status);
+                            const isPast = p.credit_date && new Date(p.credit_date) <= new Date();
+                            return (
+                              <div key={p.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                                <span className="text-xs font-bold text-muted-foreground w-12 shrink-0">
+                                  {activeInstallments.length === 1 ? '1x' : `${p.installment_number}/${p.total_installments || activeInstallments.length}`}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs text-gray-700">
+                                    {p.credit_date ? formatDate(p.credit_date) : '—'}
+                                    {isPast && isPaid && <span className="ml-1.5 text-[10px] text-emerald-600 font-medium">✓ creditado</span>}
+                                    {!isPast && <span className="ml-1.5 text-[10px] text-blue-600">a receber</span>}
+                                  </p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="font-semibold text-sm">{formatCurrency(p.net_value || p.value || 0)}</p>
+                                  {Number(p.value) !== Number(p.net_value) && (
+                                    <p className="text-[10px] text-muted-foreground">bruto {formatCurrency(p.value)}</p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              {/* Botão Reabrir — só para pagamentos manuais */}
+              {order.manual_payment && (
+                <div className="pt-2 border-t">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                    onClick={() => setReopenModal(true)}
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
+                  </Button>
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    Desfaz o registro manual (use se foi erro).
+                  </p>
                 </div>
               )}
-            </div>
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">
               Para alterar o pagamento, use as opções no card <strong>Pagamento</strong> acima.
             </p>
-          )}
-
-          {/* Botão Reabrir — só para pagamentos manuais já registrados */}
-          {order.payment_status === 'paid' && order.manual_payment && (
-            <div className="pt-2 border-t">
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-amber-700 border-amber-300 hover:bg-amber-50"
-                onClick={() => setReopenModal(true)}
-              >
-                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
-              </Button>
-              <p className="text-[11px] text-muted-foreground mt-1.5">
-                Desfaz o registro manual (use se foi erro).
-              </p>
-            </div>
           )}
         </CardContent>
       </Card>
