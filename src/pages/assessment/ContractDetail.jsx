@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   QrCode, RefreshCw, History, Pause, XCircle, AlertTriangle, RotateCcw, ArrowUpRight, ArrowDownRight,
-  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, CreditCard,
+  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -1131,8 +1131,7 @@ export default function ContractDetail() {
             {contract.asaas_charge_id && (
               <div className="border rounded-xl overflow-hidden">
                 <div className="bg-gray-50 px-3 py-2 border-b flex items-center gap-2">
-                  <CreditCard className="w-3.5 h-3.5 text-gray-500" />
-                  <span className="text-xs font-semibold text-gray-700">Parcelas no Asaas</span>
+                  <span className="text-xs font-semibold text-gray-700">💳 Parcelas no Asaas</span>
                   {loadingCancelInst && (
                     <div className="w-3 h-3 border border-blue-500 border-t-transparent rounded-full animate-spin ml-auto" />
                   )}
