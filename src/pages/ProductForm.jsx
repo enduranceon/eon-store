@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Wand2, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Wand2, ChevronDown, ChevronUp, Hash } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import ImageUpload from '@/components/shared/ImageUpload';
+import { formatSku, formatProductNumber } from '@/lib/sku';
 import { PreSaleProduct, PreSaleCampaign, PreSaleSupplier, PreSaleCategory, Product } from '@/api/entities';
 import { formatCurrency, cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -17,37 +18,12 @@ const SIZES_LETTER = ['PP', 'P', 'M', 'G', 'GG', 'XG', '2XG', '3XG'];
 const SIZES_NUMERIC = ['34', '36', '38', '40', '42', '44', '46', '48'];
 const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
 
-// ─── Auto-geração de SKU ─────────────────────────────────────────────────────
-const STOP_WORDS = new Set(['de','da','do','das','dos','e','a','o','as','os','em','na','no','para','com','sem','por','the','of']);
-
-function removeAccents(str) {
-  return str.normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
-
-function suggestSku(name, category) {
-  const catPrefix = removeAccents(category || 'GER')
-    .replace(/[^a-zA-Z0-9]/g, '')
-    .slice(0, 3)
-    .toUpperCase() || 'GER';
-
-  if (!name?.trim()) return `EON-${catPrefix}-`;
-
-  const words = removeAccents(name)
-    .replace(/[^a-zA-Z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 0 && !STOP_WORDS.has(w.toLowerCase()));
-
-  let abbr = '';
-  for (let i = 0; i < words.length && abbr.length < 6; i++) {
-    const w = words[i].toUpperCase();
-    abbr += w.slice(0, Math.min(i === 0 ? 4 : 3, 6 - abbr.length));
-  }
-
-  return abbr ? `EON-${catPrefix}-${abbr}` : `EON-${catPrefix}-`;
-}
+// ─── SKU: padrão NNNN-SIZE-GENDER ────────────────────────────────────────────
+// O SKU é gerado a partir de product_number (gerado pelo banco) + size + gender.
+// Não é editável manualmente: garante unicidade e padronização.
 
 const EMPTY = {
-  name: '', sku: '', supplier: '', sale_price: '', regular_price: '', cost_price: '',
+  name: '', product_number: null, supplier: '', sale_price: '', regular_price: '', cost_price: '',
   extra_cost: '', extra_cost_description: '',
   category: '', subcategory: '',
   status: 'active', campaign_ids: [], variations: [], extras: [], notes: '',
@@ -80,7 +56,6 @@ export default function ProductForm() {
   const [categories, setCategories] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loadingProduct, setLoadingProduct] = useState(false);
-  const [skuAutoMode, setSkuAutoMode] = useState(true); // false quando usuário edita manualmente
   const isEdit = Boolean(id);
 
   // Estado do gerador rápido
@@ -116,7 +91,6 @@ export default function ProductForm() {
           images,
           campaign_ids: p.campaign_ids?.length ? p.campaign_ids : (p.campaign_id ? [p.campaign_id] : []),
         });
-        if (p.sku) setSkuAutoMode(false); // produto já tem SKU, não sobrescrever
       }).catch(e => {
         toast.error('Erro ao carregar produto: ' + e.message);
       }).finally(() => {
@@ -125,11 +99,17 @@ export default function ProductForm() {
     }
   }, [id]);
 
-  // Auto-sugestão de SKU enquanto digita nome/categoria
+  // Re-gera SKU de cada variação sempre que product_number, size ou gender mudar
   useEffect(() => {
-    if (!skuAutoMode || isEdit) return;
-    setField('sku', suggestSku(form.name, form.category));
-  }, [form.name, form.category, skuAutoMode]);
+    if (!form.product_number || !form.variations?.length) return;
+    setForm(f => ({
+      ...f,
+      variations: f.variations.map(v => ({
+        ...v,
+        sku: formatSku(f.product_number, v.size || '', v.gender || ''),
+      })),
+    }));
+  }, [form.product_number]);
 
   const salePrice = parseFloat(form.sale_price) || 0;
   const regularPrice = parseFloat(form.regular_price) || 0;
@@ -155,26 +135,27 @@ export default function ProductForm() {
     const existing = form.variations || [];
     const toAdd = [];
 
+    const pn = form.product_number;
     if (sizes.length > 0 && genGenders.length > 0) {
       // Combinação tamanho × gênero
       for (const gender of genGenders) {
         for (const size of sizes) {
           const name = `${gender} - ${size}`;
           if (!existing.find(v => v.name === name)) {
-            toAdd.push({ name, sku: '', gender, size, sale_price: '', regular_price: '', cost_price: '' });
+            toAdd.push({ name, sku: formatSku(pn, size, gender), gender, size, sale_price: '', regular_price: '', cost_price: '' });
           }
         }
       }
     } else if (sizes.length > 0) {
       for (const size of sizes) {
         if (!existing.find(v => v.size === size && !v.gender)) {
-          toAdd.push({ name: size, sku: '', size, gender: '', sale_price: '', regular_price: '', cost_price: '' });
+          toAdd.push({ name: size, sku: formatSku(pn, size, ''), size, gender: '', sale_price: '', regular_price: '', cost_price: '' });
         }
       }
     } else {
       for (const gender of genGenders) {
         if (!existing.find(v => v.gender === gender && !v.size)) {
-          toAdd.push({ name: gender, sku: '', gender, size: '', sale_price: '', regular_price: '', cost_price: '' });
+          toAdd.push({ name: gender, sku: formatSku(pn, '', gender), gender, size: '', sale_price: '', regular_price: '', cost_price: '' });
         }
       }
     }
@@ -192,7 +173,7 @@ export default function ProductForm() {
 
   const addVariation = () => setForm(f => ({
     ...f,
-    variations: [...(f.variations || []), { name: '', sku: '', gender: '', size: '', sale_price: '', regular_price: '', cost_price: '' }],
+    variations: [...(f.variations || []), { name: '', sku: formatSku(f.product_number, '', ''), gender: '', size: '', sale_price: '', regular_price: '', cost_price: '' }],
   }));
 
   const updateVariation = (i, k, v) => setForm(f => {
@@ -205,6 +186,10 @@ export default function ProductForm() {
       if (g && s) vars[i].name = `${g} - ${s}`;
       else if (g) vars[i].name = g;
       else if (s) vars[i].name = s;
+    }
+    // Re-gera SKU automaticamente quando size/gender mudam (não editável manualmente)
+    if (k === 'gender' || k === 'size') {
+      vars[i].sku = formatSku(f.product_number, vars[i].size || '', vars[i].gender || '');
     }
     return { ...f, variations: vars };
   });
@@ -220,7 +205,7 @@ export default function ProductForm() {
     if (!form.sale_price) return toast.error('Preço de venda é obrigatório');
     setSaving(true);
     try {
-      const variations = (form.variations || []).map(v => ({
+      let variations = (form.variations || []).map(v => ({
         ...v,
         sale_price: parseFloat(v.sale_price) || null,
         regular_price: parseFloat(v.regular_price) || null,
@@ -242,17 +227,28 @@ export default function ProductForm() {
         variations, extras,
       };
       let productId = form.product_id || null;
+      let productNumber = form.product_number || null;
       if (productId) {
         await Product.update(productId, libraryPayload);
       } else {
         const lib = await Product.create(libraryPayload);
-        productId = lib.id;
+        productId     = lib.id;
+        productNumber = lib.product_number;
+        // Re-gera SKUs com o product_number REAL (gerado pelo banco) e re-salva
+        if (productNumber && variations.length > 0) {
+          variations = variations.map(v => ({
+            ...v,
+            sku: formatSku(productNumber, v.size || '', v.gender || ''),
+          }));
+          await Product.update(productId, { variations });
+        }
       }
 
       // Salva / atualiza no presale_products (com product_id linkado)
       const payload = {
         ...form,
         product_id: productId,
+        product_number: productNumber,
         sale_price: salePrice, regular_price: regularPrice || null,
         cost_price: costPrice, extra_cost: extraCost,
         total_cost: totalCost, profit_per_unit: profit,
@@ -313,20 +309,21 @@ export default function ProductForm() {
               <Input placeholder="Ex: Camiseta EON Dri-Fit" value={form.name} onChange={e => setField('name', e.target.value)} className="mt-1" />
             </div>
             <div>
-              <Label>SKU base <span className="text-xs text-muted-foreground font-normal">(código)</span></Label>
+              <Label className="flex items-center gap-1.5">
+                <Hash className="w-3.5 h-3.5" />
+                Código do produto
+                <span className="text-xs text-muted-foreground font-normal">(automático)</span>
+              </Label>
               <Input
-                placeholder="Ex: EON-COR-CAMBR"
-                value={form.sku || ''}
-                onChange={e => {
-                  setSkuAutoMode(e.target.value === ''); // reativa auto se apagar tudo
-                  setField('sku', e.target.value);
-                }}
-                onFocus={() => !isEdit && setSkuAutoMode(false)}
-                className="mt-1 font-mono"
+                readOnly
+                value={form.product_number ? formatProductNumber(form.product_number) : '— gerado ao salvar —'}
+                className="mt-1 font-mono bg-gray-50 cursor-not-allowed text-gray-600"
+                title="Número sequencial único — gerado pelo sistema"
               />
-              {skuAutoMode && !isEdit && (
-                <p className="text-[11px] text-blue-500 mt-0.5">✦ Gerado automaticamente · edite se quiser</p>
-              )}
+              <p className="text-[11px] text-blue-600 mt-0.5">
+                ✦ SKU das variações: <span className="font-mono">{form.product_number ? formatProductNumber(form.product_number) : 'NNNN'}-TAM-G</span>
+                {' '}(ex: <span className="font-mono">{form.product_number ? formatSku(form.product_number, 'M', 'Masculino') : '0042-M-M'}</span>)
+              </p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -646,10 +643,11 @@ export default function ProductForm() {
                     className="h-8 text-sm"
                   />
                   <Input
-                    placeholder="SKU"
+                    readOnly
+                    placeholder="—"
                     value={v.sku ?? ''}
-                    onChange={e => updateVariation(i, 'sku', e.target.value)}
-                    className="h-8 text-xs font-mono"
+                    className="h-8 text-xs font-mono bg-gray-50 cursor-not-allowed text-gray-600"
+                    title="SKU gerado automaticamente a partir do código do produto + tamanho + gênero"
                   />
                   <Select value={v.gender || '_none'} onValueChange={val => updateVariation(i, 'gender', val === '_none' ? '' : val)}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Gênero" /></SelectTrigger>
