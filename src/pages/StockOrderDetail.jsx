@@ -56,6 +56,7 @@ export default function StockOrderDetail() {
   const [saving, setSaving] = useState(false);
   const [whatsappModal, setWhatsappModal] = useState(false);
   const [whatsappMsg, setWhatsappMsg] = useState('');
+  const [whatsappManualLink, setWhatsappManualLink] = useState('');
   const [copied, setCopied] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState('');
   const [deliveryStatus, setDeliveryStatus] = useState('');
@@ -275,24 +276,80 @@ export default function StockOrderDetail() {
     } catch (e) { toast.error(e.message || 'Erro ao estornar'); }
   };
 
-  const buildMessage = () => {
+  const PAYMENT_METHOD_LABEL = {
+    pix_boleto: 'PIX ou Boleto', pix: 'PIX', pix_manual: 'PIX', boleto: 'Boleto',
+    cash: 'Dinheiro', bank_transfer: 'Transferência bancária',
+    card_1x: 'Cartão 1x', card_2x: 'Cartão 2x', card_3x: 'Cartão 3x',
+    card_4x: 'Cartão 4x', card_5x: 'Cartão 5x', card_6x: 'Cartão 6x',
+    card_7x: 'Cartão 7x', card_8x: 'Cartão 8x', card_9x: 'Cartão 9x',
+    card_10x: 'Cartão 10x', card_11x: 'Cartão 11x', card_12x: 'Cartão 12x',
+  };
+
+  const buildMessage = (manualLink = '') => {
     if (!order) return '';
     const itemLines = (order.items || []).filter(it => !it.cancelled).map(item => {
       const label = item.variation ? `${item.product_name} - ${item.variation}` : item.product_name;
       return `• ${label} x${item.quantity} → ${formatCurrency((item.sale_price || 0) * item.quantity)}`;
     }).join('\n');
     const total = order.total_value || 0;
-    const chargeLink = order.asaas_payment_link;
-    const pixCopy = order.asaas_pix_copy;
     const trackingLink = `${window.location.origin}/p/${order.id}`;
     const trackingLine = `\n\n🔍 *Acompanhe seu pedido:*\n${trackingLink}`;
+
+    // Modo Asaas: tem link ou PIX do gateway
+    const chargeLink = order.asaas_payment_link;
+    const pixCopy    = order.asaas_pix_copy;
     if (chargeLink || pixCopy) {
-      return `Olá, ${order.customer_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\n${pixCopy ? `📲 *PIX Copia e Cola:*\n\`${pixCopy}\`\n\n` : ''}${chargeLink ? `🔗 *Link de pagamento:*\n${chargeLink}` : ''}${trackingLine}`;
+      return (
+        `Olá, ${order.customer_name}! 👋\n\n` +
+        `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
+        `📦 *Itens:*\n${itemLines}\n\n` +
+        `💰 *Total: ${formatCurrency(total)}*\n\n` +
+        (pixCopy ? `📲 *PIX Copia e Cola:*\n\`${pixCopy}\`\n\n` : '') +
+        (chargeLink ? `🔗 *Link de pagamento:*\n${chargeLink}` : '') +
+        trackingLine
+      );
     }
-    return `Olá, ${order.customer_name}! 👋\n\nSegue o resumo do seu pedido *${order.order_number}*:\n\n📦 *Itens:*\n${itemLines}\n\n💰 *Total: ${formatCurrency(total)}*\n\nComo você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 6x)${trackingLine}`;
+
+    // Modo manual com link externo
+    const payLabel = PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method || null;
+    const linkTrim = manualLink?.trim();
+    if (linkTrim) {
+      return (
+        `Olá, ${order.customer_name}! 👋\n\n` +
+        `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
+        `📦 *Itens:*\n${itemLines}\n\n` +
+        `💰 *Total: ${formatCurrency(total)}*\n\n` +
+        (payLabel ? `💳 *Forma de pagamento:* ${payLabel}\n\n` : '') +
+        `🔗 *Link de pagamento:*\n${linkTrim}` +
+        trackingLine
+      );
+    }
+
+    // Sem link — mensagem informativa
+    if (payLabel) {
+      return (
+        `Olá, ${order.customer_name}! 👋\n\n` +
+        `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
+        `📦 *Itens:*\n${itemLines}\n\n` +
+        `💰 *Total: ${formatCurrency(total)}*\n\n` +
+        `💳 *Forma de pagamento:* ${payLabel}\n\n` +
+        `Em breve envio o link/QR para você finalizar o pagamento. 👍` +
+        trackingLine
+      );
+    }
+
+    // Fallback: sem preferência de pagamento registrada
+    return (
+      `Olá, ${order.customer_name}! 👋\n\n` +
+      `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
+      `📦 *Itens:*\n${itemLines}\n\n` +
+      `💰 *Total: ${formatCurrency(total)}*\n\n` +
+      `Como você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 12x)` +
+      trackingLine
+    );
   };
 
-  const openWhatsApp = () => { setWhatsappMsg(buildMessage()); setCopied(false); setWhatsappModal(true); };
+  const openWhatsApp = () => { setWhatsappManualLink(''); setWhatsappMsg(buildMessage('')); setCopied(false); setWhatsappModal(true); };
   const copyMessage = () => { navigator.clipboard.writeText(whatsappMsg).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
   const openWhatsAppDirect = () => { window.open(`https://wa.me/55${(order.customer_whatsapp || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`, '_blank'); };
 
@@ -562,11 +619,48 @@ export default function StockOrderDetail() {
       {/* Modal WhatsApp */}
       <Dialog open={whatsappModal} onOpenChange={setWhatsappModal}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><MessageCircle className="w-5 h-5 text-green-600" /> Mensagem de cobrança</DialogTitle></DialogHeader>
-          <div className="bg-gray-50 rounded-xl p-4 text-sm whitespace-pre-wrap font-mono border">{whatsappMsg}</div>
-          <div className="flex gap-2 pt-1">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="w-5 h-5 text-green-600" /> Mensagem de cobrança
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Badge indicando o modo */}
+          {order.asaas_charge_id ? (
+            <div className="flex items-center gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+              <Zap className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="text-blue-800"><strong>Cobrança Asaas</strong> — link/PIX incluído automaticamente na mensagem</span>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <Link2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="text-amber-800">Sem cobrança Asaas — você pode inserir um link externo abaixo (Stone, PagSeguro, etc.)</span>
+              </div>
+              <div>
+                <Label className="text-xs">Link de cobrança externo (opcional)</Label>
+                <Input
+                  className="mt-1 font-mono text-xs"
+                  placeholder="https://..."
+                  value={whatsappManualLink}
+                  onChange={e => {
+                    setWhatsappManualLink(e.target.value);
+                    setWhatsappMsg(buildMessage(e.target.value));
+                    setCopied(false);
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Preview da mensagem */}
+          <div className="bg-gray-50 rounded-xl p-4 text-sm whitespace-pre-wrap font-mono border max-h-64 overflow-y-auto">
+            {whatsappMsg}
+          </div>
+
+          <div className="flex gap-2">
             <Button className="flex-1" variant="outline" onClick={copyMessage}>
-              {copied ? <><Check className="w-4 h-4 mr-1.5 text-green-600" />Copiado!</> : <><Copy className="w-4 h-4 mr-1.5" />Copiar mensagem</>}
+              {copied ? <><Check className="w-4 h-4 mr-1.5 text-green-600" />Copiado!</> : <><Copy className="w-4 h-4 mr-1.5" />Copiar</>}
             </Button>
             <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsAppDirect}>
               <ExternalLink className="w-4 h-4 mr-1.5" /> Abrir no WhatsApp
