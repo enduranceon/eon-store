@@ -160,6 +160,8 @@ export default function ContractDetail() {
   const [leaveModal, setLeaveModal] = useState(false);
   const [leaveForm, setLeaveForm] = useState({ start_date: todayLocalStr(), end_date: todayLocalStr(), reason: '' });
   const [cancelModal, setCancelModal]   = useState(false);
+  const [voidModal, setVoidModal]       = useState(false);
+  const [voiding, setVoiding]           = useState(false);
   const [cancelDate, setCancelDate] = useState(todayLocalStr());  // Data de cancelamento (pode ser retroativa)
   const [cancelFeePct, setCancelFeePct] = useState(20);
   const [cancelReason, setCancelReason] = useState('');
@@ -421,6 +423,64 @@ export default function ContractDetail() {
       load();
     } catch (e) { toast.error(e.message); }
   };
+
+  // Anular venda — para contratos NÃO pagos (pending/awaiting_charge/message_sent/charge_sent/overdue).
+  // Diferente de cancelContract porque:
+  //   - Não calcula multa nem refund (nada foi pago)
+  //   - Cancela cobrança Asaas via API (se houver) pra não ficar vagando
+  //   - Marca payment_status='cancelled' (trigger SQL limpa asaas_payments)
+  //   - Coach já está protegido (edge function exige payment_status='paid')
+  const voidContract = async () => {
+    setVoiding(true);
+    try {
+      // 1. Se tem cobrança Asaas ativa, cancela primeiro (best-effort)
+      if (contract.asaas_charge_id) {
+        try {
+          const { error } = await supabase.functions.invoke('create-asaas-charge', {
+            body: { action: 'cancel', order_id: id, order_type: 'contract' },
+          });
+          if (error) console.warn('[voidContract] Asaas cancel falhou:', error);
+        } catch (e) {
+          console.warn('[voidContract] Asaas cancel exception:', e);
+          // não bloqueia — usuário pode cancelar manualmente no Asaas depois
+        }
+      }
+
+      // 2. Marca contrato como anulado (status + payment_status = cancelled)
+      // Trigger SQL cuida de zerar asaas_payments associados.
+      await AssessmentContract.update(id, {
+        status:              'cancelled',
+        payment_status:      'cancelled',
+        cancellation_date:   todayLocalStr(),
+        cancellation_fee:    0,
+        cancellation_reason: 'Venda não concretizada (cliente nunca pagou)',
+        refund_status:       null,
+        refund_amount:       null,
+        // Limpa referências da cobrança Asaas
+        asaas_charge_id:     null,
+        asaas_payment_link:  null,
+        asaas_pix_copy:      null,
+      });
+
+      // 3. Log de evento distinto (sale_voided ≠ cancelled)
+      await logEvent('sale_voided', {
+        had_asaas_charge:     !!contract.asaas_charge_id,
+        previous_payment_status: contract.payment_status,
+        previous_due_date:    contract.due_date,
+      }, 'Venda não concretizada');
+
+      toast.success('Venda anulada. Cobrança Asaas cancelada e contrato encerrado sem multa.');
+      setVoidModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao anular venda');
+    } finally {
+      setVoiding(false);
+    }
+  };
+
+  // Detecta se o contrato está em estado "não pago" — permite anular venda
+  const isUnpaid = contract && !['paid', 'refunded', 'cancelled'].includes(contract.payment_status || '');
 
   const renewContract = async () => {
     if (!plan) return toast.error('Plano inválido');
@@ -897,13 +957,24 @@ export default function ContractDetail() {
                 <RotateCcw className="w-4 h-4 mr-1.5" /> Renovar contrato
               </Button>
             )}
-            <Button
-              variant="outline"
-              className="text-red-600 hover:bg-red-50"
-              onClick={openCancelModal}
-            >
-              <XCircle className="w-4 h-4 mr-1.5" /> Cancelar contrato
-            </Button>
+            {isUnpaid ? (
+              <Button
+                variant="outline"
+                className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                onClick={() => setVoidModal(true)}
+                title="Cliente nunca pagou — anula a venda sem multa nem cobrança ao coach"
+              >
+                <XCircle className="w-4 h-4 mr-1.5" /> Anular venda
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                className="text-red-600 hover:bg-red-50"
+                onClick={openCancelModal}
+              >
+                <XCircle className="w-4 h-4 mr-1.5" /> Cancelar contrato
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1099,6 +1170,62 @@ export default function ContractDetail() {
             onSave={recordManualPayment}
             onCancel={() => setManualPayModal(false)}
           />
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: anular venda (contrato não pago) */}
+      <Dialog open={voidModal} onOpenChange={open => !open && !voiding && setVoidModal(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <XCircle className="w-5 h-5" /> Anular venda
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm space-y-2">
+              <p className="font-semibold text-amber-900">
+                Este contrato nunca foi pago.
+              </p>
+              <p className="text-amber-800">
+                Como o cliente não chegou a pagar (status: <strong>{contract?.payment_status}</strong>),
+                não há multa nem reembolso a calcular. A operação é simples e reversível pelo histórico.
+              </p>
+            </div>
+
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-600 shrink-0" />
+                <span>Contrato é marcado como <strong>cancelado</strong></span>
+              </div>
+              {contract?.asaas_charge_id && (
+                <div className="flex items-center gap-2">
+                  <Check className="w-4 h-4 text-green-600 shrink-0" />
+                  <span>Cobrança Asaas é <strong>cancelada</strong> automaticamente</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-600 shrink-0" />
+                <span>Coach <strong>não recebe</strong> nada por esse contrato (sempre foi assim)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-green-600 shrink-0" />
+                <span>Registra evento <strong>"Venda não concretizada"</strong> no histórico</span>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setVoidModal(false)} disabled={voiding}>
+                Voltar
+              </Button>
+              <Button
+                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white"
+                onClick={voidContract}
+                disabled={voiding}
+              >
+                {voiding ? 'Anulando...' : 'Confirmar anulação'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
