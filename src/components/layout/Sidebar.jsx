@@ -55,6 +55,7 @@ const CONFIG_ITEMS = [
   { label: 'Centros receita',   icon: Palette,         to: '/centros-receita' },
   { label: 'Métodos pagamento', icon: DollarSign,      to: '/configuracoes/pagamento' },
   { label: 'Config. assessoria',icon: Settings,        to: '/assessoria/configuracoes' },
+  { label: 'Saúde do sistema',  icon: Activity,        to: '/admin/saude' },
 ];
 
 // ─────────────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ import Coupons from '@/pages/Coupons';
 import CouponForm from '@/pages/CouponForm';
 import RevenueCenters from '@/pages/RevenueCenters';
 import PaymentMethodsConfig from '@/pages/PaymentMethodsConfig';
+import HealthCheck from '@/pages/admin/HealthCheck';
 import StockOrderNewAdmin from '@/pages/StockOrderNewAdmin';
 import PublicOrderTracking from '@/pages/PublicOrderTracking';
 
@@ -125,6 +126,7 @@ export default function App() {
           <Route path="/cupons/:id" element={<AdminLayout><CouponForm /></AdminLayout>} />
           <Route path="/centros-receita" element={<AdminLayout><RevenueCenters /></AdminLayout>} />
           <Route path="/configuracoes/pagamento" element={<AdminLayout><PaymentMethodsConfig /></AdminLayout>} />
+          <Route path="/admin/saude" element={<AdminLayout><HealthCheck /></AdminLayout>} />
 
           {/* Assessoria */}
           <Route path="/assessoria"               element={<AdminLayout><AssPainel /></AdminLayout>} />
