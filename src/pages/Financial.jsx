@@ -186,12 +186,30 @@ function KpiCard({ label, value, sub, icon: Icon, iconBg, iconColor, valueColor,
 // Tooltip customizado para o gráfico
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
+  const bruto  = (payload.find(p => p.dataKey === 'liquido')?.value || 0) + (payload.find(p => p.dataKey === 'taxas')?.value || 0);
+  const liquido = payload.find(p => p.dataKey === 'liquido')?.value || 0;
+  const taxas   = payload.find(p => p.dataKey === 'taxas')?.value || 0;
   return (
-    <div className="bg-white border rounded-lg shadow-lg p-3 text-sm">
-      <p className="font-semibold text-gray-700 mb-1 capitalize">{label}</p>
-      {payload.map(p => (
-        <p key={p.dataKey} className="text-green-700 font-bold">{formatCurrency(p.value)}</p>
-      ))}
+    <div className="bg-white border rounded-lg shadow-lg p-3 text-sm min-w-40">
+      <p className="font-semibold text-gray-700 mb-2 capitalize">{label}</p>
+      <div className="space-y-1">
+        <div className="flex justify-between gap-4">
+          <span className="text-muted-foreground">Bruto</span>
+          <span className="font-medium">{formatCurrency(bruto)}</span>
+        </div>
+        {taxas > 0 && (
+          <div className="flex justify-between gap-4">
+            <span className="text-orange-500 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-sm bg-orange-400 inline-block" /> Taxas
+            </span>
+            <span className="text-orange-600 font-medium">− {formatCurrency(taxas)}</span>
+          </div>
+        )}
+        <div className="flex justify-between gap-4 border-t pt-1 mt-1">
+          <span className="font-semibold text-blue-700">Líquido</span>
+          <span className="font-bold text-blue-700">{formatCurrency(liquido)}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -445,7 +463,7 @@ export default function Financial() {
         liquido += (mVal - mFee);
         count++;
       }
-      return { month: monthLabel(ym), ym, bruto, liquido, count };
+      return { month: monthLabel(ym), ym, bruto, liquido, taxas: bruto - liquido, count };
     });
   }, [orders, asaasPayments, ordersWithAsaasCache]);
 
@@ -669,7 +687,7 @@ export default function Financial() {
             <BarChart3 className="w-4 h-4 text-blue-600" />
             Recebimentos — últimos 6 meses
           </CardTitle>
-          <p className="text-xs text-muted-foreground">Valor bruto por mês — parcelas Asaas reais (via credit_date) + pagamentos manuais</p>
+          <p className="text-xs text-muted-foreground">Líquido + taxas de gateway por mês — parcelas Asaas reais (via credit_date) + pagamentos manuais</p>
         </CardHeader>
         <CardContent>
           {chartData.every(d => d.bruto === 0) ? (
@@ -686,18 +704,20 @@ export default function Financial() {
                   width={36}
                 />
                 <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f9fafb' }} />
-                <Bar dataKey="bruto" radius={[4, 4, 0, 0]} maxBarSize={56}>
+                <Bar dataKey="liquido" stackId="a" radius={[0, 0, 0, 0]} maxBarSize={56}>
                   {chartData.map(d => (
                     <Cell key={d.ym} fill={d.ym === currentYM ? '#2563eb' : '#93c5fd'} />
                   ))}
                 </Bar>
+                <Bar dataKey="taxas" stackId="a" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#fb923c" />
               </BarChart>
             </ResponsiveContainer>
           )}
           {/* Legenda simples */}
           <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground justify-end">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#2563eb]" /> Mês atual</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#93c5fd]" /> Meses anteriores</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#2563eb]" /> Líquido (atual)</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#93c5fd]" /> Líquido (anteriores)</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#fb923c]" /> Taxas gateway</span>
           </div>
         </CardContent>
       </Card>
