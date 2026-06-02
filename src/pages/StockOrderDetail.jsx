@@ -364,6 +364,15 @@ export default function StockOrderDetail() {
     } catch (e) { toast.error(e.message); }
   };
 
+  // Atalho: reabre pagamento manual e prepara fluxo de cobrança Asaas.
+  const convertToAsaas = async () => {
+    await reopenPayment();
+    setAsaasBilling('PIX');
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 100);
+  };
+
   // Reabre pagamento manual: desfaz o registro e volta a awaiting_charge.
   const reopenPayment = async () => {
     setReopenLoading(true);
@@ -1118,17 +1127,30 @@ export default function StockOrderDetail() {
               })()}
 
           {order.payment_status === 'paid' && order.manual_payment && (
-            <div className="pt-2 border-t">
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-amber-700 border-amber-300 hover:bg-amber-50"
-                onClick={() => setReopenModal(true)}
-              >
-                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
-              </Button>
-              <p className="text-[11px] text-muted-foreground mt-1.5">
-                Desfaz o registro manual (use se foi erro).
+            <div className="pt-3 border-t space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-blue-700 border-blue-300 hover:bg-blue-50"
+                  onClick={convertToAsaas}
+                  disabled={reopenLoading}
+                >
+                  <Zap className="w-3.5 h-3.5 mr-1.5" /> Converter pra cobrança Asaas
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                  onClick={() => setReopenModal(true)}
+                  disabled={reopenLoading}
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                <strong>Converter:</strong> desfaz o registro manual e prepara o card pra gerar cobrança Asaas. ·{' '}
+                <strong>Reabrir:</strong> só desfaz (use se foi erro de registro).
               </p>
             </div>
           )}

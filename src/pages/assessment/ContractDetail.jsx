@@ -164,6 +164,8 @@ export default function ContractDetail() {
   const [cancelModal, setCancelModal]   = useState(false);
   const [voidModal, setVoidModal]       = useState(false);
   const [voiding, setVoiding]           = useState(false);
+  const [reopenModal, setReopenModal]   = useState(false);
+  const [reopenLoading, setReopenLoading] = useState(false);
   const [cancelDate, setCancelDate] = useState(todayLocalStr());  // Data de cancelamento (pode ser retroativa)
   const [cancelFeePct, setCancelFeePct] = useState(20);
   const [cancelReason, setCancelReason] = useState('');
@@ -491,6 +493,49 @@ export default function ContractDetail() {
 
   // Detecta se o contrato está em estado "não pago" — permite anular venda
   const isUnpaid = contract && !['paid', 'refunded', 'cancelled'].includes(contract.payment_status || '');
+
+  // Reabre pagamento manual: desfaz registro e volta a status anterior.
+  const reopenPayment = async () => {
+    setReopenLoading(true);
+    try {
+      // 1. Apaga parcelas manuais em asaas_payments
+      await supabase.from('asaas_payments')
+        .delete()
+        .eq('order_id', id)
+        .eq('order_type', 'contract')
+        .eq('source', 'manual');
+
+      // 2. Reseta contrato
+      await AssessmentContract.update(id, {
+        payment_status: 'pending',
+        payment_date:   null,
+        payment_method: null,
+        manual_payment: false,
+        manual_fee:     null,
+      });
+
+      await logEvent('payment_reverted', {
+        method_before: contract.payment_method,
+        fee_before:    contract.manual_fee,
+      }, 'Pagamento manual revertido');
+
+      toast.success('Pagamento revertido. Contrato voltou para "Pendente".');
+      setReopenModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao reabrir pagamento');
+    } finally {
+      setReopenLoading(false);
+    }
+  };
+
+  // Atalho: reabre pagamento manual e prepara fluxo de cobrança Asaas.
+  const convertToAsaas = async () => {
+    await reopenPayment();
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 100);
+  };
 
   const renewContract = async () => {
     if (!plan) return toast.error('Plano inválido');
@@ -941,6 +986,36 @@ export default function ContractDetail() {
                       );
                     })}
                   </div>
+                </div>
+              )}
+
+              {/* Ações em pagamentos manuais ativos */}
+              {contract.payment_status === 'paid' && contract.manual_payment && (
+                <div className="pt-3 border-t space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-blue-700 border-blue-300 hover:bg-blue-50"
+                      onClick={convertToAsaas}
+                      disabled={reopenLoading}
+                    >
+                      <Zap className="w-3.5 h-3.5 mr-1.5" /> Converter pra cobrança Asaas
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                      onClick={() => setReopenModal(true)}
+                      disabled={reopenLoading}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    <strong>Converter:</strong> desfaz o registro manual e libera o card de cobrança Asaas. ·{' '}
+                    <strong>Reabrir:</strong> só desfaz (use se foi erro de registro).
+                  </p>
                 </div>
               )}
             </CardContent>
@@ -1519,6 +1594,37 @@ export default function ContractDetail() {
               <Button variant="outline" className="flex-1" onClick={() => setCancelModal(false)}>Voltar</Button>
               <Button className="flex-1 bg-red-500 hover:bg-red-600 text-white" onClick={cancelContract}>
                 Confirmar cancelamento
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de reabrir pagamento */}
+      <Dialog open={reopenModal} onOpenChange={open => !open && !reopenLoading && setReopenModal(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <RotateCcw className="w-5 h-5" /> Reabrir pagamento
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+              <p className="font-semibold text-amber-900">Atenção</p>
+              <p className="text-amber-800 mt-1">Isso vai <strong>desfazer</strong> o registro de pagamento manual:</p>
+              <ul className="mt-2 ml-4 text-xs text-amber-700 list-disc space-y-0.5">
+                <li>Apaga as parcelas projetadas no fluxo de caixa</li>
+                <li>Status volta para <strong>Pendente</strong></li>
+                <li>Forma, data e taxa são removidos</li>
+              </ul>
+              <p className="text-xs text-amber-700 mt-2">
+                Use só se foi um registro errado.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setReopenModal(false)} disabled={reopenLoading}>Voltar</Button>
+              <Button className="flex-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={reopenPayment} disabled={reopenLoading}>
+                {reopenLoading ? 'Revertendo...' : 'Confirmar reabertura'}
               </Button>
             </div>
           </div>
