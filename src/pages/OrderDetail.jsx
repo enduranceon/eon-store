@@ -15,6 +15,7 @@ import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { loadActivePaymentMethods, calcFee, projectInstallments, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
+import { defaultAsaasDueDate } from '@/lib/payment-methods';
 import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
 
@@ -82,11 +83,7 @@ export default function OrderDetail() {
   const [asaasBilling, setAsaasBilling] = useState('PIX');
   const [asaasInstallments, setAsaasInstallments] = useState(1);
   const [asaasStatus, setAsaasStatus] = useState(null);
-  const [asaasDueDate, setAsaasDueDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() + 3);
-    const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  });
+  const [asaasDueDate, setAsaasDueDate] = useState(defaultAsaasDueDate);
 
   // Estados dos modais de cancelamento e estorno
   const [cancelModal, setCancelModal] = useState(false);

@@ -19,7 +19,7 @@ import {
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { suggestFeePercent } from '@/lib/payment-methods';
+import { suggestFeePercent, DEFAULT_ASAAS_DUE_DAYS } from '@/lib/payment-methods';
 import { loadActivePaymentMethods, calcFee, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
@@ -1247,8 +1247,8 @@ export default function ContractDetail() {
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Vencimento</span>
                     <span className="font-medium">
-                      {(() => { const d = new Date(); d.setDate(d.getDate() + 3);
-                        return d.toLocaleDateString('pt-BR'); })()} (em 3 dias)
+                      {(() => { const d = new Date(); d.setDate(d.getDate() + DEFAULT_ASAAS_DUE_DAYS);
+                        return d.toLocaleDateString('pt-BR'); })()} (em {DEFAULT_ASAAS_DUE_DAYS} dias)
                     </span>
                   </div>
                 </div>

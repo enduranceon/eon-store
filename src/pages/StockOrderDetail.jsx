@@ -13,6 +13,7 @@ import { StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { loadActivePaymentMethods, calcFee, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
+import { defaultAsaasDueDate } from '@/lib/payment-methods';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
@@ -70,11 +71,7 @@ export default function StockOrderDetail() {
   const [asaasBilling, setAsaasBilling] = useState('PIX');
   const [asaasInstallments, setAsaasInstallments] = useState(1);
   const [asaasStatus, setAsaasStatus] = useState(null);
-  const [asaasDueDate, setAsaasDueDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() + 3);
-    const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  });
+  const [asaasDueDate, setAsaasDueDate] = useState(defaultAsaasDueDate);
 
   const [cancelModal, setCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
