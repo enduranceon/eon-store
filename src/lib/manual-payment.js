@@ -2,6 +2,7 @@
 // Gera parcelas projetadas em asaas_payments com source='manual' e status='CONFIRMED'.
 
 import { supabase } from '@/api/db';
+import { nextBusinessDay } from '@/lib/business-days';
 
 // Tabela de labels para payment_method (cobre códigos legacy + novos internal_codes).
 const PAYMENT_METHOD_LABELS = {
@@ -79,22 +80,29 @@ function addDaysLocal(yyyymmdd, days) {
 }
 
 // Calcula as datas de cada parcela a partir da data de pagamento + configuração.
+// Cada parcela cai N dias depois da anterior (não do pagamento original).
+// Se cair em fim de semana ou feriado nacional, joga pro próximo dia útil.
 // Retorna array de { number, total, due_date, credit_date }.
 export function projectInstallments(methodConfig, paymentDate) {
   if (!methodConfig || !paymentDate) return [];
   const n = Math.max(1, Math.min(12, Number(methodConfig.installments) || 1));
   const first = Number(methodConfig.credit_days_first) || 0;
-  const step = Number(methodConfig.credit_days_between) || 30;
+  const step = Number(methodConfig.credit_days_between) || 32;
   const result = [];
+  let lastDate = paymentDate;
   for (let i = 1; i <= n; i++) {
-    const offset = first + (i - 1) * step;
-    const creditDate = addDaysLocal(paymentDate, offset);
+    // Primeira parcela: paymentDate + credit_days_first
+    // Demais: parcela anterior + credit_days_between
+    const offset = i === 1 ? first : step;
+    const raw = addDaysLocal(lastDate, offset);
+    const creditDate = nextBusinessDay(raw);
     result.push({
       number: i,
       total: n,
       due_date: creditDate,
       credit_date: creditDate,
     });
+    lastDate = creditDate;
   }
   return result;
 }
