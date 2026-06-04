@@ -2,9 +2,8 @@ import { useCallback, useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   DollarSign, Calendar, CheckCircle2, Clock, AlertTriangle,
-  ChevronRight, RefreshCw, CreditCard, Banknote,
-  Zap, ArrowUpRight, ArrowDownRight, Minus, Wallet, Receipt,
-  BarChart3, Target, RotateCcw, CheckCheck, MessageCircle,
+  ChevronRight, RefreshCw, Zap, Wallet, Receipt,
+  BarChart3, RotateCcw, CheckCheck, MessageCircle,
   Copy, ExternalLink, Link2, Check,
 } from 'lucide-react';
 import { calcGatewayFee, defaultPaymentDueDate } from '@/lib/payment-methods';
@@ -18,10 +17,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Cell,
-} from 'recharts';
 
 // ─────────────────────────────────────────────────────────────────
 // CACHE
@@ -873,46 +868,39 @@ export default function Financial() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Wallet className="w-5 h-5 text-blue-600" />
+            <AlertTriangle className="w-5 h-5 text-amber-600" />
             Vendas em aberto
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Fluxo de caixa · Loja · Pré-venda · Assessoria
-            {asaasPayments.length > 0 && (
-              <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
-                <Zap className="w-3 h-3" /> {asaasPayments.length} pagamentos Asaas sincronizados
-              </span>
-            )}
+            Cobranças pendentes — quem ainda não pagou · Loja · Pré-venda · Assessoria
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={syncAsaasPayments} disabled={syncingAsaas}>
-          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncingAsaas ? 'animate-spin' : ''}`} />
-          {syncingAsaas ? 'Sincronizando...' : 'Sincronizar Asaas'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link to="/financeiro/fluxo-caixa">
+            <Button variant="outline" size="sm">
+              <Wallet className="w-3.5 h-3.5 mr-1.5" /> Ver fluxo de caixa
+            </Button>
+          </Link>
+          <Button variant="outline" size="sm" onClick={syncAsaasPayments} disabled={syncingAsaas}>
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncingAsaas ? 'animate-spin' : ''}`} />
+            {syncingAsaas ? 'Sincronizando...' : 'Sincronizar Asaas'}
+          </Button>
+        </div>
       </div>
 
       {/* ── KPI Cards ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
-          label="Recebido esse mês"
-          value={formatCurrency(receivedMonth)}
-          sub={`${paidThisMonth.length} pagamento${paidThisMonth.length !== 1 ? 's' : ''}`}
-          icon={CheckCircle2}
-          iconBg="bg-green-50" iconColor="text-green-600" valueColor="text-green-600"
-          trend={trendIcon(receivedMonth, receivedLast)}
-        />
-        <KpiCard
-          label="Líquido esse mês"
-          value={formatCurrency(netMonth)}
-          sub={feesMonth > 0 ? `− ${formatCurrency(feesMonth)} em taxas` : 'Sem taxas de gateway'}
+          label="Total em aberto"
+          value={formatCurrency(openSalesTotal)}
+          sub={`${activeOrders.length} venda${activeOrders.length !== 1 ? 's' : ''} aguardando pagamento`}
           icon={Wallet}
-          iconBg="bg-emerald-50" iconColor="text-emerald-600" valueColor="text-emerald-700"
-          trend={trendIcon(netMonth, netLast)}
+          iconBg="bg-blue-50" iconColor="text-blue-600" valueColor="text-blue-700"
         />
         <KpiCard
           label="Em atraso"
           value={formatCurrency(overdueTotal)}
-          sub={`${overdue.length} cobrança${overdue.length !== 1 ? 's' : ''}`}
+          sub={`${overdue.length} cobrança${overdue.length !== 1 ? 's' : ''} vencida${overdue.length !== 1 ? 's' : ''}`}
           icon={AlertTriangle}
           iconBg={overdueTotal > 0 ? 'bg-red-50' : 'bg-gray-50'}
           iconColor={overdueTotal > 0 ? 'text-red-600' : 'text-gray-400'}
@@ -925,56 +913,44 @@ export default function Financial() {
           icon={Calendar}
           iconBg="bg-amber-50" iconColor="text-amber-600" valueColor="text-amber-600"
         />
+        <KpiCard
+          label="Sem cobrança gerada"
+          value={formatCurrency(noChargeTotal)}
+          sub={`${noCharge.length} venda${noCharge.length !== 1 ? 's' : ''} pra acionar`}
+          icon={MessageCircle}
+          iconBg={noCharge.length > 0 ? 'bg-orange-50' : 'bg-gray-50'}
+          iconColor={noCharge.length > 0 ? 'text-orange-600' : 'text-gray-400'}
+          valueColor={noCharge.length > 0 ? 'text-orange-600' : 'text-gray-400'}
+        />
       </div>
 
-      {/* ── Linha 2: Ticket médio + Pipeline ─────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Ticket médio */}
+      {/* ── Pipeline ────────────────────────────────────────── */}
+      {pipelineTotal > 0 && (
         <Card>
-          <CardContent className="p-5 flex items-center gap-4">
-            <div className="p-3 rounded-full bg-blue-50 shrink-0">
-              <Target className="w-5 h-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Ticket médio (mês)</p>
-              <p className="text-xl font-bold text-blue-700">{formatCurrency(avgTicket)}</p>
-              <p className="text-xs text-muted-foreground">{paidThisMonth.length} transações</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Pipeline */}
-        <Card className="lg:col-span-2">
           <CardContent className="p-5">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-gray-500" /> Resumo das vendas em aberto
+                <BarChart3 className="w-4 h-4 text-gray-500" /> Composição das vendas em aberto
               </p>
               <span className="text-sm font-bold text-gray-800">{formatCurrency(pipelineTotal)}</span>
             </div>
-            {pipelineTotal > 0 ? (
-              <>
-                <div className="flex h-3 rounded-full overflow-hidden gap-0.5">
-                  {overdueTotal  > 0 && <div className="bg-red-400 transition-all"   style={{ width: `${(overdueTotal   / pipelineTotal) * 100}%` }} />}
-                  {upcomingTotal > 0 && <div className="bg-amber-300 transition-all" style={{ width: `${(upcomingTotal  / pipelineTotal) * 100}%` }} />}
-                  {missingDueDateTotal > 0 && <div className="bg-gray-200 transition-all"  style={{ width: `${(missingDueDateTotal  / pipelineTotal) * 100}%` }} />}
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
-                  {overdueTotal  > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" /> Em atraso {formatCurrency(overdueTotal)}</span>}
-                  {upcomingTotal > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-300" /> A vencer {formatCurrency(upcomingTotal)}</span>}
-                  {missingDueDateTotal > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300" /> Sem vencimento {formatCurrency(missingDueDateTotal)}</span>}
-                </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground border-t pt-2">
-                  <span>{sentCharge.length} com cobrança enviada · {formatCurrency(sentChargeTotal)}</span>
-                  <span>{noCharge.length} sem cobrança · {formatCurrency(noChargeTotal)}</span>
-                </div>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground text-center py-2">Nenhuma venda em aberto.</p>
-            )}
+            <div className="flex h-3 rounded-full overflow-hidden gap-0.5">
+              {overdueTotal  > 0 && <div className="bg-red-400 transition-all"   style={{ width: `${(overdueTotal   / pipelineTotal) * 100}%` }} />}
+              {upcomingTotal > 0 && <div className="bg-amber-300 transition-all" style={{ width: `${(upcomingTotal  / pipelineTotal) * 100}%` }} />}
+              {missingDueDateTotal > 0 && <div className="bg-gray-200 transition-all"  style={{ width: `${(missingDueDateTotal  / pipelineTotal) * 100}%` }} />}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
+              {overdueTotal  > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" /> Em atraso {formatCurrency(overdueTotal)}</span>}
+              {upcomingTotal > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-300" /> A vencer {formatCurrency(upcomingTotal)}</span>}
+              {missingDueDateTotal > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300" /> Sem vencimento {formatCurrency(missingDueDateTotal)}</span>}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground border-t pt-2">
+              <span>{sentCharge.length} com cobrança enviada · {formatCurrency(sentChargeTotal)}</span>
+              <span>{noCharge.length} sem cobrança · {formatCurrency(noChargeTotal)}</span>
+            </div>
           </CardContent>
         </Card>
-      </div>
+      )}
 
       {/* ── Tabs ─────────────────────────────────────────────── */}
       <Tabs defaultValue="abertas">
@@ -991,15 +967,6 @@ export default function Financial() {
           <TabsTrigger value="centros" className="flex items-center gap-1.5">
             <BarChart3 className="w-3.5 h-3.5" />
             Por centro
-          </TabsTrigger>
-          <TabsTrigger value="asaas" className="flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5" />
-            Recebíveis Asaas
-            {receivablesByMonth.length > 0 && (
-              <span className="ml-1 text-[10px] text-muted-foreground font-normal">
-                {formatCurrency(grandTotalNet)}
-              </span>
-            )}
           </TabsTrigger>
         </TabsList>
 
@@ -1178,163 +1145,26 @@ export default function Financial() {
           )}
         </TabsContent>
 
-        {/* ── Tab: Recebíveis Asaas ────────────────────────────── */}
-        <TabsContent value="asaas" className="mt-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-purple-600" />
-                    Recebíveis Asaas
-                    {receivablesByMonth.length > 0 && (
-                      <span className="text-sm font-bold text-purple-700 ml-1">{formatCurrency(grandTotalNet)}</span>
-                    )}
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Cobranças pendentes / confirmadas com previsão de crédito
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {fetchedAt && (
-                    <span className="text-[11px] text-muted-foreground hidden sm:block">
-                      Atualizado {fetchedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  )}
-                  <Button variant="outline" size="sm" onClick={() => fetchReceivables(true)} disabled={loadingRec}>
-                    <RefreshCw className={`w-3.5 h-3.5 ${loadingRec ? 'animate-spin' : ''}`} />
-                    <span className="ml-1.5">{loadingRec ? 'Buscando...' : 'Atualizar'}</span>
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loadingRec && receivables.length === 0 ? (
-                <div className="flex items-center justify-center py-10 gap-3 text-muted-foreground">
-                  <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm">Carregando recebíveis do Asaas...</span>
-                </div>
-              ) : receivablesByMonth.length === 0 ? (
-                <div className="text-center py-10">
-                  <Zap className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">Nenhuma cobrança pendente no Asaas.</p>
-                  <p className="text-xs text-muted-foreground mt-1">Clique em "Atualizar" para buscar dados.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {receivablesByMonth.map(m => {
-                    const [y, mo] = m.month.split('-');
-                    const mLabel = new Date(Number(y), Number(mo) - 1, 1)
-                      .toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
-                    return (
-                      <details key={m.month} className="border rounded-xl bg-white group" open={m.month === currentYM}>
-                        <summary className="cursor-pointer p-4 flex items-center justify-between hover:bg-gray-50 rounded-xl list-none">
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <Calendar className="w-4 h-4 text-purple-500 shrink-0" />
-                            <div>
-                              <p className="font-semibold capitalize text-sm">{mLabel}</p>
-                              <div className="flex flex-wrap gap-2 mt-0.5 text-xs">
-                                <span className="text-muted-foreground">{m.count} cobrança{m.count !== 1 ? 's' : ''}</span>
-                                {m.confirmed > 0 && <span className="text-green-700 font-medium">✓ {m.confirmed} confirmada{m.confirmed !== 1 ? 's' : ''}</span>}
-                                {m.pending   > 0 && <span className="text-amber-700 font-medium">⏳ {m.pending} pendente{m.pending !== 1 ? 's' : ''}</span>}
-                                {m.overdue   > 0 && <span className="text-red-700 font-medium">⚠ {m.overdue} vencida{m.overdue !== 1 ? 's' : ''}</span>}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0 ml-4">
-                            <p className="font-bold text-purple-700">{formatCurrency(m.netTotal)}</p>
-                            {m.total !== m.netTotal && (
-                              <p className="text-[11px] text-muted-foreground">bruto {formatCurrency(m.total)}</p>
-                            )}
-                          </div>
-                        </summary>
-                        <div className="border-t divide-y">
-                          {m.items
-                            .sort((a, b) => (a.creditDate || a.dueDate).localeCompare(b.creditDate || b.dueDate))
-                            .map(item => {
-                              const displayDate = item.creditDate || item.dueDate;
-                              const statusColor =
-                                item.status === 'CONFIRMED' ? 'bg-green-100 text-green-700'
-                                : item.status === 'PENDING' ? 'bg-amber-100 text-amber-700'
-                                : item.status === 'OVERDUE' ? 'bg-red-100 text-red-700'
-                                : 'bg-gray-100 text-gray-600';
-                              const billingIcon = item.billingType === 'PIX'    ? <Zap className="w-3 h-3" />
-                                               : item.billingType === 'BOLETO'  ? <Banknote className="w-3 h-3" />
-                                               : <CreditCard className="w-3 h-3" />;
-                              return (
-                                <div key={item.id} className="flex items-center gap-3 p-3 text-sm hover:bg-gray-50">
-                                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0 w-24">
-                                    {billingIcon}
-                                    <span>{formatDate(displayDate)}</span>
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="font-medium truncate">
-                                      {item.externalReference || item.description || item.id.slice(0, 12)}
-                                    </p>
-                                    {item.installmentNumber && (
-                                      <p className="text-[11px] text-muted-foreground">Parcela {item.installmentNumber}</p>
-                                    )}
-                                  </div>
-                                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusColor} shrink-0`}>
-                                    {item.status === 'CONFIRMED' ? 'Cairá em conta'
-                                     : item.status === 'PENDING' ? 'Aguardando'
-                                     : item.status === 'OVERDUE' ? 'Vencida'
-                                     : item.status}
-                                  </span>
-                                  <span className="font-semibold shrink-0">{formatCurrency(item.netValue)}</span>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      </details>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
-      {/* ── Gráfico de barras: últimos 6 meses ───────────────── */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-blue-600" />
-            Recebimentos — últimos 6 meses
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">Líquido + taxas de gateway por mês — parcelas Asaas reais (via credit_date) + pagamentos manuais</p>
-        </CardHeader>
-        <CardContent>
-          {chartData.every(d => d.bruto === 0) ? (
-            <p className="text-sm text-muted-foreground text-center py-8">Sem dados de recebimento nos últimos 6 meses.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chartData} barCategoryGap="30%" margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                <YAxis
-                  tick={{ fontSize: 11, fill: '#6b7280' }}
-                  axisLine={false} tickLine={false}
-                  tickFormatter={v => v === 0 ? '' : v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
-                  width={36}
-                />
-                <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f9fafb' }} />
-                <Bar dataKey="liquido" stackId="a" radius={[0, 0, 0, 0]} maxBarSize={56}>
-                  {chartData.map(d => (
-                    <Cell key={d.ym} fill={d.ym === currentYM ? '#2563eb' : '#93c5fd'} />
-                  ))}
-                </Bar>
-                <Bar dataKey="taxas" stackId="a" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#fb923c" />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-          {/* Legenda simples */}
-          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground justify-end">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#2563eb]" /> Líquido (atual)</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#93c5fd]" /> Líquido (anteriores)</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#fb923c]" /> Taxas gateway</span>
+      {/* ── Call-to-action: Fluxo de caixa ───────────────────── */}
+      <Card className="border-emerald-200 bg-emerald-50/40">
+        <CardContent className="p-5 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-emerald-100">
+              <Wallet className="w-5 h-5 text-emerald-600" />
+            </div>
+            <div>
+              <p className="font-semibold text-sm text-gray-900">Quer ver o que já está confirmado pra entrar?</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Parcelas de cartão, recebíveis Asaas e histórico ficam agora no Fluxo de Caixa.</p>
+            </div>
           </div>
+          <Link to="/financeiro/fluxo-caixa">
+            <Button className="bg-emerald-600 hover:bg-emerald-700">
+              Abrir Fluxo de Caixa
+              <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </Link>
         </CardContent>
       </Card>
 

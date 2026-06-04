@@ -32,6 +32,7 @@ import StockOrderDetail from '@/pages/StockOrderDetail';
 import PublicStore from '@/pages/PublicStore';
 import PublicStoreConfirmation from '@/pages/PublicStoreConfirmation';
 import Financial from '@/pages/Financial';
+import CashFlow from '@/pages/CashFlow';
 import Returns from '@/pages/Returns';
 import Today from '@/pages/Today';
 import Coupons from '@/pages/Coupons';
@@ -120,6 +121,7 @@ export default function App() {
           <Route path="/fornecedores/:id" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/relatorios" element={<AdminLayout><Reports /></AdminLayout>} />
           <Route path="/financeiro" element={<AdminLayout><Financial /></AdminLayout>} />
+          <Route path="/financeiro/fluxo-caixa" element={<AdminLayout><CashFlow /></AdminLayout>} />
           <Route path="/devolucoes" element={<AdminLayout><Returns /></AdminLayout>} />
           <Route path="/cupons" element={<AdminLayout><Coupons /></AdminLayout>} />
           <Route path="/cupons/novo" element={<AdminLayout><CouponForm /></AdminLayout>} />
