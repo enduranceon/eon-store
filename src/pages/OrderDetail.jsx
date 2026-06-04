@@ -243,7 +243,31 @@ export default function OrderDetail() {
     if (!editPayMethodValue) return toast.error('Selecione uma forma de pagamento');
     setEditPayMethodSaving(true);
     try {
-      await PreSaleOrder.update(id, { payment_method: editPayMethodValue });
+      // Busca a config do método pelo internal_code
+      const { data: methods, error: mErr } = await supabase
+        .from('payment_methods')
+        .select('*')
+        .eq('internal_code', editPayMethodValue)
+        .eq('active', true)
+        .limit(1);
+      if (mErr) throw mErr;
+      const methodConfig = methods?.[0];
+      if (!methodConfig) throw new Error('Método de pagamento não encontrado');
+
+      const payDate = order.payment_date || new Date().toISOString().slice(0, 10);
+
+      // Cria parcelas no fluxo de caixa (substitui qualquer registro anterior)
+      await createManualInstallments(methodConfig, payDate, {
+        order_id:   order.id,
+        order_type: 'presale',
+      }, Number(order.total_value) || 0);
+
+      // Atualiza o pedido com método e marca como registro manual
+      await PreSaleOrder.update(id, {
+        payment_method: editPayMethodValue,
+        manual_payment: true,
+      });
+
       toast.success('Forma de pagamento salva!');
       setEditPayMethodModal(false);
       load();
