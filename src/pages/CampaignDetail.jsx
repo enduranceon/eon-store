@@ -14,8 +14,15 @@ import { toast } from 'sonner';
 
 const STATUS_LABEL = { active: 'Ativa', ended: 'Encerrada', archived: 'Arquivada' };
 const STATUS_BADGE = { active: 'success', ended: 'warning', archived: 'secondary' };
-const PAYMENT_LABEL = { awaiting_charge: 'Ag. cobrança', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcial', cancelled: 'Cancelado', refunded: 'Reembolsado' };
-const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
+const PAYMENT_LABEL = { awaiting_charge: 'Pedido recebido', message_sent: 'Mensagem enviada', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcial', cancelled: 'Cancelado', refunded: 'Reembolsado' };
+const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', message_sent: 'warning', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
+const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'message_sent', 'charge_sent', 'partially_paid', 'pending']);
+
+function isEffectiveSale(order) {
+  if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
+  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
+  return EFFECTIVE_SALE_STATUSES.has(order.payment_status);
+}
 
 export default function CampaignDetail() {
   const { id } = useParams();
@@ -113,17 +120,18 @@ export default function CampaignDetail() {
   if (!campaign) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const activeOrders = orders.filter(o => o.payment_status !== 'cancelled');
-  const totalSold = activeOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPaid = activeOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPending = totalSold - totalPaid;
-  const totalCost = activeOrders.reduce((acc, o) => acc + (o.total_cost || 0), 0);
+  const effectiveOrders = activeOrders.filter(isEffectiveSale);
+  const totalSold = effectiveOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalPaid = effectiveOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalPending = effectiveOrders.filter(o => o.payment_status !== 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalCost = effectiveOrders.reduce((acc, o) => acc + (o.total_cost || 0), 0);
   const grossProfit = totalSold - totalCost;
   const margin = totalSold > 0 ? (grossProfit / totalSold) * 100 : 0;
   const uniqueCustomers = new Set(activeOrders.map(o => o.customer_id || o.checkout_whatsapp)).size;
 
   // Produtos mais vendidos por item de pedido
   const productQty = {};
-  activeOrders.forEach(o => {
+  effectiveOrders.forEach(o => {
     (o.items || []).forEach(item => {
       const key = `${item.product_name}${item.variation ? ' - ' + item.variation : ''}`;
       productQty[key] = (productQty[key] || 0) + (item.quantity || 1);

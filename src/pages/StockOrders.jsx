@@ -1,29 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Search, AlertTriangle, ArrowRight, Plus, HandCoins } from 'lucide-react';
+import { ClipboardList, Search, ArrowRight, Plus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StockOrder } from '@/api/entities';
-import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { loadActivePaymentMethods, calcFee, createManualInstallments } from '@/lib/manual-payment';
-import ManualPaymentForm from '@/components/ManualPaymentForm';
+import { formatCurrency, formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 
-const SENSITIVE_PAYMENT = new Set(['cancelled', 'refunded', 'partially_paid']);
-
-// Transições permitidas inline. Demais exigem abrir o pedido.
-const SOFT_TRANSITIONS = {
-  awaiting_charge: ['message_sent', 'charge_sent'],
-  message_sent:    ['awaiting_charge', 'charge_sent'],
-  charge_sent:     ['awaiting_charge', 'message_sent'],
-  overdue:         ['message_sent', 'charge_sent'],
-};
-
 const PAYMENT_STATUS = {
-  awaiting_charge: { label: 'Ag. cobrança',      color: 'bg-gray-100 text-gray-700' },
+  awaiting_charge: { label: 'Pedido recebido',   color: 'bg-gray-100 text-gray-700' },
   message_sent:    { label: 'Mensagem enviada',   color: 'bg-orange-100 text-orange-700' },
   charge_sent:     { label: 'Cobrança enviada',   color: 'bg-blue-100 text-blue-700' },
   paid:            { label: 'Pago',               color: 'bg-green-100 text-green-700' },
@@ -31,6 +18,8 @@ const PAYMENT_STATUS = {
   cancelled:       { label: 'Cancelado',          color: 'bg-red-100 text-red-700' },
   refunded:        { label: 'Reembolsado',        color: 'bg-purple-100 text-purple-700' },
 };
+
+const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['message_sent', 'charge_sent', 'partially_paid', 'pending']);
 
 const DELIVERY_STATUS = {
   awaiting_delivery: { label: 'Ag. entrega',        color: 'bg-gray-100 text-gray-700' },
@@ -60,19 +49,41 @@ function StatusSelect({ value, options, onChange, allowedKeys = null }) {
   );
 }
 
+function StatusBadge({ value, options }) {
+  const current = options[value] || { label: value || '—', color: 'bg-gray-100 text-gray-600' };
+  return (
+    <span className={`inline-flex items-center justify-center text-xs font-medium px-2.5 py-1.5 rounded-full ${current.color}`}>
+      {current.label}
+    </span>
+  );
+}
+
+function PaymentStatusCell({ order, onOpen }) {
+  const isOpen = !['paid', 'cancelled', 'refunded'].includes(order.payment_status);
+  const hasEffectiveSale = EFFECTIVE_OPEN_PAYMENT_STATUSES.has(order.payment_status);
+  return (
+    <div className="flex items-center justify-center gap-2" onClick={e => e.stopPropagation()}>
+      <div className="text-center">
+        <StatusBadge value={order.payment_status} options={PAYMENT_STATUS} />
+        {hasEffectiveSale && order.due_date && (
+          <p className="mt-1 text-[11px] text-muted-foreground">vence {formatDate(order.due_date)}</p>
+        )}
+      </div>
+      {isOpen && (
+        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onOpen}>
+          Financeiro
+          <ArrowRight className="w-3.5 h-3.5 ml-1" />
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export default function StockOrders() {
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
-  const [pendingChange, setPendingChange] = useState(null);
-  const [confirming, setConfirming] = useState(false);
-  // Estados para o modal de pagamento manual
-  const [manualPayModal, setManualPayModal] = useState(false);
-  const [manualPayOrder, setManualPayOrder] = useState(null);
-  const [manualPayForm, setManualPayForm] = useState({ method_id: '', date: '', value: '' });
-  const [methodGroups, setMethodGroups] = useState([]);
-  const [manualPaySaving, setManualPaySaving] = useState(false);
   const navigate = useNavigate();
 
   const load = () => StockOrder.list().then(setOrders).catch(() => toast.error('Erro ao carregar pedidos'));
@@ -90,89 +101,8 @@ export default function StockOrders() {
     }
   };
 
-  const handleStatusChange = async (orderId, field, oldValue, newValue) => {
-    // Só permite transições "soft" + paid pela listagem. Demais exigem abrir o pedido.
-    if (field === 'payment_status' && newValue !== oldValue) {
-      const allowedSoft = SOFT_TRANSITIONS[oldValue] || [];
-      const isAllowed = allowedSoft.includes(newValue) || newValue === 'paid';
-      if (!isAllowed) {
-        toast.error('Esta mudança não pode ser feita pela listagem. Abra o pedido para usar a ação correta (cancelar, estornar, reabrir, etc).');
-        return;
-      }
-    }
-    if (field === 'payment_status' && newValue === 'paid' && newValue !== oldValue) {
-      const order = orders.find(o => o.id === orderId);
-      // Bloqueia "Pago" inline se já tem cobrança Asaas ativa (evita duplicação no fluxo de caixa)
-      if (order?.asaas_charge_id) {
-        toast.error('Este pedido tem cobrança Asaas ativa. Cancele a cobrança ou aguarde a confirmação do gateway antes de marcar como pago manualmente. Acesse o pedido para mais opções.');
-        return;
-      }
-      // Abre modal de pagamento manual completo
-      try {
-        const groups = await loadActivePaymentMethods();
-        setMethodGroups(groups);
-        const allMethods = groups.flatMap(([, list]) => list);
-        const defaultMethod = allMethods.find(m => m.internal_code === 'pix_manual') || allMethods[0];
-        setManualPayForm({
-          method_id: defaultMethod?.id || '',
-          date:      todayLocalStr(),
-          value:     order?.total_value ? Number(order.total_value).toFixed(2) : '',
-        });
-        setManualPayOrder(order);
-        setManualPayModal(true);
-      } catch (e) {
-        toast.error('Erro ao carregar métodos: ' + e.message);
-      }
-    } else if (field === 'payment_status' && SENSITIVE_PAYMENT.has(newValue) && newValue !== oldValue) {
-      setPendingChange({ orderId, field, oldValue, newValue });
-    } else {
-      commitUpdate(orderId, field, newValue);
-    }
-  };
-
-  const confirmManualPayment = async () => {
-    if (!manualPayOrder) return;
-    if (!manualPayForm.method_id) return toast.error('Selecione um método');
-    if (!manualPayForm.date)      return toast.error('Informe a data do pagamento');
-    if (!manualPayForm.value || isNaN(Number(manualPayForm.value))) return toast.error('Informe o valor recebido');
-    const method = methodGroups.flatMap(([, list]) => list).find(m => m.id === manualPayForm.method_id);
-    if (!method) return toast.error('Método inválido');
-
-    setManualPaySaving(true);
-    try {
-      const totalV = Number(manualPayForm.value);
-      const fee    = calcFee(method, totalV);
-      // 1. Marca como pago
-      await StockOrder.update(manualPayOrder.id, {
-        payment_status: 'paid',
-        payment_method: method.internal_code || method.kind,
-        payment_date:   manualPayForm.date,
-        manual_payment: true,
-        manual_fee:     fee > 0 ? Math.round(fee * 100) / 100 : null,
-      });
-      // 2. Cria parcelas projetadas no fluxo de caixa
-      const result = await createManualInstallments(
-        method, manualPayForm.date,
-        { order_id: manualPayOrder.id, order_type: 'stock', external_reference: manualPayOrder.order_number },
-        totalV,
-      );
-      toast.success(`Pagamento registrado!${result.installments > 1 ? ` ${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
-      setManualPayModal(false);
-      setManualPayOrder(null);
-      load();
-    } catch (e) {
-      toast.error(e.message || 'Erro ao registrar pagamento');
-    } finally {
-      setManualPaySaving(false);
-    }
-  };
-
-  const confirmChange = async () => {
-    if (!pendingChange) return;
-    setConfirming(true);
-    await commitUpdate(pendingChange.orderId, pendingChange.field, pendingChange.newValue);
-    setConfirming(false);
-    setPendingChange(null);
+  const handleDeliveryStatusChange = (orderId, newValue) => {
+    commitUpdate(orderId, 'delivery_status', newValue);
   };
 
   const filtered = orders.filter(o => {
@@ -250,18 +180,13 @@ export default function StockOrders() {
                   <td className="px-4 py-3 text-muted-foreground">{formatDate(o.created_date)}</td>
                   <td className="px-4 py-3 text-right font-semibold">{formatCurrency(o.total_value)}</td>
                   <td className="px-4 py-3 text-center">
-                    <StatusSelect
-                      value={o.payment_status}
-                      options={PAYMENT_STATUS}
-                      allowedKeys={[...(SOFT_TRANSITIONS[o.payment_status] || []), 'paid']}
-                      onChange={v => handleStatusChange(o.id, 'payment_status', o.payment_status, v)}
-                    />
+                    <PaymentStatusCell order={o} onOpen={() => navigate(`/estoque/pedidos/${o.id}`)} />
                   </td>
                   <td className="px-4 py-3 text-center">
                     <StatusSelect
                       value={o.delivery_status}
                       options={DELIVERY_STATUS}
-                      onChange={v => handleStatusChange(o.id, 'delivery_status', o.delivery_status, v)}
+                      onChange={v => handleDeliveryStatusChange(o.id, v)}
                     />
                   </td>
                 </tr>
@@ -270,62 +195,6 @@ export default function StockOrders() {
           </table>
         </div>
       )}
-
-      {/* Modal de pagamento manual — abre ao marcar como Pago */}
-      <Dialog open={manualPayModal} onOpenChange={open => { if (!open && !manualPaySaving) { setManualPayModal(false); setManualPayOrder(null); } }}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <HandCoins className="w-4 h-4 text-green-600" />
-              Registrar pagamento
-              {manualPayOrder && <span className="font-mono text-sm font-normal text-muted-foreground">— {manualPayOrder.order_number}</span>}
-            </DialogTitle>
-          </DialogHeader>
-          <ManualPaymentForm
-            form={manualPayForm}
-            setForm={setManualPayForm}
-            methodGroups={methodGroups}
-            saving={manualPaySaving}
-            onSave={confirmManualPayment}
-            onCancel={() => { setManualPayModal(false); setManualPayOrder(null); }}
-          />
-        </DialogContent>
-      </Dialog>
-
-      {/* Modal de confirmação para outros status sensíveis (cancelado, reembolsado) */}
-      <Dialog open={!!pendingChange} onOpenChange={open => { if (!open && !confirming) setPendingChange(null); }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-500" /> Confirmar mudança de status
-            </DialogTitle>
-          </DialogHeader>
-          {pendingChange && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-center gap-3 py-2">
-                <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${PAYMENT_STATUS[pendingChange.oldValue]?.color || 'bg-gray-100 text-gray-700'}`}>
-                  {PAYMENT_STATUS[pendingChange.oldValue]?.label || pendingChange.oldValue}
-                </span>
-                <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${PAYMENT_STATUS[pendingChange.newValue]?.color || 'bg-gray-100 text-gray-700'}`}>
-                  {PAYMENT_STATUS[pendingChange.newValue]?.label || pendingChange.newValue}
-                </span>
-              </div>
-              <p className="text-sm text-center text-muted-foreground">
-                Essa ação será salva diretamente no banco de dados.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" className="flex-1" onClick={() => setPendingChange(null)} disabled={confirming}>
-                  Cancelar
-                </Button>
-                <Button className="flex-1" onClick={confirmChange} disabled={confirming}>
-                  {confirming ? 'Salvando...' : 'Confirmar'}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

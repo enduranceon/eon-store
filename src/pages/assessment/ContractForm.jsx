@@ -14,6 +14,7 @@ import {
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
+import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 
@@ -277,7 +278,7 @@ export default function ContractForm() {
         start_date:        form.start_date,
         end_date:          endDate,
         original_end_date: endDate,
-        due_date:          endDate, // default; sobrescrito quando Asaas gera cobrança
+        due_date:          defaultPaymentDueDate(),
         installments,
         enrollment_fee:    enrollmentFee,
         manual_discount:   manualDiscount,

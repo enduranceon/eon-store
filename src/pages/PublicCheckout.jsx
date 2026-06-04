@@ -273,6 +273,7 @@ export default function PublicCheckout() {
         delivery_city: form.delivery_city || null,
         payment_method: form.payment_method || null,
         payment_status: 'awaiting_charge',
+        due_date: null,
         delivery_status: 'awaiting_supplier',
         coupon_code: validatedCoupon?.code || null,
         discount_value: finalDiscount,
@@ -536,7 +537,7 @@ export default function PublicCheckout() {
                     subtotal={cartTotal}
                     customerIdentifier={normalizePhone(form.whatsapp)}
                     applied={appliedCoupon ? { code: appliedCoupon.code, discount } : null}
-                    onApply={(c, _d) => setAppliedCoupon(c)}
+                    onApply={(c) => setAppliedCoupon(c)}
                     onRemove={() => setAppliedCoupon(null)}
                   />
                 </div>

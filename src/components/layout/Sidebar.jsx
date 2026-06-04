@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Activity, FileText, Layers, CalendarClock, Award, DollarSign,
-  Users, TrendingUp, BarChart3,
+  Users, BarChart3,
   ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
   ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw,
@@ -15,6 +15,13 @@ import { supabase } from '@/api/db';
 // ─────────────────────────────────────────────────────────────────
 
 const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge: 'today' };
+const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['message_sent', 'charge_sent', 'partially_paid', 'pending']);
+
+function isEffectiveOpenSale(order) {
+  if (order.payment_status === 'paid') return false;
+  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
+  return EFFECTIVE_OPEN_PAYMENT_STATUSES.has(order.payment_status);
+}
 
 // ASSESSORIA — core do negócio
 const ASSESSORIA_ITEMS = [
@@ -30,7 +37,7 @@ const ASSESSORIA_ITEMS = [
 
 // FINANCEIRO — visão unificada
 const FINANCEIRO_ITEMS = [
-  { label: 'Fluxo de Caixa', icon: TrendingUp,    to: '/financeiro' },
+  { label: 'Vendas em aberto', icon: AlertCircle, to: '/financeiro', badge: 'openSales' },
   { label: 'Relatórios',     icon: BarChart3,     to: '/relatorios' },
   { label: 'Clientes',       icon: Users,         to: '/clientes',   badge: 'clients' },
 ];
@@ -102,20 +109,16 @@ function SectionLabel({ label }) {
 
 function CollapseSection({ label, icon: Icon, items, isActive, badges, onClick, defaultOpen = false }) {
   const location = useLocation();
-  const [open, setOpen] = useState(defaultOpen);
-
-  // Abre automaticamente se estiver em uma rota do grupo
-  useEffect(() => {
-    const isInGroup = items.some(item =>
-      item.exact ? location.pathname === item.to : location.pathname.startsWith(item.to)
-    );
-    if (isInGroup) setOpen(true);
-  }, [location.pathname]);
+  const isInGroup = items.some(item =>
+    item.exact ? location.pathname === item.to : location.pathname.startsWith(item.to)
+  );
+  const [manuallyOpen, setManuallyOpen] = useState(defaultOpen);
+  const open = manuallyOpen || isInGroup;
 
   return (
     <div className="mt-1">
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setManuallyOpen(o => !o)}
         className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
       >
         <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -139,7 +142,7 @@ function CollapseSection({ label, icon: Icon, items, isActive, badges, onClick, 
 
 export default function Sidebar({ open, onClose, onSignOut }) {
   const location = useLocation();
-  const [badges, setBadges] = useState({ orders: 0, clients: 0, today: 0, assessoria: 0, renewals: 0 });
+  const [badges, setBadges] = useState({ orders: 0, clients: 0, today: 0, assessoria: 0, renewals: 0, openSales: 0 });
 
   const isActive = (to, exact) => {
     if (exact) return location.pathname === to;
@@ -155,10 +158,10 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         const in14 = new Date(); in14.setDate(in14.getDate() + 14);
         const in14Str = in14.toISOString().split('T')[0];
 
-        const [presaleOrders, stockOrders, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts] = await Promise.all([
-          supabase.from('presale_orders').select('id, payment_status, due_date')
+        const [presaleOrders, stockOrders, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts, contractsOpenPayments] = await Promise.all([
+          supabase.from('presale_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, external_payment_link')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
-          supabase.from('stock_orders').select('id, payment_status, due_date')
+          supabase.from('stock_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, external_payment_link')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('order_returns').select('id', { count: 'exact', head: true })
             .in('status', ['pending_return', 'received']),
@@ -172,12 +175,18 @@ export default function Sidebar({ open, onClose, onSignOut }) {
             .eq('refund_status', 'pending'),
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('status', 'draft'),
+          supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
+            .neq('status', 'cancelled').neq('status', 'draft')
+            .neq('payment_status', 'paid').neq('payment_status', 'refunded'),
         ]);
 
         const allOrders = [...(presaleOrders.data || []), ...(stockOrders.data || [])];
+        const openSalesCount =
+          allOrders.filter(isEffectiveOpenSale).length +
+          (contractsOpenPayments.count || 0);
         const todayCount =
           allOrders.filter(o => ['awaiting_charge', 'message_sent'].includes(o.payment_status)).length +
-          allOrders.filter(o => o.due_date && o.due_date < todayStr && o.payment_status !== 'paid').length +
+          allOrders.filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o)).length +
           (returnsRes.count || 0) +
           (pendingRefunds.count || 0);
 
@@ -187,6 +196,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           today:      todayCount,
           assessoria: (contractsOverdue.count || 0) + (contractsExpiring.count || 0),
           renewals:   renewalDrafts.count || 0,
+          openSales:  openSalesCount,
         });
       } catch { /* silencioso */ }
     };

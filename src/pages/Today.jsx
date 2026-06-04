@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ShoppingCart, MessageCircle, Clock, Package,
-  Undo2, ChevronRight, Sparkles, RotateCcw, CalendarX, UserCheck,
+  Undo2, ChevronRight, Sparkles, RotateCcw, CalendarX,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/api/db';
@@ -18,6 +18,14 @@ const DELIVERY_LABEL = {
   separated:         'Separado p/ entrega',
   awaiting_delivery: 'Aguardando entrega',
 };
+
+const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['message_sent', 'charge_sent', 'partially_paid', 'pending']);
+
+function isEffectiveOpenSale(item) {
+  if (['paid', 'cancelled', 'refunded'].includes(item.payment_status)) return false;
+  if (item.asaas_charge_id) return true;
+  return EFFECTIVE_OPEN_PAYMENT_STATUSES.has(item.payment_status);
+}
 
 function daysSince(iso) {
   if (!iso) return 0;
@@ -128,8 +136,6 @@ export default function Today() {
   useEffect(() => {
     const load = async () => {
       try {
-        const todayStr = todayLocalStr();
-
         const [presaleRes, stockRes, contractRes, plansRes, customersRes, returnsRes, refundsRes] = await Promise.all([
           supabase.from('presale_orders')
             .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, asaas_charge_id, due_date, created_date, status_changed_at')
@@ -217,7 +223,7 @@ export default function Today() {
 
   // 1. Em atraso — store + assessoria
   const overdue = allItems
-    .filter(o => o.due_date && o.due_date < todayStr && o.payment_status !== 'paid')
+    .filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o))
     .sort((a, b) => a.due_date.localeCompare(b.due_date));
 
   // 2. Para cobrar — store (awaiting_charge) + contratos sem cobrança

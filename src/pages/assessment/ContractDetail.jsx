@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
-  QrCode, RefreshCw, History, Pause, XCircle, AlertTriangle, RotateCcw, ArrowUpRight, ArrowDownRight,
+  Link2, QrCode, RefreshCw, History, Pause, XCircle, RotateCcw,
   HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,7 +19,7 @@ import {
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { suggestFeePercent, DEFAULT_ASAAS_DUE_DAYS } from '@/lib/payment-methods';
+import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { loadActivePaymentMethods, calcFee, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
@@ -173,6 +173,7 @@ export default function ContractDetail() {
   const [loadingCancelInst, setLoadingCancelInst]   = useState(false);
   const [chargeLoading, setChargeLoading] = useState(false);
   const [chargeConfirmModal, setChargeConfirmModal] = useState(null); // null | 'PIX' | 'BOLETO' | 'CREDIT_CARD'
+  const [chargeDueDate, setChargeDueDate] = useState(defaultAsaasDueDate);
   const [renewModal, setRenewModal]         = useState(false);
   const [renewLoading, setRenewLoading]     = useState(false);
   const [manualPayModal, setManualPayModal] = useState(false);
@@ -256,7 +257,7 @@ export default function ContractDetail() {
     setChargeLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke('generate-assessment-charge', {
-        body: { contract_id: id, installments: contract.installments, cpf: student.cpf, billing_type },
+        body: { contract_id: id, installments: contract.installments, cpf: student.cpf, billing_type, due_date: chargeDueDate },
       });
       // Quando edge function retorna não-2xx, supabase-js cria erro genérico.
       // Extraímos o body da resposta pra mostrar mensagem real.
@@ -278,6 +279,7 @@ export default function ContractDetail() {
       await logEvent('charge_generated', {
         billing_type,
         installments: contract.installments,
+        due_date: chargeDueDate,
         asaas_charge_id: data?.asaas_charge_id || null,
       });
       toast.success('Cobrança gerada!');
@@ -546,7 +548,7 @@ export default function ContractDetail() {
     if (hasOpenPayment) {
       const labels = {
         pending: 'aguardando',
-        awaiting_charge: 'aguardando cobrança',
+        awaiting_charge: 'pedido recebido',
         message_sent: 'mensagem enviada',
         charge_sent: 'cobrança enviada',
         partially_paid: 'parcialmente pago',
@@ -574,7 +576,7 @@ export default function ContractDetail() {
         start_date:         newStart,
         end_date:           newEnd,
         original_end_date:  newEnd,
-        due_date:           newEnd,
+        due_date:           defaultAsaasDueDate(),
         installments:       contract.installments,
         enrollment_fee:     0, // renovações não cobram taxa de matrícula
         auto_renewal:       contract.auto_renewal ?? false,
@@ -1061,6 +1063,17 @@ export default function ContractDetail() {
                 </p>
               </div>
             </div>
+          ) : contract.external_payment_link ? (
+            <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+              <Link2 className="w-4 h-4 text-amber-600 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-amber-800">Link externo salvo</p>
+                <p className="text-sm text-amber-700 truncate">{contract.external_payment_link}</p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(contract.external_payment_link); toast.success('Link copiado!'); }}>
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           ) : (
             <div className="space-y-3">
               <div className="text-center py-2">
@@ -1244,12 +1257,17 @@ export default function ContractDetail() {
                       {methodLabel}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-sm">
+                  <div className="grid grid-cols-[1fr_auto] items-center gap-3 text-sm">
                     <span className="text-muted-foreground">Vencimento</span>
-                    <span className="font-medium">
-                      {(() => { const d = new Date(); d.setDate(d.getDate() + DEFAULT_ASAAS_DUE_DAYS);
-                        return d.toLocaleDateString('pt-BR'); })()} (em {DEFAULT_ASAAS_DUE_DAYS} dias)
-                    </span>
+                    <div className="text-right">
+                      <Input
+                        type="date"
+                        className="h-9 w-40 text-sm"
+                        value={chargeDueDate}
+                        onChange={e => setChargeDueDate(e.target.value)}
+                      />
+                      <p className="mt-1 text-[11px] text-muted-foreground">padrão D+{DEFAULT_ASAAS_DUE_DAYS}</p>
+                    </div>
                   </div>
                 </div>
 

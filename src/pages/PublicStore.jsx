@@ -110,6 +110,7 @@ export default function PublicStore() {
         total_value: total,
         payment_method: form.payment_method,
         payment_status: 'awaiting_charge',
+        due_date: null,
         delivery_status: 'awaiting_delivery',
         delivery_method: form.delivery_method,
         delivery_city: form.delivery_city || null,
@@ -304,7 +305,7 @@ export default function PublicStore() {
                   subtotal={cartTotal}
                   customerIdentifier={normalizePhone(form.whatsapp)}
                   applied={appliedCoupon ? { code: appliedCoupon.code, discount } : null}
-                  onApply={(c, _d) => setAppliedCoupon(c)}
+                  onApply={(c) => setAppliedCoupon(c)}
                   onRemove={() => setAppliedCoupon(null)}
                 />
                 {discount > 0 && (

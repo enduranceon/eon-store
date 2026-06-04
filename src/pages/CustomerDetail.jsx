@@ -13,8 +13,19 @@ import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 
-const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
-const PAYMENT_LABEL = { awaiting_charge: 'Ag. cobrança', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcialmente pago', cancelled: 'Cancelado', refunded: 'Reembolsado' };
+const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', message_sent: 'warning', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
+const PAYMENT_LABEL = { awaiting_charge: 'Pedido recebido', message_sent: 'Mensagem enviada', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcialmente pago', cancelled: 'Cancelado', refunded: 'Reembolsado' };
+const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'message_sent', 'charge_sent', 'partially_paid', 'pending']);
+
+function isEffectiveSale(order) {
+  if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
+  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
+  return EFFECTIVE_SALE_STATUSES.has(order.payment_status);
+}
+
+function isEffectiveOpenSale(order) {
+  return isEffectiveSale(order) && order.payment_status !== 'paid';
+}
 
 export default function CustomerDetail() {
   const { id } = useParams();
@@ -173,9 +184,10 @@ export default function CustomerDetail() {
   if (!customer) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const activeOrders   = orders.filter(o => o.payment_status !== 'cancelled');
-  const totalValue     = activeOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPaid      = activeOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPending   = totalValue - totalPaid;
+  const effectiveOrders = activeOrders.filter(isEffectiveSale);
+  const totalValue     = effectiveOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalPaid      = effectiveOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalPending   = effectiveOrders.filter(o => o.payment_status !== 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
 
   const CONTRACT_STATUS = {
     active:    { label: 'Ativo',      cls: 'bg-green-100 text-green-700' },
@@ -199,7 +211,7 @@ export default function CustomerDetail() {
       const discount = Number(c.manual_discount) || 0;
       return acc + Math.max(0, base + enrol - discount);
     }, 0);
-  const ltv = totalValue + assessTotal;
+  const ltv = totalPaid + assessTotal;
 
   const activeContractMonthly = activeContracts.reduce((acc, c) => {
     const plan = plans.find(p => p.id === c.plan_id);
@@ -223,7 +235,7 @@ export default function CustomerDetail() {
     });
 
   const openOrders = orders
-    .filter(o => !['paid', 'refunded', 'cancelled'].includes(o.payment_status))
+    .filter(isEffectiveOpenSale)
     .map(o => ({
       ...o,
       _value: Number(o.total_value) || 0,

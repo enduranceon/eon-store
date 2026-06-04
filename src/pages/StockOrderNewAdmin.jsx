@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Search, Plus, Minus, X, ShoppingCart, Check, User, Package } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -131,6 +131,7 @@ export default function StockOrderNewAdmin() {
         discount_reason:   discount.reason || null,
         payment_method:    paymentMethod,
         payment_status:    methodInfo?.paid ? 'paid' : 'awaiting_charge',
+        due_date:          null,
         payment_date:      methodInfo?.paid ? todayLocalStr() : null,
         delivery_status:   'awaiting_delivery',
         delivery_method:   'pickup',

@@ -1,19 +1,22 @@
 // Métodos de pagamento — usados em pedidos da loja e contratos da assessoria
 // Cada método informa se já é considerado "pago" e quanto cobra de taxa de gateway
 
-// Dias de vencimento default para cobranças Asaas (PIX, Boleto, Cartão).
+// Dias de vencimento default para lançamentos/cobranças.
 // Editável pelo usuário no modal de "Gerar cobrança" — esta constante é só o ponto de partida.
-export const DEFAULT_ASAAS_DUE_DAYS = 7;
+export const DEFAULT_PAYMENT_DUE_DAYS = 5;
+export const DEFAULT_ASAAS_DUE_DAYS = DEFAULT_PAYMENT_DUE_DAYS;
 
 // Helper: retorna o vencimento default formatado YYYY-MM-DD
-export function defaultAsaasDueDate() {
+export function defaultPaymentDueDate() {
   const d = new Date();
-  d.setDate(d.getDate() + DEFAULT_ASAAS_DUE_DAYS);
+  d.setDate(d.getDate() + DEFAULT_PAYMENT_DUE_DAYS);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
+
+export const defaultAsaasDueDate = defaultPaymentDueDate;
 
 export const PAYMENT_METHODS = [
   // ── Pagamentos manuais (sem taxa de gateway) ──

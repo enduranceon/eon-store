@@ -13,14 +13,14 @@ import { StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { loadActivePaymentMethods, calcFee, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
-import { defaultAsaasDueDate } from '@/lib/payment-methods';
+import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
 
 const PAYMENT_STATUS = {
-  awaiting_charge: { label: 'Aguardando contato', badge: 'secondary' },
+  awaiting_charge: { label: 'Pedido recebido', badge: 'secondary' },
   message_sent:    { label: 'Mensagem enviada',   badge: 'warning' },
   charge_sent:     { label: 'Cobrança enviada',   badge: 'info' },
   paid:            { label: 'Pago',               badge: 'success' },
@@ -348,13 +348,29 @@ export default function StockOrderDetail() {
     );
   };
 
-  const openWhatsApp = () => { setWhatsappManualLink(''); setWhatsappMsg(buildMessage('')); setCopied(false); setWhatsappModal(true); };
+  const openWhatsApp = () => {
+    const savedExternalLink = order.external_payment_link || '';
+    setWhatsappManualLink(savedExternalLink);
+    setWhatsappMsg(buildMessage(savedExternalLink));
+    setCopied(false);
+    setWhatsappModal(true);
+  };
   const copyMessage = () => { navigator.clipboard.writeText(whatsappMsg).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
   const openWhatsAppDirect = () => { window.open(`https://wa.me/55${(order.customer_whatsapp || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`, '_blank'); };
 
   const markMessageSent = async () => {
     try {
-      await StockOrder.update(id, { payment_status: 'message_sent' });
+      const updates = { payment_message_sent_at: new Date().toISOString() };
+      if (!order.asaas_charge_id) {
+        updates.external_payment_link = whatsappManualLink.trim() || null;
+        if (!order.due_date) {
+          updates.due_date = defaultPaymentDueDate();
+        }
+        if (['awaiting_charge', 'pending'].includes(order.payment_status)) {
+          updates.payment_status = 'message_sent';
+        }
+      }
+      await StockOrder.update(id, updates);
       toast.success('Mensagem marcada como enviada!');
       setWhatsappModal(false);
       load();
@@ -386,7 +402,7 @@ export default function StockOrderDetail() {
         manual_payment: false,
         manual_fee:     null,
       });
-      toast.success('Pagamento revertido. Pedido voltou para "Aguardando cobrança".');
+      toast.success('Pagamento revertido. Pedido voltou para "Pedido recebido".');
       setReopenModal(false);
       load();
     } catch (e) {
@@ -717,7 +733,7 @@ export default function StockOrderDetail() {
           </div>
           {order.payment_status === 'awaiting_charge' && (
             <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={markMessageSent}>
-              <Check className="w-4 h-4 mr-1.5" /> Mensagem enviada — aguardando resposta
+              <Check className="w-4 h-4 mr-1.5" /> Efetivar venda externa enviada
             </Button>
           )}
         </DialogContent>
@@ -934,6 +950,18 @@ export default function StockOrderDetail() {
             </div>
           ) : (
             <div className="space-y-4">
+              {order.external_payment_link && (
+                <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                  <Link2 className="w-4 h-4 text-amber-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-amber-800">Link externo salvo</p>
+                    <p className="text-sm text-amber-700 truncate">{order.external_payment_link}</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(order.external_payment_link); toast.success('Link copiado!'); }}>
+                    <Copy className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
               {order.payment_method && (
                 <div className="flex items-center gap-2 text-sm bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
                   <span className="text-blue-600">Cliente solicitou:</span>
@@ -1198,7 +1226,7 @@ export default function StockOrderDetail() {
               <p className="text-amber-800 mt-1">Isso vai <strong>desfazer</strong> o registro de pagamento manual:</p>
               <ul className="mt-2 ml-4 text-xs text-amber-700 list-disc space-y-0.5">
                 <li>Apaga as parcelas projetadas no fluxo de caixa</li>
-                <li>Status volta para <strong>Aguardando cobrança</strong></li>
+                <li>Status volta para <strong>Pedido recebido</strong></li>
                 <li>Forma, data e taxa são removidos</li>
               </ul>
               <p className="text-xs text-amber-700 mt-2">

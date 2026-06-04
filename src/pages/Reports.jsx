@@ -25,7 +25,7 @@ import { PAYMENT_METHOD_LABELS } from '@/lib/payment-methods';
 
 const STATUS_LABELS = {
   paid:             { label: 'Pago',        color: 'bg-green-100 text-green-700' },
-  awaiting_charge:  { label: 'Sem cobrança',color: 'bg-gray-100 text-gray-600' },
+  awaiting_charge:  { label: 'Pedido recebido', color: 'bg-gray-100 text-gray-600' },
   message_sent:     { label: 'Msg enviada', color: 'bg-gray-100 text-gray-600' },
   charge_sent:      { label: 'Cobrado',     color: 'bg-blue-100 text-blue-700' },
   partially_paid:   { label: 'Parcial',     color: 'bg-amber-100 text-amber-700' },
@@ -33,6 +33,14 @@ const STATUS_LABELS = {
   cancelled:        { label: 'Cancelado',   color: 'bg-gray-100 text-gray-500 line-through' },
   refunded:         { label: 'Estornado',   color: 'bg-purple-100 text-purple-700' },
 };
+
+const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'message_sent', 'charge_sent', 'partially_paid', 'pending']);
+
+function isEffectiveSale(order) {
+  if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
+  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
+  return EFFECTIVE_SALE_STATUSES.has(order.payment_status);
+}
 
 const ASAAS_STATUS_LABELS = {
   RECEIVED:          { label: 'Recebido',    color: 'bg-green-100 text-green-700' },
@@ -475,10 +483,11 @@ function SalesTab() {
     });
   }, [sales, typeFilter, statusFilter, monthFilter, search]);
 
-  const totalValue   = filtered.reduce((s, o) => s + (o.total_value || 0), 0);
-  const totalPaid    = filtered.filter(o => o.payment_status === 'paid').reduce((s, o) => s + (o.total_value || 0), 0);
-  const countContracts = filtered.filter(o => o.type === 'contract').length;
-  const countLoja      = filtered.filter(o => o.type !== 'contract').length;
+  const effectiveFiltered = filtered.filter(isEffectiveSale);
+  const totalValue   = effectiveFiltered.reduce((s, o) => s + (o.total_value || 0), 0);
+  const totalPaid    = effectiveFiltered.filter(o => o.payment_status === 'paid').reduce((s, o) => s + (o.total_value || 0), 0);
+  const countContracts = effectiveFiltered.filter(o => o.type === 'contract').length;
+  const countLoja      = effectiveFiltered.filter(o => o.type !== 'contract').length;
 
   if (loading) return (
     <div className="flex items-center justify-center py-20 gap-3 text-muted-foreground">
@@ -492,7 +501,7 @@ function SalesTab() {
       {/* ── KPI Summary ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: 'Vendas filtradas', value: filtered.length, sub: `${countContracts} assessoria · ${countLoja} loja`, icon: TrendingUp, color: 'text-blue-600', bg: 'bg-blue-50' },
+          { label: 'Vendas filtradas', value: effectiveFiltered.length, sub: `${countContracts} assessoria · ${countLoja} loja`, icon: TrendingUp, color: 'text-blue-600', bg: 'bg-blue-50' },
           { label: 'Valor total',      value: formatCurrency(totalValue),  sub: 'soma do período',   icon: DollarSign,   color: 'text-gray-700', bg: 'bg-gray-50' },
           { label: 'Total pago',       value: formatCurrency(totalPaid),   sub: 'pagamentos confirmados', icon: CheckCircle2, color: 'text-green-700', bg: 'bg-green-50' },
           { label: 'Clientes únicos',  value: new Set(filtered.map(o => o.customer)).size, sub: 'no período filtrado', icon: Users, color: 'text-purple-700', bg: 'bg-purple-50' },
@@ -567,7 +576,7 @@ function SalesTab() {
             <SelectItem value="all">Todos os status</SelectItem>
             <SelectItem value="paid">Pago</SelectItem>
             <SelectItem value="charge_sent">Cobrado</SelectItem>
-            <SelectItem value="awaiting_charge">Sem cobrança</SelectItem>
+            <SelectItem value="awaiting_charge">Pedido recebido</SelectItem>
             <SelectItem value="overdue">Vencido</SelectItem>
             <SelectItem value="cancelled">Cancelado</SelectItem>
           </SelectContent>
@@ -674,19 +683,21 @@ function StoreReportsTab() {
     : orders.filter(o => o.campaign_id === campaignFilter);
 
   const active = filteredOrders.filter(o => o.payment_status !== 'cancelled');
-  const totalSold      = active.reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPaid      = active.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPending   = active.filter(o => ['awaiting_charge','charge_sent','partially_paid'].includes(o.payment_status)).reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const effectiveOrders = active.filter(isEffectiveSale);
+  const totalSold      = effectiveOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalPaid      = effectiveOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalPending   = effectiveOrders.filter(o => o.payment_status !== 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
   const totalCancelled = filteredOrders.filter(o => o.payment_status === 'cancelled').reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalCost      = active.reduce((acc, o) => acc + (o.total_cost || 0), 0);
+  const totalCost      = effectiveOrders.reduce((acc, o) => acc + (o.total_cost || 0), 0);
   const grossProfit    = totalSold - totalCost;
   const margin         = totalSold > 0 ? (grossProfit / totalSold) * 100 : 0;
 
   const byCampaign = campaigns.map(c => {
     const co = orders.filter(o => o.campaign_id === c.id && o.payment_status !== 'cancelled');
-    const sold = co.reduce((acc, o) => acc + (o.total_value || 0), 0);
-    const paid = co.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
-    const cost = co.reduce((acc, o) => acc + (o.total_cost || 0), 0);
+    const effectiveCo = co.filter(isEffectiveSale);
+    const sold = effectiveCo.reduce((acc, o) => acc + (o.total_value || 0), 0);
+    const paid = effectiveCo.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
+    const cost = effectiveCo.reduce((acc, o) => acc + (o.total_cost || 0), 0);
     const profit = sold - cost;
     const uniqueCustomers = new Set(co.map(o => o.customer_id || o.checkout_whatsapp)).size;
     return { name: c.name, orders: co.length, sold, paid, cost, profit, uniqueCustomers, margin: sold > 0 ? (profit / sold) * 100 : 0 };

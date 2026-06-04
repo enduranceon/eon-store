@@ -34,7 +34,8 @@ function KPICard({ title, value, sub, icon: Icon, color = 'blue' }) {
 }
 
 const PAYMENT_STATUS_LABEL = {
-  awaiting_charge: 'Aguardando cobrança',
+  awaiting_charge: 'Pedido recebido',
+  message_sent: 'Mensagem enviada',
   charge_sent: 'Cobrança enviada',
   paid: 'Pago',
   partially_paid: 'Parcialmente pago',
@@ -46,10 +47,19 @@ const PAYMENT_BADGE = {
   paid: 'success',
   partially_paid: 'warning',
   awaiting_charge: 'secondary',
+  message_sent: 'warning',
   charge_sent: 'info',
   cancelled: 'destructive',
   refunded: 'outline',
 };
+
+const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'message_sent', 'charge_sent', 'partially_paid', 'pending']);
+
+function isEffectiveSale(order) {
+  if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
+  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
+  return EFFECTIVE_SALE_STATUSES.has(order.payment_status);
+}
 
 export default function Dashboard() {
   const [orders, setOrders] = useState([]);
@@ -72,10 +82,12 @@ export default function Dashboard() {
   }, []);
 
   const activeOrders = orders.filter(o => o.payment_status !== 'cancelled');
-  const totalSold = activeOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPaid = activeOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPending = activeOrders.filter(o => ['awaiting_charge', 'charge_sent', 'partially_paid'].includes(o.payment_status)).reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalCost = activeOrders.reduce((acc, o) => acc + (o.total_cost || 0), 0);
+  const effectiveOrders = activeOrders.filter(isEffectiveSale);
+  const totalSold = effectiveOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalPaid = effectiveOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const pendingOrders = effectiveOrders.filter(o => o.payment_status !== 'paid');
+  const totalPending = pendingOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const totalCost = effectiveOrders.reduce((acc, o) => acc + (o.total_cost || 0), 0);
   const grossProfit = totalSold - totalCost;
   const margin = totalSold > 0 ? (grossProfit / totalSold) * 100 : 0;
 
@@ -98,8 +110,8 @@ export default function Dashboard() {
     },
     ordersAwaitingCharge.length > 0 && {
       icon: Clock, color: 'text-orange-600 bg-orange-50 border-orange-200',
-      title: `${ordersAwaitingCharge.length} pedido${ordersAwaitingCharge.length > 1 ? 's' : ''} sem contato`,
-      desc: 'Ninguém entrou em contato com esses clientes ainda.',
+      title: `${ordersAwaitingCharge.length} pedido${ordersAwaitingCharge.length > 1 ? 's' : ''} recebido${ordersAwaitingCharge.length > 1 ? 's' : ''}`,
+      desc: 'Ainda não virou venda. Gere Asaas, envie link externo ou registre pagamento.',
       link: '/pedidos?pagamento=awaiting_charge', linkLabel: 'Ver pedidos',
     },
     ordersMessageSent.length > 0 && {
@@ -159,7 +171,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard title="Total Vendido" value={formatCurrency(totalSold)} icon={DollarSign} color="blue" />
         <KPICard title="Total Pago" value={formatCurrency(totalPaid)} sub={`${orders.filter(o => o.payment_status === 'paid').length} pedidos`} icon={CheckCircle2} color="green" />
-        <KPICard title="Total Pendente" value={formatCurrency(totalPending)} sub={`${orders.filter(o => ['awaiting_charge','charge_sent','partially_paid'].includes(o.payment_status)).length} pedidos`} icon={Clock} color="yellow" />
+        <KPICard title="Total Pendente" value={formatCurrency(totalPending)} sub={`${pendingOrders.length} venda${pendingOrders.length !== 1 ? 's' : ''}`} icon={Clock} color="yellow" />
         <KPICard title="Lucro Bruto Est." value={formatCurrency(grossProfit)} sub={`Margem: ${margin.toFixed(1)}%`} icon={TrendingUp} color="purple" />
       </div>
 

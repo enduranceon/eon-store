@@ -14,6 +14,7 @@ import {
   AssessmentCoach, PreSaleCustomer, RenewalRule, ContractRenewalAction,
 } from '@/api/entities';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr, utcToLocalDateStr, renderMessageTemplate } from '@/lib/utils';
+import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { toast } from 'sonner';
 
 // Calcula end_date a partir de start_date + duração do plano
@@ -160,7 +161,7 @@ export default function Painel() {
           start_date:        newStart,
           end_date:          newEnd,
           original_end_date: newEnd,
-          due_date:          newEnd,
+          due_date:          defaultPaymentDueDate(),
           installments:      c.installments,
           enrollment_fee:    0,
           auto_renewal:      true,

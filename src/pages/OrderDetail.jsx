@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight, Pencil } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,12 +15,12 @@ import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { loadActivePaymentMethods, calcFee, projectInstallments, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
-import { defaultAsaasDueDate } from '@/lib/payment-methods';
+import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
 import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
 
 const PAYMENT_STATUS = {
-  awaiting_charge: { label: 'Aguardando contato', badge: 'secondary' },
+  awaiting_charge: { label: 'Pedido recebido', badge: 'secondary' },
   message_sent: { label: 'Mensagem enviada', badge: 'warning' },
   charge_sent: { label: 'Cobrança enviada', badge: 'info' },
   paid: { label: 'Pago', badge: 'success' },
@@ -97,6 +97,9 @@ export default function OrderDetail() {
   const [cancelItemDelivered, setCancelItemDelivered] = useState(false);
   const [cancelItemReason, setCancelItemReason] = useState('');
   const [cancelItemLoading, setCancelItemLoading] = useState(false);
+  const [editPayMethodModal, setEditPayMethodModal] = useState(false);
+  const [editPayMethodValue, setEditPayMethodValue] = useState('');
+  const [editPayMethodSaving, setEditPayMethodSaving] = useState(false);
 
   const load = async () => {
     const o = await PreSaleOrder.get(id);
@@ -233,6 +236,21 @@ export default function OrderDetail() {
       toast.error(e.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSavePaymentMethod = async () => {
+    if (!editPayMethodValue) return toast.error('Selecione uma forma de pagamento');
+    setEditPayMethodSaving(true);
+    try {
+      await PreSaleOrder.update(id, { payment_method: editPayMethodValue });
+      toast.success('Forma de pagamento salva!');
+      setEditPayMethodModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setEditPayMethodSaving(false);
     }
   };
 
@@ -384,8 +402,9 @@ export default function OrderDetail() {
   };
 
   const openWhatsApp = () => {
-    setWhatsappManualLink('');
-    setWhatsappMsg(buildMessage(''));
+    const savedExternalLink = order.external_payment_link || '';
+    setWhatsappManualLink(savedExternalLink);
+    setWhatsappMsg(buildMessage(savedExternalLink));
     setCopied(false);
     setWhatsappModal(true);
   };
@@ -434,7 +453,7 @@ export default function OrderDetail() {
         manual_fee:     null,
       });
 
-      toast.success('Pagamento revertido. Pedido voltou para "Aguardando cobrança".');
+      toast.success('Pagamento revertido. Pedido voltou para "Pedido recebido".');
       setReopenModal(false);
       load();
     } catch (e) {
@@ -446,7 +465,17 @@ export default function OrderDetail() {
 
   const markMessageSent = async () => {
     try {
-      await PreSaleOrder.update(id, { payment_status: 'message_sent' });
+      const updates = { payment_message_sent_at: new Date().toISOString() };
+      if (!order.asaas_charge_id) {
+        updates.external_payment_link = whatsappManualLink.trim() || null;
+        if (!order.due_date) {
+          updates.due_date = defaultPaymentDueDate();
+        }
+        if (['awaiting_charge', 'pending'].includes(order.payment_status)) {
+          updates.payment_status = 'message_sent';
+        }
+      }
+      await PreSaleOrder.update(id, updates);
       toast.success('Mensagem marcada como enviada!');
       setWhatsappModal(false);
       load();
@@ -791,7 +820,7 @@ export default function OrderDetail() {
           {order.payment_status === 'awaiting_charge' && (
             <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={markMessageSent}>
               <Check className="w-4 h-4 mr-1.5" />
-              Mensagem enviada — aguardando resposta
+              Efetivar venda externa enviada
             </Button>
           )}
           {/* Atalho: se já está cobrando manualmente e o cliente confirmar pagamento */}
@@ -1093,6 +1122,18 @@ export default function OrderDetail() {
             </div>
           ) : (
             <div className="space-y-3">
+              {order.external_payment_link && (
+                <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                  <Link2 className="w-4 h-4 text-amber-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-amber-800">Link externo salvo</p>
+                    <p className="text-sm text-amber-700 truncate">{order.external_payment_link}</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(order.external_payment_link); toast.success('Link copiado!'); }}>
+                    <Copy className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
               {/* Preferência do cliente */}
               {order.payment_method && (
                 <div className="flex items-center gap-2 text-sm bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
@@ -1273,11 +1314,22 @@ export default function OrderDetail() {
                         <p className={`text-lg font-bold ${blockColors.valueText} mt-0.5`}>
                           {formatCurrency(order.total_value)}
                         </p>
-                        <p className={`text-xs ${blockColors.text} mt-0.5`}>
-                          {PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method}
-                          {' · '}
-                          <span className="font-medium">{order.payment_date ? formatDate(order.payment_date) : '—'}</span>
-                        </p>
+                        <div className={`flex items-center gap-1.5 mt-0.5`}>
+                          {order.payment_method ? (
+                            <>
+                              <span className={`text-xs ${blockColors.text}`}>{PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method}</span>
+                              <button onClick={() => { setEditPayMethodValue(order.payment_method); setEditPayMethodModal(true); }} className={`text-xs ${blockColors.text} hover:opacity-70`}>
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            </>
+                          ) : (
+                            <button onClick={() => { setEditPayMethodValue(''); setEditPayMethodModal(true); }} className="text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5 hover:bg-amber-100 flex items-center gap-1">
+                              <Pencil className="w-3 h-3" />
+                              Definir forma de pagamento
+                            </button>
+                          )}
+                          {order.payment_method && <span className={`text-xs ${blockColors.text}`}> · <span className="font-medium">{order.payment_date ? formatDate(order.payment_date) : '—'}</span></span>}
+                        </div>
                       </div>
                       <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${sourceBadgeColor}`}>
                         {sourceLabel}
@@ -1417,6 +1469,44 @@ export default function OrderDetail() {
         </CardContent>
       </Card>
 
+      {/* Modal editar forma de pagamento */}
+      <Dialog open={editPayMethodModal} onOpenChange={setEditPayMethodModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Forma de Pagamento</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground -mt-2">Selecione como este pedido foi pago.</p>
+          <Select value={editPayMethodValue} onValueChange={setEditPayMethodValue}>
+            <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="pix">PIX</SelectItem>
+              <SelectItem value="pix_boleto">PIX ou Boleto</SelectItem>
+              <SelectItem value="boleto">Boleto</SelectItem>
+              <SelectItem value="cash">Dinheiro</SelectItem>
+              <SelectItem value="bank_transfer">Transferência bancária</SelectItem>
+              <SelectItem value="credit_card">Cartão (à vista)</SelectItem>
+              <SelectItem value="card_2x">Cartão 2x</SelectItem>
+              <SelectItem value="card_3x">Cartão 3x</SelectItem>
+              <SelectItem value="card_4x">Cartão 4x</SelectItem>
+              <SelectItem value="card_5x">Cartão 5x</SelectItem>
+              <SelectItem value="card_6x">Cartão 6x</SelectItem>
+              <SelectItem value="card_7x">Cartão 7x</SelectItem>
+              <SelectItem value="card_8x">Cartão 8x</SelectItem>
+              <SelectItem value="card_9x">Cartão 9x</SelectItem>
+              <SelectItem value="card_10x">Cartão 10x</SelectItem>
+              <SelectItem value="card_11x">Cartão 11x</SelectItem>
+              <SelectItem value="card_12x">Cartão 12x</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex justify-end gap-2 mt-2">
+            <Button variant="outline" onClick={() => setEditPayMethodModal(false)}>Cancelar</Button>
+            <Button onClick={handleSavePaymentMethod} disabled={editPayMethodSaving}>
+              {editPayMethodSaving ? 'Salvando...' : 'Salvar'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Modal de pagamento manual */}
       <Dialog open={manualPayModal} onOpenChange={setManualPayModal}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
@@ -1452,7 +1542,7 @@ export default function OrderDetail() {
               </p>
               <ul className="mt-2 ml-4 text-xs text-amber-700 list-disc space-y-0.5">
                 <li>Apaga as parcelas projetadas no fluxo de caixa</li>
-                <li>Status volta para <strong>Aguardando cobrança</strong></li>
+                <li>Status volta para <strong>Pedido recebido</strong></li>
                 <li>Forma, data e taxa são removidos</li>
               </ul>
               <p className="text-xs text-amber-700 mt-2">

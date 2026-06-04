@@ -1,12 +1,13 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   DollarSign, Calendar, CheckCircle2, Clock, AlertTriangle,
-  TrendingDown, ChevronRight, RefreshCw, CreditCard, Banknote,
+  ChevronRight, RefreshCw, CreditCard, Banknote,
   Zap, ArrowUpRight, ArrowDownRight, Minus, Wallet, Receipt,
-  BarChart3, Target, RotateCcw, CheckCheck,
+  BarChart3, Target, RotateCcw, CheckCheck, MessageCircle,
+  Copy, ExternalLink, Link2, Check,
 } from 'lucide-react';
-import { calcGatewayFee } from '@/lib/payment-methods';
+import { calcGatewayFee, defaultPaymentDueDate } from '@/lib/payment-methods';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -38,6 +39,14 @@ function getLastMonthStart() {
 }
 function getLastMonthEnd() {
   const d = new Date(); d.setDate(0); return toLocalDateStr(d); // dia 0 do mês atual = último dia do mês anterior
+}
+
+const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['message_sent', 'charge_sent', 'partially_paid', 'pending']);
+
+function isEffectiveOpenSale(order) {
+  if (['paid', 'cancelled', 'refunded'].includes(order.payment_status)) return false;
+  if (order.asaas_charge_id || order.asaas_payment_link || order.asaas_pix_copy || order.external_payment_link) return true;
+  return EFFECTIVE_OPEN_PAYMENT_STATUSES.has(order.payment_status);
 }
 
 function daysDiff(dateStr) {
@@ -100,13 +109,74 @@ function DueChip({ dateStr }) {
   );
 }
 
-function OrderRow({ o }) {
+function PaymentStageChip({ status, hasAsaasCharge }) {
+  let label = status || 'Pendente';
+  let cls = 'bg-gray-100 text-gray-600';
+
+  if (status === 'awaiting_charge') {
+    label = 'Pedido recebido';
+    cls = 'bg-gray-100 text-gray-700';
+  } else if (status === 'message_sent') {
+    label = 'Link externo enviado';
+    cls = 'bg-indigo-50 text-indigo-700';
+  } else if (status === 'charge_sent') {
+    label = hasAsaasCharge ? 'Asaas enviado' : 'Cobrança enviada';
+    cls = 'bg-blue-50 text-blue-700';
+  } else if (status === 'partially_paid') {
+    label = 'Parcial';
+    cls = 'bg-amber-50 text-amber-700';
+  } else if (status === 'paid') {
+    label = 'Pago';
+    cls = 'bg-green-50 text-green-700';
+  }
+
+  return (
+    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+function firstName(name) {
+  return (name || '').trim().split(/\s+/)[0] || '';
+}
+
+function paymentLinkFor(order, externalLink = order?.external_payment_link) {
+  return order?.asaas_payment_link || externalLink?.trim() || '';
+}
+
+function buildCollectionMessage(order, externalLink = order?.external_payment_link) {
+  if (!order) return '';
+  const link = paymentLinkFor(order, externalLink);
+  const pixCopy = order.asaas_pix_copy;
+  const due = order.due_date ? formatDate(order.due_date) : null;
+  const isOverdue = order.due_date && order.due_date < todayLocalStr();
+  const saleType = order.type === 'contract' ? 'contrato' : 'pedido';
+  const customer = firstName(order.customer);
+
+  let msg = customer ? `Olá, ${customer}! Tudo bem?\n\n` : 'Olá! Tudo bem?\n\n';
+  if (isOverdue) {
+    msg += `Estou passando porque a cobrança do seu ${saleType} *${order.order_number}*, no valor de *${formatCurrency(order.total_value || 0)}*, venceu${due ? ` em *${due}*` : ''}.\n\n`;
+  } else {
+    msg += `Segue novamente a cobrança do seu ${saleType} *${order.order_number}*, no valor de *${formatCurrency(order.total_value || 0)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
+  }
+
+  if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
+  if (link) msg += `Link de pagamento:\n${link}\n\n`;
+  msg += 'Se o pagamento já foi realizado, pode desconsiderar esta mensagem. Qualquer dúvida, estou por aqui.';
+  return msg;
+}
+
+function OrderRow({ o, onEditDueDate, onCollectPayment }) {
   const link = o.type === 'stock'    ? `/estoque/pedidos/${o.id}`
              : o.type === 'contract' ? `/assessoria/contratos/${o.id}`
              : `/pedidos/${o.id}`;
+  const canEditDueDate = !!onEditDueDate && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
+  const canCollect = !!onCollectPayment && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
+
   return (
-    <Link to={link} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors group">
-      <div className="flex-1 min-w-0">
+    <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors group">
+      <Link to={link} className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-semibold text-blue-700">{o.order_number}</span>
           {o.type === 'stock' && (
@@ -115,20 +185,57 @@ function OrderRow({ o }) {
           {o.type === 'contract' && (
             <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">🏃 Assessoria</span>
           )}
+          <PaymentStageChip status={o.payment_status} hasAsaasCharge={!!o.asaas_charge_id} />
+          {o.external_payment_link && !o.asaas_payment_link && (
+            <span className="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-medium">Link externo salvo</span>
+          )}
         </div>
         <p className="text-xs text-muted-foreground truncate">{o.customer}</p>
+      </Link>
+      <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap">
+        {o.due_date ? (
+          <DueChip dateStr={o.due_date} />
+        ) : o.payment_date ? (
+          <span className="text-xs text-muted-foreground">{formatDate(o.payment_date)}</span>
+        ) : (
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+            Sem vencimento
+          </span>
+        )}
+        <span className="font-semibold text-sm">{formatCurrency(o.total_value)}</span>
+        {canCollect && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs border-green-200 text-green-700 hover:bg-green-50"
+            onClick={() => onCollectPayment(o)}
+          >
+            <MessageCircle className="w-3.5 h-3.5 sm:mr-1" />
+            <span className="hidden sm:inline">Cobrar</span>
+          </Button>
+        )}
+        {canEditDueDate && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => onEditDueDate(o)}
+          >
+            <Calendar className="w-3.5 h-3.5 sm:mr-1" />
+            <span className="hidden sm:inline">{o.due_date ? 'Alterar' : 'Definir'}</span>
+          </Button>
+        )}
+        <Link to={link} aria-label={`Abrir ${o.order_number}`}>
+          <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+        </Link>
       </div>
-      {o.due_date && <DueChip dateStr={o.due_date} />}
-      {o.payment_date && !o.due_date && (
-        <span className="text-xs text-muted-foreground">{formatDate(o.payment_date)}</span>
-      )}
-      <span className="font-semibold text-sm">{formatCurrency(o.total_value)}</span>
-      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-    </Link>
+    </div>
   );
 }
 
-function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, badgeCls, total }) {
+function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, badgeCls, total, onEditDueDate, onCollectPayment }) {
   if (orders.length === 0) return null;
   return (
     <Card className={border || ''}>
@@ -149,7 +256,14 @@ function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, ba
       <CardContent className="pt-0">
         {orders.length === 0
           ? <p className="text-sm text-muted-foreground py-4 text-center">{emptyMsg}</p>
-          : <div className="divide-y">{orders.map(o => <OrderRow key={o.id + o.type} o={o} />)}</div>
+          : <div className="divide-y">{orders.map(o => (
+            <OrderRow
+              key={o.id + o.type}
+              o={o}
+              onEditDueDate={onEditDueDate}
+              onCollectPayment={onCollectPayment}
+            />
+          ))}</div>
         }
       </CardContent>
     </Card>
@@ -228,11 +342,18 @@ export default function Financial() {
   const [refundDoneModal, setRefundDoneModal] = useState(null); // { contract } | null
   const [refundDoneForm, setRefundDoneForm]   = useState({ date: '', notes: '' });
   const [savingRefund, setSavingRefund]       = useState(false);
+  const [dueDateModal, setDueDateModal]       = useState(null);
+  const [dueDateForm, setDueDateForm]         = useState({ date: '' });
+  const [savingDueDate, setSavingDueDate]     = useState(false);
+  const [collectionModal, setCollectionModal] = useState(null);
+  const [collectionForm, setCollectionForm]   = useState({ externalLink: '', message: '' });
+  const [collectionCopied, setCollectionCopied] = useState(false);
+  const [savingCollection, setSavingCollection] = useState(false);
   const [asaasPayments, setAsaasPayments] = useState([]);     // cache local (asaas_payments)
   const [syncingAsaas, setSyncingAsaas]   = useState(false);
 
   // ── Fetch Asaas ───────────────────────────────────────────────
-  const fetchReceivables = async (force = false) => {
+  const fetchReceivables = useCallback(async (force = false) => {
     if (!force) {
       try {
         const cached = localStorage.getItem(RECEIVABLES_CACHE_KEY);
@@ -260,9 +381,12 @@ export default function Financial() {
     } catch (e) {
       toast.error('Erro ao buscar recebíveis: ' + (e.message || 'desconhecido'));
     } finally { setLoadingRec(false); }
-  };
+  }, []);
 
-  useEffect(() => { fetchReceivables(false); }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => { fetchReceivables(false); }, 0);
+    return () => clearTimeout(timer);
+  }, [fetchReceivables]);
 
   // ── Fetch pedidos/contratos ────────────────────────────────────
   useEffect(() => {
@@ -277,16 +401,16 @@ export default function Financial() {
 
         const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes, paymentsRes] = await Promise.all([
           supabase.from('presale_orders')
-            .select('id, order_number, checkout_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, items')
+            .select('id, order_number, checkout_name, checkout_whatsapp, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('stock_orders')
-            .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, items')
+            .select('id, order_number, customer_name, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, plan_snapshot')
+            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, plan_snapshot')
             .neq('status', 'cancelled').neq('status', 'draft').neq('payment_status', 'refunded'),
           supabase.from('assessment_plans').select('id, price_total, name, revenue_center_id'),
-          supabase.from('presale_customers').select('id, full_name'),
+          supabase.from('presale_customers').select('id, full_name, whatsapp'),
           supabase.from('revenue_centers').select('id, name, color'),
           supabase.from('stock_products').select('id, revenue_center_id'),
           // Pagamentos reais do Asaas — fonte de verdade do fluxo de caixa
@@ -306,7 +430,13 @@ export default function Financial() {
           return stockProductsMap[items[0].product_id]?.revenue_center_id || null;
         };
 
-        const presale   = (presaleRes.data   || []).map(o => ({ ...o, type: 'presale',  customer: o.checkout_name,  revenue_center_id: orderCenter(o.items) }));
+        const presale   = (presaleRes.data   || []).map(o => ({
+          ...o,
+          type: 'presale',
+          customer: o.checkout_name,
+          customer_whatsapp: o.checkout_whatsapp || o.customer_whatsapp || null,
+          revenue_center_id: orderCenter(o.items),
+        }));
         const stock     = (stockRes.data     || []).map(o => ({ ...o, type: 'stock',    customer: o.customer_name,  revenue_center_id: orderCenter(o.items) }));
         const contracts = (contractRes.data  || []).map(c => {
           const plan = plansMap[c.plan_id];
@@ -317,9 +447,15 @@ export default function Financial() {
           return {
             id: c.id, order_number: c.contract_number,
             customer: customersMap[c.customer_id]?.full_name || '—',
+            customer_whatsapp: customersMap[c.customer_id]?.whatsapp || null,
             total_value, payment_status: c.payment_status, payment_method: c.payment_method,
             payment_date: c.payment_date, due_date: c.due_date,
-            asaas_charge_id: c.asaas_charge_id, manual_fee: c.manual_fee,
+            asaas_charge_id: c.asaas_charge_id,
+            asaas_payment_link: c.asaas_payment_link,
+            asaas_pix_copy: c.asaas_pix_copy,
+            external_payment_link: c.external_payment_link,
+            payment_message_sent_at: c.payment_message_sent_at,
+            manual_fee: c.manual_fee,
             type: 'contract',
             revenue_center_id: c.plan_snapshot?.revenue_center_id || plan?.revenue_center_id || null,
             installments: c.installments || 1,
@@ -392,19 +528,19 @@ export default function Financial() {
     return { bruto, liquido };
   };
 
-  const activeOrders = orders.filter(o => o.payment_status !== 'paid');
+  const activeOrders = orders.filter(isEffectiveOpenSale);
 
   const paidThisMonth = orders
     .filter(o => o.payment_status === 'paid' && o.payment_date >= monthStart)
     .sort((a, b) => b.payment_date.localeCompare(a.payment_date));
 
-  const paidLastMonth = orders
-    .filter(o => o.payment_status === 'paid' && o.payment_date >= lastMonthStart && o.payment_date <= lastMonthEnd);
-
   const overdue    = activeOrders.filter(o => o.due_date && o.due_date < todayStr).sort((a, b) => a.due_date.localeCompare(b.due_date));
   const upcoming   = activeOrders.filter(o => o.due_date && o.due_date >= todayStr).sort((a, b) => a.due_date.localeCompare(b.due_date));
-  const chargedNoDate = activeOrders.filter(o => !o.due_date && o.asaas_charge_id);
-  const noCharge   = activeOrders.filter(o => ['awaiting_charge', 'message_sent'].includes(o.payment_status));
+  const missingDueDate = activeOrders.filter(o => !o.due_date);
+  const sentCharge = activeOrders.filter(o =>
+    o.asaas_charge_id || ['charge_sent', 'partially_paid', 'message_sent'].includes(o.payment_status)
+  );
+  const noCharge = activeOrders.filter(o => !o.asaas_charge_id && !o.asaas_payment_link && !o.external_payment_link);
 
   // KPI valores: combina asaas_payments (real) + orders manuais (fallback)
   const monthResult = sumReceived(
@@ -421,16 +557,17 @@ export default function Financial() {
   const receivedLast  = lastResult.bruto;
   const netLast       = lastResult.liquido;
 
-  const toReceive    = orders.filter(o => ['charge_sent', 'partially_paid'].includes(o.payment_status)).reduce((s, o) => s + (o.total_value || 0), 0);
+  const openSalesTotal = activeOrders.reduce((s, o) => s + (o.total_value || 0), 0);
   const overdueTotal = overdue.reduce((s, o) => s + (o.total_value || 0), 0);
   const upcomingTotal = upcoming.reduce((s, o) => s + (o.total_value || 0), 0);
+  const missingDueDateTotal = missingDueDate.reduce((s, o) => s + (o.total_value || 0), 0);
+  const sentChargeTotal = sentCharge.reduce((s, o) => s + (o.total_value || 0), 0);
   const noChargeTotal = noCharge.reduce((s, o) => s + (o.total_value || 0), 0);
 
   // ticket médio
   const avgTicket = paidThisMonth.length > 0 ? receivedMonth / paidThisMonth.length : 0;
 
-  // pipeline total (overdue + toReceive + upcoming)
-  const pipelineTotal = overdueTotal + toReceive + upcomingTotal + noChargeTotal;
+  const pipelineTotal = openSalesTotal;
 
   // ── Gráfico: últimos 6 meses ──────────────────────────────────
   // Combina asaas_payments (real, via credit_date) + orders manuais sem cache
@@ -467,7 +604,6 @@ export default function Financial() {
     });
   }, [orders, asaasPayments, ordersWithAsaasCache]);
 
-  const maxChart = useMemo(() => Math.max(...chartData.map(d => d.bruto), 1), [chartData]);
   const currentYM = monthStart.slice(0, 7);
 
   // ── Recebíveis Asaas agrupados ────────────────────────────────
@@ -563,6 +699,164 @@ export default function Financial() {
     finally { setSavingRefund(false); }
   };
 
+  const openDueDateEditor = (order) => {
+    setDueDateForm({ date: order.due_date || defaultPaymentDueDate() });
+    setDueDateModal(order);
+  };
+
+  const saveDueDate = async () => {
+    if (!dueDateForm.date) return toast.error('Informe o vencimento');
+    if (!dueDateModal) return;
+
+    const tableByType = {
+      presale: 'presale_orders',
+      stock: 'stock_orders',
+      contract: 'assessment_contracts',
+    };
+    const tableName = tableByType[dueDateModal.type];
+    if (!tableName) return toast.error('Tipo de venda inválido');
+
+    setSavingDueDate(true);
+    try {
+      const { error } = await supabase
+        .from(tableName)
+        .update({ due_date: dueDateForm.date })
+        .eq('id', dueDateModal.id);
+      if (error) throw error;
+
+      if (dueDateModal.type === 'contract') {
+        supabase.from('assessment_contract_event').insert({
+          contract_id: dueDateModal.id,
+          event_type: 'due_date_changed',
+          payload: {
+            from: dueDateModal.due_date || null,
+            to: dueDateForm.date,
+            source: 'financial_open_sales',
+          },
+          notes: 'Vencimento ajustado em Vendas em aberto',
+        }).then(({ error: eventError }) => {
+          if (eventError) console.warn('[contract_event] falha ao registrar due_date_changed:', eventError.message);
+        });
+      }
+
+      setOrders(prev => prev.map(o =>
+        o.id === dueDateModal.id && o.type === dueDateModal.type
+          ? { ...o, due_date: dueDateForm.date }
+          : o
+      ));
+      toast.success('Vencimento atualizado');
+      setDueDateModal(null);
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar vencimento');
+    } finally {
+      setSavingDueDate(false);
+    }
+  };
+
+  const openCollectionEditor = (order) => {
+    const externalLink = order.external_payment_link || '';
+    setCollectionModal(order);
+    setCollectionForm({
+      externalLink,
+      message: buildCollectionMessage(order, externalLink),
+    });
+    setCollectionCopied(false);
+  };
+
+  const updateCollectionExternalLink = (externalLink) => {
+    setCollectionForm({
+      externalLink,
+      message: buildCollectionMessage(collectionModal, externalLink),
+    });
+    setCollectionCopied(false);
+  };
+
+  const copyCollectionMessage = async () => {
+    try {
+      await navigator.clipboard.writeText(collectionForm.message);
+      setCollectionCopied(true);
+      setTimeout(() => setCollectionCopied(false), 2000);
+    } catch {
+      toast.error('Não consegui copiar a mensagem');
+    }
+  };
+
+  const openCollectionWhatsApp = () => {
+    if (!collectionModal?.customer_whatsapp) {
+      toast.error('Cliente sem WhatsApp cadastrado');
+      return;
+    }
+    const phone = '55' + collectionModal.customer_whatsapp.replace(/\D/g, '');
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(collectionForm.message)}`, '_blank');
+  };
+
+  const markCollectionSent = async () => {
+    if (!collectionModal) return;
+    const tableByType = {
+      presale: 'presale_orders',
+      stock: 'stock_orders',
+      contract: 'assessment_contracts',
+    };
+    const tableName = tableByType[collectionModal.type];
+    if (!tableName) return toast.error('Tipo de venda inválido');
+
+    const externalLink = collectionForm.externalLink.trim();
+    const nowIso = new Date().toISOString();
+    const hasAsaasPaymentInfo = !!(collectionModal.asaas_payment_link || collectionModal.asaas_pix_copy);
+    const updates = { payment_message_sent_at: nowIso };
+    if (!hasAsaasPaymentInfo) {
+      updates.external_payment_link = externalLink || null;
+      if (!collectionModal.due_date) {
+        updates.due_date = defaultPaymentDueDate();
+      }
+    }
+    if (!collectionModal.asaas_charge_id) {
+      if (['awaiting_charge', 'pending'].includes(collectionModal.payment_status)) {
+        updates.payment_status = 'message_sent';
+      }
+    }
+
+    setSavingCollection(true);
+    try {
+      const { error } = await supabase.from(tableName).update(updates).eq('id', collectionModal.id);
+      if (error) throw error;
+
+      if (collectionModal.type === 'contract') {
+        supabase.from('assessment_contract_event').insert({
+          contract_id: collectionModal.id,
+          event_type: 'payment_message_sent',
+          payload: {
+            due_date: collectionModal.due_date || null,
+            has_asaas_link: !!collectionModal.asaas_payment_link,
+            has_external_link: !!externalLink,
+            source: 'financial_open_sales',
+          },
+          notes: 'Mensagem de cobrança enviada em Vendas em aberto',
+        }).then(({ error: eventError }) => {
+          if (eventError) console.warn('[contract_event] falha ao registrar payment_message_sent:', eventError.message);
+        });
+      }
+
+      setOrders(prev => prev.map(o =>
+        o.id === collectionModal.id && o.type === collectionModal.type
+          ? {
+              ...o,
+              external_payment_link: !hasAsaasPaymentInfo ? (externalLink || null) : o.external_payment_link,
+              payment_message_sent_at: nowIso,
+              payment_status: updates.payment_status || o.payment_status,
+              due_date: updates.due_date || o.due_date,
+            }
+          : o
+      ));
+      toast.success('Mensagem registrada');
+      setCollectionModal(null);
+    } catch (e) {
+      toast.error(e.message || 'Erro ao registrar mensagem');
+    } finally {
+      setSavingCollection(false);
+    }
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center h-64">
       <div className="text-center space-y-2">
@@ -580,10 +874,10 @@ export default function Financial() {
         <div>
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <Wallet className="w-5 h-5 text-blue-600" />
-            Fluxo de Caixa
+            Vendas em aberto
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Loja · Pré-venda · Assessoria
+            Fluxo de caixa · Loja · Pré-venda · Assessoria
             {asaasPayments.length > 0 && (
               <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
                 <Zap className="w-3 h-3" /> {asaasPayments.length} pagamentos Asaas sincronizados
@@ -625,7 +919,7 @@ export default function Financial() {
           valueColor={overdueTotal > 0 ? 'text-red-600' : 'text-gray-400'}
         />
         <KpiCard
-          label="Previsão 30 dias"
+          label="A vencer"
           value={formatCurrency(upcomingTotal)}
           sub={`${upcoming.length} vencimento${upcoming.length !== 1 ? 's' : ''}`}
           icon={Calendar}
@@ -654,7 +948,7 @@ export default function Financial() {
           <CardContent className="p-5">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-gray-500" /> Pipeline de cobranças
+                <BarChart3 className="w-4 h-4 text-gray-500" /> Resumo das vendas em aberto
               </p>
               <span className="text-sm font-bold text-gray-800">{formatCurrency(pipelineTotal)}</span>
             </div>
@@ -662,75 +956,35 @@ export default function Financial() {
               <>
                 <div className="flex h-3 rounded-full overflow-hidden gap-0.5">
                   {overdueTotal  > 0 && <div className="bg-red-400 transition-all"   style={{ width: `${(overdueTotal   / pipelineTotal) * 100}%` }} />}
-                  {toReceive     > 0 && <div className="bg-blue-400 transition-all"  style={{ width: `${(toReceive      / pipelineTotal) * 100}%` }} />}
                   {upcomingTotal > 0 && <div className="bg-amber-300 transition-all" style={{ width: `${(upcomingTotal  / pipelineTotal) * 100}%` }} />}
-                  {noChargeTotal > 0 && <div className="bg-gray-200 transition-all"  style={{ width: `${(noChargeTotal  / pipelineTotal) * 100}%` }} />}
+                  {missingDueDateTotal > 0 && <div className="bg-gray-200 transition-all"  style={{ width: `${(missingDueDateTotal  / pipelineTotal) * 100}%` }} />}
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-muted-foreground">
                   {overdueTotal  > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" /> Em atraso {formatCurrency(overdueTotal)}</span>}
-                  {toReceive     > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400" /> Cobrança enviada {formatCurrency(toReceive)}</span>}
                   {upcomingTotal > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-300" /> A vencer {formatCurrency(upcomingTotal)}</span>}
-                  {noChargeTotal > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300" /> Sem cobrança {formatCurrency(noChargeTotal)}</span>}
+                  {missingDueDateTotal > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-300" /> Sem vencimento {formatCurrency(missingDueDateTotal)}</span>}
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground border-t pt-2">
+                  <span>{sentCharge.length} com cobrança enviada · {formatCurrency(sentChargeTotal)}</span>
+                  <span>{noCharge.length} sem cobrança · {formatCurrency(noChargeTotal)}</span>
                 </div>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground text-center py-2">Nenhuma cobrança pendente 🎉</p>
+              <p className="text-sm text-muted-foreground text-center py-2">Nenhuma venda em aberto.</p>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* ── Gráfico de barras: últimos 6 meses ───────────────── */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-blue-600" />
-            Recebimentos — últimos 6 meses
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">Líquido + taxas de gateway por mês — parcelas Asaas reais (via credit_date) + pagamentos manuais</p>
-        </CardHeader>
-        <CardContent>
-          {chartData.every(d => d.bruto === 0) ? (
-            <p className="text-sm text-muted-foreground text-center py-8">Sem dados de recebimento nos últimos 6 meses.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chartData} barCategoryGap="30%" margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                <YAxis
-                  tick={{ fontSize: 11, fill: '#6b7280' }}
-                  axisLine={false} tickLine={false}
-                  tickFormatter={v => v === 0 ? '' : v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
-                  width={36}
-                />
-                <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f9fafb' }} />
-                <Bar dataKey="liquido" stackId="a" radius={[0, 0, 0, 0]} maxBarSize={56}>
-                  {chartData.map(d => (
-                    <Cell key={d.ym} fill={d.ym === currentYM ? '#2563eb' : '#93c5fd'} />
-                  ))}
-                </Bar>
-                <Bar dataKey="taxas" stackId="a" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#fb923c" />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-          {/* Legenda simples */}
-          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground justify-end">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#2563eb]" /> Líquido (atual)</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#93c5fd]" /> Líquido (anteriores)</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#fb923c]" /> Taxas gateway</span>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* ── Tabs ─────────────────────────────────────────────── */}
-      <Tabs defaultValue="cobrancas">
+      <Tabs defaultValue="abertas">
         <TabsList className="w-full sm:w-auto">
-          <TabsTrigger value="cobrancas" className="flex items-center gap-1.5">
+          <TabsTrigger value="abertas" className="flex items-center gap-1.5">
             <Receipt className="w-3.5 h-3.5" />
-            Cobranças
-            {(overdue.length + noCharge.length) > 0 && (
+            Vendas em aberto
+            {activeOrders.length > 0 && (
               <span className="ml-1 bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5 font-bold">
-                {overdue.length + noCharge.length}
+                {activeOrders.length}
               </span>
             )}
           </TabsTrigger>
@@ -749,8 +1003,8 @@ export default function Financial() {
           </TabsTrigger>
         </TabsList>
 
-        {/* ── Tab: Cobranças ──────────────────────────────────── */}
-        <TabsContent value="cobrancas" className="space-y-4 mt-4">
+        {/* ── Tab: Vendas em aberto ───────────────────────────── */}
+        <TabsContent value="abertas" className="space-y-4 mt-4">
 
           {/* ── Estornos pendentes ─────────────────────────────── */}
           {pendingRefunds.length > 0 && (
@@ -824,22 +1078,22 @@ export default function Financial() {
             title="Em atraso" icon={AlertTriangle} iconCls="text-red-600"
             badgeCls="bg-red-100 text-red-700" border="border-red-200"
             orders={overdue} total={overdueTotal}
+            onEditDueDate={openDueDateEditor}
+            onCollectPayment={openCollectionEditor}
           />
           <OrderSection
-            title="Próximos vencimentos" icon={Calendar} iconCls="text-blue-600"
+            title="A vencer" icon={Calendar} iconCls="text-blue-600"
             badgeCls="bg-blue-100 text-blue-700"
             orders={upcoming} total={upcomingTotal}
+            onEditDueDate={openDueDateEditor}
+            onCollectPayment={openCollectionEditor}
           />
           <OrderSection
-            title="Cobrança enviada — sem data" icon={Clock} iconCls="text-gray-500"
+            title="Sem vencimento" icon={Clock} iconCls="text-gray-500"
             badgeCls="bg-gray-100 text-gray-600"
-            orders={chargedNoDate}
-          />
-          <OrderSection
-            title="Sem cobrança ainda" icon={TrendingDown} iconCls="text-gray-500"
-            badgeCls="bg-gray-100 text-gray-600"
-            orders={noCharge} total={noChargeTotal}
-            emptyMsg="Todos os pedidos já têm cobrança gerada."
+            orders={missingDueDate} total={missingDueDateTotal}
+            onEditDueDate={openDueDateEditor}
+            onCollectPayment={openCollectionEditor}
           />
           <OrderSection
             title="Recebidos esse mês" icon={CheckCircle2} iconCls="text-green-700"
@@ -1041,6 +1295,192 @@ export default function Financial() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* ── Gráfico de barras: últimos 6 meses ───────────────── */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-blue-600" />
+            Recebimentos — últimos 6 meses
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">Líquido + taxas de gateway por mês — parcelas Asaas reais (via credit_date) + pagamentos manuais</p>
+        </CardHeader>
+        <CardContent>
+          {chartData.every(d => d.bruto === 0) ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Sem dados de recebimento nos últimos 6 meses.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={chartData} barCategoryGap="30%" margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                <YAxis
+                  tick={{ fontSize: 11, fill: '#6b7280' }}
+                  axisLine={false} tickLine={false}
+                  tickFormatter={v => v === 0 ? '' : v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
+                  width={36}
+                />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f9fafb' }} />
+                <Bar dataKey="liquido" stackId="a" radius={[0, 0, 0, 0]} maxBarSize={56}>
+                  {chartData.map(d => (
+                    <Cell key={d.ym} fill={d.ym === currentYM ? '#2563eb' : '#93c5fd'} />
+                  ))}
+                </Bar>
+                <Bar dataKey="taxas" stackId="a" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#fb923c" />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+          {/* Legenda simples */}
+          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground justify-end">
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#2563eb]" /> Líquido (atual)</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#93c5fd]" /> Líquido (anteriores)</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#fb923c]" /> Taxas gateway</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Modal: mensagem de cobrança ─────────────────────── */}
+      <Dialog open={!!collectionModal} onOpenChange={open => !open && setCollectionModal(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="w-5 h-5 text-green-600" />
+              Mensagem de cobrança
+            </DialogTitle>
+          </DialogHeader>
+          {collectionModal && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-gray-50 p-3 text-sm space-y-1">
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Venda</span>
+                  <span className="font-mono font-semibold text-right">{collectionModal.order_number}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Cliente</span>
+                  <span className="font-medium text-right truncate">{collectionModal.customer}</span>
+                </div>
+                <div className="flex justify-between gap-3 border-t pt-1 mt-1">
+                  <span className="text-muted-foreground">Vencimento</span>
+                  <span className="font-medium">
+                    {collectionModal.due_date ? formatDate(collectionModal.due_date) : 'Sem vencimento'}
+                  </span>
+                </div>
+              </div>
+
+              {collectionModal.asaas_payment_link || collectionModal.asaas_pix_copy ? (
+                <div className="flex items-start gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                  <Zap className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
+                  <span className="text-blue-800">Cobrança Asaas encontrada. Link/PIX entram automaticamente na mensagem.</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <Link2 className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                    <span className="text-amber-800">Cobrança externa. Informe o link para salvar e reenviar depois.</span>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Link externo</Label>
+                    <Input
+                      className="mt-1 font-mono text-xs"
+                      placeholder="https://..."
+                      value={collectionForm.externalLink}
+                      onChange={e => updateCollectionExternalLink(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <Label className="text-xs">Mensagem</Label>
+                <Textarea
+                  rows={9}
+                  className="mt-1 font-mono text-xs"
+                  value={collectionForm.message}
+                  onChange={e => {
+                    setCollectionForm(f => ({ ...f, message: e.target.value }));
+                    setCollectionCopied(false);
+                  }}
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <Button className="flex-1" variant="outline" onClick={copyCollectionMessage}>
+                  {collectionCopied
+                    ? <><Check className="w-4 h-4 mr-1.5 text-green-600" />Copiado</>
+                    : <><Copy className="w-4 h-4 mr-1.5" />Copiar</>}
+                </Button>
+                <Button
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                  onClick={openCollectionWhatsApp}
+                  disabled={!collectionModal.customer_whatsapp}
+                >
+                  <ExternalLink className="w-4 h-4 mr-1.5" />
+                  WhatsApp
+                </Button>
+              </div>
+
+              <Button className="w-full" onClick={markCollectionSent} disabled={savingCollection}>
+                <CheckCheck className="w-4 h-4 mr-1.5" />
+                {savingCollection ? 'Registrando...' : 'Registrar envio'}
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal: definir vencimento ────────────────────────── */}
+      <Dialog open={!!dueDateModal} onOpenChange={open => !open && setDueDateModal(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-blue-600" />
+              Definir vencimento
+            </DialogTitle>
+          </DialogHeader>
+          {dueDateModal && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-gray-50 p-3 text-sm space-y-1">
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Venda</span>
+                  <span className="font-mono font-semibold text-right">{dueDateModal.order_number}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Cliente</span>
+                  <span className="font-medium text-right truncate">{dueDateModal.customer}</span>
+                </div>
+                <div className="flex justify-between gap-3 border-t pt-1 mt-1">
+                  <span className="text-muted-foreground">Valor</span>
+                  <span className="font-bold">{formatCurrency(dueDateModal.total_value)}</span>
+                </div>
+              </div>
+
+              <div>
+                <Label>Vencimento</Label>
+                <Input
+                  type="date"
+                  className="mt-1"
+                  value={dueDateForm.date}
+                  onChange={e => setDueDateForm({ date: e.target.value })}
+                />
+              </div>
+
+              {dueDateModal.asaas_charge_id && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                  Esta venda já tem cobrança Asaas. Aqui o vencimento interno do lançamento será ajustado.
+                </p>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" onClick={() => setDueDateModal(null)}>
+                  Cancelar
+                </Button>
+                <Button className="flex-1" onClick={saveDueDate} disabled={savingDueDate}>
+                  {savingDueDate ? 'Salvando...' : 'Salvar'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Modal: confirmar estorno realizado ─────────────── */}
       <Dialog open={!!refundDoneModal} onOpenChange={open => !open && setRefundDoneModal(null)}>
