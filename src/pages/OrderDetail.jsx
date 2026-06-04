@@ -99,6 +99,7 @@ export default function OrderDetail() {
   const [cancelItemLoading, setCancelItemLoading] = useState(false);
   const [editPayMethodModal, setEditPayMethodModal] = useState(false);
   const [editPayMethodValue, setEditPayMethodValue] = useState('');
+  const [editPayMethodDate, setEditPayMethodDate] = useState('');
   const [editPayMethodSaving, setEditPayMethodSaving] = useState(false);
 
   const load = async () => {
@@ -241,6 +242,7 @@ export default function OrderDetail() {
 
   const handleSavePaymentMethod = async () => {
     if (!editPayMethodValue) return toast.error('Selecione uma forma de pagamento');
+    if (!editPayMethodDate) return toast.error('Informe a data de pagamento');
     setEditPayMethodSaving(true);
     try {
       // Busca a config do método pelo internal_code
@@ -254,17 +256,16 @@ export default function OrderDetail() {
       const methodConfig = methods?.[0];
       if (!methodConfig) throw new Error('Método de pagamento não encontrado');
 
-      const payDate = order.payment_date || new Date().toISOString().slice(0, 10);
-
       // Cria parcelas no fluxo de caixa (substitui qualquer registro anterior)
-      await createManualInstallments(methodConfig, payDate, {
+      await createManualInstallments(methodConfig, editPayMethodDate, {
         order_id:   order.id,
         order_type: 'presale',
       }, Number(order.total_value) || 0);
 
-      // Atualiza o pedido com método e marca como registro manual
+      // Atualiza o pedido com método, data e marca como registro manual
       await PreSaleOrder.update(id, {
         payment_method: editPayMethodValue,
+        payment_date:   editPayMethodDate,
         manual_payment: true,
       });
 
@@ -1342,12 +1343,12 @@ export default function OrderDetail() {
                           {order.payment_method ? (
                             <>
                               <span className={`text-xs ${blockColors.text}`}>{PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method}</span>
-                              <button onClick={() => { setEditPayMethodValue(order.payment_method); setEditPayMethodModal(true); }} className={`text-xs ${blockColors.text} hover:opacity-70`}>
+                              <button onClick={() => { setEditPayMethodValue(order.payment_method); setEditPayMethodDate(order.payment_date || ''); setEditPayMethodModal(true); }} className={`text-xs ${blockColors.text} hover:opacity-70`}>
                                 <Pencil className="w-3 h-3" />
                               </button>
                             </>
                           ) : (
-                            <button onClick={() => { setEditPayMethodValue(''); setEditPayMethodModal(true); }} className="text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5 hover:bg-amber-100 flex items-center gap-1">
+                            <button onClick={() => { setEditPayMethodValue(''); setEditPayMethodDate(order.payment_date || ''); setEditPayMethodModal(true); }} className="text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5 hover:bg-amber-100 flex items-center gap-1">
                               <Pencil className="w-3 h-3" />
                               Definir forma de pagamento
                             </button>
@@ -1500,28 +1501,37 @@ export default function OrderDetail() {
             <DialogTitle>Forma de Pagamento</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground -mt-2">Selecione como este pedido foi pago.</p>
-          <Select value={editPayMethodValue} onValueChange={setEditPayMethodValue}>
-            <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="pix">PIX</SelectItem>
-              <SelectItem value="pix_boleto">PIX ou Boleto</SelectItem>
-              <SelectItem value="boleto">Boleto</SelectItem>
-              <SelectItem value="cash">Dinheiro</SelectItem>
-              <SelectItem value="bank_transfer">Transferência bancária</SelectItem>
-              <SelectItem value="credit_card">Cartão (à vista)</SelectItem>
-              <SelectItem value="card_2x">Cartão 2x</SelectItem>
-              <SelectItem value="card_3x">Cartão 3x</SelectItem>
-              <SelectItem value="card_4x">Cartão 4x</SelectItem>
-              <SelectItem value="card_5x">Cartão 5x</SelectItem>
-              <SelectItem value="card_6x">Cartão 6x</SelectItem>
-              <SelectItem value="card_7x">Cartão 7x</SelectItem>
-              <SelectItem value="card_8x">Cartão 8x</SelectItem>
-              <SelectItem value="card_9x">Cartão 9x</SelectItem>
-              <SelectItem value="card_10x">Cartão 10x</SelectItem>
-              <SelectItem value="card_11x">Cartão 11x</SelectItem>
-              <SelectItem value="card_12x">Cartão 12x</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Forma de pagamento</Label>
+              <Select value={editPayMethodValue} onValueChange={setEditPayMethodValue}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pix_manual">PIX manual</SelectItem>
+                  <SelectItem value="pix">PIX (via Asaas)</SelectItem>
+                  <SelectItem value="boleto">Boleto</SelectItem>
+                  <SelectItem value="cash">Dinheiro</SelectItem>
+                  <SelectItem value="bank_transfer">Transferência bancária</SelectItem>
+                  <SelectItem value="credit_card">Cartão (à vista)</SelectItem>
+                  <SelectItem value="card_2x">Cartão 2x</SelectItem>
+                  <SelectItem value="card_3x">Cartão 3x</SelectItem>
+                  <SelectItem value="card_4x">Cartão 4x</SelectItem>
+                  <SelectItem value="card_5x">Cartão 5x</SelectItem>
+                  <SelectItem value="card_6x">Cartão 6x</SelectItem>
+                  <SelectItem value="card_7x">Cartão 7x</SelectItem>
+                  <SelectItem value="card_8x">Cartão 8x</SelectItem>
+                  <SelectItem value="card_9x">Cartão 9x</SelectItem>
+                  <SelectItem value="card_10x">Cartão 10x</SelectItem>
+                  <SelectItem value="card_11x">Cartão 11x</SelectItem>
+                  <SelectItem value="card_12x">Cartão 12x</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Data do pagamento</Label>
+              <Input type="date" value={editPayMethodDate} onChange={e => setEditPayMethodDate(e.target.value)} className="mt-1" />
+            </div>
+          </div>
           <div className="flex justify-end gap-2 mt-2">
             <Button variant="outline" onClick={() => setEditPayMethodModal(false)}>Cancelar</Button>
             <Button onClick={handleSavePaymentMethod} disabled={editPayMethodSaving}>
