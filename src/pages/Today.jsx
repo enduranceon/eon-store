@@ -259,7 +259,7 @@ export default function Today() {
   const sumAmount = arr => arr.reduce((s, x) => s + (x.refund_amount || 0), 0);
 
   const totalActions =
-    overdue.length + toCharge.length + messagesSent.length +
+    overdue.length + toCharge.length +
     chargedNoPay.length + expiringContracts.length +
     awaitingDelivery.length + pendingReturns.length +
     receivedReturns.length + pendingRefunds.length;
