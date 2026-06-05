@@ -233,11 +233,20 @@ export default function CashFlow() {
     return Object.values(map).sort((a, b) => b.value - a.value);
   }, [futurePayments]);
 
+  // Normaliza billing_type para chave única (cartão vem como CREDIT, CREDIT_CARD, etc.)
+  const normalizeBillingType = (t) => {
+    if (!t) return 'OUTROS';
+    const up = String(t).toUpperCase();
+    if (up === 'CREDIT' || up === 'CREDIT_CARD' || up.includes('CARD') || up.includes('CREDIT')) return 'CREDIT_CARD';
+    if (up === 'DEBIT' || up === 'DEBIT_CARD') return 'DEBIT_CARD';
+    return up;
+  };
+
   // Por forma de pagamento (billing_type)
   const byBillingType = useMemo(() => {
     const map = {};
     for (const p of futurePayments) {
-      const key = p.billing_type || 'OUTROS';
+      const key = normalizeBillingType(p.billing_type);
       if (!map[key]) map[key] = { type: key, value: 0, count: 0 };
       map[key].value += Number(p.net_value) || Number(p.value) || 0;
       map[key].count++;
