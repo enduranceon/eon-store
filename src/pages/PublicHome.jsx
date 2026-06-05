@@ -13,7 +13,7 @@ export default function PublicHome() {
     PreSaleCampaign.list().then(all => {
       const active = all.filter(c => {
         if (c.status !== 'active') return false;
-        if (c.end_date && new Date() > new Date(c.end_date + 'T23:59:59')) return false;
+        if (c.end_date && new Date() > new Date(c.end_date + 'T23:59:59-03:00')) return false;
         return true;
       });
       setCampaigns(active);

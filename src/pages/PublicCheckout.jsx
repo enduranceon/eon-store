@@ -121,7 +121,7 @@ export default function PublicCheckout() {
     </div>
   );
 
-  const campaignExpired = campaign.end_date && new Date() > new Date(campaign.end_date + 'T23:59:59');
+  const campaignExpired = campaign.end_date && new Date() > new Date(campaign.end_date + 'T23:59:59-03:00');
   if (campaign.status !== 'active' || campaignExpired) {
     const deliveryDate = campaign.end_date && campaign.delivery_days
       ? new Date(new Date(campaign.end_date).getTime() + campaign.delivery_days * 86400000)
@@ -200,7 +200,7 @@ export default function PublicCheckout() {
     setSubmitting(true);
     try {
       const freshCampaign = await getCampaignBySlugOrId(campaignId);
-      const nowExpired = freshCampaign.end_date && new Date() > new Date(freshCampaign.end_date + 'T23:59:59');
+      const nowExpired = freshCampaign.end_date && new Date() > new Date(freshCampaign.end_date + 'T23:59:59-03:00');
       if (freshCampaign.status !== 'active' || nowExpired) {
         toast.error('Esta pré-venda foi encerrada. Não é possível finalizar o pedido.');
         setSubmitting(false);
