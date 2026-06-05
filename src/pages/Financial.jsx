@@ -36,7 +36,7 @@ function getLastMonthEnd() {
   const d = new Date(); d.setDate(0); return toLocalDateStr(d); // dia 0 do mês atual = último dia do mês anterior
 }
 
-const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['message_sent', 'charge_sent', 'partially_paid', 'pending']);
+const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['charge_sent', 'partially_paid', 'pending']);
 
 function isEffectiveOpenSale(order) {
   if (['paid', 'cancelled', 'refunded'].includes(order.payment_status)) return false;
@@ -111,9 +111,6 @@ function PaymentStageChip({ status, hasAsaasCharge }) {
   if (status === 'awaiting_charge') {
     label = 'Pedido recebido';
     cls = 'bg-gray-100 text-gray-700';
-  } else if (status === 'message_sent') {
-    label = 'Link externo enviado';
-    cls = 'bg-indigo-50 text-indigo-700';
   } else if (status === 'charge_sent') {
     label = hasAsaasCharge ? 'Asaas enviado' : 'Cobrança enviada';
     cls = 'bg-blue-50 text-blue-700';
@@ -533,7 +530,7 @@ export default function Financial() {
   const upcoming   = activeOrders.filter(o => o.due_date && o.due_date >= todayStr).sort((a, b) => a.due_date.localeCompare(b.due_date));
   const missingDueDate = activeOrders.filter(o => !o.due_date);
   const sentCharge = activeOrders.filter(o =>
-    o.asaas_charge_id || ['charge_sent', 'partially_paid', 'message_sent'].includes(o.payment_status)
+    o.asaas_charge_id || ['charge_sent', 'partially_paid'].includes(o.payment_status)
   );
   const noCharge = activeOrders.filter(o => !o.asaas_charge_id && !o.asaas_payment_link && !o.external_payment_link);
 
@@ -805,10 +802,8 @@ export default function Financial() {
         updates.due_date = defaultPaymentDueDate();
       }
     }
-    if (!collectionModal.asaas_charge_id) {
-      if (['awaiting_charge', 'pending'].includes(collectionModal.payment_status)) {
-        updates.payment_status = 'message_sent';
-      }
+    if (['awaiting_charge', 'pending'].includes(collectionModal.payment_status)) {
+      updates.payment_status = 'charge_sent';
     }
 
     setSavingCollection(true);

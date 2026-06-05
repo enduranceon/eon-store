@@ -26,7 +26,6 @@ import { PAYMENT_METHOD_LABELS } from '@/lib/payment-methods';
 const STATUS_LABELS = {
   paid:             { label: 'Pago',        color: 'bg-green-100 text-green-700' },
   awaiting_charge:  { label: 'Pedido recebido', color: 'bg-gray-100 text-gray-600' },
-  message_sent:     { label: 'Msg enviada', color: 'bg-gray-100 text-gray-600' },
   charge_sent:      { label: 'Cobrado',     color: 'bg-blue-100 text-blue-700' },
   partially_paid:   { label: 'Parcial',     color: 'bg-amber-100 text-amber-700' },
   overdue:          { label: 'Vencido',     color: 'bg-red-100 text-red-700' },
@@ -34,7 +33,7 @@ const STATUS_LABELS = {
   refunded:         { label: 'Estornado',   color: 'bg-purple-100 text-purple-700' },
 };
 
-const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'message_sent', 'charge_sent', 'partially_paid', 'pending']);
+const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'charge_sent', 'partially_paid', 'pending']);
 
 function isEffectiveSale(order) {
   if (['cancelled', 'refunded'].includes(order.payment_status)) return false;

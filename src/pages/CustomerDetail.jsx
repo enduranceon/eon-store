@@ -13,9 +13,9 @@ import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 
-const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', message_sent: 'warning', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
-const PAYMENT_LABEL = { awaiting_charge: 'Pedido recebido', message_sent: 'Mensagem enviada', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcialmente pago', cancelled: 'Cancelado', refunded: 'Reembolsado' };
-const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'message_sent', 'charge_sent', 'partially_paid', 'pending']);
+const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
+const PAYMENT_LABEL = { awaiting_charge: 'Pedido recebido', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcialmente pago', cancelled: 'Cancelado', refunded: 'Reembolsado' };
+const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'charge_sent', 'partially_paid', 'pending']);
 
 function isEffectiveSale(order) {
   if (['cancelled', 'refunded'].includes(order.payment_status)) return false;

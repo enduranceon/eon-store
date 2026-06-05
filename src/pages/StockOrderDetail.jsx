@@ -21,7 +21,6 @@ import { returnCouponUse } from '@/lib/coupon';
 
 const PAYMENT_STATUS = {
   awaiting_charge: { label: 'Pedido recebido', badge: 'secondary' },
-  message_sent:    { label: 'Mensagem enviada',   badge: 'warning' },
   charge_sent:     { label: 'Cobrança enviada',   badge: 'info' },
   paid:            { label: 'Pago',               badge: 'success' },
   partially_paid:  { label: 'Parcialmente pago',  badge: 'warning' },
@@ -366,9 +365,9 @@ export default function StockOrderDetail() {
         if (!order.due_date) {
           updates.due_date = defaultPaymentDueDate();
         }
-        if (['awaiting_charge', 'pending'].includes(order.payment_status)) {
-          updates.payment_status = 'message_sent';
-        }
+      }
+      if (['awaiting_charge', 'pending'].includes(order.payment_status)) {
+        updates.payment_status = 'charge_sent';
       }
       await StockOrder.update(id, updates);
       toast.success('Mensagem marcada como enviada!');

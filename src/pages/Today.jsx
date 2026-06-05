@@ -19,7 +19,7 @@ const DELIVERY_LABEL = {
   awaiting_delivery: 'Aguardando entrega',
 };
 
-const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['message_sent', 'charge_sent', 'partially_paid', 'pending']);
+const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['charge_sent', 'partially_paid', 'pending']);
 
 function isEffectiveOpenSale(item) {
   if (['paid', 'cancelled', 'refunded'].includes(item.payment_status)) return false;
@@ -231,12 +231,7 @@ export default function Today() {
     .filter(o => o.payment_status === 'awaiting_charge')
     .sort((a, b) => (b.created_date || '').localeCompare(a.created_date || ''));
 
-  // 3. Mensagem enviada — aguardando resposta (store)
-  const messagesSent = orders
-    .filter(o => o.payment_status === 'message_sent' && daysSince(o.status_changed_at || o.created_date) >= 1)
-    .sort((a, b) => daysSince(b.status_changed_at) - daysSince(a.status_changed_at));
-
-  // 4. Cobrança enviada sem pagamento (store + assessoria)
+  // 3. Cobrança enviada sem pagamento (store + assessoria) — 2+ dias sem retorno
   const chargedNoPay = allItems
     .filter(o => o.payment_status === 'charge_sent' && daysSince(o.status_changed_at || o.created_date) >= 2)
     .sort((a, b) => daysSince(b.status_changed_at) - daysSince(a.status_changed_at));
@@ -387,23 +382,7 @@ export default function Today() {
             })}
           </Section>
 
-          {/* ── 5. Mensagem enviada sem resposta ───────────────────── */}
-          <Section
-            title="Mensagens — aguardando resposta"
-            subtitle="Cliente recebeu mas ainda não confirmou forma de pagamento"
-            icon={MessageCircle} iconColor="text-orange-600"
-            count={messagesSent.length} total={sum(messagesSent)}
-          >
-            {messagesSent.map(o => {
-              const d = daysSince(o.status_changed_at || o.created_date);
-              return (
-                <ItemRow key={o.id + o.type} item={o}
-                  badge={`Há ${d}d`} badgeColor="bg-orange-100 text-orange-700" />
-              );
-            })}
-          </Section>
-
-          {/* ── 6. Cobrança enviada há 2+ dias sem pagamento ───────── */}
+          {/* ── 5. Cobrança enviada há 2+ dias sem pagamento ───────── */}
           <Section
             title="Cobranças enviadas — lembrar cliente"
             subtitle="PIX/boleto enviado há 2+ dias sem confirmação"

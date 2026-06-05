@@ -35,7 +35,6 @@ function KPICard({ title, value, sub, icon: Icon, color = 'blue' }) {
 
 const PAYMENT_STATUS_LABEL = {
   awaiting_charge: 'Pedido recebido',
-  message_sent: 'Mensagem enviada',
   charge_sent: 'Cobrança enviada',
   paid: 'Pago',
   partially_paid: 'Parcialmente pago',
@@ -47,13 +46,12 @@ const PAYMENT_BADGE = {
   paid: 'success',
   partially_paid: 'warning',
   awaiting_charge: 'secondary',
-  message_sent: 'warning',
   charge_sent: 'info',
   cancelled: 'destructive',
   refunded: 'outline',
 };
 
-const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'message_sent', 'charge_sent', 'partially_paid', 'pending']);
+const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'charge_sent', 'partially_paid', 'pending']);
 
 function isEffectiveSale(order) {
   if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
@@ -97,7 +95,6 @@ export default function Dashboard() {
   // Alertas de ação
   const clientsNoCpf = customers.filter(c => !c.cpf);
   const ordersAwaitingCharge = activeOrders.filter(o => o.payment_status === 'awaiting_charge');
-  const ordersMessageSent = activeOrders.filter(o => o.payment_status === 'message_sent');
   const ordersPaidNoDate = activeOrders.filter(o => o.payment_status === 'paid' && !o.payment_date);
   const ordersNoPaymentMethod = activeOrders.filter(o => !o.payment_method && o.payment_status !== 'paid' && o.payment_status !== 'cancelled');
 
@@ -113,12 +110,6 @@ export default function Dashboard() {
       title: `${ordersAwaitingCharge.length} pedido${ordersAwaitingCharge.length > 1 ? 's' : ''} recebido${ordersAwaitingCharge.length > 1 ? 's' : ''}`,
       desc: 'Ainda não virou venda. Gere Asaas, envie link externo ou registre pagamento.',
       link: '/pedidos?pagamento=awaiting_charge', linkLabel: 'Ver pedidos',
-    },
-    ordersMessageSent.length > 0 && {
-      icon: MessageCircle, color: 'text-amber-600 bg-amber-50 border-amber-200',
-      title: `${ordersMessageSent.length} pedido${ordersMessageSent.length > 1 ? 's' : ''} aguardando resposta`,
-      desc: 'Mensagem enviada mas cliente ainda não confirmou pagamento.',
-      link: '/pedidos?pagamento=message_sent', linkLabel: 'Ver pedidos',
     },
     ordersNoPaymentMethod.length > 0 && {
       icon: CreditCard, color: 'text-blue-600 bg-blue-50 border-blue-200',

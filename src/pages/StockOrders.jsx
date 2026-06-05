@@ -11,7 +11,6 @@ import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
   awaiting_charge: { label: 'Pedido recebido',   color: 'bg-gray-100 text-gray-700' },
-  message_sent:    { label: 'Mensagem enviada',   color: 'bg-orange-100 text-orange-700' },
   charge_sent:     { label: 'Cobrança enviada',   color: 'bg-blue-100 text-blue-700' },
   paid:            { label: 'Pago',               color: 'bg-green-100 text-green-700' },
   partially_paid:  { label: 'Parcialmente pago',  color: 'bg-amber-100 text-amber-700' },
@@ -19,7 +18,7 @@ const PAYMENT_STATUS = {
   refunded:        { label: 'Reembolsado',        color: 'bg-purple-100 text-purple-700' },
 };
 
-const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['message_sent', 'charge_sent', 'partially_paid', 'pending']);
+const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['charge_sent', 'partially_paid', 'pending']);
 
 const DELIVERY_STATUS = {
   awaiting_delivery: { label: 'Ag. entrega',        color: 'bg-gray-100 text-gray-700' },

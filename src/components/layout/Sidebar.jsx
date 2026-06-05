@@ -15,7 +15,7 @@ import { supabase } from '@/api/db';
 // ─────────────────────────────────────────────────────────────────
 
 const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge: 'today' };
-const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['message_sent', 'charge_sent', 'partially_paid', 'pending']);
+const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['charge_sent', 'partially_paid', 'pending']);
 
 function isEffectiveOpenSale(order) {
   if (order.payment_status === 'paid') return false;
@@ -186,13 +186,13 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           allOrders.filter(isEffectiveOpenSale).length +
           (contractsOpenPayments.count || 0);
         const todayCount =
-          allOrders.filter(o => ['awaiting_charge', 'message_sent'].includes(o.payment_status)).length +
+          allOrders.filter(o => ['awaiting_charge'].includes(o.payment_status)).length +
           allOrders.filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o)).length +
           (returnsRes.count || 0) +
           (pendingRefunds.count || 0);
 
         setBadges({
-          orders:     allOrders.filter(o => ['awaiting_charge', 'message_sent'].includes(o.payment_status)).length,
+          orders:     allOrders.filter(o => ['awaiting_charge'].includes(o.payment_status)).length,
           clients:    clientsRes.count || 0,
           today:      todayCount,
           assessoria: (contractsOverdue.count || 0) + (contractsExpiring.count || 0),

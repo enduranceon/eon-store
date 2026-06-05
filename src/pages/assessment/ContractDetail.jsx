@@ -438,7 +438,7 @@ export default function ContractDetail() {
     } catch (e) { toast.error(e.message); }
   };
 
-  // Anular venda — para contratos NÃO pagos (pending/awaiting_charge/message_sent/charge_sent/overdue).
+  // Anular venda — para contratos NÃO pagos (pending/awaiting_charge/charge_sent/overdue).
   // Diferente de cancelContract porque:
   //   - Não calcula multa nem refund (nada foi pago)
   //   - Cancela cobrança Asaas via API (se houver) pra não ficar vagando
@@ -549,7 +549,6 @@ export default function ContractDetail() {
       const labels = {
         pending: 'aguardando',
         awaiting_charge: 'pedido recebido',
-        message_sent: 'mensagem enviada',
         charge_sent: 'cobrança enviada',
         partially_paid: 'parcialmente pago',
         overdue: 'vencido',
