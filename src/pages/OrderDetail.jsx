@@ -130,7 +130,7 @@ export default function OrderDetail() {
     }
     if (o.campaign_id) {
       PreSaleCampaign.get(o.campaign_id).then(setCampaign).catch(() => {});
-      PreSaleProduct.filter({ campaign_id: o.campaign_id, active: true })
+      PreSaleProduct.filter({ campaign_id: o.campaign_id, status: 'active' })
         .then(setCampaignProducts)
         .catch(() => setCampaignProducts([]));
     }
