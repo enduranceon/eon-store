@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight, Pencil } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight, Pencil, Plus, Minus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer } from '@/api/entities';
+import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer, PreSaleProduct } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { loadActivePaymentMethods, calcFee, projectInstallments, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
@@ -100,6 +100,14 @@ export default function OrderDetail() {
   const [editPayMethodValue, setEditPayMethodValue] = useState('');
   const [editPayMethodDate, setEditPayMethodDate] = useState('');
   const [editPayMethodSaving, setEditPayMethodSaving] = useState(false);
+  // Adicionar peça
+  const [campaignProducts, setCampaignProducts] = useState([]);
+  const [addItemModal, setAddItemModal] = useState(false);
+  const [addItemProductId, setAddItemProductId] = useState('');
+  const [addItemVariation, setAddItemVariation] = useState('');
+  const [addItemQuantity, setAddItemQuantity] = useState(1);
+  const [addItemExtras, setAddItemExtras] = useState([]);
+  const [addItemLoading, setAddItemLoading] = useState(false);
 
   const load = async () => {
     const o = await PreSaleOrder.get(id);
@@ -120,7 +128,12 @@ export default function OrderDetail() {
     } else {
       setAsaasBilling('PIX');
     }
-    if (o.campaign_id) PreSaleCampaign.get(o.campaign_id).then(setCampaign).catch(() => {});
+    if (o.campaign_id) {
+      PreSaleCampaign.get(o.campaign_id).then(setCampaign).catch(() => {});
+      PreSaleProduct.filter({ campaign_id: o.campaign_id, active: true })
+        .then(setCampaignProducts)
+        .catch(() => setCampaignProducts([]));
+    }
     if (o.customer_id) PreSaleCustomer.get(o.customer_id).then(c => {
       setCustomer(c);
       if (c.cpf) setAsaasCpf(c.cpf);
@@ -608,6 +621,89 @@ export default function OrderDetail() {
     }
   };
 
+  // ── Adicionar peça ──────────────────────────────────────────────
+  const openAddItem = () => {
+    setAddItemProductId('');
+    setAddItemVariation('');
+    setAddItemQuantity(1);
+    setAddItemExtras([]);
+    setAddItemModal(true);
+  };
+
+  const addItemSelectedProduct = campaignProducts.find(p => p.id === addItemProductId);
+  const addItemSelectedVariation = addItemSelectedProduct?.variations?.find(v => v.name === addItemVariation);
+
+  const confirmAddItem = async () => {
+    if (!addItemSelectedProduct) return toast.error('Selecione um produto');
+    if (addItemSelectedProduct.variations?.length > 0 && !addItemSelectedVariation) {
+      return toast.error('Selecione a variação');
+    }
+    if (!addItemQuantity || addItemQuantity < 1) return toast.error('Quantidade inválida');
+
+    const sale_price = addItemSelectedVariation?.sale_price ?? addItemSelectedProduct.sale_price ?? 0;
+    const cost_price = addItemSelectedVariation?.cost_price ?? addItemSelectedProduct.cost_price ?? 0;
+    const extras_total = addItemExtras.reduce((s, e) => s + (e.price || 0), 0);
+
+    const newItem = {
+      product_id: addItemSelectedProduct.id,
+      product_name: addItemSelectedProduct.name,
+      variation: addItemSelectedVariation?.name || null,
+      extras: addItemExtras,
+      extras_total,
+      quantity: addItemQuantity,
+      sale_price,
+      cost_price,
+    };
+
+    const newItems = [...items, newItem];
+    const activeItems = newItems.filter(it => !it.cancelled);
+    const newSubtotal = activeItems.reduce((s, it) => s + ((it.sale_price || 0) + (it.extras_total || 0)) * it.quantity, 0);
+    const newTotalCost = activeItems.reduce((s, it) => s + ((it.cost_price || 0) * it.quantity), 0);
+    const newTotal = Math.max(0, newSubtotal - (Number(order.discount_value) || 0) - (Number(order.manual_discount) || 0));
+
+    setAddItemLoading(true);
+    try {
+      // 1) Se tem cobrança Asaas ativa, cancela primeiro (pra não deixar uma cobrança com valor errado solta)
+      if (order.asaas_charge_id) {
+        await callAsaas('cancel');
+      }
+
+      // 2) Limpa parcelas manuais (se houver) — vai gerar nova cobrança depois
+      await supabase.from('asaas_payments')
+        .delete()
+        .eq('order_id', id)
+        .eq('order_type', 'presale')
+        .eq('source', 'manual');
+
+      // 3) Atualiza pedido: novos itens + zera tudo de cobrança, volta para "Pedido recebido"
+      await supabase.from('presale_orders').update({
+        items: newItems,
+        total_value: newTotal,
+        total_cost: newTotalCost,
+        payment_status: 'awaiting_charge',
+        payment_method: null,
+        payment_date: null,
+        due_date: null,
+        asaas_charge_id: null,
+        asaas_payment_link: null,
+        asaas_pix_qrcode: null,
+        asaas_pix_copy: null,
+        external_payment_link: null,
+        payment_message_sent_at: null,
+        manual_payment: false,
+        manual_fee: null,
+      }).eq('id', id);
+
+      toast.success('Peça adicionada! Pedido voltou para "Pedido recebido" — gere a cobrança novamente.');
+      setAddItemModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao adicionar peça');
+    } finally {
+      setAddItemLoading(false);
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
@@ -729,6 +825,17 @@ export default function OrderDetail() {
               </table>
             </div>
           )}
+
+          {/* Adicionar peça — só se pedido NÃO pago e NÃO cancelado/reembolsado */}
+          {!['paid', 'refunded', 'cancelled'].includes(order.payment_status) && campaignProducts.length > 0 && (
+            <div className="mt-3 flex justify-end">
+              <Button variant="outline" size="sm" onClick={openAddItem}>
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                Adicionar peça
+              </Button>
+            </div>
+          )}
+
           {order.coupon_code && (
             <div className="border-t mt-4 pt-3 flex items-center justify-between text-sm bg-amber-50 -mx-6 px-6 py-2">
               <span className="flex items-center gap-2 text-amber-800">
@@ -973,6 +1080,126 @@ export default function OrderDetail() {
                 disabled={asaasLoading || !refundReason}
               >
                 {asaasLoading ? 'Estornando...' : 'Confirmar estorno'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal adicionar peça */}
+      <Dialog open={addItemModal} onOpenChange={setAddItemModal}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5 text-blue-600" />
+              Adicionar peça ao pedido
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {(order.asaas_charge_id || order.external_payment_link || order.payment_message_sent_at) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 flex gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  Este pedido já tinha cobrança em andamento. Ao adicionar a peça, a cobrança será cancelada
+                  e o pedido volta para <strong>"Pedido recebido"</strong>. Você precisa gerar/enviar uma nova cobrança ao cliente.
+                </span>
+              </div>
+            )}
+
+            <div>
+              <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Produto</Label>
+              <Select value={addItemProductId} onValueChange={v => { setAddItemProductId(v); setAddItemVariation(''); setAddItemExtras([]); }}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {campaignProducts.map(p => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} {p.sale_price ? `— ${formatCurrency(p.sale_price)}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {addItemSelectedProduct?.variations?.length > 0 && (
+              <div>
+                <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Variação</Label>
+                <Select value={addItemVariation} onValueChange={setAddItemVariation}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {addItemSelectedProduct.variations.map(v => (
+                      <SelectItem key={v.name} value={v.name}>
+                        {v.name} {v.sale_price ? `— ${formatCurrency(v.sale_price)}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {addItemSelectedProduct?.extras?.length > 0 && (
+              <div>
+                <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Adicionais (opcional)</Label>
+                <div className="space-y-2 mt-1">
+                  {addItemSelectedProduct.extras.map(extra => {
+                    const isChecked = addItemExtras.some(e => e.name === extra.name);
+                    return (
+                      <label key={extra.name} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            if (e.target.checked) setAddItemExtras([...addItemExtras, { name: extra.name, price: extra.price }]);
+                            else setAddItemExtras(addItemExtras.filter(x => x.name !== extra.name));
+                          }}
+                          className="rounded"
+                        />
+                        <span>{extra.name}</span>
+                        {extra.price > 0 && <span className="text-blue-600">+ {formatCurrency(extra.price)}</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Quantidade</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Button type="button" size="icon" variant="outline" onClick={() => setAddItemQuantity(Math.max(1, addItemQuantity - 1))}>
+                  <Minus className="w-3.5 h-3.5" />
+                </Button>
+                <Input
+                  type="number"
+                  min="1"
+                  value={addItemQuantity}
+                  onChange={e => setAddItemQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-20 text-center"
+                />
+                <Button type="button" size="icon" variant="outline" onClick={() => setAddItemQuantity(addItemQuantity + 1)}>
+                  <Plus className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+
+            {addItemSelectedProduct && (
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="font-semibold">
+                    {formatCurrency(
+                      ((addItemSelectedVariation?.sale_price ?? addItemSelectedProduct.sale_price ?? 0)
+                        + addItemExtras.reduce((s, e) => s + (e.price || 0), 0))
+                      * addItemQuantity
+                    )}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setAddItemModal(false)} disabled={addItemLoading}>Cancelar</Button>
+              <Button onClick={confirmAddItem} disabled={addItemLoading || !addItemSelectedProduct}>
+                {addItemLoading ? 'Adicionando...' : 'Adicionar peça'}
               </Button>
             </div>
           </div>
