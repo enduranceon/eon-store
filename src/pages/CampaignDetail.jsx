@@ -129,10 +129,10 @@ export default function CampaignDetail() {
   const margin = totalSold > 0 ? (grossProfit / totalSold) * 100 : 0;
   const uniqueCustomers = new Set(activeOrders.map(o => o.customer_id || o.checkout_whatsapp)).size;
 
-  // Produtos mais vendidos por item de pedido
+  // Produtos mais vendidos por item de pedido (exclui itens cancelados)
   const productQty = {};
   effectiveOrders.forEach(o => {
-    (o.items || []).forEach(item => {
+    (o.items || []).filter(it => !it.cancelled).forEach(item => {
       const key = `${item.product_name}${item.variation ? ' - ' + item.variation : ''}`;
       productQty[key] = (productQty[key] || 0) + (item.quantity || 1);
     });

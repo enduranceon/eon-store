@@ -704,7 +704,7 @@ function StoreReportsTab() {
 
   const supplierReport = {};
   active.forEach(o => {
-    (o.items || []).forEach(item => {
+    (o.items || []).filter(it => !it.cancelled).forEach(item => {
       const key = `${item.product_name}||${item.variation || ''}`;
       if (!supplierReport[key]) {
         supplierReport[key] = { product: item.product_name, variation: item.variation || '-', totalQty: 0, paidQty: 0, pendingQty: 0 };
@@ -868,7 +868,7 @@ function StoreReportsTab() {
                       <td className="px-4 py-3 font-medium">{o.checkout_name}</td>
                       <td className="px-4 py-3 text-muted-foreground">{o.checkout_whatsapp}</td>
                       <td className="px-4 py-3 text-muted-foreground text-xs">
-                        {(o.items || []).map(i => `${i.product_name}${i.variation ? ' ' + i.variation : ''} x${i.quantity}`).join(', ')}
+                        {(o.items || []).filter(i => !i.cancelled).map(i => `${i.product_name}${i.variation ? ' ' + i.variation : ''} x${i.quantity}`).join(', ')}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold">{formatCurrency(o.total_value)}</td>
                     </tr>
@@ -899,7 +899,7 @@ function StoreReportsTab() {
                       <td className="px-4 py-3 font-medium">{o.checkout_name}</td>
                       <td className="px-4 py-3 text-muted-foreground">{o.checkout_whatsapp}</td>
                       <td className="px-4 py-3 text-muted-foreground text-xs">
-                        {(o.items || []).map(i => `${i.product_name}${i.variation ? ' ' + i.variation : ''} x${i.quantity}`).join(', ')}
+                        {(o.items || []).filter(i => !i.cancelled).map(i => `${i.product_name}${i.variation ? ' ' + i.variation : ''} x${i.quantity}`).join(', ')}
                       </td>
                     </tr>
                   ))}

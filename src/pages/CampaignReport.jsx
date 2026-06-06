@@ -41,7 +41,7 @@ export default function CampaignReport() {
       activeOrders.forEach(o => {
         customerSet.add(o.customer_id || o.checkout_whatsapp);
         totalValue += o.total_value || 0;
-        (o.items || []).forEach(item => {
+        (o.items || []).filter(it => !it.cancelled).forEach(item => {
           const key = `${item.product_id}__${item.variation || ''}`;
           if (!agg[key]) {
             const prod = productMap[item.product_id];
