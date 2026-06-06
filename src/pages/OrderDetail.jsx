@@ -100,6 +100,11 @@ export default function OrderDetail() {
   const [editPayMethodValue, setEditPayMethodValue] = useState('');
   const [editPayMethodDate, setEditPayMethodDate] = useState('');
   const [editPayMethodSaving, setEditPayMethodSaving] = useState(false);
+  // Cancelar pedido inteiro
+  const [cancelOrderModal, setCancelOrderModal] = useState(false);
+  const [cancelOrderReason, setCancelOrderReason] = useState('');
+  const [cancelOrderReasonCustom, setCancelOrderReasonCustom] = useState('');
+  const [cancelOrderLoading, setCancelOrderLoading] = useState(false);
   // Adicionar peça
   const [campaignProducts, setCampaignProducts] = useState([]);
   const [addItemModal, setAddItemModal] = useState(false);
@@ -627,6 +632,59 @@ export default function OrderDetail() {
     }
   };
 
+  // ── Cancelar pedido inteiro ─────────────────────────────────────
+  const openCancelOrder = () => {
+    setCancelOrderReason('');
+    setCancelOrderReasonCustom('');
+    setCancelOrderModal(true);
+  };
+
+  const confirmCancelOrder = async () => {
+    const reason = cancelOrderReason === 'Outro' ? cancelOrderReasonCustom : cancelOrderReason;
+    if (!reason?.trim()) return toast.error('Informe o motivo do cancelamento');
+
+    setCancelOrderLoading(true);
+    try {
+      // 1) Se tem cobrança Asaas, cancela ela primeiro (só se ainda não foi paga)
+      if (order.asaas_charge_id && order.payment_status !== 'paid') {
+        try {
+          await callAsaas('cancel');
+        } catch (e) {
+          console.warn('Falha ao cancelar cobrança Asaas:', e.message);
+        }
+      }
+
+      // 2) Apaga parcelas manuais (se houver)
+      await supabase.from('asaas_payments')
+        .delete()
+        .eq('order_id', id)
+        .eq('order_type', 'presale')
+        .eq('source', 'manual');
+
+      // 3) Atualiza pedido para cancelled
+      await supabase.from('presale_orders').update({
+        payment_status: 'cancelled',
+        cancellation_reason: reason,
+        asaas_charge_id: null,
+        asaas_payment_link: null,
+        asaas_pix_qrcode: null,
+        asaas_pix_copy: null,
+        external_payment_link: null,
+      }).eq('id', id);
+
+      // 4) Devolve uso de cupom (se houver)
+      await returnCouponUse(id, 'presale');
+
+      toast.success('Pedido cancelado.');
+      setCancelOrderModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cancelar pedido');
+    } finally {
+      setCancelOrderLoading(false);
+    }
+  };
+
   // ── Adicionar peça ──────────────────────────────────────────────
   const openAddItem = () => {
     setAddItemSearch('');
@@ -736,6 +794,12 @@ export default function OrderDetail() {
         <div className="ml-auto flex items-center gap-2">
           <Badge variant={ps.badge}>{ps.label}</Badge>
           <Badge variant={ds.badge}>{ds.label}</Badge>
+          {!['paid', 'cancelled', 'refunded'].includes(order.payment_status) && (
+            <Button variant="outline" size="sm" onClick={openCancelOrder} className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
+              <X className="w-3.5 h-3.5 mr-1" />
+              Cancelar pedido
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1099,6 +1163,67 @@ export default function OrderDetail() {
                 disabled={asaasLoading || !refundReason}
               >
                 {asaasLoading ? 'Estornando...' : 'Confirmar estorno'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal cancelar pedido inteiro */}
+      <Dialog open={cancelOrderModal} onOpenChange={setCancelOrderModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <X className="w-5 h-5" />
+              Cancelar pedido
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 flex gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Esta ação cancela <strong>todo</strong> o pedido. Se houver cobrança Asaas ativa, ela será cancelada também.
+                Esta ação não pode ser desfeita pelo sistema.
+              </span>
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Motivo do cancelamento</Label>
+              <div className="grid grid-cols-2 gap-2 mt-1.5">
+                {['Cliente desistiu', 'Erro no pedido', 'Sem estoque', 'Duplicado', 'Outro'].map(r => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setCancelOrderReason(r)}
+                    className={`text-sm px-3 py-2 rounded-lg border transition-all ${
+                      cancelOrderReason === r
+                        ? 'border-red-400 bg-red-50 text-red-800 font-medium'
+                        : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+              {cancelOrderReason === 'Outro' && (
+                <Textarea
+                  value={cancelOrderReasonCustom}
+                  onChange={e => setCancelOrderReasonCustom(e.target.value)}
+                  placeholder="Descreva o motivo..."
+                  className="mt-2"
+                  rows={2}
+                />
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setCancelOrderModal(false)} disabled={cancelOrderLoading}>Voltar</Button>
+              <Button
+                variant="destructive"
+                onClick={confirmCancelOrder}
+                disabled={cancelOrderLoading || !cancelOrderReason}
+              >
+                {cancelOrderLoading ? 'Cancelando...' : 'Confirmar cancelamento'}
               </Button>
             </div>
           </div>
