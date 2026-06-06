@@ -131,8 +131,13 @@ export default function OrderDetail() {
     }
     if (o.campaign_id) {
       PreSaleCampaign.get(o.campaign_id).then(setCampaign).catch(() => {});
-      PreSaleProduct.filter({ campaign_id: o.campaign_id, status: 'active' })
-        .then(setCampaignProducts)
+      // Produtos podem estar vinculados via campaign_id (single) OU campaign_ids (array uuid[])
+      supabase
+        .from('presale_products')
+        .select('*')
+        .eq('status', 'active')
+        .or(`campaign_id.eq.${o.campaign_id},campaign_ids.cs.{${o.campaign_id}}`)
+        .then(({ data }) => setCampaignProducts(data || []))
         .catch(() => setCampaignProducts([]));
     }
     if (o.customer_id) PreSaleCustomer.get(o.customer_id).then(c => {
