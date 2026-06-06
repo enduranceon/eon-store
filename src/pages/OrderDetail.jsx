@@ -103,6 +103,7 @@ export default function OrderDetail() {
   // Adicionar peça
   const [campaignProducts, setCampaignProducts] = useState([]);
   const [addItemModal, setAddItemModal] = useState(false);
+  const [addItemSearch, setAddItemSearch] = useState('');
   const [addItemProductId, setAddItemProductId] = useState('');
   const [addItemVariation, setAddItemVariation] = useState('');
   const [addItemQuantity, setAddItemQuantity] = useState(1);
@@ -623,12 +624,25 @@ export default function OrderDetail() {
 
   // ── Adicionar peça ──────────────────────────────────────────────
   const openAddItem = () => {
+    setAddItemSearch('');
     setAddItemProductId('');
     setAddItemVariation('');
     setAddItemQuantity(1);
     setAddItemExtras([]);
     setAddItemModal(true);
   };
+
+  const addItemFilteredProducts = campaignProducts.filter(p => {
+    if (!addItemSearch.trim()) return true;
+    const q = addItemSearch.toLowerCase().trim();
+    return (
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.sku || '').toLowerCase().includes(q) ||
+      (p.category || '').toLowerCase().includes(q) ||
+      (p.subcategory || '').toLowerCase().includes(q) ||
+      (p.supplier || '').toLowerCase().includes(q)
+    );
+  });
 
   const addItemSelectedProduct = campaignProducts.find(p => p.id === addItemProductId);
   const addItemSelectedVariation = addItemSelectedProduct?.variations?.find(v => v.name === addItemVariation);
@@ -1088,118 +1102,210 @@ export default function OrderDetail() {
 
       {/* Modal adicionar peça */}
       <Dialog open={addItemModal} onOpenChange={setAddItemModal}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <Plus className="w-5 h-5 text-blue-600" />
               Adicionar peça ao pedido
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            {(order.asaas_charge_id || order.external_payment_link || order.payment_message_sent_at) && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 flex gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>
-                  Este pedido já tinha cobrança em andamento. Ao adicionar a peça, a cobrança será cancelada
-                  e o pedido volta para <strong>"Pedido recebido"</strong>. Você precisa gerar/enviar uma nova cobrança ao cliente.
-                </span>
-              </div>
-            )}
 
-            <div>
-              <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Produto</Label>
-              <Select value={addItemProductId} onValueChange={v => { setAddItemProductId(v); setAddItemVariation(''); setAddItemExtras([]); }}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  {campaignProducts.map(p => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name} {p.sale_price ? `— ${formatCurrency(p.sale_price)}` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          {(order.asaas_charge_id || order.external_payment_link || order.payment_message_sent_at) && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 flex gap-2 shrink-0">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Este pedido já tinha cobrança em andamento. Ao adicionar a peça, a cobrança será cancelada
+                e o pedido volta para <strong>"Pedido recebido"</strong>. Você precisa gerar/enviar uma nova cobrança ao cliente.
+              </span>
+            </div>
+          )}
+
+          {/* Conteúdo scrollável */}
+          <div className="flex-1 overflow-y-auto space-y-4 -mx-6 px-6">
+            {/* Busca */}
+            <div className="sticky top-0 bg-white pt-2 pb-2 z-10">
+              <div className="relative">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" /></svg>
+                <Input
+                  placeholder="Buscar produto, SKU, categoria ou fornecedor..."
+                  value={addItemSearch}
+                  onChange={e => setAddItemSearch(e.target.value)}
+                  className="pl-9 h-10"
+                  autoFocus
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                {addItemFilteredProducts.length} de {campaignProducts.length} produto{campaignProducts.length !== 1 ? 's' : ''}
+                {addItemSearch && ' (filtrado)'}
+              </p>
             </div>
 
-            {addItemSelectedProduct?.variations?.length > 0 && (
-              <div>
-                <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Variação</Label>
-                <Select value={addItemVariation} onValueChange={setAddItemVariation}>
-                  <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {addItemSelectedProduct.variations.map(v => (
-                      <SelectItem key={v.name} value={v.name}>
-                        {v.name} {v.sale_price ? `— ${formatCurrency(v.sale_price)}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            {/* Grade de produtos */}
+            {addItemFilteredProducts.length === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground">
+                <Package className="w-10 h-10 mx-auto text-gray-300 mb-2" />
+                Nenhum produto encontrado.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {addItemFilteredProducts.map(p => {
+                  const isSelected = addItemProductId === p.id;
+                  const img = p.images?.[0];
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => { setAddItemProductId(p.id); setAddItemVariation(''); setAddItemExtras([]); }}
+                      className={`text-left rounded-xl border-2 p-3 flex gap-3 transition-all ${
+                        isSelected
+                          ? 'border-blue-500 bg-blue-50/50 shadow-sm'
+                          : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}
+                    >
+                      <div className="w-14 h-14 rounded-lg bg-gray-100 shrink-0 overflow-hidden flex items-center justify-center">
+                        {img ? (
+                          <img src={img} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <Package className="w-6 h-6 text-gray-300" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`font-semibold text-sm leading-tight ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>
+                          {p.name}
+                        </p>
+                        {p.variations?.length > 0 && (
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            {p.variations.length} variaç{p.variations.length === 1 ? 'ão' : 'ões'}
+                          </p>
+                        )}
+                        <p className={`text-sm font-bold mt-1 ${isSelected ? 'text-blue-700' : 'text-emerald-700'}`}>
+                          {formatCurrency(p.sale_price || 0)}
+                        </p>
+                      </div>
+                      {isSelected && <Check className="w-5 h-5 text-blue-600 shrink-0" />}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
-            {addItemSelectedProduct?.extras?.length > 0 && (
-              <div>
-                <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Adicionais (opcional)</Label>
-                <div className="space-y-2 mt-1">
-                  {addItemSelectedProduct.extras.map(extra => {
-                    const isChecked = addItemExtras.some(e => e.name === extra.name);
-                    return (
-                      <label key={extra.name} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={e => {
-                            if (e.target.checked) setAddItemExtras([...addItemExtras, { name: extra.name, price: extra.price }]);
-                            else setAddItemExtras(addItemExtras.filter(x => x.name !== extra.name));
-                          }}
-                          className="rounded"
-                        />
-                        <span>{extra.name}</span>
-                        {extra.price > 0 && <span className="text-blue-600">+ {formatCurrency(extra.price)}</span>}
-                      </label>
-                    );
-                  })}
+            {/* Config (variação, extras, qtd) — só aparece quando seleciona um produto */}
+            {addItemSelectedProduct && (
+              <div className="border-t pt-4 space-y-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                  <Check className="w-4 h-4 text-blue-600" />
+                  Configurar "{addItemSelectedProduct.name}"
+                </div>
+
+                {addItemSelectedProduct.variations?.length > 0 && (
+                  <div>
+                    <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Variação</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-1.5">
+                      {addItemSelectedProduct.variations.map(v => {
+                        const isVarSelected = addItemVariation === v.name;
+                        return (
+                          <button
+                            key={v.name}
+                            type="button"
+                            onClick={() => setAddItemVariation(v.name)}
+                            className={`text-left rounded-lg border px-3 py-2 transition-all ${
+                              isVarSelected
+                                ? 'border-blue-500 bg-blue-50 text-blue-900'
+                                : 'border-gray-200 hover:border-gray-300'
+                            }`}
+                          >
+                            <p className="text-sm font-medium">{v.name}</p>
+                            {v.sale_price != null && v.sale_price !== addItemSelectedProduct.sale_price && (
+                              <p className="text-xs text-emerald-700 mt-0.5">{formatCurrency(v.sale_price)}</p>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {addItemSelectedProduct.extras?.length > 0 && (
+                  <div>
+                    <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Adicionais (opcional)</Label>
+                    <div className="space-y-1.5 mt-1.5">
+                      {addItemSelectedProduct.extras.map(extra => {
+                        const isChecked = addItemExtras.some(e => e.name === extra.name);
+                        return (
+                          <label key={extra.name} className={`flex items-center gap-2 text-sm cursor-pointer p-2 rounded-lg border transition-all ${
+                            isChecked ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50'
+                          }`}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={e => {
+                                if (e.target.checked) setAddItemExtras([...addItemExtras, { name: extra.name, price: extra.price }]);
+                                else setAddItemExtras(addItemExtras.filter(x => x.name !== extra.name));
+                              }}
+                              className="rounded"
+                            />
+                            <span className="flex-1">{extra.name}</span>
+                            {extra.price > 0 && <span className="text-blue-600 font-medium">+ {formatCurrency(extra.price)}</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Quantidade</Label>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <Button type="button" size="icon" variant="outline" onClick={() => setAddItemQuantity(Math.max(1, addItemQuantity - 1))}>
+                      <Minus className="w-3.5 h-3.5" />
+                    </Button>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={addItemQuantity}
+                      onChange={e => setAddItemQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-20 text-center"
+                    />
+                    <Button type="button" size="icon" variant="outline" onClick={() => setAddItemQuantity(addItemQuantity + 1)}>
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
+          </div>
 
-            <div>
-              <Label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Quantidade</Label>
-              <div className="flex items-center gap-2 mt-1">
-                <Button type="button" size="icon" variant="outline" onClick={() => setAddItemQuantity(Math.max(1, addItemQuantity - 1))}>
-                  <Minus className="w-3.5 h-3.5" />
-                </Button>
-                <Input
-                  type="number"
-                  min="1"
-                  value={addItemQuantity}
-                  onChange={e => setAddItemQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-20 text-center"
-                />
-                <Button type="button" size="icon" variant="outline" onClick={() => setAddItemQuantity(addItemQuantity + 1)}>
-                  <Plus className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            </div>
-
+          {/* Footer fixo com subtotal e ações */}
+          <div className="shrink-0 border-t pt-4 -mx-6 px-6 space-y-3">
             {addItemSelectedProduct && (
-              <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Subtotal</span>
-                  <span className="font-semibold">
+              <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Subtotal</p>
+                  <p className="text-lg font-bold text-emerald-700">
                     {formatCurrency(
                       ((addItemSelectedVariation?.sale_price ?? addItemSelectedProduct.sale_price ?? 0)
                         + addItemExtras.reduce((s, e) => s + (e.price || 0), 0))
                       * addItemQuantity
                     )}
-                  </span>
+                  </p>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  {addItemQuantity}× {formatCurrency(
+                    (addItemSelectedVariation?.sale_price ?? addItemSelectedProduct.sale_price ?? 0)
+                    + addItemExtras.reduce((s, e) => s + (e.price || 0), 0)
+                  )}
+                </p>
               </div>
             )}
-
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setAddItemModal(false)} disabled={addItemLoading}>Cancelar</Button>
               <Button onClick={confirmAddItem} disabled={addItemLoading || !addItemSelectedProduct}>
-                {addItemLoading ? 'Adicionando...' : 'Adicionar peça'}
+                {addItemLoading ? 'Adicionando...' : (
+                  <>
+                    <Plus className="w-4 h-4 mr-1" />
+                    Adicionar peça
+                  </>
+                )}
               </Button>
             </div>
           </div>
