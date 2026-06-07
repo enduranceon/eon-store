@@ -56,7 +56,7 @@ export default function PublicHome() {
               {campaigns.length === 1 ? '1 pré-venda aberta' : `${campaigns.length} pré-vendas abertas`}
             </p>
             {campaigns.map(c => {
-              const end = c.end_date ? new Date(c.end_date) : null;
+              const end = c.end_date ? new Date(c.end_date + 'T12:00:00-03:00') : null;
               const daysLeft = end ? Math.max(0, Math.ceil((end - new Date()) / 86400000)) : null;
               const deliveryEnd = end && c.delivery_days
                 ? new Date(end.getTime() + c.delivery_days * 86400000) : null;

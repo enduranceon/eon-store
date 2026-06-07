@@ -124,7 +124,7 @@ export default function PublicCheckout() {
   const campaignExpired = campaign.end_date && new Date() > new Date(campaign.end_date + 'T23:59:59-03:00');
   if (campaign.status !== 'active' || campaignExpired) {
     const deliveryDate = campaign.end_date && campaign.delivery_days
-      ? new Date(new Date(campaign.end_date).getTime() + campaign.delivery_days * 86400000)
+      ? new Date(new Date(campaign.end_date + 'T12:00:00-03:00').getTime() + campaign.delivery_days * 86400000)
       : null;
     return (
       <div className="min-h-screen bg-gray-50">
@@ -345,7 +345,7 @@ export default function PublicCheckout() {
       {/* ── Barra de pré-venda ─────────────────────────────────────────── */}
       {(campaign.end_date || campaign.delivery_days) && (() => {
         const now = new Date();
-        const end = campaign.end_date ? new Date(campaign.end_date) : null;
+        const end = campaign.end_date ? new Date(campaign.end_date + 'T12:00:00-03:00') : null;
         const daysLeft = end ? Math.max(0, Math.ceil((end - now) / 86400000)) : null;
         const deliveryEnd = end && campaign.delivery_days
           ? new Date(end.getTime() + campaign.delivery_days * 86400000) : null;
@@ -467,7 +467,7 @@ export default function PublicCheckout() {
 
             {/* Lembrete pré-venda */}
             {(campaign.end_date || campaign.delivery_days) && (() => {
-              const end = campaign.end_date ? new Date(campaign.end_date) : null;
+              const end = campaign.end_date ? new Date(campaign.end_date + 'T12:00:00-03:00') : null;
               const deliveryEnd = end && campaign.delivery_days
                 ? new Date(end.getTime() + campaign.delivery_days * 86400000) : null;
               return (
