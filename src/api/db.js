@@ -179,22 +179,25 @@ async function findOrCreateCustomer({ full_name, whatsapp, email, trainer }) {
 
   let existing = null;
   if (cleanPhone) {
+    // Pega o cliente mais recente caso haja duplicatas (não usa single pra tolerar duplicatas)
     const { data, error } = await supabase
       .from('presale_customers')
       .select('*')
       .eq('whatsapp', cleanPhone)
-      .maybeSingle();
+      .order('created_date', { ascending: false })
+      .limit(1);
     if (error) throw error;
-    existing = data;
+    existing = data?.[0] || null;
   }
   if (!existing && cleanEmail) {
     const { data, error } = await supabase
       .from('presale_customers')
       .select('*')
       .eq('email', cleanEmail)
-      .maybeSingle();
+      .order('created_date', { ascending: false })
+      .limit(1);
     if (error) throw error;
-    existing = data;
+    existing = data?.[0] || null;
   }
   if (existing) {
     const updates = {};
@@ -210,20 +213,22 @@ async function findOrCreateCustomer({ full_name, whatsapp, email, trainer }) {
 }
 
 export async function getCampaignBySlugOrId(slugOrId) {
-  const { data: bySlug } = await supabase
+  const { data: bySlug, error: slugErr } = await supabase
     .from('presale_campaigns')
     .select('*')
     .eq('slug', slugOrId)
-    .maybeSingle();
-  if (bySlug) return bySlug;
+    .order('created_date', { ascending: false })
+    .limit(1);
+  if (slugErr) throw slugErr;
+  if (bySlug?.[0]) return bySlug[0];
   const { data, error } = await supabase
     .from('presale_campaigns')
     .select('*')
     .eq('id', slugOrId)
-    .maybeSingle();
+    .limit(1);
   if (error) throw error;
-  if (!data) throw new Error('Campanha não encontrada');
-  return data;
+  if (!data?.[0]) throw new Error('Campanha não encontrada');
+  return data[0];
 }
 
 // Trainers are seeded via SQL migration; this is a no-op

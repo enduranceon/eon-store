@@ -344,9 +344,17 @@ export default function PublicCheckout() {
 
       {/* ── Barra de pré-venda ─────────────────────────────────────────── */}
       {(campaign.end_date || campaign.delivery_days) && (() => {
-        const now = new Date();
+        // Compara como string YYYY-MM-DD (evita totalmente qualquer problema de timezone)
+        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
         const end = campaign.end_date ? new Date(campaign.end_date + 'T12:00:00-03:00') : null;
-        const daysLeft = end ? Math.max(0, Math.ceil((end - now) / 86400000)) : null;
+        let daysLeft = null;
+        if (campaign.end_date) {
+          const [ey, em, ed] = campaign.end_date.split('-').map(Number);
+          const [ty, tm, td] = todayStr.split('-').map(Number);
+          const endUtc = Date.UTC(ey, em - 1, ed);
+          const todayUtc = Date.UTC(ty, tm - 1, td);
+          daysLeft = Math.max(0, Math.round((endUtc - todayUtc) / 86400000));
+        }
         const deliveryEnd = end && campaign.delivery_days
           ? new Date(end.getTime() + campaign.delivery_days * 86400000) : null;
         return (
