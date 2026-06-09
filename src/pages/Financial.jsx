@@ -24,6 +24,17 @@ import { toast } from 'sonner';
 // ─────────────────────────────────────────────────────────────────
 const RECEIVABLES_CACHE_KEY = 'asaas_receivables_cache_v1';
 const RECEIVABLES_CACHE_TTL = 5 * 60 * 1000;
+const FINANCIAL_PAGE_CACHE_TTL = 60 * 1000;
+let financialPageCache = null;
+
+function writeFinancialPageCache(data) {
+  financialPageCache = { data, updatedAt: Date.now() };
+}
+
+function patchFinancialPageCache(partial) {
+  if (!financialPageCache?.data) return;
+  writeFinancialPageCache({ ...financialPageCache.data, ...partial });
+}
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -317,13 +328,15 @@ function CustomTooltip({ active, payload, label }) {
 // COMPONENTE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────
 export default function Financial() {
-  const [loading, setLoading]             = useState(true);
-  const [orders, setOrders]               = useState([]);
-  const [centers, setCenters]             = useState([]);
+  const [initialFinancialCache] = useState(() => financialPageCache);
+  const cachedFinancialData = initialFinancialCache?.data;
+  const [loading, setLoading]             = useState(!cachedFinancialData);
+  const [orders, setOrders]               = useState(() => cachedFinancialData?.orders || []);
+  const [centers, setCenters]             = useState(() => cachedFinancialData?.centers || []);
   const [receivables, setReceivables]     = useState([]);
   const [loadingRec, setLoadingRec]       = useState(false);
   const [fetchedAt, setFetchedAt]         = useState(null);
-  const [pendingRefunds, setPendingRefunds] = useState([]);
+  const [pendingRefunds, setPendingRefunds] = useState(() => cachedFinancialData?.pendingRefunds || []);
   const [refundDoneModal, setRefundDoneModal] = useState(null); // { contract } | null
   const [refundDoneForm, setRefundDoneForm]   = useState({ date: '', notes: '' });
   const [savingRefund, setSavingRefund]       = useState(false);
@@ -334,7 +347,7 @@ export default function Financial() {
   const [collectionForm, setCollectionForm]   = useState({ externalLink: '', message: '' });
   const [collectionCopied, setCollectionCopied] = useState(false);
   const [savingCollection, setSavingCollection] = useState(false);
-  const [asaasPayments, setAsaasPayments] = useState([]);     // cache local (asaas_payments)
+  const [asaasPayments, setAsaasPayments] = useState(() => cachedFinancialData?.asaasPayments || []);
   const [syncingAsaas, setSyncingAsaas]   = useState(false);
 
   // ── Fetch Asaas ───────────────────────────────────────────────
@@ -375,8 +388,14 @@ export default function Financial() {
 
   // ── Fetch pedidos/contratos ────────────────────────────────────
   useEffect(() => {
+    let active = true;
+
     const load = async () => {
-      setLoading(true);
+      const cacheIsFresh = initialFinancialCache
+        && Date.now() - initialFinancialCache.updatedAt < FINANCIAL_PAGE_CACHE_TTL;
+      if (cacheIsFresh) return;
+
+      if (!initialFinancialCache?.data) setLoading(true);
       try {
         // Janela ampla pra puxar pagamentos: hoje − 7 meses para cobrir gráfico de 6 meses
         const sevenMonthsAgo = new Date();
@@ -405,7 +424,7 @@ export default function Financial() {
             .gte('credit_date', apFromStr)
             .order('credit_date', { ascending: false }),
         ]);
-        setAsaasPayments(paymentsRes.data || []);
+        const nextAsaasPayments = paymentsRes.data || [];
 
         const plansMap         = Object.fromEntries((plansRes.data         || []).map(p => [p.id, p]));
         const customersMap     = Object.fromEntries((customersRes.data     || []).map(c => [c.id, c]));
@@ -447,8 +466,8 @@ export default function Financial() {
           };
         });
 
-        setOrders([...presale, ...stock, ...contracts]);
-        setCenters(centersRes.data || []);
+        const nextOrders = [...presale, ...stock, ...contracts];
+        const nextCenters = centersRes.data || [];
 
         // ── Estornos pendentes ──────────────────────────────────────
         const { data: refundContracts } = await supabase
@@ -456,24 +475,39 @@ export default function Financial() {
           .select('id, contract_number, customer_id, refund_amount, refund_status, payment_method, cancellation_reason, updated_at')
           .eq('refund_status', 'pending');
 
+        let nextPendingRefunds = [];
         if (refundContracts?.length) {
           const customerIds = [...new Set(refundContracts.map(c => c.customer_id).filter(Boolean))];
           const { data: rfCustomers } = await supabase
             .from('presale_customers').select('id, full_name').in('id', customerIds);
           const rfCustMap = Object.fromEntries((rfCustomers || []).map(c => [c.id, c]));
-          setPendingRefunds(refundContracts.map(c => ({
+          nextPendingRefunds = refundContracts.map(c => ({
             ...c,
             customer_name: rfCustMap[c.customer_id]?.full_name || '—',
-          })));
-        } else {
-          setPendingRefunds([]);
+          }));
         }
+
+        if (!active) return;
+        const nextData = {
+          orders: nextOrders,
+          centers: nextCenters,
+          asaasPayments: nextAsaasPayments,
+          pendingRefunds: nextPendingRefunds,
+        };
+        setOrders(nextOrders);
+        setCenters(nextCenters);
+        setAsaasPayments(nextAsaasPayments);
+        setPendingRefunds(nextPendingRefunds);
+        writeFinancialPageCache(nextData);
       } catch (e) {
         console.error('Erro ao carregar Financeiro:', e);
-      } finally { setLoading(false); }
+      } finally {
+        if (active) setLoading(false);
+      }
     };
     load();
-  }, []);
+    return () => { active = false; };
+  }, [initialFinancialCache]);
 
   // ── Cálculos ──────────────────────────────────────────────────
   const todayStr       = getTodayStr();
@@ -649,7 +683,9 @@ export default function Financial() {
         .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
         .gte('credit_date', toLocalDateStr(sevenMonthsAgo))
         .order('credit_date', { ascending: false });
-      setAsaasPayments(payments || []);
+      const nextPayments = payments || [];
+      setAsaasPayments(nextPayments);
+      patchFinancialPageCache({ asaasPayments: nextPayments });
     } catch (e) {
       toast.error('Erro ao sincronizar: ' + (e.message || ''));
     } finally {
@@ -679,7 +715,9 @@ export default function Financial() {
       toast.success('Estorno marcado como realizado!');
       setRefundDoneModal(null);
       // Remove da lista local sem recarregar tudo
-      setPendingRefunds(prev => prev.filter(r => r.id !== refundDoneModal.id));
+      const nextPendingRefunds = pendingRefunds.filter(r => r.id !== refundDoneModal.id);
+      setPendingRefunds(nextPendingRefunds);
+      patchFinancialPageCache({ pendingRefunds: nextPendingRefunds });
     } catch (e) { toast.error(e.message); }
     finally { setSavingRefund(false); }
   };
@@ -724,11 +762,13 @@ export default function Financial() {
         });
       }
 
-      setOrders(prev => prev.map(o =>
+      const nextOrders = orders.map(o =>
         o.id === dueDateModal.id && o.type === dueDateModal.type
           ? { ...o, due_date: dueDateForm.date }
           : o
-      ));
+      );
+      setOrders(nextOrders);
+      patchFinancialPageCache({ orders: nextOrders });
       toast.success('Vencimento atualizado');
       setDueDateModal(null);
     } catch (e) {
@@ -824,7 +864,7 @@ export default function Financial() {
         });
       }
 
-      setOrders(prev => prev.map(o =>
+      const nextOrders = orders.map(o =>
         o.id === collectionModal.id && o.type === collectionModal.type
           ? {
               ...o,
@@ -834,7 +874,9 @@ export default function Financial() {
               due_date: updates.due_date || o.due_date,
             }
           : o
-      ));
+      );
+      setOrders(nextOrders);
+      patchFinancialPageCache({ orders: nextOrders });
       toast.success('Mensagem registrada');
       setCollectionModal(null);
     } catch (e) {
