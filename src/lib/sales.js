@@ -1,6 +1,14 @@
 export const TERMINAL_PAYMENT_STATUSES = new Set(['cancelled', 'refunded']);
 export const PAID_PAYMENT_STATUSES = new Set(['paid', 'partially_paid']);
 
+export function isNonCancelledOrder(order) {
+  return Boolean(
+    order &&
+    order.payment_status !== 'cancelled' &&
+    order.delivery_status !== 'cancelled'
+  );
+}
+
 export function hasChargeEvidence(order) {
   if (!order) return false;
   return Boolean(

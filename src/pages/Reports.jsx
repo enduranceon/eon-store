@@ -18,7 +18,7 @@ import { PreSaleOrder, PreSaleProduct, PreSaleCampaign, PreSaleCustomer } from '
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
 import { PAYMENT_METHOD_LABELS } from '@/lib/payment-methods';
-import { isEffectiveSale } from '@/lib/sales';
+import { isEffectiveSale, isNonCancelledOrder } from '@/lib/sales';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -674,7 +674,7 @@ function StoreReportsTab() {
     ? orders
     : orders.filter(o => o.campaign_id === campaignFilter);
 
-  const active = filteredOrders.filter(o => o.payment_status !== 'cancelled');
+  const active = filteredOrders.filter(isNonCancelledOrder);
   const effectiveOrders = active.filter(isEffectiveSale);
   const totalSold      = effectiveOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
   const totalPaid      = effectiveOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
@@ -685,7 +685,7 @@ function StoreReportsTab() {
   const margin         = totalSold > 0 ? (grossProfit / totalSold) * 100 : 0;
 
   const byCampaign = campaigns.map(c => {
-    const co = orders.filter(o => o.campaign_id === c.id && o.payment_status !== 'cancelled');
+    const co = orders.filter(o => o.campaign_id === c.id && isNonCancelledOrder(o));
     const effectiveCo = co.filter(isEffectiveSale);
     const sold = effectiveCo.reduce((acc, o) => acc + (o.total_value || 0), 0);
     const paid = effectiveCo.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);

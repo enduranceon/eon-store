@@ -4,7 +4,7 @@ import { ArrowLeft, Download, Printer, Package, ShoppingCart, Users, DollarSign,
 import { Button } from '@/components/ui/button';
 import { PreSaleCampaign, PreSaleOrder, PreSaleProduct } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { isEffectiveSale } from '@/lib/sales';
+import { isNonCancelledOrder } from '@/lib/sales';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -35,7 +35,9 @@ export default function CampaignReport() {
       let totalValue = 0, totalItems = 0;
       const customerSet = new Set();
 
-      const activeOrders = orders.filter(isEffectiveSale);
+      // Este é um relatório operacional para compra/recebimento.
+      // Todo pedido não cancelado deve aparecer, mesmo antes da cobrança.
+      const activeOrders = orders.filter(isNonCancelledOrder);
       const deliveredCount = activeOrders.filter(o => o.delivery_status === 'delivered').length;
       setDeliveryStats({ delivered: deliveredCount, total: activeOrders.length });
 
@@ -177,7 +179,7 @@ export default function CampaignReport() {
           { label: 'Pedidos ativos', value: stats.orders, icon: ShoppingCart },
           { label: 'Clientes', value: stats.customers, icon: Users },
           { label: 'Total de itens', value: `${stats.items} un.`, icon: Package },
-          { label: 'Receita total', value: formatCurrency(stats.total), icon: DollarSign },
+          { label: 'Valor dos pedidos', value: formatCurrency(stats.total), icon: DollarSign },
         ].map(k => (
           <div key={k.label} className="bg-white rounded-xl border p-4">
             <p className="text-xs text-muted-foreground">{k.label}</p>
