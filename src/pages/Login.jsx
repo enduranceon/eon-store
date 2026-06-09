@@ -17,8 +17,19 @@ export default function Login() {
 
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setLoading(false);
+      return toast.error('E-mail ou senha incorretos');
+    }
+
+    const { data: isAdmin, error: accessError } = await supabase.rpc('is_app_admin');
+    if (accessError || !isAdmin) {
+      await supabase.auth.signOut();
+      setLoading(false);
+      return toast.error('Esta conta não tem acesso ao painel');
+    }
+
     setLoading(false);
-    if (error) return toast.error('E-mail ou senha incorretos');
     navigate('/hoje');
   };
 
