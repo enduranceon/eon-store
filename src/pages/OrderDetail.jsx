@@ -12,7 +12,8 @@ import { Input } from '@/components/ui/input';
 import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer, PreSaleProduct } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { loadActivePaymentMethods, calcFee, projectInstallments, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
+import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
+import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
@@ -187,20 +188,15 @@ export default function OrderDetail() {
     if (!manualPayForm.value || isNaN(Number(manualPayForm.value))) return toast.error('Informe o valor recebido');
     const method = methodGroups.flatMap(([, list]) => list).find(m => m.id === manualPayForm.method_id);
     if (!method) return toast.error('Método inválido');
+    if (order?.asaas_charge_id) return toast.error('Cancele a cobrança Asaas antes de registrar pagamento por fora');
 
     setManualPaySaving(true);
     try {
       const totalV = Number(manualPayForm.value);
-      const fee    = calcFee(method, totalV);
-      // 1. Marca como pago com os dados do método
-      await PreSaleOrder.update(id, {
-        payment_status: 'paid',
-        payment_method: method.internal_code || method.kind,
-        payment_date:   manualPayForm.date,
-        manual_payment: true,
-        manual_fee:     fee > 0 ? Math.round(fee * 100) / 100 : null,
-      });
-      // 2. Cria parcelas projetadas no fluxo de caixa
+      const orderTotal = Number(order?.total_value) || 0;
+      if (Math.abs(totalV - orderTotal) > 0.009) {
+        throw new Error('Pagamento parcial ainda não está habilitado. Informe o valor integral do pedido.');
+      }
       const result = await createManualInstallments(
         method, manualPayForm.date,
         { order_id: id, order_type: 'presale', external_reference: order?.order_number },
@@ -235,7 +231,7 @@ export default function OrderDetail() {
       `💰 Valor: ${formatCurrency(order.total_value || 0)}\n` +
       `📅 Pago em: ${formatDate(manualPayForm.date || todayLocalStr())}\n\n` +
       `Em breve seu pedido será preparado para entrega. Qualquer dúvida, estamos por aqui!\n\n` +
-      `🔍 *Acompanhe seu pedido:*\n${window.location.origin}/p/${order.id}`;
+      `🔍 *Acompanhe seu pedido:*\n${window.location.origin}/p/${publicTrackingToken(order)}`;
     const phone = '55' + (order.checkout_whatsapp || '').replace(/\D/g, '');
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
@@ -284,13 +280,6 @@ export default function OrderDetail() {
         order_id:   order.id,
         order_type: 'presale',
       }, Number(order.total_value) || 0);
-
-      // Atualiza o pedido com método, data e marca como registro manual
-      await PreSaleOrder.update(id, {
-        payment_method: editPayMethodValue,
-        payment_date:   editPayMethodDate,
-        manual_payment: true,
-      });
 
       toast.success('Forma de pagamento salva!');
       setEditPayMethodModal(false);
@@ -392,7 +381,7 @@ export default function OrderDetail() {
       return `• ${label} x${item.quantity} → ${formatCurrency(itemTotal)}${extras ? '\n' + extras : ''}`;
     }).join('\n');
     const total = order.total_value || 0;
-    const trackingLink = `${window.location.origin}/p/${order.id}`;
+    const trackingLink = `${window.location.origin}/p/${publicTrackingToken(order)}`;
     const trackingLine = `\n\n🔍 *Acompanhe seu pedido:*\n${trackingLink}`;
 
     // Modo Asaas: tem link ou PIX do gateway
@@ -411,7 +400,8 @@ export default function OrderDetail() {
     }
 
     // Modo manual com link externo
-    const payLabel = PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method || null;
+    const preferredMethod = order.payment_preference || order.payment_method;
+    const payLabel = PAYMENT_METHOD_LABEL[preferredMethod] || preferredMethod || null;
     const linkTrim = manualLink?.trim();
     if (linkTrim) {
       return (
@@ -513,9 +503,24 @@ export default function OrderDetail() {
 
   const markMessageSent = async () => {
     try {
+      const externalLink = whatsappManualLink.trim();
+      if (externalLink && !isSafePaymentUrl(externalLink)) {
+        toast.error('Informe um link válido começando com https://');
+        return;
+      }
+      const hasChargeDetails = Boolean(
+        order.asaas_charge_id ||
+        order.asaas_payment_link ||
+        order.asaas_pix_copy ||
+        externalLink
+      );
+      if (!hasChargeDetails) {
+        toast.error('Gere uma cobrança ou informe o link externo antes de efetivar a venda.');
+        return;
+      }
       const updates = { payment_message_sent_at: new Date().toISOString() };
       if (!order.asaas_charge_id) {
-        updates.external_payment_link = whatsappManualLink.trim() || null;
+        updates.external_payment_link = externalLink || null;
         if (!order.due_date) {
           updates.due_date = defaultPaymentDueDate();
         }
@@ -1622,14 +1627,14 @@ export default function OrderDetail() {
                 </div>
               )}
               {/* Preferência do cliente */}
-              {order.payment_method && (
+              {(order.payment_preference || order.payment_method) && (
                 <div className="flex items-center gap-2 text-sm bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
                   <span className="text-blue-600">Cliente solicitou:</span>
                   <span className="font-semibold text-blue-900">{{
                     pix_boleto:'PIX ou Boleto', pix:'PIX', boleto:'Boleto',
                     card_1x:'Cartão 1x', card_2x:'Cartão 2x', card_3x:'Cartão 3x',
                     card_4x:'Cartão 4x', card_5x:'Cartão 5x', card_6x:'Cartão 6x',
-                  }[order.payment_method] || order.payment_method}</span>
+                  }[order.payment_preference || order.payment_method] || order.payment_preference || order.payment_method}</span>
                 </div>
               )}
 

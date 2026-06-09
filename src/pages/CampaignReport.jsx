@@ -4,6 +4,7 @@ import { ArrowLeft, Download, Printer, Package, ShoppingCart, Users, DollarSign,
 import { Button } from '@/components/ui/button';
 import { PreSaleCampaign, PreSaleOrder, PreSaleProduct } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { isEffectiveSale } from '@/lib/sales';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -34,7 +35,7 @@ export default function CampaignReport() {
       let totalValue = 0, totalItems = 0;
       const customerSet = new Set();
 
-      const activeOrders = orders.filter(o => o.payment_status !== 'cancelled');
+      const activeOrders = orders.filter(isEffectiveSale);
       const deliveredCount = activeOrders.filter(o => o.delivery_status === 'delivered').length;
       setDeliveryStats({ delivered: deliveredCount, total: activeOrders.length });
 

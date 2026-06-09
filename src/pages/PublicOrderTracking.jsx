@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/api/db';
 import { formatCurrency } from '@/lib/utils';
+import { isSafePaymentUrl } from '@/lib/sales';
 import { toast } from 'sonner';
 
 const PAYMENT_METHOD_LABEL = {
@@ -73,7 +74,7 @@ export default function PublicOrderTracking() {
     const load = async () => {
       try {
         const { data, error: err } = await supabase.functions.invoke('get-public-order', {
-          body: { order_id: orderId },
+          body: { public_token: orderId },
         });
         if (err || data?.error) { setError(true); return; }
         setOrder(data);
@@ -105,7 +106,7 @@ export default function PublicOrderTracking() {
   const stage = getStage(order);
   const isCancelled = stage === -1;
   const isPaid = order.payment_status === 'paid';
-  const hasPaymentInfo = order.asaas_pix_copy || order.asaas_payment_link || order.asaas_pix_qrcode;
+  const hasPaymentInfo = order.asaas_pix_copy || order.asaas_payment_link || order.asaas_pix_qrcode || order.external_payment_link;
   const subtotal = (order.total_value || 0) + (order.discount_value || 0);
 
   const copy = (text, label) => {
@@ -173,6 +174,16 @@ export default function PublicOrderTracking() {
             {order.asaas_payment_link && (
               <a
                 href={order.asaas_payment_link}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-3 flex items-center justify-center gap-2 font-semibold text-sm transition-colors"
+              >
+                <ExternalLink className="w-4 h-4" /> Abrir página de pagamento
+              </a>
+            )}
+            {!order.asaas_payment_link && isSafePaymentUrl(order.external_payment_link) && (
+              <a
+                href={order.external_payment_link}
                 target="_blank"
                 rel="noreferrer"
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-4 py-3 flex items-center justify-center gap-2 font-semibold text-sm transition-colors"

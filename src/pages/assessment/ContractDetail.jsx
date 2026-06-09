@@ -20,7 +20,7 @@ import {
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
-import { loadActivePaymentMethods, calcFee, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
+import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 
@@ -651,18 +651,21 @@ export default function ContractDetail() {
     if (!manualPayForm.value || isNaN(Number(manualPayForm.value))) return toast.error('Informe o valor recebido');
     const method = methodGroups.flatMap(([, list]) => list).find(m => m.id === manualPayForm.method_id);
     if (!method) return toast.error('Método inválido');
+    if (contract?.asaas_charge_id) return toast.error('Cancele a cobrança Asaas antes de registrar pagamento por fora');
 
     setManualPaySaving(true);
     try {
       const totalV = Number(manualPayForm.value);
-      const fee    = calcFee(method, totalV);
-      await AssessmentContract.update(id, {
-        payment_status:  'paid',
-        payment_method:  method.internal_code || method.kind,
-        payment_date:    manualPayForm.date,
-        manual_payment:  true,
-        manual_fee:      fee > 0 ? Math.round(fee * 100) / 100 : null,
-      });
+      const expectedTotal = Math.max(
+        0,
+        (Number(planVal('price_total')) || 0) +
+        (Number(contract.enrollment_fee) || 0) -
+        (Number(contract.manual_discount) || 0) -
+        (Number(contract.credit_balance) || 0)
+      );
+      if (Math.abs(totalV - expectedTotal) > 0.009) {
+        throw new Error('Pagamento parcial ainda não está habilitado. Informe o valor integral do contrato.');
+      }
       const result = await createManualInstallments(
         method, manualPayForm.date,
         { order_id: id, order_type: 'contract', external_reference: contract.contract_number },
@@ -673,7 +676,7 @@ export default function ContractDetail() {
         method_name:  method.name,
         date:         manualPayForm.date,
         value:        totalV,
-        fee:          Math.round(fee * 100) / 100,
+        fee:          result.total_fee,
         installments: result.installments,
       });
       toast.success(`Pagamento registrado! ${result.installments > 1 ? `${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);

@@ -11,22 +11,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan, AssessmentModality, AssessmentCoach, StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
 import { toast } from 'sonner';
 
 const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
 const PAYMENT_LABEL = { awaiting_charge: 'Pedido recebido', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcialmente pago', cancelled: 'Cancelado', refunded: 'Reembolsado' };
-const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'charge_sent', 'partially_paid', 'pending']);
-
-function isEffectiveSale(order) {
-  if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
-  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
-  return EFFECTIVE_SALE_STATUSES.has(order.payment_status);
-}
-
-function isEffectiveOpenSale(order) {
-  return isEffectiveSale(order) && order.payment_status !== 'paid';
-}
-
 export default function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();

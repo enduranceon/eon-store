@@ -7,6 +7,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
+import { isEffectiveOpenSale } from '@/lib/sales';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -18,14 +19,6 @@ const DELIVERY_LABEL = {
   separated:         'Separado p/ entrega',
   awaiting_delivery: 'Aguardando entrega',
 };
-
-const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['charge_sent', 'partially_paid', 'pending']);
-
-function isEffectiveOpenSale(item) {
-  if (['paid', 'cancelled', 'refunded'].includes(item.payment_status)) return false;
-  if (item.asaas_charge_id) return true;
-  return EFFECTIVE_OPEN_PAYMENT_STATUSES.has(item.payment_status);
-}
 
 function daysSince(iso) {
   if (!iso) return 0;
@@ -138,15 +131,15 @@ export default function Today() {
       try {
         const [presaleRes, stockRes, contractRes, plansRes, customersRes, returnsRes, refundsRes] = await Promise.all([
           supabase.from('presale_orders')
-            .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, asaas_charge_id, due_date, created_date, status_changed_at')
+            .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, due_date, created_date, status_changed_at')
             .neq('payment_status', 'cancelled')
             .neq('payment_status', 'refunded'),
           supabase.from('stock_orders')
-            .select('id, order_number, customer_name, total_value, payment_status, delivery_status, asaas_charge_id, due_date, created_date, status_changed_at')
+            .select('id, order_number, customer_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, due_date, created_date, status_changed_at')
             .neq('payment_status', 'cancelled')
             .neq('payment_status', 'refunded'),
           supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, due_date, end_date, status, asaas_charge_id, enrollment_fee, manual_discount, refund_status, refund_amount')
+            .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, due_date, end_date, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, refund_status, refund_amount')
             .not('status', 'in', '("cancelled","finished","draft")')
             .neq('payment_status', 'refunded'),
           supabase.from('assessment_plans').select('id, price_total'),

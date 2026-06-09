@@ -115,63 +115,17 @@ export async function createManualInstallments(methodConfig, paymentDate, orderR
   if (!orderRef?.order_id || !orderRef?.order_type) throw new Error('order_id e order_type obrigatórios');
 
   const totalV = Number(totalValue) || 0;
-  const fee = calcFee(methodConfig, totalV);
-  const netTotal = Math.max(0, totalV - fee);
-
   const parcels = projectInstallments(methodConfig, paymentDate);
-  const valuePerInst = totalV / parcels.length;
-  const netPerInst = netTotal / parcels.length;
-
-  // Limpa parcelas anteriores antes de re-inserir.
-  // - Manuais: sempre deletadas (re-registro substitui)
-  // - Asaas PENDING/OVERDUE: deletadas (cliente pagou por fora; cobrança Asaas pendente
-  //   é descartada para evitar duplicação caso o webhook chegue depois)
-  // - Asaas RECEIVED/CONFIRMED: PROTEGIDAS (Asaas já recebeu de verdade; nesse caso
-  //   o front deveria ter bloqueado o registro manual)
-  await supabase.from('asaas_payments')
-    .delete()
-    .eq('order_id', orderRef.order_id)
-    .eq('order_type', orderRef.order_type)
-    .eq('source', 'manual');
-
-  await supabase.from('asaas_payments')
-    .delete()
-    .eq('order_id', orderRef.order_id)
-    .eq('order_type', orderRef.order_type)
-    .eq('source', 'asaas')
-    .in('status', ['PENDING', 'OVERDUE']);
-
-  const rows = parcels.map(p => ({
-    asaas_payment_id:    `manual_${orderRef.order_id}_${p.number}_${Date.now()}`,
-    source:              'manual',
-    payment_method_id:   methodConfig.id,
-    installment_number:  p.number,
-    total_installments:  p.total,
-    billing_type:        methodConfig.kind?.toUpperCase() || null,
-    status:              'CONFIRMED',
-    value:               Math.round(valuePerInst * 100) / 100,
-    net_value:           Math.round(netPerInst * 100) / 100,
-    due_date:            p.due_date,
-    credit_date:         p.credit_date,
-    payment_date:        paymentDate,
-    description:         `Pagamento manual — ${methodConfig.name}${parcels.length > 1 ? ` (parcela ${p.number}/${p.total})` : ''}`,
-    external_reference:  orderRef.external_reference || null,
-    order_id:            orderRef.order_id,
-    order_type:          orderRef.order_type,
-    raw:                 null,
-    last_synced_at:      new Date().toISOString(),
-  }));
-
-  const { error } = await supabase.from('asaas_payments').insert(rows);
+  const { data, error } = await supabase.rpc('record_manual_payment', {
+    p_order_type: orderRef.order_type,
+    p_order_id: orderRef.order_id,
+    p_payment_method_id: methodConfig.id,
+    p_payment_date: paymentDate,
+    p_total: totalV,
+    p_installments: parcels,
+  });
   if (error) throw error;
-
-  return {
-    installments: parcels.length,
-    total_gross: totalV,
-    total_fee:   Math.round(fee * 100) / 100,
-    total_net:   Math.round(netTotal * 100) / 100,
-    value_per_installment: Math.round(valuePerInst * 100) / 100,
-  };
+  return data;
 }
 
 // Recalcula proporcionalmente os valores das parcelas manuais de um pedido

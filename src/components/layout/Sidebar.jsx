@@ -9,20 +9,13 @@ import {
 } from 'lucide-react';
 import { cn, todayLocalStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
+import { isEffectiveOpenSale } from '@/lib/sales';
 
 // ─────────────────────────────────────────────────────────────────
 // ITENS DE NAVEGAÇÃO
 // ─────────────────────────────────────────────────────────────────
 
 const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge: 'today' };
-const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['charge_sent', 'partially_paid', 'pending']);
-
-function isEffectiveOpenSale(order) {
-  if (order.payment_status === 'paid') return false;
-  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
-  return EFFECTIVE_OPEN_PAYMENT_STATUSES.has(order.payment_status);
-}
-
 // ASSESSORIA — core do negócio
 const ASSESSORIA_ITEMS = [
   { label: 'Painel',         icon: Activity,      to: '/assessoria',              exact: true },
@@ -160,9 +153,9 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         const in14Str = in14.toISOString().split('T')[0];
 
         const [presaleOrders, stockOrders, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts, contractsOpenPayments] = await Promise.all([
-          supabase.from('presale_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, external_payment_link')
+          supabase.from('presale_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
-          supabase.from('stock_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, external_payment_link')
+          supabase.from('stock_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('order_returns').select('id', { count: 'exact', head: true })
             .in('status', ['pending_return', 'received']),
@@ -176,7 +169,8 @@ export default function Sidebar({ open, onClose, onSignOut }) {
             .eq('refund_status', 'pending'),
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('status', 'draft'),
-          supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
+          supabase.from('assessment_contracts')
+            .select('id, payment_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
             .neq('status', 'cancelled').neq('status', 'draft')
             .neq('payment_status', 'paid').neq('payment_status', 'refunded'),
         ]);
@@ -184,7 +178,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         const allOrders = [...(presaleOrders.data || []), ...(stockOrders.data || [])];
         const openSalesCount =
           allOrders.filter(isEffectiveOpenSale).length +
-          (contractsOpenPayments.count || 0);
+          (contractsOpenPayments.data || []).filter(isEffectiveOpenSale).length;
         const todayCount =
           allOrders.filter(o => ['awaiting_charge'].includes(o.payment_status)).length +
           allOrders.filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o)).length +

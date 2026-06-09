@@ -3,13 +3,13 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ShoppingCart, Plus, Minus, Trash2, Store, ChevronRight, ChevronLeft, Lock, Tag, CheckCircle2, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { PreSaleProduct, PreSaleOrder, PreSaleTrainer, findOrCreateCustomer, getCampaignBySlugOrId } from '@/api/entities';
-import { normalizePhone, normalizeEmail } from '@/api/db';
+import { normalizePhone } from '@/api/db';
+import { createPublicPresaleOrder, getPublicPresaleCatalog } from '@/api/public';
 import { formatCurrency } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import CouponInput from '@/components/CouponInput';
-import { computeDiscount, validateCoupon, recordCouponUse } from '@/lib/coupon';
+import { computeDiscount } from '@/lib/coupon';
 
 const extrasTotal = (extras) => (extras || []).reduce((s, e) => s + (e.price || 0), 0);
 
@@ -31,56 +31,51 @@ export default function PublicCheckout() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [appliedCoupon, setAppliedCoupon] = useState(null);
 
-  useEffect(() => { PreSaleTrainer.list().then(setTrainers); }, []);
   useEffect(() => { localStorage.setItem(CART_KEY, JSON.stringify(cart)); }, [cart]);
 
   useEffect(() => {
-    getCampaignBySlugOrId(campaignId)
-      .then(c => {
-        setCampaign(c);
-        return PreSaleProduct.list().then(p => {
-          const active = p.filter(prod =>
-            prod.status === 'active' &&
-            ((prod.campaign_ids || []).includes(c.id) || prod.campaign_id === c.id)
-          );
-          if (c.product_order?.length) {
-            active.sort((a, b) => {
-              const ia = c.product_order.indexOf(a.id);
-              const ib = c.product_order.indexOf(b.id);
-              return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-            });
-          }
-          setProducts(active);
-          setCart(prev => {
-            if (prev.length === 0) return prev;
-            let changed = false;
-            const reconciled = prev.filter(item => {
-              const prod = active.find(p => p.id === item.product.id);
-              if (!prod) { changed = true; return false; }
-              return true;
-            }).map(item => {
-              const prod = active.find(p => p.id === item.product.id);
-              const variation = item.variation ? (prod.variations || []).find(v => v.name === item.variation.name) : null;
-              const freshSale    = variation?.sale_price    ?? prod.sale_price    ?? 0;
-              const freshRegular = variation?.regular_price ?? prod.regular_price ?? 0;
-              const freshProdExtras = prod.extras || [];
-              const reconciledExtras = (item.extras || [])
-                .map(e => { const fe = freshProdExtras.find(pe => pe.name === e.name); return fe ? { name: fe.name, price: fe.price || 0 } : null; })
-                .filter(Boolean);
-              const priceChanged = item.sale_price !== freshSale || item.regular_price !== freshRegular;
-              const extrasChanged = reconciledExtras.length !== (item.extras || []).length ||
-                reconciledExtras.some((e, i) => e.price !== (item.extras || [])[i]?.price);
-              const extrasKey = reconciledExtras.map(e => e.name).sort().join('+');
-              const correctKey = `${prod.id}-${variation?.name || ''}-${extrasKey}`;
-              if (priceChanged || extrasChanged || item.key !== correctKey) {
-                changed = true;
-                return { ...item, key: correctKey, product: prod, variation: variation || item.variation, sale_price: freshSale, regular_price: freshRegular, extras: reconciledExtras };
-              }
-              return { ...item, product: prod };
-            });
-            if (changed) toast.info('Carrinho atualizado com os preços mais recentes');
-            return changed ? reconciled : prev;
+    getPublicPresaleCatalog(campaignId)
+      .then(({ campaign: c, products: catalogProducts, trainers: catalogTrainers }) => {
+        const active = catalogProducts || [];
+        if (c.product_order?.length) {
+          active.sort((a, b) => {
+            const ia = c.product_order.indexOf(a.id);
+            const ib = c.product_order.indexOf(b.id);
+            return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
           });
+        }
+        setCampaign(c);
+        setProducts(active);
+        setTrainers(catalogTrainers || []);
+        setCart(prev => {
+          if (prev.length === 0) return prev;
+          let changed = false;
+          const reconciled = prev.filter(item => {
+            const prod = active.find(p => p.id === item.product.id);
+            if (!prod) { changed = true; return false; }
+            return true;
+          }).map(item => {
+            const prod = active.find(p => p.id === item.product.id);
+            const variation = item.variation ? (prod.variations || []).find(v => v.name === item.variation.name) : null;
+            const freshSale    = variation?.sale_price    ?? prod.sale_price    ?? 0;
+            const freshRegular = variation?.regular_price ?? prod.regular_price ?? 0;
+            const freshProdExtras = prod.extras || [];
+            const reconciledExtras = (item.extras || [])
+              .map(e => { const fe = freshProdExtras.find(pe => pe.name === e.name); return fe ? { name: fe.name, price: fe.price || 0 } : null; })
+              .filter(Boolean);
+            const priceChanged = item.sale_price !== freshSale || item.regular_price !== freshRegular;
+            const extrasChanged = reconciledExtras.length !== (item.extras || []).length ||
+              reconciledExtras.some((e, i) => e.price !== (item.extras || [])[i]?.price);
+            const extrasKey = reconciledExtras.map(e => e.name).sort().join('+');
+            const correctKey = `${prod.id}-${variation?.name || ''}-${extrasKey}`;
+            if (priceChanged || extrasChanged || item.key !== correctKey) {
+              changed = true;
+              return { ...item, key: correctKey, product: prod, variation: variation || item.variation, sale_price: freshSale, regular_price: freshRegular, extras: reconciledExtras };
+            }
+            return { ...item, product: prod };
+          });
+          if (changed) toast.info('Carrinho atualizado com os preços mais recentes');
+          return changed ? reconciled : prev;
         });
       })
       .catch(() => setNotFound(true));
@@ -199,100 +194,31 @@ export default function PublicCheckout() {
     if (!form.payment_method) return toast.error('Selecione a forma de pagamento');
     setSubmitting(true);
     try {
-      const freshCampaign = await getCampaignBySlugOrId(campaignId);
-      const nowExpired = freshCampaign.end_date && new Date() > new Date(freshCampaign.end_date + 'T23:59:59-03:00');
-      if (freshCampaign.status !== 'active' || nowExpired) {
-        toast.error('Esta pré-venda foi encerrada. Não é possível finalizar o pedido.');
-        setSubmitting(false);
-        return;
-      }
-
-      // Re-fetch products to validate prices server-side
-      const freshProducts = await PreSaleProduct.list();
-      const validatedItems = cart.map(i => {
-        const prod = freshProducts.find(p => p.id === i.product.id);
-        if (!prod) throw new Error(`Produto "${i.product.name}" não está mais disponível.`);
-        const variation = i.variation ? (prod.variations || []).find(v => v.name === i.variation.name) : null;
-        const freshSale = variation?.sale_price ?? prod.sale_price ?? 0;
-        const freshCost = variation?.cost_price ?? prod.cost_price ?? 0;
-        if (Math.round(i.sale_price * 100) !== Math.round(freshSale * 100)) throw new Error(`O preço de "${prod.name}" foi atualizado. Recarregue a página.`);
-        if (!Number.isInteger(i.quantity) || i.quantity <= 0) throw new Error('Quantidade inválida no carrinho.');
-        const freshProdExtras = prod.extras || [];
-        const validatedExtras = (i.extras || []).map(sel => {
-          const fe = freshProdExtras.find(e => e.name === sel.name);
-          if (!fe) throw new Error(`O adicional "${sel.name}" não está mais disponível. Recarregue a página.`);
-          if (Math.round(sel.price * 100) !== Math.round((fe.price || 0) * 100)) throw new Error(`O preço do adicional "${sel.name}" foi atualizado. Recarregue a página.`);
-          return { name: fe.name, price: fe.price || 0 };
-        });
-        const itemExtrasTotal = validatedExtras.reduce((s, e) => s + e.price, 0);
-        return {
-          product_id: prod.id,
-          product_name: prod.name,
-          variation: variation?.name || null,
-          extras: validatedExtras,
-          extras_total: itemExtrasTotal,
-          quantity: i.quantity,
-          sale_price: freshSale,
-          cost_price: freshCost,
-        };
-      });
-
-      const freshSubtotal = validatedItems.reduce((acc, i) => acc + (i.sale_price + i.extras_total) * i.quantity, 0);
-      const freshCostTotal = validatedItems.reduce((acc, i) => acc + i.cost_price * i.quantity, 0);
-
-      // Revalida cupom (caso tenha expirado/esgotado entre apply e submit)
-      let finalDiscount = 0;
-      let validatedCoupon = null;
-      if (appliedCoupon) {
-        const recheck = await validateCoupon(appliedCoupon.code, freshSubtotal, cleanWhatsapp);
-        if (!recheck.ok) {
-          toast.error(`Cupom ${appliedCoupon.code}: ${recheck.error}`);
-          setAppliedCoupon(null);
-          setSubmitting(false);
-          return;
-        }
-        validatedCoupon = recheck.coupon;
-        finalDiscount = recheck.discount;
-      }
-      const freshTotal = Math.max(0, freshSubtotal - finalDiscount);
-
       const trainerValue = form.trainer === '__outro' ? '' : form.trainer;
-      const cleanEmail = normalizeEmail(form.email);
-      const customer = await findOrCreateCustomer({ ...form, whatsapp: cleanWhatsapp, email: cleanEmail, trainer: trainerValue });
-      const order = await PreSaleOrder.create({
+      const order = await createPublicPresaleOrder({
         campaign_id: campaign.id,
-        customer_id: customer.id,
-        checkout_name: form.full_name,
-        checkout_whatsapp: cleanWhatsapp,
-        checkout_email: cleanEmail,
-        checkout_trainer: trainerValue,
-        items: validatedItems,
-        total_value: freshTotal,
-        total_cost: freshCostTotal,
-        delivery_method: form.delivery_method,
-        delivery_city: form.delivery_city || null,
-        payment_method: form.payment_method || null,
-        payment_status: 'awaiting_charge',
-        due_date: null,
-        delivery_status: 'awaiting_supplier',
-        coupon_code: validatedCoupon?.code || null,
-        discount_value: finalDiscount,
+        customer: {
+          full_name: form.full_name,
+          whatsapp: cleanWhatsapp,
+          email: form.email,
+          trainer: trainerValue,
+        },
+        delivery: {
+          method: form.delivery_method,
+          city: form.delivery_city || null,
+        },
+        payment_preference: form.payment_method,
+        coupon_code: appliedCoupon?.code || null,
+        items: cart.map(i => ({
+          product_id: i.product.id,
+          variation: i.variation?.name || null,
+          extras: (i.extras || []).map(extra => ({ name: extra.name })),
+          quantity: i.quantity,
+        })),
       });
-
-      // Registra uso do cupom (não bloqueia o fluxo se falhar)
-      if (validatedCoupon) {
-        await recordCouponUse({
-          coupon: validatedCoupon,
-          order,
-          orderType: 'presale',
-          customerIdentifier: cleanWhatsapp,
-          customerName: form.full_name,
-          discount: finalDiscount,
-        });
-      }
 
       localStorage.removeItem(CART_KEY);
-      navigate(`/confirmacao/${order.id}`, { state: { order, campaignName: campaign.name } });
+      navigate(`/confirmacao/${order.public_token}`, { state: { order, campaignName: campaign.name } });
     } catch (e) {
       toast.error(e.message || 'Erro ao finalizar pedido. Tente novamente.');
     } finally {

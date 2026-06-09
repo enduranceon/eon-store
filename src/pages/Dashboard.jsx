@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PreSaleOrder, PreSaleCustomer, PreSaleProduct, PreSaleCampaign } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { isEffectiveSale } from '@/lib/sales';
 import { toast } from 'sonner';
 
 function KPICard({ title, value, sub, icon: Icon, color = 'blue' }) {
@@ -50,14 +51,6 @@ const PAYMENT_BADGE = {
   cancelled: 'destructive',
   refunded: 'outline',
 };
-
-const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'charge_sent', 'partially_paid', 'pending']);
-
-function isEffectiveSale(order) {
-  if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
-  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
-  return EFFECTIVE_SALE_STATUSES.has(order.payment_status);
-}
 
 export default function Dashboard() {
   const [orders, setOrders] = useState([]);
@@ -227,7 +220,7 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-3">
                   {activeCampaigns.map(c => {
-                    const cOrders = orders.filter(o => o.campaign_id === c.id && o.payment_status !== 'cancelled');
+                    const cOrders = orders.filter(o => o.campaign_id === c.id && isEffectiveSale(o));
                     const cTotal = cOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
                     return (
                       <Link

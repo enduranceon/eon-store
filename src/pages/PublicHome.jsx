@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Store, ChevronRight, Calendar, Clock } from 'lucide-react';
-import { PreSaleCampaign } from '@/api/entities';
-import { formatCurrency } from '@/lib/utils';
+import { listPublicCampaigns } from '@/api/public';
 
 export default function PublicHome() {
   const [campaigns, setCampaigns] = useState([]);
@@ -10,13 +9,8 @@ export default function PublicHome() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    PreSaleCampaign.list().then(all => {
-      const active = all.filter(c => {
-        if (c.status !== 'active') return false;
-        if (c.end_date && new Date() > new Date(c.end_date + 'T23:59:59-03:00')) return false;
-        return true;
-      });
-      setCampaigns(active);
+    listPublicCampaigns().then(active => {
+      setCampaigns(active || []);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);

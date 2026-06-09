@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { StockOrder } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { isEffectiveOpenSale } from '@/lib/sales';
 import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
@@ -17,8 +18,6 @@ const PAYMENT_STATUS = {
   cancelled:       { label: 'Cancelado',          color: 'bg-red-100 text-red-700' },
   refunded:        { label: 'Reembolsado',        color: 'bg-purple-100 text-purple-700' },
 };
-
-const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['charge_sent', 'partially_paid', 'pending']);
 
 const DELIVERY_STATUS = {
   awaiting_delivery: { label: 'Ag. entrega',        color: 'bg-gray-100 text-gray-700' },
@@ -59,7 +58,7 @@ function StatusBadge({ value, options }) {
 
 function PaymentStatusCell({ order, onOpen }) {
   const isOpen = !['paid', 'cancelled', 'refunded'].includes(order.payment_status);
-  const hasEffectiveSale = EFFECTIVE_OPEN_PAYMENT_STATUSES.has(order.payment_status);
+  const hasEffectiveSale = isEffectiveOpenSale(order);
   return (
     <div className="flex items-center justify-center gap-2" onClick={e => e.stopPropagation()}>
       <div className="text-center">

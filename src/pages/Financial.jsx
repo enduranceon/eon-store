@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
+import { isEffectiveOpenSale, isSafePaymentUrl } from '@/lib/sales';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
@@ -34,14 +35,6 @@ function getLastMonthStart() {
 }
 function getLastMonthEnd() {
   const d = new Date(); d.setDate(0); return toLocalDateStr(d); // dia 0 do mês atual = último dia do mês anterior
-}
-
-const EFFECTIVE_OPEN_PAYMENT_STATUSES = new Set(['charge_sent', 'partially_paid', 'pending']);
-
-function isEffectiveOpenSale(order) {
-  if (['paid', 'cancelled', 'refunded'].includes(order.payment_status)) return false;
-  if (order.asaas_charge_id || order.asaas_payment_link || order.asaas_pix_copy || order.external_payment_link) return true;
-  return EFFECTIVE_OPEN_PAYMENT_STATUSES.has(order.payment_status);
 }
 
 function daysDiff(dateStr) {
@@ -793,6 +786,10 @@ export default function Financial() {
     if (!tableName) return toast.error('Tipo de venda inválido');
 
     const externalLink = collectionForm.externalLink.trim();
+    if (externalLink && !isSafePaymentUrl(externalLink)) {
+      toast.error('Informe um link válido começando com https://');
+      return;
+    }
     const nowIso = new Date().toISOString();
     const hasAsaasPaymentInfo = !!(collectionModal.asaas_payment_link || collectionModal.asaas_pix_copy);
     const updates = { payment_message_sent_at: nowIso };

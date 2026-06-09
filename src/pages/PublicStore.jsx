@@ -3,13 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { ShoppingCart, Plus, Minus, Trash2, Store, ChevronRight, Lock, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { StockProduct, StockOrder } from '@/api/entities';
-import { normalizePhone, normalizeEmail } from '@/api/db';
+import { normalizePhone } from '@/api/db';
+import { createPublicStockOrder, getPublicStockCatalog } from '@/api/public';
 import { formatCurrency } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import CouponInput from '@/components/CouponInput';
-import { computeDiscount, validateCoupon, recordCouponUse } from '@/lib/coupon';
+import { computeDiscount } from '@/lib/coupon';
 
 const CART_KEY = 'eon_loja_cart';
 
@@ -26,7 +26,7 @@ export default function PublicStore() {
   const [appliedCoupon, setAppliedCoupon] = useState(null);
 
   useEffect(() => {
-    StockProduct.list()
+    getPublicStockCatalog()
       .then(p => setProducts(p.filter(x => x.status === 'active')))
       .catch(() => toast.error('Erro ao carregar produtos'))
       .finally(() => setLoading(false));
@@ -74,63 +74,26 @@ export default function PublicStore() {
 
     setSubmitting(true);
     try {
-      // Re-validar preços e estoque
-      const freshProducts = await StockProduct.list();
-      const validatedItems = cart.map(i => {
-        const prod = freshProducts.find(p => p.id === i.product_id);
-        if (!prod || prod.status !== 'active') throw new Error(`"${i.product_name}" não está mais disponível.`);
-        if (prod.quantity < i.quantity) throw new Error(`Estoque insuficiente para "${prod.name}". Disponível: ${prod.quantity} un.`);
-        return { product_id: prod.id, product_name: prod.name, quantity: i.quantity, sale_price: prod.sale_price, cost_price: prod.cost_price || 0 };
+      const order = await createPublicStockOrder({
+        customer: {
+          full_name: form.name,
+          whatsapp: cleanWhatsapp,
+          email: form.email,
+        },
+        delivery: {
+          method: form.delivery_method,
+          city: form.delivery_city || null,
+        },
+        payment_preference: form.payment_method,
+        coupon_code: appliedCoupon?.code || null,
+        items: cart.map(i => ({
+          product_id: i.product_id,
+          quantity: i.quantity,
+        })),
       });
-
-      const subtotal = validatedItems.reduce((acc, i) => acc + i.sale_price * i.quantity, 0);
-      const cleanEmail = normalizeEmail(form.email);
-
-      // Revalida cupom
-      let finalDiscount = 0;
-      let validatedCoupon = null;
-      if (appliedCoupon) {
-        const recheck = await validateCoupon(appliedCoupon.code, subtotal, cleanWhatsapp);
-        if (!recheck.ok) {
-          toast.error(`Cupom ${appliedCoupon.code}: ${recheck.error}`);
-          setAppliedCoupon(null);
-          setSubmitting(false);
-          return;
-        }
-        validatedCoupon = recheck.coupon;
-        finalDiscount = recheck.discount;
-      }
-      const total = Math.max(0, subtotal - finalDiscount);
-
-      const order = await StockOrder.create({
-        customer_name: form.name,
-        customer_whatsapp: cleanWhatsapp,
-        customer_email: cleanEmail || null,
-        items: validatedItems,
-        total_value: total,
-        payment_method: form.payment_method,
-        payment_status: 'awaiting_charge',
-        due_date: null,
-        delivery_status: 'awaiting_delivery',
-        delivery_method: form.delivery_method,
-        delivery_city: form.delivery_city || null,
-        coupon_code: validatedCoupon?.code || null,
-        discount_value: finalDiscount,
-      });
-
-      if (validatedCoupon) {
-        await recordCouponUse({
-          coupon: validatedCoupon,
-          order,
-          orderType: 'stock',
-          customerIdentifier: cleanWhatsapp,
-          customerName: form.name,
-          discount: finalDiscount,
-        });
-      }
 
       localStorage.removeItem(CART_KEY);
-      navigate(`/loja/confirmacao/${order.id}`, { state: { order } });
+      navigate(`/loja/confirmacao/${order.public_token}`, { state: { order } });
     } catch (e) {
       toast.error(e.message || 'Erro ao finalizar pedido. Tente novamente.');
     } finally {

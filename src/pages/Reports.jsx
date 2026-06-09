@@ -18,6 +18,7 @@ import { PreSaleOrder, PreSaleProduct, PreSaleCampaign, PreSaleCustomer } from '
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
 import { PAYMENT_METHOD_LABELS } from '@/lib/payment-methods';
+import { isEffectiveSale } from '@/lib/sales';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -32,14 +33,6 @@ const STATUS_LABELS = {
   cancelled:        { label: 'Cancelado',   color: 'bg-gray-100 text-gray-500 line-through' },
   refunded:         { label: 'Estornado',   color: 'bg-purple-100 text-purple-700' },
 };
-
-const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'charge_sent', 'partially_paid', 'pending']);
-
-function isEffectiveSale(order) {
-  if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
-  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
-  return EFFECTIVE_SALE_STATUSES.has(order.payment_status);
-}
 
 const ASAAS_STATUS_LABELS = {
   RECEIVED:          { label: 'Recebido',    color: 'bg-green-100 text-green-700' },
@@ -408,13 +401,13 @@ function SalesTab() {
       try {
         const [presaleRes, stockRes, contractRes, plansRes, customersRes] = await Promise.all([
           supabase.from('presale_orders')
-            .select('id, order_number, checkout_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, items, created_date')
+            .select('id, order_number, checkout_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items, created_date')
             .order('created_date', { ascending: false }),
           supabase.from('stock_orders')
-            .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, items, created_date')
+            .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items, created_date')
             .order('created_date', { ascending: false }),
           supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
+            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
             .neq('status', 'cancelled').neq('status', 'draft')
             .order('created_at', { ascending: false }),
           supabase.from('assessment_plans').select('id, price_total, name'),

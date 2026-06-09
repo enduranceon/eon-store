@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { StockProduct, StockOrder, PreSaleCustomer } from '@/api/entities';
-import { formatCurrency, todayLocalStr } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 
@@ -110,7 +110,6 @@ export default function StockOrderNewAdmin() {
 
     setSaving(true);
     try {
-      const methodInfo = PAYMENT_METHODS.find(m => m.value === paymentMethod);
       const validatedItems = cartItems.map(i => ({
         product_id:   i.product.id,
         product_name: i.product.name,
@@ -129,17 +128,18 @@ export default function StockOrderNewAdmin() {
         total_value:       totalAfterDiscount,
         manual_discount:   Number(discount.value) || 0,
         discount_reason:   discount.reason || null,
-        payment_method:    paymentMethod,
-        payment_status:    methodInfo?.paid ? 'paid' : 'awaiting_charge',
+        payment_preference: paymentMethod,
+        payment_method:    null,
+        payment_status:    'awaiting_charge',
         due_date:          null,
-        payment_date:      methodInfo?.paid ? todayLocalStr() : null,
+        payment_date:      null,
         delivery_status:   'awaiting_delivery',
         delivery_method:   'pickup',
         internal_notes:    notes || null,
       };
 
       const order = await StockOrder.create(payload);
-      toast.success(`Pedido ${order.order_number} criado!`);
+      toast.success(`Pedido ${order.order_number} criado. Registre ou gere a cobrança para efetivar a venda.`);
       navigate(`/estoque/pedidos/${order.id}`);
     } catch (e) {
       toast.error(e.message || 'Erro ao criar pedido');

@@ -10,20 +10,13 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { PreSaleCampaign, PreSaleOrder, PreSaleProduct } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { isEffectiveSale } from '@/lib/sales';
 import { toast } from 'sonner';
 
 const STATUS_LABEL = { active: 'Ativa', ended: 'Encerrada', archived: 'Arquivada' };
 const STATUS_BADGE = { active: 'success', ended: 'warning', archived: 'secondary' };
 const PAYMENT_LABEL = { awaiting_charge: 'Pedido recebido', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcial', cancelled: 'Cancelado', refunded: 'Reembolsado' };
 const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
-const EFFECTIVE_SALE_STATUSES = new Set(['paid', 'charge_sent', 'partially_paid', 'pending']);
-
-function isEffectiveSale(order) {
-  if (['cancelled', 'refunded'].includes(order.payment_status)) return false;
-  if (order.asaas_charge_id || order.asaas_payment_link || order.external_payment_link) return true;
-  return EFFECTIVE_SALE_STATUSES.has(order.payment_status);
-}
-
 export default function CampaignDetail() {
   const { id } = useParams();
   const navigate = useNavigate();

@@ -11,6 +11,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { PreSaleCampaign, PreSaleOrder } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { isEffectiveSale } from '@/lib/sales';
 import { toast } from 'sonner';
 
 const STATUS_LABEL = { active: 'Ativa', ended: 'Encerrada', archived: 'Arquivada' };
@@ -130,7 +131,7 @@ export default function Campaigns() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map(c => {
-            const cOrders = orders.filter(o => o.campaign_id === c.id && o.payment_status !== 'cancelled');
+            const cOrders = orders.filter(o => o.campaign_id === c.id && isEffectiveSale(o));
             const totalSold = cOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
             const totalPaid = cOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
             return (
