@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Trash2, Archive } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,22 +8,29 @@ import { StockProduct } from '@/api/entities';
 import { formatCurrency } from '@/lib/utils';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
+
+async function loadStockProductsPage() {
+  return StockProduct.list();
+}
 
 export default function StockProducts() {
-  const [products, setProducts] = useState([]);
+  const { data: products, refresh } = usePageData({
+    key: 'stock-products:list',
+    loader: loadStockProductsPage,
+    initialData: [],
+    tags: ['stock_products'],
+    onError: () => toast.error('Erro ao carregar estoque'),
+  });
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
-
-  const load = () => StockProduct.list().then(setProducts).catch(() => toast.error('Erro ao carregar estoque'));
-
-  useEffect(() => { load(); }, []);
 
   const handleDelete = async (id, name) => {
     if (!confirm(`Excluir "${name}"?`)) return;
     try {
       await StockProduct.delete(id);
       toast.success('Produto excluído');
-      load();
+      await refresh({ force: true });
     } catch (e) {
       toast.error(e.message);
     }

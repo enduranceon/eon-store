@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Pencil, Check, BadgeDollarSign, Clock, Palette } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AssessmentModality, AssessmentPlan, RevenueCenter } from '@/api/entities';
 import { formatCurrency } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 function getPlanMonths(plan) {
@@ -26,6 +27,24 @@ function autoPlanName(plan, modalities) {
   if (plan?.name?.trim()) return plan.name;
   const mod = modalities.find(m => m.id === plan?.modality_id);
   return `${mod?.name || 'Plano'} · ${periodLabel(getPlanMonths(plan))}`;
+}
+
+async function loadPlansPage() {
+  const [modalities, plans, centers] = await Promise.all([
+    AssessmentModality.list('name').catch(error => {
+      console.error('modalities:', error);
+      return [];
+    }),
+    AssessmentPlan.list().catch(error => {
+      console.error('plans:', error);
+      return [];
+    }),
+    RevenueCenter.list('name').catch(error => {
+      console.error('centers:', error);
+      return [];
+    }),
+  ]);
+  return { modalities, plans, centers };
 }
 
 // ─── Card visual de plano ─────────────────────────────────────────────────────
@@ -103,28 +122,17 @@ function PlanCard({ plan, modality, center, modalities, onEdit, onToggle }) {
 
 // ─── Modal criar/editar plano ─────────────────────────────────────────────────
 function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }) {
-  const [form, setForm] = useState({});
-
   const blank = {
     name: '', modality_id: '', period_months: 1, price_monthly: '',
     price_total: '', max_installments: 1, enrollment_fee: 0,
     revenue_center_id: centers.find(c => c.name?.includes('Mensalidades'))?.id || '',
     active: true,
   };
-
-  useEffect(() => {
-    if (open) {
-      if (editing?.id) {
-        setForm({ ...editing, period_months: getPlanMonths(editing) });
-      } else if (editing?.modality_id) {
-        // Pré-seleção de modalidade vinda do clique de uma seção
-        setForm({ ...blank, modality_id: editing.modality_id });
-      } else {
-        setForm(blank);
-      }
-    }
-    // eslint-disable-next-line
-  }, [open, editing]);
+  const [form, setForm] = useState(() => {
+    if (editing?.id) return { ...editing, period_months: getPlanMonths(editing) };
+    if (editing?.modality_id) return { ...blank, modality_id: editing.modality_id };
+    return blank;
+  });
 
   // Auto-cálculo do total: mensalidade × duração (só preenche se total estiver vazio ou batendo)
   const recalcTotal = (prev, newMonthly, newMonths) => {
@@ -353,38 +361,20 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
 
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function Planos() {
-  const [modalities, setModalities] = useState([]);
-  const [plans, setPlans]           = useState([]);
-  const [centers, setCenters]       = useState([]);
+  const {
+    data: { modalities, plans, centers },
+    loading,
+    refresh,
+  } = usePageData({
+    key: 'assessment-plans:list',
+    loader: loadPlansPage,
+    initialData: { modalities: [], plans: [], centers: [] },
+    tags: ['assessment_modalities', 'assessment_plans', 'revenue_centers'],
+    onError: error => toast.error('Erro ao carregar dados: ' + (error.message || 'desconhecido')),
+  });
   const [showInactive, setShowInactive] = useState(false);
   const [modal, setModal]           = useState(false);
   const [editing, setEditing]       = useState(null);
-  const [loading, setLoading]       = useState(true);
-
-  const load = async () => {
-    setLoading(true);
-    // Failsafe: força saída do loading em 10s se algo travar
-    const failsafe = setTimeout(() => {
-      console.warn('Planos: timeout 10s — forçando saída do loading');
-      setLoading(false);
-    }, 10000);
-    try {
-      const [m, p, rc] = await Promise.all([
-        AssessmentModality.list('name').catch(e => { console.error('modalities:', e); return []; }),
-        AssessmentPlan.list().catch(e => { console.error('plans:', e); return []; }),
-        RevenueCenter.list('name').catch(e => { console.error('centers:', e); return []; }),
-      ]);
-      setModalities(m); setPlans(p); setCenters(rc);
-    } catch (e) {
-      console.error('Erro ao carregar planos:', e);
-      toast.error('Erro ao carregar dados: ' + (e.message || 'desconhecido'));
-    } finally {
-      clearTimeout(failsafe);
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
 
   const openCreate = (preModalityId) => {
     setEditing(preModalityId ? { modality_id: preModalityId } : null);
@@ -393,7 +383,10 @@ export default function Planos() {
   const openEdit = (plan) => { setEditing(plan); setModal(true); };
 
   const toggle = async (plan) => {
-    try { await AssessmentPlan.update(plan.id, { active: !plan.active }); load(); }
+    try {
+      await AssessmentPlan.update(plan.id, { active: !plan.active });
+      await refresh({ force: true });
+    }
     catch (e) { toast.error(e.message); }
   };
 
@@ -481,12 +474,13 @@ export default function Planos() {
       )}
 
       <PlanModal
+        key={`${modal ? 'open' : 'closed'}:${editing?.id || editing?.modality_id || 'new'}`}
         open={modal}
         onOpenChange={setModal}
         editing={editing}
         modalities={modalities}
         centers={centers}
-        onSaved={load}
+        onSaved={() => refresh({ force: true })}
       />
     </div>
   );

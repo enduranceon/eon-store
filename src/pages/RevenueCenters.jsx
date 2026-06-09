@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Pencil, Palette, Check, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { RevenueCenter } from '@/api/entities';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const TYPE_LABEL = {
@@ -26,26 +27,21 @@ const COLORS = [
   '#6b7280', // cinza
 ];
 
+async function loadRevenueCentersPage() {
+  return RevenueCenter.list('name').catch(() => []);
+}
+
 export default function RevenueCenters() {
-  const [centers, setCenters] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { data: centers, loading, refresh } = usePageData({
+    key: 'revenue-centers:list',
+    loader: loadRevenueCentersPage,
+    initialData: [],
+    tags: ['revenue_centers'],
+    onError: error => console.error('Erro ao carregar centros de receita:', error),
+  });
   const [modal, setModal]     = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({});
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const data = await RevenueCenter.list('name').catch(() => []);
-      setCenters(data);
-    } catch (e) {
-      console.error('Erro:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
 
   const open = (c) => {
     setEditing(c);
@@ -67,12 +63,15 @@ export default function RevenueCenters() {
       else         await RevenueCenter.create(payload);
       toast.success('Centro salvo!');
       setModal(false);
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error(e.message); }
   };
 
   const toggle = async (c) => {
-    try { await RevenueCenter.update(c.id, { active: !c.active }); load(); }
+    try {
+      await RevenueCenter.update(c.id, { active: !c.active });
+      await refresh({ force: true });
+    }
     catch (e) { toast.error(e.message); }
   };
 
@@ -83,7 +82,7 @@ export default function RevenueCenters() {
       await RevenueCenter.delete(editing.id);
       toast.success('Centro removido');
       setModal(false);
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error(e.message); }
   };
 
@@ -153,7 +152,11 @@ export default function RevenueCenters() {
                     <button
                       onClick={async () => {
                         if (!confirm(`Excluir "${c.name}"?\n\nPlanos e produtos vinculados ficarão sem centro (não serão deletados).`)) return;
-                        try { await RevenueCenter.delete(c.id); toast.success('Removido'); load(); }
+                        try {
+                          await RevenueCenter.delete(c.id);
+                          toast.success('Removido');
+                          await refresh({ force: true });
+                        }
                         catch (e) { toast.error(e.message); }
                       }}
                       className="text-xs text-gray-400 hover:text-red-600 inline-flex items-center gap-1">

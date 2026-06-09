@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardList, Search, ArrowRight, Plus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { StockOrder } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
@@ -77,16 +78,22 @@ function PaymentStatusCell({ order, onOpen }) {
   );
 }
 
+async function loadStockOrdersPage() {
+  return StockOrder.list();
+}
+
 export default function StockOrders() {
-  const [orders, setOrders] = useState([]);
+  const { data: orders, setData: setOrders, refresh } = usePageData({
+    key: 'stock-orders:list',
+    loader: loadStockOrdersPage,
+    initialData: [],
+    tags: ['stock_orders'],
+    onError: () => toast.error('Erro ao carregar pedidos'),
+  });
   const [search, setSearch] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
   const navigate = useNavigate();
-
-  const load = () => StockOrder.list().then(setOrders).catch(() => toast.error('Erro ao carregar pedidos'));
-
-  useEffect(() => { load(); }, []);
 
   const commitUpdate = async (orderId, field, value, extras = {}) => {
     const patch = { [field]: value, ...extras };
@@ -95,7 +102,7 @@ export default function StockOrders() {
       await StockOrder.update(orderId, patch);
     } catch (e) {
       toast.error(e.message);
-      load();
+      refresh({ force: true }).catch(() => {});
     }
   };
 

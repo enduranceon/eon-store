@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { invalidatePageCacheByTag } from '@/lib/page-cache';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -87,18 +88,25 @@ function createSupabaseProxy(tableName) {
     },
 
     async create(data) {
-      const { id: _id, created_date: _cd, order_number: _on, ...rest } = data;
+      const rest = { ...data };
+      delete rest.id;
+      delete rest.created_date;
+      delete rest.order_number;
       const { data: created, error } = await supabase
         .from(tableName)
         .insert(sanitize(rest))
         .select()
         .single();
       if (error) throw error;
+      invalidatePageCacheByTag(tableName);
       return created;
     },
 
     async update(id, data) {
-      const { id: _id, created_date: _cd, created_at: _ca, ...rest } = data;
+      const rest = { ...data };
+      delete rest.id;
+      delete rest.created_date;
+      delete rest.created_at;
       const updatedCol = getUpdatedColumn(tableName);
       const { data: updated, error } = await supabase
         .from(tableName)
@@ -107,12 +115,14 @@ function createSupabaseProxy(tableName) {
         .select()
         .single();
       if (error) throw error;
+      invalidatePageCacheByTag(tableName);
       return updated;
     },
 
     async delete(id) {
       const { error } = await supabase.from(tableName).delete().eq('id', id);
       if (error) throw error;
+      invalidatePageCacheByTag(tableName);
       return true;
     },
 

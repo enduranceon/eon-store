@@ -2,23 +2,23 @@ import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   BarChart3, Search, X, ChevronRight, Copy, Check, ExternalLink,
-  CreditCard, Zap, Banknote, Loader2, ShoppingCart, FileText, Package,
-  Calendar, DollarSign, CheckCircle2, Clock, AlertTriangle, Filter,
-  Download, Users, TrendingUp,
+  CreditCard, Zap, Banknote, Loader2, ShoppingCart,
+  Calendar, DollarSign, CheckCircle2, AlertTriangle, Filter,
+  Users, TrendingUp,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { supabase } from '@/api/db';
-import { PreSaleOrder, PreSaleProduct, PreSaleCampaign, PreSaleCustomer } from '@/api/entities';
-import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
+import { PreSaleOrder, PreSaleCampaign } from '@/api/entities';
+import { formatCurrency, formatDate, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
 import { PAYMENT_METHOD_LABELS } from '@/lib/payment-methods';
 import { isEffectiveSale, isNonCancelledOrder } from '@/lib/sales';
+import { usePageData } from '@/hooks/usePageData';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -106,46 +106,40 @@ function SaleDetailModal({ sale, onClose }) {
   const [installments, setInstallments] = useState(null);
   const [loadingInst, setLoadingInst] = useState(false);
   const [instError, setInstError] = useState(null);
+  const [installmentRetry, setInstallmentRetry] = useState(0);
 
   const pm = (sale?.payment_method || '').toLowerCase();
   const isAsaasCard = pm === 'credit_card' || (pm.startsWith('card_') && pm !== 'card_machine');
   const isAsaas = isAsaasCard || pm === 'pix' || pm === 'boleto';
   const hasAsaas = sale?.asaas_charge_id && isAsaas;
 
-  const fetchInstallments = async () => {
-    if (!sale || !hasAsaas) return;
-    setLoadingInst(true);
-    setInstError(null);
-    try {
-      const body = sale.type === 'contract'
-        ? { contract_id: sale.id }
-        : { charge_id: sale.asaas_charge_id }; // futura expansão
-
-      // Para contratos: usa a edge function existente
-      // Para pedidos da loja: mostramos só o charge ID por enquanto
-      if (sale.type !== 'contract') {
-        setInstallments({ storeOrder: true });
-        return;
-      }
-      const { data, error } = await supabase.functions.invoke('fetch-contract-installments', {
-        body,
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      setInstallments(data);
-    } catch (e) {
-      console.error('[SaleDetail installments]', e);
-      setInstError(e.message || 'Erro ao buscar parcelas');
-    } finally {
-      setLoadingInst(false);
-    }
-  };
-
   useEffect(() => {
-    if (sale && sale.type === 'contract' && hasAsaas) {
-      fetchInstallments();
-    }
-  }, [sale?.id]);
+    if (!sale || sale.type !== 'contract' || !hasAsaas) return undefined;
+
+    let active = true;
+    const timer = setTimeout(async () => {
+      setLoadingInst(true);
+      setInstError(null);
+      try {
+        const { data, error } = await supabase.functions.invoke('fetch-contract-installments', {
+          body: { contract_id: sale.id },
+        });
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
+        if (active) setInstallments(data);
+      } catch (error) {
+        console.error('[SaleDetail installments]', error);
+        if (active) setInstError(error.message || 'Erro ao buscar parcelas');
+      } finally {
+        if (active) setLoadingInst(false);
+      }
+    }, 0);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [hasAsaas, installmentRetry, sale]);
 
   if (!sale) return null;
 
@@ -241,7 +235,7 @@ function SaleDetailModal({ sale, onClose }) {
                   <div>
                     <p className="font-medium">Erro ao buscar parcelas</p>
                     <p className="text-xs mt-0.5">{instError}</p>
-                    <button onClick={fetchInstallments}
+                    <button onClick={() => setInstallmentRetry(value => value + 1)}
                       className="text-xs text-red-700 underline mt-1 hover:no-underline">
                       Tentar novamente
                     </button>
@@ -384,9 +378,81 @@ function SaleDetailModal({ sale, onClose }) {
 // TAB VENDAS
 // ─────────────────────────────────────────────────────────────────
 
+async function loadReportsSales() {
+  const [presaleRes, stockRes, contractRes, plansRes, customersRes] = await Promise.all([
+    supabase.from('presale_orders')
+      .select('id, order_number, checkout_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items, created_date')
+      .order('created_date', { ascending: false }),
+    supabase.from('stock_orders')
+      .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items, created_date')
+      .order('created_date', { ascending: false }),
+    supabase.from('assessment_contracts')
+      .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
+      .neq('status', 'cancelled').neq('status', 'draft')
+      .order('created_at', { ascending: false }),
+    supabase.from('assessment_plans').select('id, price_total, name'),
+    supabase.from('presale_customers').select('id, full_name'),
+  ]);
+
+  const plansMap = Object.fromEntries((plansRes.data || []).map(p => [p.id, p]));
+  const customersMap = Object.fromEntries((customersRes.data || []).map(c => [c.id, c]));
+  const presale = (presaleRes.data || []).map(o => ({
+    ...o,
+    type: 'presale',
+    customer: o.checkout_name,
+    created_at: o.created_date,
+  }));
+  const stock = (stockRes.data || []).map(o => ({
+    ...o,
+    type: 'stock',
+    customer: o.customer_name,
+    created_at: o.created_date,
+  }));
+  const contracts = (contractRes.data || []).map(c => {
+    const plan = plansMap[c.plan_id];
+    const snapPrice = c.plan_snapshot?.price_total;
+    const base = snapPrice != null ? Number(snapPrice) : (plan ? Number(plan.price_total) : 0);
+    const totalValue = Math.max(0, base + (Number(c.enrollment_fee) || 0) - (Number(c.manual_discount) || 0));
+    return {
+      id: c.id,
+      order_number: c.contract_number,
+      customer: customersMap[c.customer_id]?.full_name || '—',
+      plan_name: c.plan_snapshot?.name || plan?.name || '—',
+      total_value: totalValue,
+      payment_status: c.payment_status,
+      payment_method: c.payment_method,
+      payment_date: c.payment_date,
+      due_date: c.due_date,
+      asaas_charge_id: c.asaas_charge_id,
+      manual_fee: c.manual_fee,
+      installments: c.installments || 1,
+      type: 'contract',
+      created_at: c.created_at,
+    };
+  });
+
+  return [...contracts, ...presale, ...stock].sort((a, b) =>
+    (b.created_at || '').localeCompare(a.created_at || '')
+  );
+}
+
 function SalesTab() {
-  const [sales, setSales]         = useState([]);
-  const [loading, setLoading]     = useState(true);
+  const { data: sales, loading } = usePageData({
+    key: 'reports:sales',
+    loader: loadReportsSales,
+    initialData: [],
+    tags: [
+      'presale_orders',
+      'stock_orders',
+      'assessment_contracts',
+      'assessment_plans',
+      'presale_customers',
+    ],
+    onError: error => {
+      console.error('[SalesTab]', error);
+      toast.error('Erro ao carregar vendas');
+    },
+  });
   const [search, setSearch]       = useState('');
   const [monthFilter, setMonth]   = useState(toLocalDateStr(new Date()).slice(0, 7)); // mês atual
   const [typeFilter, setType]     = useState('all');
@@ -394,67 +460,6 @@ function SalesTab() {
   const [selected, setSelected]   = useState(null);
 
   const monthOptions = useMemo(() => getMonthOptions(), []);
-
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const [presaleRes, stockRes, contractRes, plansRes, customersRes] = await Promise.all([
-          supabase.from('presale_orders')
-            .select('id, order_number, checkout_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items, created_date')
-            .order('created_date', { ascending: false }),
-          supabase.from('stock_orders')
-            .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items, created_date')
-            .order('created_date', { ascending: false }),
-          supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
-            .neq('status', 'cancelled').neq('status', 'draft')
-            .order('created_at', { ascending: false }),
-          supabase.from('assessment_plans').select('id, price_total, name'),
-          supabase.from('presale_customers').select('id, full_name'),
-        ]);
-
-        const plansMap     = Object.fromEntries((plansRes.data || []).map(p => [p.id, p]));
-        const customersMap = Object.fromEntries((customersRes.data || []).map(c => [c.id, c]));
-
-        const presale = (presaleRes.data || []).map(o => ({
-          ...o, type: 'presale', customer: o.checkout_name,
-          created_at: o.created_date,
-        }));
-        const stock = (stockRes.data || []).map(o => ({
-          ...o, type: 'stock', customer: o.customer_name,
-          created_at: o.created_date,
-        }));
-        const contracts = (contractRes.data || []).map(c => {
-          const plan = plansMap[c.plan_id];
-          // Snapshot preserva o valor original mesmo se o plano for editado
-          const snapPrice = c.plan_snapshot?.price_total;
-          const base = snapPrice != null ? Number(snapPrice) : (plan ? Number(plan.price_total) : 0);
-          const total_value = Math.max(0, base + (Number(c.enrollment_fee) || 0) - (Number(c.manual_discount) || 0));
-          return {
-            id: c.id, order_number: c.contract_number,
-            customer: customersMap[c.customer_id]?.full_name || '—',
-            plan_name: c.plan_snapshot?.name || plan?.name || '—',
-            total_value, payment_status: c.payment_status,
-            payment_method: c.payment_method, payment_date: c.payment_date,
-            due_date: c.due_date, asaas_charge_id: c.asaas_charge_id,
-            manual_fee: c.manual_fee, installments: c.installments || 1,
-            type: 'contract', created_at: c.created_at,
-          };
-        });
-
-        setSales([...contracts, ...presale, ...stock].sort((a, b) =>
-          (b.created_at || '').localeCompare(a.created_at || '')
-        ));
-      } catch (e) {
-        console.error('[SalesTab]', e);
-        toast.error('Erro ao carregar vendas');
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, []);
 
   const filtered = useMemo(() => {
     return sales.filter(s => {
@@ -657,18 +662,22 @@ function SalesTab() {
 // ─────────────────────────────────────────────────────────────────
 
 function StoreReportsTab() {
-  const [orders, setOrders]           = useState([]);
-  const [products, setProducts]       = useState([]);
-  const [campaigns, setCampaigns]     = useState([]);
+  const {
+    data: { orders, campaigns },
+  } = usePageData({
+    key: 'reports:store',
+    loader: async () => {
+      const [ordersData, campaignsData] = await Promise.all([
+        PreSaleOrder.list(),
+        PreSaleCampaign.list(),
+      ]);
+      return { orders: ordersData, campaigns: campaignsData };
+    },
+    initialData: { orders: [], campaigns: [] },
+    tags: ['presale_orders', 'presale_campaigns'],
+    onError: error => console.error('[StoreReportsTab]', error),
+  });
   const [campaignFilter, setCampaignFilter] = useState('all');
-
-  useEffect(() => {
-    Promise.all([
-      PreSaleOrder.list(),
-      PreSaleProduct.list(),
-      PreSaleCampaign.list(),
-    ]).then(([o, p, c]) => { setOrders(o); setProducts(p); setCampaigns(c); });
-  }, []);
 
   const filteredOrders = campaignFilter === 'all'
     ? orders

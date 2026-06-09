@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Package, CheckCircle2, Clock, Undo2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
+import { invalidatePageCacheByTag } from '@/lib/page-cache';
 import { toast } from 'sonner';
 
 const TABS = [
@@ -13,23 +15,25 @@ const TABS = [
   { key: 'completed',      label: 'Concluídos',           icon: CheckCircle2 },
 ];
 
+async function loadReturnsPage() {
+  const { data, error } = await supabase
+    .from('order_returns')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
 export default function Returns() {
-  const [returns, setReturns] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { data: returns, loading, refresh } = usePageData({
+    key: 'returns:list',
+    loader: loadReturnsPage,
+    initialData: [],
+    tags: ['order_returns'],
+    onError: () => toast.error('Erro ao carregar devoluções'),
+  });
   const [filter, setFilter] = useState('pending_return');
   const [actionId, setActionId] = useState(null);
-
-  const load = async () => {
-    setLoading(true);
-    const { data } = await supabase
-      .from('order_returns')
-      .select('*')
-      .order('created_at', { ascending: false });
-    setReturns(data || []);
-    setLoading(false);
-  };
-
-  useEffect(() => { load(); }, []);
 
   const markReceived = async (ret) => {
     setActionId(ret.id);
@@ -39,7 +43,8 @@ export default function Returns() {
         received_at: new Date().toISOString(),
       }).eq('id', ret.id);
       toast.success('Marcado como recebido!');
-      load();
+      invalidatePageCacheByTag('order_returns');
+      await refresh({ force: true });
     } catch {
       toast.error('Erro ao atualizar');
     } finally {
@@ -64,7 +69,9 @@ export default function Returns() {
         completed_at: new Date().toISOString(),
       }).eq('id', ret.id);
       toast.success(ret.product_id ? 'Estoque reposto!' : 'Devolução concluída!');
-      load();
+      invalidatePageCacheByTag('order_returns');
+      if (ret.product_id) invalidatePageCacheByTag('stock_products');
+      await refresh({ force: true });
     } catch {
       toast.error('Erro ao repor estoque');
     } finally {

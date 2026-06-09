@@ -1,25 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Truck, Search, Edit, Trash2, Phone, Mail, Globe } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PreSaleSupplier, PreSaleProduct } from '@/api/entities';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
+async function loadSuppliersPage() {
+  const [suppliers, products] = await Promise.all([
+    PreSaleSupplier.list(),
+    PreSaleProduct.list(),
+  ]);
+  return { suppliers, products };
+}
+
 export default function Suppliers() {
-  const [suppliers, setSuppliers] = useState([]);
-  const [products, setProducts] = useState([]);
+  const {
+    data: { suppliers, products },
+    refresh,
+  } = usePageData({
+    key: 'suppliers:list',
+    loader: loadSuppliersPage,
+    initialData: { suppliers: [], products: [] },
+    tags: ['presale_suppliers', 'presale_products'],
+    onError: error => toast.error('Erro ao carregar fornecedores: ' + error.message),
+  });
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
-
-  const load = async () => {
-    const [s, p] = await Promise.all([PreSaleSupplier.list(), PreSaleProduct.list()]);
-    setSuppliers(s);
-    setProducts(p);
-  };
-
-  useEffect(() => { load(); }, []);
 
   const filtered = suppliers.filter(s =>
     s.name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -32,7 +41,7 @@ export default function Suppliers() {
     if (!confirm(`Excluir fornecedor "${name}"?`)) return;
     await PreSaleSupplier.delete(id);
     toast.success('Fornecedor excluído');
-    load();
+    await refresh({ force: true });
   };
 
   return (

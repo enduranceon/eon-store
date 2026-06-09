@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ShoppingCart, Search, AlertTriangle, ArrowRight } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { PreSaleOrder, PreSaleCampaign } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
@@ -80,31 +81,44 @@ function PaymentStatusCell({ order, onOpen }) {
   );
 }
 
+async function loadOrdersPage() {
+  const [orders, campaigns] = await Promise.all([
+    PreSaleOrder.list(),
+    PreSaleCampaign.list(),
+  ]);
+  return { orders, campaigns };
+}
+
 export default function Orders() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [orders, setOrders] = useState([]);
-  const [campaigns, setCampaigns] = useState([]);
+  const {
+    data: { orders, campaigns },
+    setData,
+    refresh,
+  } = usePageData({
+    key: 'orders:list',
+    loader: loadOrdersPage,
+    initialData: { orders: [], campaigns: [] },
+    tags: ['presale_orders', 'presale_campaigns'],
+    onError: () => toast.error('Erro ao carregar pedidos'),
+  });
   const [search, setSearch] = useState('');
   const [paymentFilter, setPaymentFilter] = useState(() => searchParams.get('pagamento') || 'all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
   const [campaignFilter, setCampaignFilter] = useState('all');
 
-  const load = () => Promise.all([PreSaleOrder.list(), PreSaleCampaign.list()]).then(([o, c]) => {
-    setOrders(o);
-    setCampaigns(c);
-  }).catch(() => toast.error('Erro ao carregar pedidos'));
-
-  useEffect(() => { load(); }, []);
-
   const commitUpdate = async (orderId, field, value, extras = {}) => {
     const patch = { [field]: value, ...extras };
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...patch } : o));
+    setData(prev => ({
+      ...prev,
+      orders: prev.orders.map(o => o.id === orderId ? { ...o, ...patch } : o),
+    }));
     try {
       await PreSaleOrder.update(orderId, patch);
     } catch (e) {
       toast.error(e.message);
-      load();
+      refresh({ force: true }).catch(() => {});
     }
   };
 

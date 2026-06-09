@@ -1,22 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Tag, Trash2, Edit2, Check, X, ChevronDown, ChevronRight } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PreSaleCategory } from '@/api/entities';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
+
+async function loadCategoriesPage() {
+  return PreSaleCategory.list();
+}
 
 export default function Categories() {
-  const [categories, setCategories] = useState([]);
+  const { data: categories, refresh } = usePageData({
+    key: 'categories:list',
+    loader: loadCategoriesPage,
+    initialData: [],
+    tags: ['presale_categories'],
+    onError: error => toast.error('Erro ao carregar categorias: ' + error.message),
+  });
   const [expanded, setExpanded] = useState({});
   const [newCatName, setNewCatName] = useState('');
   const [editingCat, setEditingCat] = useState(null); // { id, name }
   const [newSubName, setNewSubName] = useState({}); // { catId: '' }
   const [editingSub, setEditingSub] = useState(null); // { catId, index, name }
-
-  const load = () => PreSaleCategory.list().then(setCategories);
-  useEffect(() => { load(); }, []);
 
   // ─── Categorias ──────────────────────────────────────────────────────────────
 
@@ -28,7 +36,7 @@ export default function Categories() {
     try {
       await PreSaleCategory.create({ name, subcategories: [] });
       setNewCatName('');
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
@@ -38,7 +46,7 @@ export default function Categories() {
     try {
       await PreSaleCategory.update(cat.id, { name });
       setEditingCat(null);
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
@@ -47,7 +55,7 @@ export default function Categories() {
     try {
       await PreSaleCategory.delete(cat.id);
       toast.success('Categoria excluída');
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
@@ -61,7 +69,7 @@ export default function Categories() {
     try {
       await PreSaleCategory.update(cat.id, { subcategories: [...subs, name] });
       setNewSubName(prev => ({ ...prev, [cat.id]: '' }));
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
@@ -73,7 +81,7 @@ export default function Categories() {
     try {
       await PreSaleCategory.update(cat.id, { subcategories: subs });
       setEditingSub(null);
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
@@ -83,7 +91,7 @@ export default function Categories() {
     try {
       const subs = (cat.subcategories || []).filter((_, i) => i !== idx);
       await PreSaleCategory.update(cat.id, { subcategories: subs });
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 

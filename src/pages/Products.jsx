@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Package, Search, Edit, Trash2, Copy } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,21 +7,29 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { PreSaleProduct } from '@/api/entities';
-import { formatCurrency, formatPercent } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const STATUS_LABEL = { active: 'Ativo', inactive: 'Inativo', pre_sale_closed: 'Pré-venda encerrada' };
 const STATUS_BADGE = { active: 'success', inactive: 'secondary', pre_sale_closed: 'warning' };
 
+async function loadProductsPage() {
+  return PreSaleProduct.list();
+}
+
 export default function Products() {
-  const [products, setProducts] = useState([]);
+  const { data: products, refresh } = usePageData({
+    key: 'products:list',
+    loader: loadProductsPage,
+    initialData: [],
+    tags: ['presale_products'],
+    onError: error => toast.error('Erro ao carregar produtos: ' + error.message),
+  });
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const navigate = useNavigate();
-
-  const load = () => PreSaleProduct.list().then(setProducts);
-  useEffect(() => { load(); }, []);
 
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))].sort();
 
@@ -38,7 +46,7 @@ export default function Products() {
     try {
       await PreSaleProduct.delete(id);
       toast.success('Produto excluído');
-      load();
+      await refresh({ force: true });
     } catch (e) {
       toast.error('Erro ao excluir: ' + e.message);
     }
@@ -46,10 +54,12 @@ export default function Products() {
 
   const handleDuplicate = async (p) => {
     try {
-      const { id, created_date, ...rest } = p;
+      const rest = { ...p };
+      delete rest.id;
+      delete rest.created_date;
       await PreSaleProduct.create({ ...rest, name: `${p.name} (cópia)`, status: 'inactive' });
       toast.success('Produto duplicado');
-      load();
+      await refresh({ force: true });
     } catch (e) {
       toast.error('Erro ao duplicar: ' + e.message);
     }

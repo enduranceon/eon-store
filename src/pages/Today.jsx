@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ShoppingCart, MessageCircle, Clock, Package,
+  AlertTriangle, ShoppingCart, Clock, Package,
   Undo2, ChevronRight, Sparkles, RotateCcw, CalendarX,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
+import { usePageData } from '@/hooks/usePageData';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -116,89 +116,94 @@ function Section({ title, subtitle, icon: Icon, iconColor, count, total, borderC
   );
 }
 
+async function loadTodayPage() {
+  const [presaleRes, stockRes, contractRes, plansRes, customersRes, returnsRes, refundsRes] = await Promise.all([
+    supabase.from('presale_orders')
+      .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, due_date, created_date, status_changed_at')
+      .neq('payment_status', 'cancelled')
+      .neq('payment_status', 'refunded'),
+    supabase.from('stock_orders')
+      .select('id, order_number, customer_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, due_date, created_date, status_changed_at')
+      .neq('payment_status', 'cancelled')
+      .neq('payment_status', 'refunded'),
+    supabase.from('assessment_contracts')
+      .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, due_date, end_date, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, refund_status, refund_amount')
+      .not('status', 'in', '("cancelled","finished","draft")')
+      .neq('payment_status', 'refunded'),
+    supabase.from('assessment_plans').select('id, price_total'),
+    supabase.from('presale_customers').select('id, full_name'),
+    supabase.from('order_returns').select('*').in('status', ['pending_return', 'received']),
+    supabase.from('assessment_contracts')
+      .select('id, contract_number, customer_id, refund_amount, refund_status, payment_method, updated_at')
+      .eq('refund_status', 'pending'),
+  ]);
+
+  const presale = (presaleRes.data || []).map(o => ({ ...o, type: 'presale', customer: o.checkout_name }));
+  const stock = (stockRes.data || []).map(o => ({ ...o, type: 'stock', customer: o.customer_name }));
+  const plansMap = Object.fromEntries((plansRes.data || []).map(p => [p.id, p]));
+  const customersMap = Object.fromEntries((customersRes.data || []).map(c => [c.id, c]));
+  const contracts = (contractRes.data || []).map(c => {
+    const plan = plansMap[c.plan_id];
+    const base = Number(plan?.price_total) || 0;
+    const total = Math.max(0, base + (Number(c.enrollment_fee) || 0) - (Number(c.manual_discount) || 0));
+    return {
+      id: c.id,
+      order_number: c.contract_number,
+      customer: customersMap[c.customer_id]?.full_name || '—',
+      total_value: total,
+      payment_status: c.payment_status,
+      payment_method: c.payment_method,
+      due_date: c.due_date,
+      end_date: c.end_date,
+      status: c.status,
+      asaas_charge_id: c.asaas_charge_id,
+      type: 'contract',
+    };
+  });
+
+  let pendingRefunds = [];
+  if (refundsRes.data?.length) {
+    const customerIds = [...new Set(refundsRes.data.map(r => r.customer_id).filter(Boolean))];
+    const { data: refundCustomers } = await supabase
+      .from('presale_customers')
+      .select('id, full_name')
+      .in('id', customerIds);
+    const refundCustomerMap = Object.fromEntries((refundCustomers || []).map(c => [c.id, c]));
+    pendingRefunds = refundsRes.data.map(r => ({
+      ...r,
+      customer_name: refundCustomerMap[r.customer_id]?.full_name || '—',
+    }));
+  }
+
+  return {
+    orders: [...presale, ...stock],
+    contracts,
+    returns: returnsRes.data || [],
+    pendingRefunds,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────
 // COMPONENTE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────
 export default function Today() {
-  const [loading, setLoading] = useState(true);
-  const [orders, setOrders]   = useState([]);    // store orders (presale + stock)
-  const [contracts, setContracts] = useState([]); // assessment contracts
-  const [returns, setReturns] = useState([]);
-  const [pendingRefunds, setPendingRefunds] = useState([]);
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [presaleRes, stockRes, contractRes, plansRes, customersRes, returnsRes, refundsRes] = await Promise.all([
-          supabase.from('presale_orders')
-            .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, due_date, created_date, status_changed_at')
-            .neq('payment_status', 'cancelled')
-            .neq('payment_status', 'refunded'),
-          supabase.from('stock_orders')
-            .select('id, order_number, customer_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, due_date, created_date, status_changed_at')
-            .neq('payment_status', 'cancelled')
-            .neq('payment_status', 'refunded'),
-          supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, due_date, end_date, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, refund_status, refund_amount')
-            .not('status', 'in', '("cancelled","finished","draft")')
-            .neq('payment_status', 'refunded'),
-          supabase.from('assessment_plans').select('id, price_total'),
-          supabase.from('presale_customers').select('id, full_name'),
-          supabase.from('order_returns').select('*').in('status', ['pending_return', 'received']),
-          supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, refund_amount, refund_status, payment_method, updated_at')
-            .eq('refund_status', 'pending'),
-        ]);
-
-        const presale = (presaleRes.data || []).map(o => ({ ...o, type: 'presale', customer: o.checkout_name }));
-        const stock   = (stockRes.data   || []).map(o => ({ ...o, type: 'stock',   customer: o.customer_name  }));
-        setOrders([...presale, ...stock]);
-        setReturns(returnsRes.data || []);
-
-        // Mapeia contratos
-        const plansMap     = Object.fromEntries((plansRes.data     || []).map(p => [p.id, p]));
-        const customersMap = Object.fromEntries((customersRes.data || []).map(c => [c.id, c]));
-
-        const mapped = (contractRes.data || []).map(c => {
-          const plan  = plansMap[c.plan_id];
-          const base  = Number(plan?.price_total) || 0;
-          const total = Math.max(0, base + (Number(c.enrollment_fee) || 0) - (Number(c.manual_discount) || 0));
-          return {
-            id:             c.id,
-            order_number:   c.contract_number,
-            customer:       customersMap[c.customer_id]?.full_name || '—',
-            total_value:    total,
-            payment_status: c.payment_status,
-            payment_method: c.payment_method,
-            due_date:       c.due_date,
-            end_date:       c.end_date,
-            status:         c.status,
-            asaas_charge_id: c.asaas_charge_id,
-            type:           'contract',
-          };
-        });
-        setContracts(mapped);
-
-        // Estornos pendentes
-        if (refundsRes.data?.length) {
-          const rfIds = [...new Set(refundsRes.data.map(r => r.customer_id).filter(Boolean))];
-          const { data: rfCust } = await supabase.from('presale_customers').select('id, full_name').in('id', rfIds);
-          const rfMap = Object.fromEntries((rfCust || []).map(c => [c.id, c]));
-          setPendingRefunds(refundsRes.data.map(r => ({
-            ...r,
-            customer_name: rfMap[r.customer_id]?.full_name || '—',
-          })));
-        } else {
-          setPendingRefunds([]);
-        }
-      } catch (e) {
-        console.error('Erro ao carregar Hoje:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, []);
+  const {
+    data: { orders, contracts, returns, pendingRefunds },
+    loading,
+  } = usePageData({
+    key: 'today:dashboard',
+    loader: loadTodayPage,
+    initialData: { orders: [], contracts: [], returns: [], pendingRefunds: [] },
+    tags: [
+      'presale_orders',
+      'stock_orders',
+      'assessment_contracts',
+      'assessment_plans',
+      'presale_customers',
+      'order_returns',
+    ],
+    onError: error => console.error('Erro ao carregar Hoje:', error),
+  });
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">

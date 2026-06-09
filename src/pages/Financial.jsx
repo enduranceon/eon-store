@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isEffectiveOpenSale, isSafePaymentUrl } from '@/lib/sales';
+import { readPageCache, writePageCache } from '@/lib/page-cache';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
@@ -25,15 +26,25 @@ import { toast } from 'sonner';
 const RECEIVABLES_CACHE_KEY = 'asaas_receivables_cache_v1';
 const RECEIVABLES_CACHE_TTL = 5 * 60 * 1000;
 const FINANCIAL_PAGE_CACHE_TTL = 60 * 1000;
-let financialPageCache = null;
+const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview';
 
 function writeFinancialPageCache(data) {
-  financialPageCache = { data, updatedAt: Date.now() };
+  writePageCache(FINANCIAL_PAGE_CACHE_KEY, data, [
+    'presale_orders',
+    'stock_orders',
+    'assessment_contracts',
+    'assessment_plans',
+    'presale_customers',
+    'revenue_centers',
+    'stock_products',
+    'asaas_payments',
+  ]);
 }
 
 function patchFinancialPageCache(partial) {
-  if (!financialPageCache?.data) return;
-  writeFinancialPageCache({ ...financialPageCache.data, ...partial });
+  const cached = readPageCache(FINANCIAL_PAGE_CACHE_KEY);
+  if (!cached?.data) return;
+  writeFinancialPageCache({ ...cached.data, ...partial });
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -328,7 +339,7 @@ function CustomTooltip({ active, payload, label }) {
 // COMPONENTE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────
 export default function Financial() {
-  const [initialFinancialCache] = useState(() => financialPageCache);
+  const [initialFinancialCache] = useState(() => readPageCache(FINANCIAL_PAGE_CACHE_KEY));
   const cachedFinancialData = initialFinancialCache?.data;
   const [loading, setLoading]             = useState(!cachedFinancialData);
   const [orders, setOrders]               = useState(() => cachedFinancialData?.orders || []);

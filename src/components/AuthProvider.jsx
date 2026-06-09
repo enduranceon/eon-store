@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/api/db';
 import { AuthContext } from '@/contexts/AuthContext';
+import { clearPageCache } from '@/lib/page-cache';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -12,6 +13,7 @@ export function AuthProvider({ children }) {
     const validateSession = async (session) => {
       if (!active) return;
       if (!session?.user) {
+        clearPageCache();
         setUser(null);
         setLoading(false);
         return;
@@ -42,7 +44,10 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const signOut = () => supabase.auth.signOut();
+  const signOut = () => {
+    clearPageCache();
+    return supabase.auth.signOut();
+  };
 
   return (
     <AuthContext.Provider value={{ user, loading, signOut }}>

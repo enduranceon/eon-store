@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Search, FileText, ChevronRight, Filter, RefreshCcw } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Search, FileText, ChevronRight, RefreshCcw } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import {
   AssessmentPlan, AssessmentModality,
 } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
 
 const STATUS = {
   active:    { label: 'Ativo',     cls: 'bg-green-100 text-green-700' },
@@ -27,38 +28,38 @@ const PAY = {
   partially_refunded: { label: 'Est. parcial', cls: 'bg-amber-100 text-amber-700' },
 };
 
+async function loadContractsPage() {
+  const [contracts, students, coaches, plans, modalities] = await Promise.all([
+    AssessmentContract.list('-created_at').catch(() => []),
+    PreSaleCustomer.list().catch(() => []),
+    AssessmentCoach.list().catch(() => []),
+    AssessmentPlan.list().catch(() => []),
+    AssessmentModality.list().catch(() => []),
+  ]);
+  return { contracts, students, coaches, plans, modalities };
+}
+
 export default function Contracts() {
   const navigate = useNavigate();
-  const [contracts, setContracts] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [coaches, setCoaches] = useState([]);
-  const [plans, setPlans] = useState([]);
-  const [modalities, setModalities] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: { contracts, students, coaches, plans, modalities },
+  } = usePageData({
+    key: 'assessment-contracts:list',
+    loader: loadContractsPage,
+    initialData: { contracts: [], students: [], coaches: [], plans: [], modalities: [] },
+    tags: [
+      'assessment_contracts',
+      'presale_customers',
+      'assessment_coaches',
+      'assessment_plans',
+      'assessment_modalities',
+    ],
+    onError: error => console.error('Erro ao carregar contratos:', error),
+  });
   const [search, setSearch] = useState('');
   const [statusF, setStatusF] = useState('all');
   const [modalityF, setModalityF] = useState('all');
   const [coachF, setCoachF] = useState('all');
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [c, s, co, p, m] = await Promise.all([
-          AssessmentContract.list('-created_at').catch(() => []),
-          PreSaleCustomer.list().catch(() => []),
-          AssessmentCoach.list().catch(() => []),
-          AssessmentPlan.list().catch(() => []),
-          AssessmentModality.list().catch(() => []),
-        ]);
-        setContracts(c); setStudents(s); setCoaches(co); setPlans(p); setModalities(m);
-      } catch (e) {
-        console.error('Erro ao carregar contratos:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, []);
 
   const enriched = contracts.map(c => {
     const plan = plans.find(p => p.id === c.plan_id);

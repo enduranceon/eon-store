@@ -1,49 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Users, Search, AlertTriangle, FileText, TrendingUp } from 'lucide-react';
+import { Users, Search, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
+
+async function loadCustomersPage() {
+  const [customers, orders, contracts, plans] = await Promise.all([
+    PreSaleCustomer.list('full_name'),
+    PreSaleOrder.list().catch(() => []),
+    AssessmentContract.list('-created_at').catch(() => []),
+    AssessmentPlan.list().catch(() => []),
+  ]);
+  return { customers, orders, contracts, plans };
+}
 
 export default function Customers() {
-  const [customers,  setCustomers]  = useState([]);
-  const [orders,     setOrders]     = useState([]);
-  const [contracts,  setContracts]  = useState([]);
-  const [plans,      setPlans]      = useState([]);
-  const [loading,    setLoading]    = useState(true);
+  const [searchParams] = useSearchParams();
+  const {
+    data: { customers, orders, contracts, plans },
+    loading,
+  } = usePageData({
+    key: 'customers:list',
+    loader: loadCustomersPage,
+    initialData: { customers: [], orders: [], contracts: [], plans: [] },
+    tags: ['presale_customers', 'presale_orders', 'assessment_contracts', 'assessment_plans'],
+    onError: error => console.error('Erro ao carregar clientes:', error),
+  });
   const [search,     setSearch]     = useState('');
   const [typeFilter, setTypeFilter] = useState('all'); // all | assessment | store-only
-  const [cpfFilter,  setCpfFilter]  = useState('all'); // all | no-cpf
+  const [cpfFilter,  setCpfFilter]  = useState(() => searchParams.get('filtro') === 'sem-cpf' ? 'no-cpf' : 'all');
   const [sortBy,     setSortBy]     = useState('ltv'); // ltv | name | last-activity
   const navigate  = useNavigate();
-  const [searchParams] = useSearchParams();
-
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        // Carrega tudo em paralelo mas com fallback individual
-        const [c, o, ct, pl] = await Promise.all([
-          PreSaleCustomer.list('full_name'),
-          PreSaleOrder.list().catch(() => []),
-          AssessmentContract.list('-created_at').catch(() => []),
-          AssessmentPlan.list().catch(() => []),
-        ]);
-        setCustomers(c);
-        setOrders(o);
-        setContracts(ct);
-        setPlans(pl);
-      } catch (e) {
-        console.error('Erro ao carregar clientes:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-    if (searchParams.get('filtro') === 'sem-cpf') setCpfFilter('no-cpf');
-  }, []);
 
   // ── LTV e stats por cliente ───────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   TrendingUp, Calendar, Wallet, RefreshCw,
   ChevronDown, ChevronRight, Zap, Banknote, CreditCard,
@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Cell, LineChart, Line,
@@ -113,42 +114,41 @@ function MonthlyChartTooltip({ active, payload }) {
   );
 }
 
+async function loadCashFlowPayments() {
+  const start = new Date();
+  start.setMonth(start.getMonth() - 12);
+  start.setDate(1);
+  const end = new Date();
+  end.setMonth(end.getMonth() + 12);
+
+  const { data, error } = await supabase
+    .from('asaas_payments')
+    .select('id, asaas_payment_id, order_id, order_type, status, source, value, net_value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments, description, external_reference, payment_method_id')
+    .gte('credit_date', toLocalDateStr(start))
+    .lte('credit_date', toLocalDateStr(end))
+    .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
+    .order('credit_date', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
 // ─────────────────────────────────────────────────────────────────
 // COMPONENTE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────
 export default function CashFlow() {
-  const [loading, setLoading] = useState(true);
-  const [payments, setPayments] = useState([]);
-  const [refreshing, setRefreshing] = useState(false);
+  const { data: payments, loading, refreshing, refresh } = usePageData({
+    key: 'cash-flow:payments',
+    loader: loadCashFlowPayments,
+    initialData: [],
+    tags: ['asaas_payments'],
+    onError: error => console.error('Erro ao carregar fluxo de caixa:', error),
+  });
   const [expandedMonth, setExpandedMonth] = useState(null);
 
-  const load = async () => {
-    try {
-      // Janela: 12 meses pra trás até 12 meses à frente
-      const start = new Date(); start.setMonth(start.getMonth() - 12); start.setDate(1);
-      const end   = new Date(); end.setMonth(end.getMonth() + 12);
-
-      const { data, error } = await supabase
-        .from('asaas_payments')
-        .select('id, asaas_payment_id, order_id, order_type, status, source, value, net_value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments, description, external_reference, payment_method_id')
-        .gte('credit_date', toLocalDateStr(start))
-        .lte('credit_date', toLocalDateStr(end))
-        .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
-        .order('credit_date', { ascending: true });
-
-      if (error) throw error;
-      setPayments(data || []);
-    } catch (e) {
-      console.error('Erro ao carregar fluxo de caixa:', e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+  const handleRefresh = () => {
+    refresh({ force: true }).catch(() => {});
   };
-
-  useEffect(() => { load(); }, []);
-
-  const handleRefresh = () => { setRefreshing(true); load(); };
 
   // ── Cálculos ────────────────────────────────────────────────────
   const todayStr = todayLocalStr();

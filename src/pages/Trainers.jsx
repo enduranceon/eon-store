@@ -1,20 +1,27 @@
-import { useEffect, useState } from 'react';
-import { Plus, UserCheck, Trash2, Edit2, Check, X, Phone, Mail } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, UserCheck, Trash2, Edit2, Check, Phone, Mail } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PreSaleTrainer } from '@/api/entities';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
+async function loadTrainersPage() {
+  return PreSaleTrainer.list();
+}
+
 export default function Trainers() {
-  const [trainers, setTrainers] = useState([]);
-  const [newName, setNewName] = useState('');
+  const { data: trainers, refresh } = usePageData({
+    key: 'trainers:list',
+    loader: loadTrainersPage,
+    initialData: [],
+    tags: ['presale_trainers'],
+    onError: error => toast.error('Erro ao carregar treinadores: ' + error.message),
+  });
   const [editing, setEditing] = useState(null); // { id, name, whatsapp, email }
   const [adding, setAdding] = useState(false);
   const [newForm, setNewForm] = useState({ name: '', whatsapp: '', email: '' });
-
-  const load = () => PreSaleTrainer.list().then(setTrainers);
-  useEffect(() => { load(); }, []);
 
   const handleAdd = async () => {
     if (!newForm.name.trim()) return;
@@ -25,7 +32,7 @@ export default function Trainers() {
       setNewForm({ name: '', whatsapp: '', email: '' });
       setAdding(false);
       toast.success('Treinador cadastrado!');
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
@@ -35,7 +42,7 @@ export default function Trainers() {
       await PreSaleTrainer.update(editing.id, { name: editing.name.trim(), whatsapp: editing.whatsapp, email: editing.email });
       setEditing(null);
       toast.success('Treinador atualizado!');
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 
@@ -44,7 +51,7 @@ export default function Trainers() {
     try {
       await PreSaleTrainer.delete(t.id);
       toast.success('Treinador excluído');
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error('Erro: ' + e.message); }
   };
 

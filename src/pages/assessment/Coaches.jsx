@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Plus, Pencil, Search, UserCheck, Power, PowerOff, Phone, Mail } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, Pencil, Search, UserCheck, Phone, Mail } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AssessmentCoach, AssessmentContract } from '@/api/entities';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const ROLE_LABEL = { junior: 'Junior', pleno: 'Pleno', senior: 'Senior' };
@@ -18,30 +19,34 @@ const ROLE_COLOR = {
 
 const emptyForm = { name: '', email: '', phone: '', role: 'junior', leader_id: null, co_leader_ids: [], active: true };
 
+async function loadCoachesPage() {
+  const [coaches, contracts] = await Promise.all([
+    AssessmentCoach.list('name').catch(() => []),
+    AssessmentContract.filter({ status: 'active' }, '-created_at').catch(() => []),
+  ]);
+  const counts = {};
+  contracts.forEach(contract => {
+    counts[contract.coach_id] = (counts[contract.coach_id] || 0) + 1;
+  });
+  return { coaches, counts };
+}
+
 export default function Coaches() {
-  const [coaches, setCoaches] = useState([]);
-  const [counts, setCounts] = useState({}); // coach_id → ativos
+  const {
+    data: { coaches, counts },
+    refresh,
+  } = usePageData({
+    key: 'assessment-coaches:list',
+    loader: loadCoachesPage,
+    initialData: { coaches: [], counts: {} },
+    tags: ['assessment_coaches', 'assessment_contracts'],
+    onError: error => console.error('Erro ao carregar coaches:', error),
+  });
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
-
-  const load = async () => {
-    try {
-      const [list, contracts] = await Promise.all([
-        AssessmentCoach.list('name').catch(() => []),
-        AssessmentContract.filter({ status: 'active' }, '-created_at').catch(() => []),
-      ]);
-      setCoaches(list);
-      const c = {};
-      contracts.forEach(ct => { c[ct.coach_id] = (c[ct.coach_id] || 0) + 1; });
-      setCounts(c);
-    } catch (e) {
-      console.error('Erro ao carregar coaches:', e);
-    }
-  };
-  useEffect(() => { load(); }, []);
 
   const open = (c) => {
     if (c) { setEditing(c); setForm({ ...c, co_leader_ids: c.co_leader_ids || [] }); }
@@ -66,14 +71,19 @@ export default function Coaches() {
       };
       if (editing) await AssessmentCoach.update(editing.id, payload);
       else await AssessmentCoach.create(payload);
-      toast.success('Salvo!'); setModal(false); load();
+      toast.success('Salvo!');
+      setModal(false);
+      await refresh({ force: true });
     } catch (e) {
       toast.error(e.message?.includes('duplicate') ? 'Email já cadastrado' : (e.message || 'Erro'));
     } finally { setSaving(false); }
   };
 
   const toggle = async (c) => {
-    try { await AssessmentCoach.update(c.id, { active: !c.active }); load(); }
+    try {
+      await AssessmentCoach.update(c.id, { active: !c.active });
+      await refresh({ force: true });
+    }
     catch (e) { toast.error(e.message); }
   };
 

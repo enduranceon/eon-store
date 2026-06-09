@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Plus, Pencil, Trash2, Save, X, Calendar, MessageCircle, DollarSign, Info } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, Pencil, Trash2, Save, Calendar, MessageCircle, DollarSign, Info } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { RenewalRule } from '@/api/entities';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const ACTION_TYPES = [
@@ -42,24 +43,22 @@ const TYPE_INFO = {
   },
 };
 
+async function loadRenewalRulesPage() {
+  return RenewalRule.list('order_index').catch(() => []);
+}
+
 export default function Regua() {
-  const [rules, setRules]     = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { data: rules, loading, refresh } = usePageData({
+    key: 'renewal-rules:list',
+    loader: loadRenewalRulesPage,
+    initialData: [],
+    tags: ['renewal_rules'],
+    onError: error => console.error(error),
+  });
   const [modal, setModal]     = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({});
   const [activeTab, setActiveTab] = useState('renewal'); // 'renewal' | 'payment'
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const data = await RenewalRule.list('order_index').catch(() => []);
-      setRules(data);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  };
-
-  useEffect(() => { load(); }, []);
 
   const open = (r) => {
     setEditing(r);
@@ -92,18 +91,26 @@ export default function Regua() {
       if (editing?.id) await RenewalRule.update(editing.id, payload);
       else             await RenewalRule.create(payload);
       toast.success('Regra salva!');
-      setModal(false); load();
+      setModal(false);
+      await refresh({ force: true });
     } catch (e) { toast.error(e.message); }
   };
 
   const remove = async (r) => {
     if (!confirm(`Excluir a regra "${r.name}"?\n\nAções já registradas no histórico permanecem (não são apagadas).`)) return;
-    try { await RenewalRule.delete(r.id); toast.success('Regra excluída'); load(); }
+    try {
+      await RenewalRule.delete(r.id);
+      toast.success('Regra excluída');
+      await refresh({ force: true });
+    }
     catch (e) { toast.error(e.message); }
   };
 
   const toggle = async (r) => {
-    try { await RenewalRule.update(r.id, { active: !r.active }); load(); }
+    try {
+      await RenewalRule.update(r.id, { active: !r.active });
+      await refresh({ force: true });
+    }
     catch (e) { toast.error(e.message); }
   };
 

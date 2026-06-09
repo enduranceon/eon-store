@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   CreditCard, Plus, Pencil, Trash2, Save, X, AlertTriangle,
   Lock, ChevronDown, ChevronRight, FolderPlus,
@@ -11,6 +11,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PaymentMethodConfig } from '@/api/entities';
 import { formatCurrency } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const KIND_LABEL = {
@@ -43,9 +44,17 @@ const emptyForm = {
   active:               true,
 };
 
+async function loadPaymentMethodsPage() {
+  return PaymentMethodConfig.list('order_index').catch(() => []);
+}
+
 export default function PaymentMethodsConfig() {
-  const [methods, setMethods]       = useState([]);
-  const [loading, setLoading]       = useState(true);
+  const { data: methods, loading, refresh } = usePageData({
+    key: 'payment-methods:list',
+    loader: loadPaymentMethodsPage,
+    initialData: [],
+    tags: ['payment_methods'],
+  });
   const [collapsed, setCollapsed]   = useState({}); // grupo → bool
   const [editing, setEditing]       = useState(null); // método em edição ou 'new'
   const [form, setForm]             = useState(emptyForm);
@@ -53,15 +62,6 @@ export default function PaymentMethodsConfig() {
 
   const [groupModal, setGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const data = await PaymentMethodConfig.list('order_index').catch(() => []);
-      setMethods(data || []);
-    } finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, []);
 
   const grouped = useMemo(() => {
     const map = {};
@@ -114,7 +114,7 @@ export default function PaymentMethodsConfig() {
         toast.success('Método atualizado!');
       }
       setEditing(null);
-      load();
+      await refresh({ force: true });
     } catch (e) {
       toast.error(e.message || 'Erro ao salvar');
     } finally { setSaving(false); }
@@ -126,14 +126,14 @@ export default function PaymentMethodsConfig() {
     try {
       await PaymentMethodConfig.delete(method.id);
       toast.success('Método excluído');
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error(e.message); }
   };
 
   const toggleActive = async (method) => {
     try {
       await PaymentMethodConfig.update(method.id, { active: !method.active });
-      load();
+      await refresh({ force: true });
     } catch (e) { toast.error(e.message); }
   };
 

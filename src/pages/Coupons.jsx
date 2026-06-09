@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Trash2, Ticket, Power, PowerOff, Copy } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Coupon } from '@/api/entities';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 function isExpired(c) {
@@ -27,20 +28,27 @@ function couponStatus(c) {
   return                              { label: 'Ativo',     cls: 'bg-green-100 text-green-700' };
 }
 
+async function loadCouponsPage() {
+  return Coupon.list();
+}
+
 export default function Coupons() {
-  const [coupons, setCoupons] = useState([]);
+  const { data: coupons, refresh } = usePageData({
+    key: 'coupons:list',
+    loader: loadCouponsPage,
+    initialData: [],
+    tags: ['coupons'],
+    onError: () => toast.error('Erro ao carregar cupons'),
+  });
   const [search, setSearch]   = useState('');
   const navigate              = useNavigate();
-
-  const load = () => Coupon.list().then(setCoupons).catch(() => toast.error('Erro ao carregar cupons'));
-  useEffect(() => { load(); }, []);
 
   const handleDelete = async (c) => {
     if (!confirm(`Excluir o cupom "${c.code}"? Esta ação não pode ser desfeita.`)) return;
     try {
       await Coupon.delete(c.id);
       toast.success('Cupom excluído');
-      load();
+      await refresh({ force: true });
     } catch (e) {
       toast.error(e.message || 'Erro ao excluir');
     }
@@ -50,7 +58,7 @@ export default function Coupons() {
     try {
       await Coupon.update(c.id, { active: !c.active });
       toast.success(c.active ? 'Cupom desativado' : 'Cupom ativado');
-      load();
+      await refresh({ force: true });
     } catch (e) {
       toast.error(e.message || 'Erro ao atualizar');
     }

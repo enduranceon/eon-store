@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Users, Phone, Mail, ChevronRight, Filter } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,33 +8,37 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PreSaleCustomer, AssessmentContract } from '@/api/entities';
 import { normalizePhone } from '@/api/db';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const empty = { full_name: '', email: '', whatsapp: '', cpf: '', active: true };
 
+async function loadStudentsPage() {
+  const [customers, contracts] = await Promise.all([
+    PreSaleCustomer.list('full_name').catch(() => []),
+    AssessmentContract.list('-created_at').catch(() => []),
+  ]);
+  return { customers, contracts };
+}
+
 export default function Students() {
   const navigate = useNavigate();
-  const [customers, setCustomers] = useState([]);
-  const [contracts, setContracts] = useState([]);
+  const {
+    data: { customers, contracts },
+    refresh,
+  } = usePageData({
+    key: 'assessment-students:list',
+    loader: loadStudentsPage,
+    initialData: { customers: [], contracts: [] },
+    tags: ['presale_customers', 'assessment_contracts'],
+    onError: error => console.error('Erro ao carregar alunos:', error),
+  });
   const [search, setSearch] = useState('');
   const [onlyStudents, setOnlyStudents] = useState(false); // padrão: mostra toda a base
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
   const [saving, setSaving] = useState(false);
-
-  const load = async () => {
-    try {
-      const [c, ct] = await Promise.all([
-        PreSaleCustomer.list('full_name').catch(() => []),
-        AssessmentContract.list('-created_at').catch(() => []),
-      ]);
-      setCustomers(c); setContracts(ct);
-    } catch (e) {
-      console.error('Erro ao carregar alunos:', e);
-    }
-  };
-  useEffect(() => { load(); }, []);
 
   const open = (s) => {
     if (s) { setEditing(s); setForm({ ...s, active: s.active ?? true }); }
@@ -55,7 +59,9 @@ export default function Students() {
       };
       if (editing) await PreSaleCustomer.update(editing.id, payload);
       else await PreSaleCustomer.create(payload);
-      toast.success('Salvo!'); setModal(false); load();
+      toast.success('Salvo!');
+      setModal(false);
+      await refresh({ force: true });
     } catch (e) { toast.error(e.message || 'Erro'); }
     finally { setSaving(false); }
   };

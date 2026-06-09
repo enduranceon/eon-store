@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Megaphone, Calendar, Building2, Search, Edit, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { PreSaleCampaign, PreSaleOrder } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveSale, isNonCancelledOrder } from '@/lib/sales';
+import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const STATUS_LABEL = { active: 'Ativa', ended: 'Encerrada', archived: 'Arquivada' };
@@ -29,24 +30,30 @@ function generateSlug(name) {
     .replace(/\s+/g, '-');
 }
 
+async function loadCampaignsPage() {
+  const [campaigns, orders] = await Promise.all([
+    PreSaleCampaign.list(),
+    PreSaleOrder.list(),
+  ]);
+  return { campaigns, orders };
+}
+
 export default function Campaigns() {
-  const [campaigns, setCampaigns] = useState([]);
-  const [orders, setOrders] = useState([]);
+  const {
+    data: { campaigns, orders },
+    refresh,
+  } = usePageData({
+    key: 'campaigns:list',
+    loader: loadCampaignsPage,
+    initialData: { campaigns: [], orders: [] },
+    tags: ['presale_campaigns', 'presale_orders'],
+    onError: () => toast.error('Erro ao carregar campanhas'),
+  });
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-
-  const load = async () => {
-    try {
-      const [c, o] = await Promise.all([PreSaleCampaign.list(), PreSaleOrder.list()]);
-      setCampaigns(c);
-      setOrders(o);
-    } catch { toast.error('Erro ao carregar campanhas'); }
-  };
-
-  useEffect(() => { load(); }, []);
 
   const filtered = campaigns.filter(c =>
     c.name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -69,7 +76,7 @@ export default function Campaigns() {
       setOpen(false);
       setEditingId(null);
       setForm(EMPTY_FORM);
-      load();
+      await refresh({ force: true });
     } catch (e) {
       toast.error(e.message);
     } finally {
@@ -94,7 +101,7 @@ export default function Campaigns() {
     try {
       await PreSaleCampaign.delete(c.id);
       toast.success('Campanha excluída');
-      load();
+      await refresh({ force: true });
     } catch (err) {
       toast.error(err.message);
     }
