@@ -1,11 +1,6 @@
 import { useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { CheckCircle2, AlertCircle, Database, ArrowRight } from 'lucide-react';
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
-);
+import { CheckCircle2, Database, ArrowRight } from 'lucide-react';
+import { supabase } from '@/api/db';
 
 const TABLES = [
   { key: 'presale_suppliers',  label: 'Fornecedores' },
@@ -53,7 +48,8 @@ export default function Migrate() {
       if (suppliers.length) {
         addLog(`Migrando ${suppliers.length} fornecedor(es)...`);
         for (const s of suppliers) {
-          const { id: oldId, created_date, updated_date, ...rest } = s;
+          const { id: oldId, created_date, ...rest } = s;
+          delete rest.updated_date;
           const { error } = await supabase.from('presale_suppliers').insert({
             id: newId(oldId), ...rest,
             created_date: created_date ?? new Date().toISOString(),
@@ -69,7 +65,8 @@ export default function Migrate() {
       if (categories.length) {
         addLog(`Migrando ${categories.length} categoria(s)...`);
         for (const c of categories) {
-          const { id: oldId, created_date, updated_date, ...rest } = c;
+          const { id: oldId, created_date, ...rest } = c;
+          delete rest.updated_date;
           const { error } = await supabase.from('presale_categories').insert({
             id: newId(oldId), ...rest,
             created_date: created_date ?? new Date().toISOString(),
@@ -87,7 +84,8 @@ export default function Migrate() {
         const { data: existing } = await supabase.from('presale_trainers').select('name, id');
         const byName = Object.fromEntries((existing ?? []).map(t => [t.name.toLowerCase(), t.id]));
         for (const t of trainers) {
-          const { id: oldId, created_date, updated_date, ...rest } = t;
+          const { id: oldId, created_date, ...rest } = t;
+          delete rest.updated_date;
           const existingId = byName[t.name.toLowerCase()];
           if (existingId) {
             idMap[oldId] = existingId;
@@ -109,7 +107,9 @@ export default function Migrate() {
       if (campaigns.length) {
         addLog(`Migrando ${campaigns.length} campanha(s)...`);
         for (const c of campaigns) {
-          const { id: oldId, product_order, created_date, updated_date, ...rest } = c;
+          const { id: oldId, created_date, ...rest } = c;
+          delete rest.product_order;
+          delete rest.updated_date;
           const { error } = await supabase.from('presale_campaigns').insert({
             id: newId(oldId), ...rest, product_order: null,
             created_date: created_date ?? new Date().toISOString(),
@@ -125,7 +125,8 @@ export default function Migrate() {
       if (products.length) {
         addLog(`Migrando ${products.length} produto(s)...`);
         for (const p of products) {
-          const { id: oldId, campaign_id, supplier_id, created_date, updated_date, ...rest } = p;
+          const { id: oldId, campaign_id, supplier_id, created_date, ...rest } = p;
+          delete rest.updated_date;
           const { error } = await supabase.from('presale_products').insert({
             id: newId(oldId),
             campaign_id: campaign_id ? (idMap[campaign_id] ?? null) : null,
@@ -156,7 +157,8 @@ export default function Migrate() {
       if (customers.length) {
         addLog(`Migrando ${customers.length} cliente(s)...`);
         for (const cu of customers) {
-          const { id: oldId, created_date, updated_date, ...rest } = cu;
+          const { id: oldId, created_date, ...rest } = cu;
+          delete rest.updated_date;
           const { error } = await supabase.from('presale_customers').insert({
             id: newId(oldId), ...rest,
             created_date: created_date ?? new Date().toISOString(),
@@ -172,7 +174,8 @@ export default function Migrate() {
       if (orders.length) {
         addLog(`Migrando ${orders.length} pedido(s)...`);
         for (const o of orders) {
-          const { id: oldId, campaign_id, customer_id, order_number, created_date, updated_date, ...rest } = o;
+          const { id: oldId, campaign_id, customer_id, order_number, created_date, ...rest } = o;
+          delete rest.updated_date;
           const remappedItems = (o.items ?? []).map(item => ({
             ...item,
             product_id: item.product_id ? (idMap[item.product_id] ?? item.product_id) : undefined,
