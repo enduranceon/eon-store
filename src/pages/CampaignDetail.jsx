@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Edit2, Save, X, ExternalLink, Copy, Package, ShoppingCart, DollarSign, TrendingUp, LayoutGrid, GripVertical, Plus, Search, Link2Off, BarChart2 } from 'lucide-react';
+import { ArrowLeft, Edit2, Save, X, ExternalLink, Copy, Package, ShoppingCart, DollarSign, TrendingUp, LayoutGrid, GripVertical, Plus, Search, BarChart2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +10,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { PreSaleCampaign, PreSaleOrder, PreSaleProduct } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { isEffectiveSale } from '@/lib/sales';
+import { isEffectiveSale, isNonCancelledOrder } from '@/lib/sales';
 import { toast } from 'sonner';
 
 const STATUS_LABEL = { active: 'Ativa', ended: 'Encerrada', archived: 'Arquivada' };
@@ -112,7 +112,7 @@ export default function CampaignDetail() {
 
   if (!campaign) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
-  const activeOrders = orders.filter(o => o.payment_status !== 'cancelled');
+  const activeOrders = orders.filter(isNonCancelledOrder);
   const effectiveOrders = activeOrders.filter(isEffectiveSale);
   const totalSold = effectiveOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
   const totalPaid = effectiveOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
@@ -122,15 +122,18 @@ export default function CampaignDetail() {
   const margin = totalSold > 0 ? (grossProfit / totalSold) * 100 : 0;
   const uniqueCustomers = new Set(activeOrders.map(o => o.customer_id || o.checkout_whatsapp)).size;
 
-  // Produtos mais vendidos por item de pedido (exclui itens cancelados)
+  // Resumo operacional: considera todo pedido não cancelado, mesmo sem cobrança.
   const productQty = {};
-  effectiveOrders.forEach(o => {
+  activeOrders.forEach(o => {
     (o.items || []).filter(it => !it.cancelled).forEach(item => {
       const key = `${item.product_name}${item.variation ? ' - ' + item.variation : ''}`;
       productQty[key] = (productQty[key] || 0) + (item.quantity || 1);
     });
   });
-  const topProducts = Object.entries(productQty).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const orderedProducts = Object.entries(productQty).sort((a, b) => {
+    const quantityDifference = b[1] - a[1];
+    return quantityDifference !== 0 ? quantityDifference : a[0].localeCompare(b[0]);
+  });
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -270,11 +273,10 @@ export default function CampaignDetail() {
         <div className="lg:col-span-2">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Pedidos ({orders.length})</CardTitle>
-              {orders.length > 0 && (() => {
-                const nonCancelled = orders.filter(o => o.payment_status !== 'cancelled');
-                const delivered = nonCancelled.filter(o => o.delivery_status === 'delivered').length;
-                const total = nonCancelled.length;
+              <CardTitle className="text-base flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Pedidos ({activeOrders.length})</CardTitle>
+              {activeOrders.length > 0 && (() => {
+                const delivered = activeOrders.filter(o => o.delivery_status === 'delivered').length;
+                const total = activeOrders.length;
                 if (total === 0) return null;
                 const pct = Math.round((delivered / total) * 100);
                 return (
@@ -291,11 +293,11 @@ export default function CampaignDetail() {
               })()}
             </CardHeader>
             <CardContent>
-              {orders.length === 0 ? (
+              {activeOrders.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">Nenhum pedido ainda</p>
               ) : (
                 <div className="space-y-2 max-h-80 overflow-y-auto">
-                  {orders.map(o => (
+                  {activeOrders.map(o => (
                     <Link key={o.id} to={`/pedidos/${o.id}`} className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-colors">
                       <div>
                         <p className="text-sm font-mono font-semibold text-blue-700">{o.order_number}</p>
@@ -313,11 +315,11 @@ export default function CampaignDetail() {
           </Card>
         </div>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Package className="w-4 h-4" /> Top produtos</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Package className="w-4 h-4" /> Itens dos pedidos</CardTitle></CardHeader>
           <CardContent>
-            {topProducts.length === 0 ? <p className="text-sm text-muted-foreground">—</p> : (
-              <div className="space-y-2">
-                {topProducts.map(([name, qty]) => (
+            {orderedProducts.length === 0 ? <p className="text-sm text-muted-foreground">—</p> : (
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {orderedProducts.map(([name, qty]) => (
                   <div key={name} className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground truncate">{name}</span>
                     <span className="font-semibold ml-2 shrink-0">{qty} un.</span>
@@ -544,7 +546,6 @@ function ProductOrderModal({ products, order, saving, onSave, onClose }) {
           {displayed.map((pid, idx) => {
             const p = getProduct(pid);
             if (!p) return null;
-            const isDragging = dragIdx !== null && displayed[dragIdx] === pid && dragIdx === idx && overIdx === null;
             const isOver = overIdx === idx && dragIdx !== idx;
             const img = p.images?.[0] || p.image;
 

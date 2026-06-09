@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { DollarSign, ShoppingCart, Users, TrendingUp, Package, AlertCircle, CheckCircle2, Clock, AlertTriangle, UserX, MessageCircle, CreditCard } from 'lucide-react';
+import { DollarSign, ShoppingCart, Users, TrendingUp, Package, AlertCircle, CheckCircle2, Clock, AlertTriangle, UserX, CreditCard } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PreSaleOrder, PreSaleCustomer, PreSaleProduct, PreSaleCampaign } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { isEffectiveSale } from '@/lib/sales';
+import { isEffectiveSale, isNonCancelledOrder } from '@/lib/sales';
 import { toast } from 'sonner';
 
 function KPICard({ title, value, sub, icon: Icon, color = 'blue' }) {
@@ -72,7 +72,7 @@ export default function Dashboard() {
     }).catch(() => toast.error('Erro ao carregar dados'));
   }, []);
 
-  const activeOrders = orders.filter(o => o.payment_status !== 'cancelled');
+  const activeOrders = orders.filter(isNonCancelledOrder);
   const effectiveOrders = activeOrders.filter(isEffectiveSale);
   const totalSold = effectiveOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
   const totalPaid = effectiveOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
@@ -160,7 +160,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title="Total de Pedidos" value={orders.length} icon={ShoppingCart} color="blue" />
+        <KPICard title="Total de Pedidos" value={activeOrders.length} icon={ShoppingCart} color="blue" />
         <KPICard title="Clientes" value={customers.length} icon={Users} color="purple" />
         <KPICard title="Produtos Ativos" value={products.filter(p => p.status === 'active').length} icon={Package} color="green" />
         <KPICard title="Campanhas Ativas" value={activeCampaigns.length} icon={AlertCircle} color="yellow" />
@@ -220,8 +220,8 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-3">
                   {activeCampaigns.map(c => {
-                    const cOrders = orders.filter(o => o.campaign_id === c.id && isEffectiveSale(o));
-                    const cTotal = cOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
+                    const cOrders = activeOrders.filter(o => o.campaign_id === c.id);
+                    const cTotal = cOrders.filter(isEffectiveSale).reduce((acc, o) => acc + (o.total_value || 0), 0);
                     return (
                       <Link
                         key={c.id}

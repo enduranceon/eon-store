@@ -61,9 +61,13 @@ export default function CampaignReport() {
               variation: item.variation || '',
               qty: 0,
               sale_price: item.sale_price || 0,
+              order_numbers: [],
             };
           }
           agg[key].qty += item.quantity || 1;
+          if (o.order_number && !agg[key].order_numbers.includes(o.order_number)) {
+            agg[key].order_numbers.push(o.order_number);
+          }
           totalItems += item.quantity || 1;
         });
       });
@@ -107,12 +111,12 @@ export default function CampaignReport() {
   };
 
   const exportCSV = () => {
-    const header = ['SKU', 'Produto', 'Variação', 'Qtd. Pedida', 'Qtd. Recebida', 'Pendente', 'Preço Unit. (R$)', 'Total (R$)'];
+    const header = ['SKU', 'Produto', 'Variação', 'Pedidos de origem', 'Qtd. Pedida', 'Qtd. Recebida', 'Pendente', 'Preço Unit. (R$)', 'Total (R$)'];
     const data = rows.map(r => {
       const rec = receipts[r.receipt_key]?.qty || 0;
       const pending = Math.max(0, r.qty - rec);
       return [
-        r.sku, r.product_name, r.variation || '-',
+        r.sku, r.product_name, r.variation || '-', r.order_numbers.join(', '),
         r.qty, rec, pending,
         r.sale_price.toFixed(2).replace('.', ','),
         (r.qty * r.sale_price).toFixed(2).replace('.', ','),
@@ -288,7 +292,14 @@ export default function CampaignReport() {
                             <td className="px-4 py-2.5 font-mono text-xs text-blue-700">
                               {r.sku || <span className="text-gray-300 italic">—</span>}
                             </td>
-                            <td className="px-4 py-2.5 font-medium">{r.product_name}</td>
+                            <td className="px-4 py-2.5 font-medium">
+                              <span>{r.product_name}</span>
+                              {r.order_numbers.length > 0 && (
+                                <span className="block text-[10px] font-normal text-muted-foreground mt-0.5">
+                                  {r.order_numbers.join(', ')}
+                                </span>
+                              )}
+                            </td>
                             <td className="px-4 py-2.5 text-muted-foreground">{r.variation || '—'}</td>
                             <td className="px-4 py-2.5 text-right font-bold text-lg">{r.qty}</td>
                             <td className="px-4 py-2.5 text-right print:hidden">

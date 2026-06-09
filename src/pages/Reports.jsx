@@ -700,16 +700,26 @@ function StoreReportsTab() {
     (o.items || []).filter(it => !it.cancelled).forEach(item => {
       const key = `${item.product_name}||${item.variation || ''}`;
       if (!supplierReport[key]) {
-        supplierReport[key] = { product: item.product_name, variation: item.variation || '-', totalQty: 0, paidQty: 0, pendingQty: 0 };
+        supplierReport[key] = {
+          product: item.product_name,
+          variation: item.variation || '-',
+          totalQty: 0,
+          paidQty: 0,
+          pendingQty: 0,
+          orderNumbers: [],
+        };
       }
       supplierReport[key].totalQty += item.quantity || 1;
+      if (o.order_number && !supplierReport[key].orderNumbers.includes(o.order_number)) {
+        supplierReport[key].orderNumbers.push(o.order_number);
+      }
       if (o.payment_status === 'paid') supplierReport[key].paidQty += item.quantity || 1;
       else supplierReport[key].pendingQty += item.quantity || 1;
     });
   });
 
-  const deliveryReport  = orders.filter(o => o.payment_status === 'paid' && o.delivery_status !== 'delivered' && o.delivery_status !== 'cancelled');
-  const deliveredOrders = orders.filter(o => o.delivery_status === 'delivered');
+  const deliveryReport  = active.filter(o => o.payment_status === 'paid' && o.delivery_status !== 'delivered');
+  const deliveredOrders = active.filter(o => o.delivery_status === 'delivered');
 
   const chartData = byCampaign.filter(c => c.sold > 0).map(c => ({
     name: c.name.length > 20 ? c.name.slice(0, 20) + '…' : c.name,
@@ -825,7 +835,14 @@ function StoreReportsTab() {
               <tbody className="divide-y">
                 {Object.values(supplierReport).sort((a, b) => b.totalQty - a.totalQty).map((r, i) => (
                   <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium">{r.product}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <span>{r.product}</span>
+                      {r.orderNumbers.length > 0 && (
+                        <span className="block text-[10px] font-normal text-muted-foreground mt-0.5">
+                          {r.orderNumbers.join(', ')}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{r.variation}</td>
                     <td className="px-4 py-3 text-right font-semibold">{r.totalQty}</td>
                     <td className="px-4 py-3 text-right text-green-700">{r.paidQty}</td>
