@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Loader2, AlertCircle, CreditCard, QrCode } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -22,50 +22,95 @@ function periodLabel(months) {
   return `${n} meses`;
 }
 
+function PaymentSelector({ planMonths, paymentType, installments, onChange }) {
+  const maxInstallments = planMonths;
+
+  return (
+    <div className="space-y-3">
+      <Label>Forma de pagamento *</Label>
+      <div className="grid grid-cols-2 gap-3 mt-1">
+        <button
+          type="button"
+          onClick={() => onChange('card', 1)}
+          className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all ${
+            paymentType === 'card'
+              ? 'border-blue-500 bg-blue-50 text-blue-700'
+              : 'border-gray-200 text-gray-500 hover:border-gray-300'
+          }`}
+        >
+          <CreditCard className="w-5 h-5" />
+          <span className="text-xs font-medium">Cartão de crédito</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange('pix_boleto', 1)}
+          className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all ${
+            paymentType === 'pix_boleto'
+              ? 'border-blue-500 bg-blue-50 text-blue-700'
+              : 'border-gray-200 text-gray-500 hover:border-gray-300'
+          }`}
+        >
+          <QrCode className="w-5 h-5" />
+          <span className="text-xs font-medium">PIX / Boleto</span>
+        </button>
+      </div>
+
+      {paymentType === 'card' && maxInstallments > 1 && (
+        <div>
+          <p className="text-xs text-gray-500 mb-2">Parcelas</p>
+          <div className="flex flex-wrap gap-2">
+            {Array.from({ length: maxInstallments }, (_, i) => i + 1).map(n => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => onChange('card', n)}
+                className={`px-3 py-1.5 rounded-lg border-2 text-sm font-medium transition-all ${
+                  installments === n
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                {n}x
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PublicPlanEnrollment() {
   const { planId } = useParams();
 
-  const [plan,           setPlan]           = useState(null);
-  const [modality,       setModality]       = useState(null);
-  const [coaches,        setCoaches]        = useState([]);
-  const [paymentMethods, setPaymentMethods] = useState([]);
-  const [loading,        setLoading]        = useState(true);
-  const [notFound,       setNotFound]       = useState(false);
-  const [submitting,     setSubmitting]     = useState(false);
-  const [done,           setDone]           = useState(false);
+  const [plan,       setPlan]       = useState(null);
+  const [modality,   setModality]   = useState(null);
+  const [coaches,    setCoaches]    = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [notFound,   setNotFound]   = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [done,       setDone]       = useState(false);
 
   const [form, setForm] = useState({
-    full_name: '',
-    gender: '',
-    birth_date: '',
-    whatsapp: '',
-    cpf: '',
-    coach_id: '',
-    payment_method: '',
+    full_name: '', gender: '', birth_date: '',
+    whatsapp: '', cpf: '', coach_id: '',
+    payment_type: '', installments: 1,
   });
 
   useEffect(() => {
     (async () => {
       try {
         const { data: planData, error } = await supabase
-          .from('assessment_plans')
-          .select('*')
-          .eq('id', planId)
-          .eq('active', true)
-          .maybeSingle();
-
+          .from('assessment_plans').select('*').eq('id', planId).eq('active', true).maybeSingle();
         if (error || !planData) { setNotFound(true); setLoading(false); return; }
         setPlan(planData);
 
-        const [{ data: mod }, { data: coachList }, { data: pmList }] = await Promise.all([
+        const [{ data: mod }, { data: coachList }] = await Promise.all([
           supabase.from('assessment_modalities').select('id,name').eq('id', planData.modality_id).maybeSingle(),
           supabase.from('assessment_coaches').select('id,name').eq('active', true).order('name'),
-          supabase.from('payment_methods').select('id,name,internal_code').eq('active', true).order('name'),
         ]);
-
         setModality(mod);
-        setCoaches(coachList  || []);
-        setPaymentMethods(pmList || []);
+        setCoaches(coachList || []);
       } catch (e) {
         console.error(e);
         setNotFound(true);
@@ -83,19 +128,15 @@ export default function PublicPlanEnrollment() {
     if (!form.whatsapp.trim())   return toast.error('WhatsApp obrigatório');
     if (!form.cpf.trim())        return toast.error('CPF obrigatório');
     if (!form.coach_id)          return toast.error('Selecione um coach');
-    if (!form.payment_method)    return toast.error('Selecione a forma de pagamento');
+    if (!form.payment_type)      return toast.error('Selecione a forma de pagamento');
 
     setSubmitting(true);
     try {
       const cpfClean = form.cpf.replace(/\D/g, '');
 
-      // Reutiliza cadastro existente se CPF já estiver no sistema
       let customer;
       const { data: existing } = await supabase
-        .from('presale_customers')
-        .select('id')
-        .eq('cpf', cpfClean)
-        .maybeSingle();
+        .from('presale_customers').select('id').eq('cpf', cpfClean).maybeSingle();
 
       if (existing) {
         customer = existing;
@@ -110,24 +151,10 @@ export default function PublicPlanEnrollment() {
             birth_date: form.birth_date || null,
             active:     true,
           })
-          .select()
-          .single();
+          .select().single();
         if (custErr) throw custErr;
         customer = created;
       }
-
-      const planSnapshot = {
-        plan_id:          plan.id,
-        name:             plan.name || null,
-        modality_id:      plan.modality_id,
-        price_total:      Number(plan.price_total)    || 0,
-        price_monthly:    Number(plan.price_monthly)  || 0,
-        enrollment_fee:   Number(plan.enrollment_fee) || 0,
-        max_installments: plan.max_installments,
-        period_months:    getPlanMonths(plan),
-        snapshot_at:      new Date().toISOString(),
-        snapshot_source:  'public_enrollment',
-      };
 
       const { error: contractErr } = await supabase
         .from('assessment_contracts')
@@ -135,18 +162,28 @@ export default function PublicPlanEnrollment() {
           customer_id:    customer.id,
           coach_id:       form.coach_id,
           plan_id:        plan.id,
-          plan_snapshot:  planSnapshot,
+          plan_snapshot: {
+            plan_id:          plan.id,
+            name:             plan.name || null,
+            modality_id:      plan.modality_id,
+            price_total:      Number(plan.price_total)    || 0,
+            price_monthly:    Number(plan.price_monthly)  || 0,
+            enrollment_fee:   Number(plan.enrollment_fee) || 0,
+            max_installments: plan.max_installments,
+            period_months:    getPlanMonths(plan),
+            snapshot_at:      new Date().toISOString(),
+            snapshot_source:  'public_enrollment',
+          },
           status:         'draft',
           payment_status: 'pending',
-          payment_method: form.payment_method,
-          installments:   plan.max_installments || 1,
+          payment_method: form.payment_type,
+          installments:   form.payment_type === 'card' ? form.installments : 1,
           enrollment_fee: Number(plan.enrollment_fee) || 0,
           auto_renewal:   false,
           notes:          'Adesão via formulário público',
         });
 
       if (contractErr) throw contractErr;
-
       setDone(true);
     } catch (err) {
       toast.error(err.message || 'Erro ao enviar. Tente novamente.');
@@ -178,9 +215,7 @@ export default function PublicPlanEnrollment() {
           <CheckCircle2 className="w-9 h-9 text-green-600" />
         </div>
         <h2 className="text-2xl font-bold text-gray-900">Tudo certo!</h2>
-        <p className="text-gray-600 mt-3">
-          Sua intenção de adesão foi registrada com sucesso.
-        </p>
+        <p className="text-gray-600 mt-3">Sua intenção de adesão foi registrada com sucesso.</p>
         <p className="text-gray-500 mt-2 text-sm">
           Em breve você receberá a cobrança para confirmar sua matrícula.
           Aguarde o contato da nossa equipe.
@@ -189,8 +224,8 @@ export default function PublicPlanEnrollment() {
     </div>
   );
 
-  const planName = plan.name?.trim()
-    || `${modality?.name || 'Plano'} · ${periodLabel(getPlanMonths(plan))}`;
+  const planMonths = getPlanMonths(plan);
+  const planName   = plan.name?.trim() || `${modality?.name || 'Plano'} · ${periodLabel(planMonths)}`;
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4">
@@ -202,7 +237,7 @@ export default function PublicPlanEnrollment() {
             {modality?.name || 'Assessoria'}
           </p>
           <h1 className="text-xl font-bold text-gray-900">{planName}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{periodLabel(getPlanMonths(plan))}</p>
+          <p className="text-sm text-gray-500 mt-0.5">{periodLabel(planMonths)}</p>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <div className="bg-blue-50 rounded-xl p-3 text-center">
               <p className="text-xs text-blue-600 font-medium mb-0.5">Mensalidade</p>
@@ -233,22 +268,15 @@ export default function PublicPlanEnrollment() {
 
             <div>
               <Label htmlFor="full_name">Nome completo *</Label>
-              <Input
-                id="full_name"
-                value={form.full_name}
-                onChange={e => set('full_name', e.target.value)}
-                placeholder="Seu nome completo"
-                className="mt-1"
-              />
+              <Input id="full_name" value={form.full_name} onChange={e => set('full_name', e.target.value)}
+                placeholder="Seu nome completo" className="mt-1" />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="gender">Gênero</Label>
                 <Select value={form.gender} onValueChange={v => set('gender', v)}>
-                  <SelectTrigger id="gender" className="mt-1">
-                    <SelectValue placeholder="Selecione" />
-                  </SelectTrigger>
+                  <SelectTrigger id="gender" className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="masculino">Masculino</SelectItem>
                     <SelectItem value="feminino">Feminino</SelectItem>
@@ -259,66 +287,39 @@ export default function PublicPlanEnrollment() {
               </div>
               <div>
                 <Label htmlFor="birth_date">Nascimento</Label>
-                <Input
-                  id="birth_date"
-                  type="date"
-                  value={form.birth_date}
-                  onChange={e => set('birth_date', e.target.value)}
-                  className="mt-1"
-                />
+                <Input id="birth_date" type="date" value={form.birth_date}
+                  onChange={e => set('birth_date', e.target.value)} className="mt-1" />
               </div>
             </div>
 
             <div>
               <Label htmlFor="whatsapp">WhatsApp *</Label>
-              <Input
-                id="whatsapp"
-                type="tel"
-                value={form.whatsapp}
-                onChange={e => set('whatsapp', e.target.value)}
-                placeholder="(11) 99999-9999"
-                className="mt-1"
-              />
+              <Input id="whatsapp" type="tel" value={form.whatsapp}
+                onChange={e => set('whatsapp', e.target.value)} placeholder="(11) 99999-9999" className="mt-1" />
             </div>
 
             <div>
               <Label htmlFor="cpf">CPF *</Label>
-              <Input
-                id="cpf"
-                value={form.cpf}
-                onChange={e => set('cpf', e.target.value)}
-                placeholder="000.000.000-00"
-                className="mt-1"
-              />
+              <Input id="cpf" value={form.cpf} onChange={e => set('cpf', e.target.value)}
+                placeholder="000.000.000-00" className="mt-1" />
             </div>
 
             <div>
               <Label htmlFor="coach_id">Coach *</Label>
               <Select value={form.coach_id} onValueChange={v => set('coach_id', v)}>
-                <SelectTrigger id="coach_id" className="mt-1">
-                  <SelectValue placeholder="Selecione seu coach" />
-                </SelectTrigger>
+                <SelectTrigger id="coach_id" className="mt-1"><SelectValue placeholder="Selecione seu coach" /></SelectTrigger>
                 <SelectContent>
-                  {coaches.map(c => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                  ))}
+                  {coaches.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
 
-            <div>
-              <Label htmlFor="payment_method">Forma de pagamento *</Label>
-              <Select value={form.payment_method} onValueChange={v => set('payment_method', v)}>
-                <SelectTrigger id="payment_method" className="mt-1">
-                  <SelectValue placeholder="Selecione" />
-                </SelectTrigger>
-                <SelectContent>
-                  {paymentMethods.map(pm => (
-                    <SelectItem key={pm.id} value={pm.internal_code}>{pm.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <PaymentSelector
+              planMonths={planMonths}
+              paymentType={form.payment_type}
+              installments={form.installments}
+              onChange={(type, inst) => setForm(f => ({ ...f, payment_type: type, installments: inst }))}
+            />
 
             <Button type="submit" className="w-full mt-2" size="lg" disabled={submitting}>
               {submitting && <Loader2 className="w-4 h-4 animate-spin mr-2" />}

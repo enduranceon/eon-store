@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { CheckCircle2, Loader2, AlertCircle, Clock, BadgeDollarSign, ChevronLeft } from 'lucide-react';
+import { CheckCircle2, Loader2, AlertCircle, Clock, BadgeDollarSign, ChevronLeft, CreditCard, QrCode } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -22,14 +22,71 @@ function periodLabel(months) {
   return `${n} meses`;
 }
 
+function PaymentSelector({ planMonths, paymentType, installments, onChange }) {
+  const maxInstallments = planMonths;
+
+  return (
+    <div className="space-y-3">
+      <Label>Forma de pagamento *</Label>
+      <div className="grid grid-cols-2 gap-3 mt-1">
+        <button
+          type="button"
+          onClick={() => onChange('card', 1)}
+          className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all ${
+            paymentType === 'card'
+              ? 'border-blue-500 bg-blue-50 text-blue-700'
+              : 'border-gray-200 text-gray-500 hover:border-gray-300'
+          }`}
+        >
+          <CreditCard className="w-5 h-5" />
+          <span className="text-xs font-medium">Cartão de crédito</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange('pix_boleto', 1)}
+          className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all ${
+            paymentType === 'pix_boleto'
+              ? 'border-blue-500 bg-blue-50 text-blue-700'
+              : 'border-gray-200 text-gray-500 hover:border-gray-300'
+          }`}
+        >
+          <QrCode className="w-5 h-5" />
+          <span className="text-xs font-medium">PIX / Boleto</span>
+        </button>
+      </div>
+
+      {paymentType === 'card' && maxInstallments > 1 && (
+        <div>
+          <p className="text-xs text-gray-500 mb-2">Parcelas</p>
+          <div className="flex flex-wrap gap-2">
+            {Array.from({ length: maxInstallments }, (_, i) => i + 1).map(n => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => onChange('card', n)}
+                className={`px-3 py-1.5 rounded-lg border-2 text-sm font-medium transition-all ${
+                  installments === n
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                {n}x
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PublicModalityPlans() {
   const { modalityId } = useParams();
 
-  const [modality,       setModality]       = useState(null);
-  const [plans,          setPlans]          = useState([]);
-  const [coaches,        setCoaches]        = useState([]);
-  const [paymentMethods, setPaymentMethods] = useState([]);
-  const [loading,        setLoading]        = useState(true);
+  const [modality,     setModality]     = useState(null);
+  const [plans,        setPlans]        = useState([]);
+  const [coaches,      setCoaches]      = useState([]);
+  const [loading,      setLoading]      = useState(true);
   const [notFound,       setNotFound]       = useState(false);
   const [selectedPlan,   setSelectedPlan]   = useState(null);
   const [submitting,     setSubmitting]     = useState(false);
@@ -37,24 +94,23 @@ export default function PublicModalityPlans() {
 
   const [form, setForm] = useState({
     full_name: '', gender: '', birth_date: '',
-    whatsapp: '', cpf: '', coach_id: '', payment_method: '',
+    whatsapp: '', cpf: '', coach_id: '',
+    payment_type: '', installments: 1,
   });
 
   useEffect(() => {
     (async () => {
       try {
-        const [{ data: mod }, { data: planList }, { data: coachList }, { data: pmList }] = await Promise.all([
+        const [{ data: mod }, { data: planList }, { data: coachList }] = await Promise.all([
           supabase.from('assessment_modalities').select('id,name').eq('id', modalityId).eq('active', true).maybeSingle(),
           supabase.from('assessment_plans').select('*').eq('modality_id', modalityId).eq('active', true).order('period_months'),
           supabase.from('assessment_coaches').select('id,name').eq('active', true).order('name'),
-          supabase.from('payment_methods').select('id,name,internal_code').eq('active', true).order('name'),
         ]);
 
         if (!mod) { setNotFound(true); setLoading(false); return; }
         setModality(mod);
         setPlans(planList || []);
         setCoaches(coachList || []);
-        setPaymentMethods(pmList || []);
       } catch (e) {
         console.error(e);
         setNotFound(true);
@@ -72,7 +128,7 @@ export default function PublicModalityPlans() {
     if (!form.whatsapp.trim())  return toast.error('WhatsApp obrigatório');
     if (!form.cpf.trim())       return toast.error('CPF obrigatório');
     if (!form.coach_id)         return toast.error('Selecione um coach');
-    if (!form.payment_method)   return toast.error('Selecione a forma de pagamento');
+    if (!form.payment_type)     return toast.error('Selecione a forma de pagamento');
 
     setSubmitting(true);
     try {
@@ -121,8 +177,8 @@ export default function PublicModalityPlans() {
           },
           status:         'draft',
           payment_status: 'pending',
-          payment_method: form.payment_method,
-          installments:   plan.max_installments || 1,
+          payment_method: form.payment_type,
+          installments:   form.payment_type === 'card' ? form.installments : 1,
           enrollment_fee: Number(plan.enrollment_fee) || 0,
           auto_renewal:   false,
           notes:          'Adesão via formulário público',
@@ -342,15 +398,12 @@ export default function PublicModalityPlans() {
               </Select>
             </div>
 
-            <div>
-              <Label htmlFor="payment_method">Forma de pagamento *</Label>
-              <Select value={form.payment_method} onValueChange={v => set('payment_method', v)}>
-                <SelectTrigger id="payment_method" className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  {paymentMethods.map(pm => <SelectItem key={pm.id} value={pm.internal_code}>{pm.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            <PaymentSelector
+              planMonths={months}
+              paymentType={form.payment_type}
+              installments={form.installments}
+              onChange={(type, inst) => setForm(f => ({ ...f, payment_type: type, installments: inst }))}
+            />
 
             <Button type="submit" className="w-full mt-2" size="lg" disabled={submitting}>
               {submitting && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
