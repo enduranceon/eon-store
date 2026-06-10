@@ -2,14 +2,21 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   UserPlus, ChevronRight, Check, Trash2, Calendar,
-  Loader2, CheckCheck, CreditCard,
+  Loader2, CheckCheck, CreditCard, MessageCircle, Copy, ExternalLink, QrCode,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
+
+// ─────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────
 
 function contractTotal(c) {
   const base       = Number(c.plan_snapshot?.price_total ?? 0);
@@ -17,6 +24,249 @@ function contractTotal(c) {
   const discount   = Number(c.manual_discount || 0);
   return Math.max(0, base + enrollment - discount);
 }
+
+function buildMessage(draft, customer, coach, modality, paymentLink) {
+  const total        = contractTotal(draft);
+  const installments = draft.installments || 1;
+  const months       = draft.plan_snapshot?.period_months || 1;
+  const planName     = draft.plan_snapshot?.name
+    || (modality ? `${modality.name} · ${months}m` : 'Assessoria');
+  const firstName    = customer?.full_name?.split(' ')[0] || 'aluno(a)';
+
+  let m = `Olá, ${firstName}! 👋\n\n`;
+  m += `Sua adesão na *Assessoria EON* foi confirmada! 🎉\n\n`;
+  m += `📋 Contrato: *${draft.contract_number}*\n`;
+  if (modality) m += `🏃 Modalidade: *${modality.name}*\n`;
+  m += `📅 Plano: *${planName}* (${months} ${months === 1 ? 'mês' : 'meses'})\n`;
+  if (coach) m += `👤 Coach: *${coach.name}*\n`;
+  m += `💰 Total: *${formatCurrency(total)}*`;
+  if (installments > 1) m += ` em *${installments}x de ${formatCurrency(total / installments)}*`;
+  m += '\n';
+  if (Number(draft.enrollment_fee) > 0) {
+    m += `📌 Matrícula: ${formatCurrency(draft.enrollment_fee)} _(cobrada na 1ª mensalidade)_\n`;
+  }
+  m += '\n';
+  if (paymentLink?.trim()) {
+    m += `Segue o link para efetuar o pagamento:\n🔗 ${paymentLink.trim()}\n\n`;
+  } else {
+    m += `Em breve você receberá o link de pagamento.\n\n`;
+  }
+  m += `Qualquer dúvida, estamos à disposição! 🏆`;
+  return m;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MODAL DE CONFIRMAÇÃO
+// ─────────────────────────────────────────────────────────────────
+
+function ConfirmModal({ data, onClose, onDone }) {
+  const { draft, customer, coach, modality } = data;
+  const [step,         setStep]         = useState('confirm'); // 'confirm' | 'message'
+  const [paymentLink,  setPaymentLink]  = useState('');
+  const [confirming,   setConfirming]   = useState(false);
+  const [copied,       setCopied]       = useState(false);
+
+  const total        = contractTotal(draft);
+  const installments = draft.installments || 1;
+  const months       = draft.plan_snapshot?.period_months || 1;
+  const planName     = draft.plan_snapshot?.name
+    || (modality ? `${modality.name} · ${months}m` : 'Assessoria');
+
+  const doConfirm = async (goToMessage) => {
+    setConfirming(true);
+    try {
+      const updates = { status: 'active' };
+      if (paymentLink.trim()) updates.external_payment_link = paymentLink.trim();
+
+      await AssessmentContract.update(draft.id, updates);
+      await AssessmentContractEvent.create({
+        contract_id: draft.id,
+        event_type:  'enrollment_activated',
+        payload:     { source: 'public_enrollment', payment_link_provided: !!paymentLink.trim() },
+        notes:       'Adesão via formulário público confirmada',
+      }).catch(() => {});
+
+      if (goToMessage) {
+        setStep('message');
+      } else {
+        toast.success(`Adesão de ${customer?.full_name} confirmada!`);
+        onDone();
+      }
+    } catch (e) {
+      toast.error('Erro ao confirmar: ' + (e.message || ''));
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const message = buildMessage(draft, customer, coach, modality, paymentLink);
+
+  const copyMessage = () => {
+    navigator.clipboard.writeText(message);
+    setCopied(true);
+    toast.success('Mensagem copiada!');
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const openWhatsApp = () => {
+    const phone = '55' + (customer?.whatsapp || '').replace(/\D/g, '');
+    if (!phone || phone === '55') return toast.error('WhatsApp do cliente não cadastrado');
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+  };
+
+  // ── Passo 1: Confirmar ──────────────────────────────────────────
+  if (step === 'confirm') return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <UserPlus className="w-5 h-5 text-green-600" /> Confirmar adesão
+        </DialogTitle>
+      </DialogHeader>
+
+      <div className="space-y-4 mt-2">
+        {/* Resumo */}
+        <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
+          <p className="font-semibold text-gray-900 text-base">{customer?.full_name}</p>
+          {customer?.whatsapp && (
+            <p className="text-muted-foreground text-xs">{customer.whatsapp}</p>
+          )}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2">
+            <span className="text-muted-foreground">Plano</span>
+            <span className="font-medium">{planName}</span>
+            <span className="text-muted-foreground">Modalidade</span>
+            <span className="font-medium capitalize">{modality?.name || '—'}</span>
+            <span className="text-muted-foreground">Coach</span>
+            <span className="font-medium">{coach?.name || '—'}</span>
+            <span className="text-muted-foreground">Valor</span>
+            <span className="font-bold text-green-700">
+              {formatCurrency(total)}
+              {installments > 1 && (
+                <span className="font-normal text-muted-foreground text-xs ml-1">
+                  ({installments}x de {formatCurrency(total / installments)})
+                </span>
+              )}
+            </span>
+            <span className="text-muted-foreground">Pagamento</span>
+            <span className="flex items-center gap-1">
+              {draft.payment_method === 'card'
+                ? <><CreditCard className="w-3.5 h-3.5" /> Cartão</>
+                : <><QrCode className="w-3.5 h-3.5" /> PIX / Boleto</>
+              }
+            </span>
+          </div>
+          {Number(draft.enrollment_fee) > 0 && (
+            <p className="text-xs text-amber-700 mt-1 pt-2 border-t">
+              Matrícula: {formatCurrency(draft.enrollment_fee)} · cobrada na 1ª mensalidade
+            </p>
+          )}
+        </div>
+
+        {/* Link de pagamento opcional */}
+        <div>
+          <Label className="text-sm">Link de pagamento <span className="text-muted-foreground font-normal">(opcional)</span></Label>
+          <p className="text-xs text-muted-foreground mb-1.5">
+            Cole aqui o link gerado no Asaas. Se ainda não tiver, pode confirmar e adicionar depois.
+          </p>
+          <Input
+            placeholder="https://asaas.com/c/..."
+            value={paymentLink}
+            onChange={e => setPaymentLink(e.target.value)}
+            className="text-sm"
+          />
+        </div>
+
+        <div className="flex gap-2 pt-1">
+          <Button variant="outline" className="flex-1" onClick={onClose} disabled={confirming}>
+            Cancelar
+          </Button>
+          <Button variant="outline" className="flex-1" onClick={() => doConfirm(false)} disabled={confirming}>
+            {confirming ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Check className="w-4 h-4 mr-1.5" />}
+            Só confirmar
+          </Button>
+          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={() => doConfirm(true)} disabled={confirming}>
+            {confirming ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <MessageCircle className="w-4 h-4 mr-1.5" />}
+            Confirmar e enviar
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+
+  // ── Passo 2: Mensagem pronta ────────────────────────────────────
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <MessageCircle className="w-5 h-5 text-green-600" /> Mensagem pronta
+        </DialogTitle>
+      </DialogHeader>
+
+      <div className="space-y-4 mt-2">
+        <p className="text-sm text-muted-foreground">
+          Adesão de <b>{customer?.full_name}</b> confirmada! Agora envie a cobrança.
+        </p>
+
+        {/* Link de pagamento */}
+        <div>
+          <Label className="text-sm">Link de pagamento</Label>
+          <div className="flex gap-2 mt-1">
+            <Input
+              placeholder="Cole o link do Asaas aqui..."
+              value={paymentLink}
+              onChange={e => setPaymentLink(e.target.value)}
+              className="text-sm"
+            />
+            {paymentLink.trim() && (
+              <a href={paymentLink.trim()} target="_blank" rel="noreferrer">
+                <Button size="icon" variant="outline"><ExternalLink className="w-4 h-4" /></Button>
+              </a>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Gere o link no Asaas, cole aqui e a mensagem abaixo atualiza automaticamente.
+          </p>
+        </div>
+
+        {/* Preview da mensagem */}
+        <div>
+          <Label className="text-sm mb-1.5 block">Preview da mensagem</Label>
+          <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm whitespace-pre-wrap font-mono text-xs leading-relaxed text-gray-800 max-h-56 overflow-y-auto">
+            {message}
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={copyMessage}>
+            {copied ? <Check className="w-4 h-4 mr-1.5 text-green-600" /> : <Copy className="w-4 h-4 mr-1.5" />}
+            {copied ? 'Copiado!' : 'Copiar mensagem'}
+          </Button>
+          <Button
+            className="flex-1 bg-green-600 hover:bg-green-700"
+            onClick={openWhatsApp}
+            disabled={!customer?.whatsapp}
+          >
+            <MessageCircle className="w-4 h-4 mr-1.5" /> Abrir WhatsApp
+          </Button>
+        </div>
+
+        <div className="flex items-center justify-between pt-1 border-t">
+          <Link to={`/assessoria/contratos/${draft.id}`} onClick={onClose}>
+            <Button variant="ghost" size="sm" className="text-blue-600">
+              Ver contrato <ChevronRight className="w-3.5 h-3.5 ml-1" />
+            </Button>
+          </Link>
+          <Button variant="ghost" size="sm" onClick={() => { onDone(); }}>
+            Fechar
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// LINHA DO PROSPECT
+// ─────────────────────────────────────────────────────────────────
 
 function ProspectRow({ draft, customer, coach, modality, onConfirm, onRefuse, busy }) {
   const total        = contractTotal(draft);
@@ -47,9 +297,7 @@ function ProspectRow({ draft, customer, coach, modality, onConfirm, onRefuse, bu
                 <CreditCard className="w-3 h-3" />
                 {installments}x de <b className="text-gray-700 ml-1">{formatCurrency(total / installments)}</b>
               </span>
-              {draft.payment_method && (
-                <span>{draft.payment_method === 'card' ? 'Cartão de crédito' : 'PIX / Boleto'}</span>
-              )}
+              <span>{draft.payment_method === 'card' ? 'Cartão de crédito' : 'PIX / Boleto'}</span>
             </div>
           </div>
 
@@ -58,7 +306,7 @@ function ProspectRow({ draft, customer, coach, modality, onConfirm, onRefuse, bu
             <div className="flex gap-1.5">
               <Button size="sm" variant="outline" disabled={busy}
                 className="border-red-200 text-red-700 hover:bg-red-50"
-                onClick={() => onRefuse(draft)}>
+                onClick={() => onRefuse(draft, customer)}>
                 <Trash2 className="w-3.5 h-3.5 mr-1" /> Recusar
               </Button>
               <Link to={`/assessoria/contratos/${draft.id}`}>
@@ -68,7 +316,7 @@ function ProspectRow({ draft, customer, coach, modality, onConfirm, onRefuse, bu
               </Link>
               <Button size="sm" disabled={busy}
                 className="bg-green-600 hover:bg-green-700"
-                onClick={() => onConfirm(draft)}>
+                onClick={() => onConfirm(draft, customer, coach, modality)}>
                 <Check className="w-3.5 h-3.5 mr-1" /> Confirmar
               </Button>
             </div>
@@ -79,6 +327,10 @@ function ProspectRow({ draft, customer, coach, modality, onConfirm, onRefuse, bu
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// PÁGINA PRINCIPAL
+// ─────────────────────────────────────────────────────────────────
+
 export default function Prospects() {
   const [drafts,     setDrafts]     = useState([]);
   const [customers,  setCustomers]  = useState({});
@@ -86,6 +338,7 @@ export default function Prospects() {
   const [modalities, setModalities] = useState({});
   const [loading,    setLoading]    = useState(true);
   const [busy,       setBusy]       = useState(null);
+  const [modal,      setModal]      = useState(null); // { draft, customer, coach, modality }
 
   const load = async () => {
     setLoading(true);
@@ -128,29 +381,12 @@ export default function Prospects() {
 
   useEffect(() => { load(); }, []);
 
-  const confirmEnrollment = async (draft) => {
-    const name = customers[draft.customer_id]?.full_name || draft.contract_number;
-    if (!confirm(`Confirmar adesão de ${name}?\n\nO contrato será ativado. Lembre de gerar a cobrança no detalhe do contrato.`)) return;
-    setBusy(draft.id);
-    try {
-      await AssessmentContract.update(draft.id, { status: 'active' });
-      await AssessmentContractEvent.create({
-        contract_id: draft.id,
-        event_type:  'enrollment_activated',
-        payload:     { source: 'public_enrollment' },
-        notes:       'Adesão via formulário público confirmada',
-      }).catch(() => {});
-      toast.success(`Adesão de ${name} confirmada!`);
-      load();
-    } catch (e) {
-      toast.error('Erro ao confirmar: ' + (e.message || ''));
-    } finally {
-      setBusy(null);
-    }
+  const openConfirm = (draft, customer, coach, modality) => {
+    setModal({ draft, customer, coach, modality });
   };
 
-  const refuseEnrollment = async (draft) => {
-    const name = customers[draft.customer_id]?.full_name || draft.contract_number;
+  const refuseEnrollment = async (draft, customer) => {
+    const name = customer?.full_name || draft.contract_number;
     if (!confirm(`Recusar a adesão de ${name}?\n\nO registro será excluído permanentemente.`)) return;
     setBusy(draft.id);
     try {
@@ -230,13 +466,26 @@ export default function Prospects() {
               customer={customers[draft.customer_id]}
               coach={coaches[draft.coach_id]}
               modality={modalities[draft.plan_snapshot?.modality_id]}
-              onConfirm={confirmEnrollment}
+              onConfirm={openConfirm}
               onRefuse={refuseEnrollment}
               busy={busy === draft.id}
             />
           ))}
         </div>
       )}
+
+      {/* Modal de confirmação + mensagem */}
+      <Dialog open={!!modal} onOpenChange={open => { if (!open) { setModal(null); load(); } }}>
+        <DialogContent className="max-w-md">
+          {modal && (
+            <ConfirmModal
+              data={modal}
+              onClose={() => { setModal(null); load(); }}
+              onDone={() => { setModal(null); load(); }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
