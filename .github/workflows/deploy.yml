@@ -26,8 +26,6 @@ jobs:
           VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJzaWxqcnJvZGd0bXRkaWxudXhyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwNTg5OTAsImV4cCI6MjA5NDYzNDk5MH0.YYaQ_MX4w_dHsKl6Tv9xPP4o4P8eL3gij-WQdL-4ZqA
 
       - name: Deploy to Netlify
-        uses: netlify/actions/cli@master
-        with:
-          args: deploy --dir=dist --prod --site=9a9edc3b-04e4-431f-8927-f946900b0b27
+        run: npx netlify-cli@latest deploy --dir=dist --prod --site=9a9edc3b-04e4-431f-8927-f946900b0b27
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
