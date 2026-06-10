@@ -446,10 +446,23 @@ export default function Planos() {
             <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground capitalize">
               {modality.name}
             </h3>
-            <button onClick={() => openCreate(modality.id)}
-              className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Adicionar plano
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  const url = `${window.location.origin}/planos/${modality.id}`;
+                  navigator.clipboard.writeText(url).then(() => toast.success('Link de planos copiado!')).catch(() => {
+                    prompt('Copie o link:', url);
+                  });
+                }}
+                className="text-xs text-green-600 hover:underline flex items-center gap-1"
+              >
+                <Link2 className="w-3 h-3" /> Link de planos
+              </button>
+              <button onClick={() => openCreate(modality.id)}
+                className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                <Plus className="w-3 h-3" /> Adicionar plano
+              </button>
+            </div>
           </div>
 
           {mPlans.length === 0 ? (

@@ -44,6 +44,7 @@ import HealthCheck from '@/pages/admin/HealthCheck';
 import StockOrderNewAdmin from '@/pages/StockOrderNewAdmin';
 import PublicOrderTracking from '@/pages/PublicOrderTracking';
 import PublicPlanEnrollment from '@/pages/public/PublicPlanEnrollment';
+import PublicModalityPlans from '@/pages/public/PublicModalityPlans';
 
 // Assessoria
 import AssConfiguracoes from '@/pages/assessment/Configuracoes';
@@ -101,6 +102,7 @@ export default function App() {
           <Route path="/loja/confirmacao/:orderId" element={<PublicStoreConfirmation />} />
           <Route path="/p/:orderId" element={<PublicOrderTracking />} />
           <Route path="/assinar/:planId" element={<PublicPlanEnrollment />} />
+          <Route path="/planos/:modalityId" element={<PublicModalityPlans />} />
 
           {/* Admin */}
           <Route path="/login" element={<Login />} />
