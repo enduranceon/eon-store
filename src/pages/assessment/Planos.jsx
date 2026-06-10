@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Pencil, Check, BadgeDollarSign, Clock, Palette } from 'lucide-react';
+import { Plus, Pencil, Check, BadgeDollarSign, Clock, Palette, Link2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -91,12 +91,25 @@ function PlanCard({ plan, modality, center, modalities, onEdit, onToggle }) {
         )}
       </div>
 
-      <button
-        onClick={() => onEdit(plan)}
-        className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg py-1.5 transition-colors border border-transparent hover:border-blue-100"
-      >
-        <Pencil className="w-3 h-3" /> Editar plano
-      </button>
+      <div className="mt-3 flex gap-2">
+        <button
+          onClick={() => onEdit(plan)}
+          className="flex-1 flex items-center justify-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg py-1.5 transition-colors border border-transparent hover:border-blue-100"
+        >
+          <Pencil className="w-3 h-3" /> Editar
+        </button>
+        <button
+          onClick={() => {
+            const url = `${window.location.origin}/assinar/${plan.id}`;
+            navigator.clipboard.writeText(url).then(() => toast.success('Link copiado!')).catch(() => {
+              prompt('Copie o link:', url);
+            });
+          }}
+          className="flex-1 flex items-center justify-center gap-1.5 text-xs text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-lg py-1.5 transition-colors border border-transparent hover:border-green-100"
+        >
+          <Link2 className="w-3 h-3" /> Copiar link
+        </button>
+      </div>
     </div>
   );
 }
