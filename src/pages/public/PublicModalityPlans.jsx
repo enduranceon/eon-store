@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { supabase } from '@/api/db';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, maskCpf, validateCpf } from '@/lib/utils';
 import { toast } from 'sonner';
 
 function getPlanMonths(plan) {
@@ -104,6 +104,7 @@ export default function PublicModalityPlans() {
     whatsapp: '', cpf: '', coach_id: '',
     payment_type: '', installments: 1,
   });
+  const [cpfTouched, setCpfTouched] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -134,6 +135,7 @@ export default function PublicModalityPlans() {
     if (!form.full_name.trim()) return toast.error('Nome obrigatório');
     if (!form.whatsapp.trim())  return toast.error('WhatsApp obrigatório');
     if (!form.cpf.trim())       return toast.error('CPF obrigatório');
+    if (!validateCpf(form.cpf)) return toast.error('CPF inválido');
     if (!form.coach_id)         return toast.error('Selecione um coach');
     if (!form.payment_type)     return toast.error('Selecione a forma de pagamento');
 
@@ -397,8 +399,14 @@ export default function PublicModalityPlans() {
 
             <div>
               <Label htmlFor="cpf">CPF *</Label>
-              <Input id="cpf" value={form.cpf} onChange={e => set('cpf', e.target.value)}
-                placeholder="000.000.000-00" className="mt-1" />
+              <Input id="cpf" value={form.cpf}
+                onChange={e => set('cpf', maskCpf(e.target.value))}
+                onBlur={() => setCpfTouched(true)}
+                placeholder="000.000.000-00" className="mt-1"
+                inputMode="numeric" />
+              {cpfTouched && form.cpf && !validateCpf(form.cpf) && (
+                <p className="text-xs text-red-500 mt-1">CPF inválido</p>
+              )}
             </div>
 
             <div>

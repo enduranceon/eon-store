@@ -97,3 +97,24 @@ export function renderMessageTemplate(template, ctx) {
     .replaceAll('{mensalidade}',    formatCurrency(ctx.plan?.price_monthly))
     .replaceAll('{link_pagamento}', ctx.contract?.asaas_payment_link || '');
 }
+
+export function maskCpf(value) {
+  const d = value.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0,3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6)}`;
+  return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
+}
+
+export function validateCpf(value) {
+  const d = value.replace(/\D/g, '');
+  if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += parseInt(d[i]) * (10 - i);
+  let r = sum % 11;
+  if ((r < 2 ? 0 : 11 - r) !== parseInt(d[9])) return false;
+  sum = 0;
+  for (let i = 0; i < 10; i++) sum += parseInt(d[i]) * (11 - i);
+  r = sum % 11;
+  return (r < 2 ? 0 : 11 - r) === parseInt(d[10]);
+}
