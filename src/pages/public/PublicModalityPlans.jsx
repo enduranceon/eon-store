@@ -177,6 +177,7 @@ export default function PublicModalityPlans() {
           },
           status:         'draft',
           payment_status: 'pending',
+          start_date:     new Date().toISOString().split('T')[0],
           payment_method: form.payment_type,
           installments:   form.payment_type === 'card' ? form.installments : 1,
           enrollment_fee: Number(plan.enrollment_fee) || 0,
