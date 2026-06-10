@@ -101,8 +101,27 @@ export default function Contracts() {
         <Button onClick={() => navigate('/assessoria/contratos/novo')}><Plus className="w-4 h-4 mr-2" /> Novo contrato</Button>
       </div>
 
-      {/* Faixa de drafts pendentes */}
-      {drafts.length > 0 && (
+      {/* Faixa: prospects pendentes */}
+      {draftEnrollments.length > 0 && (
+        <Card className="border-green-300 bg-green-50/40 cursor-pointer hover:bg-green-50 transition-colors"
+          onClick={() => navigate('/assessoria/prospects')}>
+          <CardContent className="p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-green-100"><RefreshCcw className="w-4 h-4 text-green-700" /></div>
+              <div>
+                <p className="text-sm font-semibold text-green-900">
+                  {draftEnrollments.length} prospect{draftEnrollments.length !== 1 ? 's' : ''} aguardando confirmação
+                </p>
+                <p className="text-xs text-green-700">Clique para revisar e confirmar</p>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-green-700" />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Faixa: renovações pendentes */}
+      {draftRenewals.length > 0 && (
         <Card className="border-blue-300 bg-blue-50/40 cursor-pointer hover:bg-blue-50 transition-colors"
           onClick={() => navigate('/assessoria/renovacoes')}>
           <CardContent className="p-3 flex items-center justify-between gap-3">
@@ -110,12 +129,7 @@ export default function Contracts() {
               <div className="p-2 rounded-full bg-blue-100"><RefreshCcw className="w-4 h-4 text-blue-700" /></div>
               <div>
                 <p className="text-sm font-semibold text-blue-900">
-                  {draftEnrollments.length > 0 && draftRenewals.length > 0
-                    ? `${draftEnrollments.length} adesão${draftEnrollments.length !== 1 ? 'ões' : ''} nova${draftEnrollments.length !== 1 ? 's' : ''} + ${draftRenewals.length} renovação${draftRenewals.length !== 1 ? 'ões' : ''} pendente${draftRenewals.length !== 1 ? 's' : ''}`
-                    : draftEnrollments.length > 0
-                      ? `${draftEnrollments.length} nova${draftEnrollments.length !== 1 ? 's adesões' : ' adesão'} aguardando confirmação`
-                      : `${draftRenewals.length} renovação${draftRenewals.length !== 1 ? 'ões' : ''} aguardando aprovação`
-                  }
+                  {draftRenewals.length} renovação{draftRenewals.length !== 1 ? 'ões' : ''} aguardando aprovação
                 </p>
                 <p className="text-xs text-blue-700">Clique para revisar e ativar</p>
               </div>
