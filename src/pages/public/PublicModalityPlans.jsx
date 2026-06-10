@@ -143,27 +143,16 @@ export default function PublicModalityPlans() {
     try {
       const cpfClean = form.cpf.replace(/\D/g, '');
 
-      let customer;
-      const { data: existingId } = await supabase
-        .rpc('find_customer_id_by_cpf', { p_cpf: cpfClean });
-
-      if (existingId) {
-        customer = { id: existingId };
-      } else {
-        const { data: created, error: custErr } = await supabase
-          .from('presale_customers')
-          .insert({
-            full_name:  form.full_name.trim(),
-            whatsapp:   form.whatsapp.replace(/\D/g, '') || null,
-            cpf:        cpfClean || null,
-            gender:     form.gender    || null,
-            birth_date: form.birth_date || null,
-            active:     true,
-          })
-          .select().single();
-        if (custErr) throw custErr;
-        customer = created;
-      }
+      const { data: customerId, error: custErr } = await supabase
+        .rpc('upsert_assessment_customer', {
+          p_full_name:  form.full_name.trim(),
+          p_whatsapp:   form.whatsapp.replace(/\D/g, '') || null,
+          p_cpf:        cpfClean || null,
+          p_gender:     form.gender    || null,
+          p_birth_date: form.birth_date || null,
+        });
+      if (custErr) throw custErr;
+      const customer = { id: customerId };
 
       const plan      = selectedPlan;
       const startDate = new Date().toISOString().split('T')[0];
