@@ -210,13 +210,18 @@ export default function PublicPlanEnrollment() {
             </div>
             <div className="bg-gray-50 rounded-xl p-3 text-center">
               <p className="text-xs text-gray-500 font-medium mb-0.5">Total</p>
-              <p className="text-lg font-bold text-gray-800">{formatCurrency(plan.price_total)}</p>
+              <p className="text-lg font-bold text-gray-800">
+                {formatCurrency(Number(plan.price_total) + Number(plan.enrollment_fee || 0))}
+              </p>
             </div>
           </div>
           {Number(plan.enrollment_fee) > 0 && (
-            <div className="mt-2 bg-amber-50 rounded-xl p-3 flex items-center justify-between">
-              <p className="text-xs text-amber-700 font-medium">Matrícula</p>
-              <p className="text-sm font-bold text-amber-700">{formatCurrency(plan.enrollment_fee)}</p>
+            <div className="mt-2 bg-amber-50 rounded-xl p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-amber-700 font-medium">Matrícula</p>
+                <p className="text-sm font-bold text-amber-700">{formatCurrency(plan.enrollment_fee)}</p>
+              </div>
+              <p className="text-[11px] text-amber-600 mt-0.5">Cobrada apenas na primeira mensalidade</p>
             </div>
           )}
         </div>

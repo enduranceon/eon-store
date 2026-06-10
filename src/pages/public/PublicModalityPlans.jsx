@@ -211,18 +211,23 @@ export default function PublicModalityPlans() {
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-gray-500">Total</span>
-                        <span className="text-sm font-semibold text-gray-800">{formatCurrency(plan.price_total)}</span>
+                        <span className="text-sm font-semibold text-gray-800">
+                          {formatCurrency(Number(plan.price_total) + Number(plan.enrollment_fee || 0))}
+                        </span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-gray-500">Parcelas</span>
                         <span className="text-sm text-gray-700">até {plan.max_installments}x</span>
                       </div>
                       {Number(plan.enrollment_fee) > 0 && (
-                        <div className="flex items-center justify-between pt-2 border-t">
-                          <span className="text-xs text-amber-700 flex items-center gap-1">
-                            <BadgeDollarSign className="w-3.5 h-3.5" /> Matrícula
-                          </span>
-                          <span className="text-xs font-semibold text-amber-700">{formatCurrency(plan.enrollment_fee)}</span>
+                        <div className="pt-2 border-t space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-amber-700 flex items-center gap-1">
+                              <BadgeDollarSign className="w-3.5 h-3.5" /> Matrícula
+                            </span>
+                            <span className="text-xs font-semibold text-amber-700">{formatCurrency(plan.enrollment_fee)}</span>
+                          </div>
+                          <p className="text-[11px] text-gray-400">Cobrada apenas na primeira mensalidade</p>
                         </div>
                       )}
                     </div>
@@ -268,13 +273,18 @@ export default function PublicModalityPlans() {
             </div>
             <div className="bg-gray-50 rounded-xl p-3 text-center">
               <p className="text-xs text-gray-500 font-medium mb-0.5">Total</p>
-              <p className="text-lg font-bold text-gray-800">{formatCurrency(selectedPlan.price_total)}</p>
+              <p className="text-lg font-bold text-gray-800">
+                {formatCurrency(Number(selectedPlan.price_total) + Number(selectedPlan.enrollment_fee || 0))}
+              </p>
             </div>
           </div>
           {Number(selectedPlan.enrollment_fee) > 0 && (
-            <div className="mt-2 bg-amber-50 rounded-xl p-3 flex items-center justify-between">
-              <p className="text-xs text-amber-700 font-medium">Matrícula</p>
-              <p className="text-sm font-bold text-amber-700">{formatCurrency(selectedPlan.enrollment_fee)}</p>
+            <div className="mt-2 bg-amber-50 rounded-xl p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-amber-700 font-medium">Matrícula</p>
+                <p className="text-sm font-bold text-amber-700">{formatCurrency(selectedPlan.enrollment_fee)}</p>
+              </div>
+              <p className="text-[11px] text-amber-600 mt-0.5">Cobrada apenas na primeira mensalidade</p>
             </div>
           )}
         </div>
