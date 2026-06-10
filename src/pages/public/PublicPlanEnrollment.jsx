@@ -87,20 +87,34 @@ export default function PublicPlanEnrollment() {
 
     setSubmitting(true);
     try {
-      const { data: customer, error: custErr } = await supabase
-        .from('presale_customers')
-        .insert({
-          full_name:  form.full_name.trim(),
-          whatsapp:   form.whatsapp.replace(/\D/g, '') || null,
-          cpf:        form.cpf.replace(/\D/g, '')      || null,
-          gender:     form.gender    || null,
-          birth_date: form.birth_date || null,
-          active:     true,
-        })
-        .select()
-        .single();
+      const cpfClean = form.cpf.replace(/\D/g, '');
 
-      if (custErr) throw custErr;
+      // Reutiliza cadastro existente se CPF já estiver no sistema
+      let customer;
+      const { data: existing } = await supabase
+        .from('presale_customers')
+        .select('id')
+        .eq('cpf', cpfClean)
+        .maybeSingle();
+
+      if (existing) {
+        customer = existing;
+      } else {
+        const { data: created, error: custErr } = await supabase
+          .from('presale_customers')
+          .insert({
+            full_name:  form.full_name.trim(),
+            whatsapp:   form.whatsapp.replace(/\D/g, '') || null,
+            cpf:        cpfClean || null,
+            gender:     form.gender    || null,
+            birth_date: form.birth_date || null,
+            active:     true,
+          })
+          .select()
+          .single();
+        if (custErr) throw custErr;
+        customer = created;
+      }
 
       const planSnapshot = {
         plan_id:          plan.id,
