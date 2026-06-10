@@ -142,11 +142,11 @@ export default function PublicModalityPlans() {
       const cpfClean = form.cpf.replace(/\D/g, '');
 
       let customer;
-      const { data: existing } = await supabase
-        .from('presale_customers').select('id').eq('cpf', cpfClean).maybeSingle();
+      const { data: existingId } = await supabase
+        .rpc('find_customer_id_by_cpf', { p_cpf: cpfClean });
 
-      if (existing) {
-        customer = existing;
+      if (existingId) {
+        customer = { id: existingId };
       } else {
         const { data: created, error: custErr } = await supabase
           .from('presale_customers')
