@@ -13,7 +13,7 @@ import {
   AssessmentContractEvent,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
+import { formatCurrency, todayLocalStr, toLocalDateStr, maskCpf } from '@/lib/utils';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
@@ -103,7 +103,7 @@ export default function ContractForm() {
   const [customerSearch, setCustomerSearch] = useState('');
   // Modal de cadastro rápido de aluno
   const [newCustomerModal, setNewCustomerModal] = useState(false);
-  const [newCustomer, setNewCustomer] = useState({ full_name: '', whatsapp: '', email: '', cpf: '' });
+  const [newCustomer, setNewCustomer] = useState({ full_name: '', whatsapp: '', email: '', cpf: '', gender: '', birth_date: '' });
   const [creatingCustomer, setCreatingCustomer] = useState(false);
 
   // Step: 'plan' | 'details' | 'review'
@@ -182,10 +182,12 @@ export default function ContractForm() {
   const openNewCustomerModal = () => {
     const digits = customerSearch.replace(/\D/g, '');
     setNewCustomer({
-      full_name: digits ? '' : customerSearch,
-      whatsapp:  digits || '',
-      email:     customerSearch.includes('@') ? customerSearch : '',
-      cpf:       '',
+      full_name:  digits ? '' : customerSearch,
+      whatsapp:   digits || '',
+      email:      customerSearch.includes('@') ? customerSearch : '',
+      cpf:        '',
+      gender:     '',
+      birth_date: '',
     });
     setNewCustomerModal(true);
   };
@@ -195,10 +197,12 @@ export default function ContractForm() {
     setCreatingCustomer(true);
     try {
       const payload = {
-        full_name: newCustomer.full_name.trim(),
-        whatsapp:  newCustomer.whatsapp?.replace(/\D/g, '') || null,
-        email:     newCustomer.email?.trim().toLowerCase() || null,
-        cpf:       newCustomer.cpf?.replace(/\D/g, '') || null,
+        full_name:  newCustomer.full_name.trim(),
+        whatsapp:   newCustomer.whatsapp?.replace(/\D/g, '') || null,
+        email:      newCustomer.email?.trim().toLowerCase() || null,
+        cpf:        newCustomer.cpf?.replace(/\D/g, '') || null,
+        gender:     newCustomer.gender || null,
+        birth_date: newCustomer.birth_date || null,
       };
       const created = await PreSaleCustomer.create(payload);
       // Adiciona à lista local e seleciona
@@ -206,7 +210,7 @@ export default function ContractForm() {
       setForm(f => ({ ...f, customer_id: created.id }));
       setCustomerSearch('');
       setNewCustomerModal(false);
-      setNewCustomer({ full_name: '', whatsapp: '', email: '', cpf: '' });
+      setNewCustomer({ full_name: '', whatsapp: '', email: '', cpf: '', gender: '', birth_date: '' });
       toast.success(`${created.full_name} cadastrado!`);
     } catch (e) {
       // CPF unique constraint pode estourar aqui
@@ -813,11 +817,29 @@ export default function ContractForm() {
                   placeholder="joao@email.com" />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Gênero</Label>
+                <Select value={newCustomer.gender} onValueChange={v => setNewCustomer(c => ({ ...c, gender: v }))}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="masculino">Masculino</SelectItem>
+                    <SelectItem value="feminino">Feminino</SelectItem>
+                    <SelectItem value="outro">Outro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Nascimento</Label>
+                <Input className="mt-1" type="date" value={newCustomer.birth_date}
+                  onChange={e => setNewCustomer(c => ({ ...c, birth_date: e.target.value }))} />
+              </div>
+            </div>
             <div>
               <Label>CPF</Label>
               <Input className="mt-1" value={newCustomer.cpf}
-                onChange={e => setNewCustomer(c => ({ ...c, cpf: e.target.value }))}
-                placeholder="000.000.000-00" />
+                onChange={e => setNewCustomer(c => ({ ...c, cpf: maskCpf(e.target.value) }))}
+                placeholder="000.000.000-00" inputMode="numeric" />
               <p className="text-[11px] text-muted-foreground mt-1">
                 Necessário para gerar cobrança no Asaas. Pode ser preenchido depois.
               </p>
