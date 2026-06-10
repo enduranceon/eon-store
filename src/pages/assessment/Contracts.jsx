@@ -72,8 +72,10 @@ export default function Contracts() {
     };
   });
 
-  // Drafts (rascunhos de renovação) vão pra página dedicada — escondemos aqui
-  const drafts = enriched.filter(c => c.status === 'draft');
+  // Drafts vão pra página dedicada — escondemos aqui
+  const drafts           = enriched.filter(c => c.status === 'draft');
+  const draftEnrollments = drafts.filter(c => !c.parent_contract_id);
+  const draftRenewals    = drafts.filter(c =>  c.parent_contract_id);
 
   const filtered = enriched.filter(c => {
     if (c.status === 'draft') return false;
@@ -108,7 +110,12 @@ export default function Contracts() {
               <div className="p-2 rounded-full bg-blue-100"><RefreshCcw className="w-4 h-4 text-blue-700" /></div>
               <div>
                 <p className="text-sm font-semibold text-blue-900">
-                  {drafts.length} renovação{drafts.length !== 1 ? 'ões' : ''} aguardando aprovação
+                  {draftEnrollments.length > 0 && draftRenewals.length > 0
+                    ? `${draftEnrollments.length} adesão${draftEnrollments.length !== 1 ? 'ões' : ''} nova${draftEnrollments.length !== 1 ? 's' : ''} + ${draftRenewals.length} renovação${draftRenewals.length !== 1 ? 'ões' : ''} pendente${draftRenewals.length !== 1 ? 's' : ''}`
+                    : draftEnrollments.length > 0
+                      ? `${draftEnrollments.length} nova${draftEnrollments.length !== 1 ? 's adesões' : ' adesão'} aguardando confirmação`
+                      : `${draftRenewals.length} renovação${draftRenewals.length !== 1 ? 'ões' : ''} aguardando aprovação`
+                  }
                 </p>
                 <p className="text-xs text-blue-700">Clique para revisar e ativar</p>
               </div>

@@ -22,6 +22,13 @@ function periodLabel(months) {
   return `${n} meses`;
 }
 
+function addPlanMonths(startStr, months) {
+  const d = new Date(startStr + 'T12:00:00');
+  d.setMonth(d.getMonth() + months);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function PaymentSelector({ planMonths, paymentType, installments, onChange }) {
   const maxInstallments = planMonths;
 
@@ -156,6 +163,9 @@ export default function PublicPlanEnrollment() {
         customer = created;
       }
 
+      const startDate = new Date().toISOString().split('T')[0];
+      const endDate   = addPlanMonths(startDate, getPlanMonths(plan));
+
       const { error: contractErr } = await supabase
         .from('assessment_contracts')
         .insert({
@@ -174,9 +184,11 @@ export default function PublicPlanEnrollment() {
             snapshot_at:      new Date().toISOString(),
             snapshot_source:  'public_enrollment',
           },
-          status:         'draft',
-          payment_status: 'pending',
-          start_date:     new Date().toISOString().split('T')[0],
+          status:            'draft',
+          payment_status:    'pending',
+          start_date:        startDate,
+          end_date:          endDate,
+          original_end_date: endDate,
           payment_method: form.payment_type,
           installments:   form.payment_type === 'card' ? form.installments : 1,
           enrollment_fee: Number(plan.enrollment_fee) || 0,
