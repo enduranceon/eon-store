@@ -89,6 +89,16 @@ function PlanCard({ plan, modality, selected, onClick }) {
   );
 }
 
+// Chave de persistência por sessão (sobrevive a remounts, some no F5/fechar aba)
+const DRAFT_KEY = 'assessment:contract-form:draft';
+
+function loadDraft() {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function ContractForm() {
   const navigate = useNavigate();
@@ -106,12 +116,14 @@ export default function ContractForm() {
   const [newCustomer, setNewCustomer] = useState({ full_name: '', whatsapp: '', email: '', cpf: '', gender: '', birth_date: '' });
   const [creatingCustomer, setCreatingCustomer] = useState(false);
 
+  const draft = loadDraft();
+
   // Step: 'plan' | 'details' | 'review'
-  const [step, setStep] = useState('plan');
-  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [step, setStep] = useState(draft?.step || 'plan');
+  const [selectedPlan, setSelectedPlan] = useState(draft?.selectedPlan || null);
   const [priorContracts, setPriorContracts] = useState({ total: 0, cancelled: 0, loading: false });
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(draft?.form || {
     customer_id: preselectedId,
     coach_id: '',
     start_date: todayLocalStr(),
@@ -122,6 +134,13 @@ export default function ContractForm() {
     manual_discount: 0,
     discount_reason: '',
   });
+
+  // Persiste rascunho (step + plano + form) a cada mudança relevante
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ step, selectedPlan, form }));
+    } catch { /* sessionStorage cheio/bloqueado: ignora */ }
+  }, [step, selectedPlan, form]);
 
   useEffect(() => {
     (async () => {
@@ -317,6 +336,7 @@ export default function ContractForm() {
       }
 
       toast.success(`Contrato ${created.contract_number} criado!`);
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* noop */ }
       navigate(`/assessoria/contratos/${created.id}`);
     } catch (e) { toast.error(e.message || 'Erro ao criar contrato'); }
     finally { setSaving(false); }
@@ -789,7 +809,7 @@ export default function ContractForm() {
       </div>
 
       {/* ── Modal: Cadastrar novo aluno inline ─────────────────────────────── */}
-      <Dialog open={newCustomerModal} onOpenChange={() => {}}>
+      <Dialog open={newCustomerModal} onOpenChange={setNewCustomerModal}>
         <DialogContent className="max-w-md" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
