@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
@@ -109,7 +110,7 @@ function ConfirmModal({ data, onClose, onDone }) {
   };
 
   const openWhatsApp = () => {
-    const phone = '55' + (customer?.whatsapp || '').replace(/\D/g, '');
+    const phone = phoneDigitsForWhatsApp(customer?.whatsapp);
     if (!phone || phone === '55') return toast.error('WhatsApp do cliente não cadastrado');
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
   };

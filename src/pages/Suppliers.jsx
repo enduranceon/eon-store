@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PreSaleSupplier, PreSaleProduct } from '@/api/entities';
 import { usePageData } from '@/hooks/usePageData';
+import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { toast } from 'sonner';
 
 async function loadSuppliersPage() {
@@ -99,9 +100,9 @@ export default function Suppliers() {
 
                 <div className="space-y-1">
                   {s.whatsapp && (
-                    <a href={`https://wa.me/${s.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"
+                    <a href={`https://wa.me/${phoneDigitsForWhatsApp(s.whatsapp)}`} target="_blank" rel="noreferrer"
                       className="flex items-center gap-2 text-xs text-muted-foreground hover:text-green-600 transition-colors">
-                      <Phone className="w-3.5 h-3.5" /> {s.whatsapp}
+                      <Phone className="w-3.5 h-3.5" /> {formatPhoneDisplay(s.whatsapp)}
                     </a>
                   )}
                   {s.email && (

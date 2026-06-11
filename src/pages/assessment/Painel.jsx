@@ -15,6 +15,7 @@ import {
 } from '@/api/entities';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr, utcToLocalDateStr, renderMessageTemplate } from '@/lib/utils';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
+import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { toast } from 'sonner';
 
 // Calcula end_date a partir de start_date + duração do plano
@@ -328,7 +329,7 @@ export default function Painel() {
 
   // ── Handlers da régua ───────────────────────────────────────────────────────
   const sendWhatsApp = (item) => {
-    const phone = '55' + (item.customer?.whatsapp || '').replace(/\D/g, '');
+    const phone = phoneDigitsForWhatsApp(item.customer?.whatsapp);
     if (!phone || phone.length < 12) return toast.error('Aluno sem WhatsApp cadastrado');
     const msg = renderTemplate(item.rule.message_template, {
       customer: item.customer,
@@ -360,7 +361,7 @@ export default function Painel() {
       await load();
       // Pega o contrato atualizado e envia
       const fresh = (await AssessmentContract.list('-created_at')).find(c => c.id === item.contract.id);
-      const phone = '55' + (item.customer?.whatsapp || '').replace(/\D/g, '');
+      const phone = phoneDigitsForWhatsApp(item.customer?.whatsapp);
       const msg = renderTemplate(item.rule.message_template, {
         customer: item.customer,
         plan:     item.plan,

@@ -20,6 +20,8 @@ import {
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
+import { isSafePaymentUrl } from '@/lib/sales';
+import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
@@ -67,6 +69,8 @@ const EVENT_META = {
   leave_started:            { icon: Pause,      color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Licença iniciada' },
   leave_ended:              { icon: RotateCcw,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Licença encerrada' },
   charge_generated:         { icon: Zap,        color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Cobrança gerada' },
+  external_charge_registered: { icon: Link2,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Cobrança externa registrada' },
+  external_charge_removed:    { icon: Link2,    color: 'text-gray-500',   bg: 'bg-gray-100',  label: 'Cobrança externa removida' },
   manual_payment_recorded:  { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Pagamento manual' },
   renewed:                  { icon: RefreshCcw, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovado' },
   cancelled:                { icon: Ban,        color: 'text-red-600',    bg: 'bg-red-50',    label: 'Cancelado' },
@@ -90,6 +94,10 @@ function formatEventSummary(ev) {
       return `${p.billing_type || ''}${p.installments > 1 ? ` · ${p.installments}x` : ''}`;
     case 'manual_payment_recorded':
       return `${p.method || ''}${p.value ? ' · R$ ' + Number(p.value).toFixed(2) : ''}`;
+    case 'external_charge_registered':
+      return p.due_date ? `Vence em ${formatDate(p.due_date)}` : 'Link externo salvo';
+    case 'external_charge_removed':
+      return 'Link externo removido';
     case 'renewed':
       return `Novo contrato ${p.new_contract_number || ''}`;
     case 'cancelled':
@@ -179,6 +187,10 @@ export default function ContractDetail() {
   const [manualPayModal, setManualPayModal] = useState(false);
   const [manualPayForm, setManualPayForm]   = useState({ method_id: '', date: '', value: '' });
   const [manualPaySaving, setManualPaySaving] = useState(false);
+  // Cobrança externa (link gerado fora da plataforma)
+  const [externalSaleModal, setExternalSaleModal] = useState(false);
+  const [externalSaleForm, setExternalSaleForm]   = useState({ link: '', due_date: '' });
+  const [externalSaleSaving, setExternalSaleSaving] = useState(false);
   const [methodGroups, setMethodGroups]     = useState([]);
 
   const load = async () => {
@@ -688,7 +700,7 @@ export default function ContractDetail() {
 
   const openWhatsApp = () => {
     if (!student) return;
-    const phone = '55' + (student.whatsapp || '').replace(/\D/g, '');
+    const phone = phoneDigitsForWhatsApp(student.whatsapp);
     const msg = buildMessage();
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
@@ -696,18 +708,76 @@ export default function ContractDetail() {
   const buildMessage = () => {
     if (!contract || !student || !plan || !modality) return '';
     const total = Number(planVal('price_total') || 0) - (contract.credit_balance || 0);
-    const pix = contract.asaas_pix_copy;
-    const link = contract.asaas_payment_link;
+    const pix  = contract.asaas_pix_copy;
+    const link = contract.asaas_payment_link || contract.external_payment_link;
     let m = `Olá, ${student.full_name.split(' ')[0]}! 👋\n\n`;
     m += `Aqui está sua cobrança da Assessoria EON:\n\n`;
     m += `📋 Contrato: *${contract.contract_number}*\n`;
     m += `🏃 Modalidade: ${modality.name}\n`;
     m += `📅 Período: ${periodLabel(plan)} (${contract.installments}x)\n`;
-    m += `💰 Total: *${formatCurrency(total)}*\n\n`;
-    if (pix) m += `📲 PIX Copia e Cola:\n\`${pix}\`\n\n`;
+    m += `💰 Total: *${formatCurrency(total)}*\n`;
+    if (contract.due_date) m += `📆 Vencimento: *${formatDate(contract.due_date)}*\n`;
+    m += '\n';
+    if (pix)  m += `📲 PIX Copia e Cola:\n\`${pix}\`\n\n`;
     if (link) m += `🔗 Link de pagamento:\n${link}\n\n`;
     m += `Qualquer dúvida, estou aqui!`;
     return m;
+  };
+
+  const openExternalSaleModal = () => {
+    setExternalSaleForm({
+      link:     contract?.external_payment_link || '',
+      due_date: contract?.due_date || defaultAsaasDueDate(),
+    });
+    setExternalSaleModal(true);
+  };
+
+  const saveExternalSale = async () => {
+    const link = externalSaleForm.link.trim();
+    const dueDate = externalSaleForm.due_date;
+    if (!link)                  return toast.error('Informe o link de cobrança');
+    if (!isSafePaymentUrl(link)) return toast.error('Link inválido — deve começar com https://');
+    if (!dueDate)                return toast.error('Informe a data de vencimento');
+
+    setExternalSaleSaving(true);
+    try {
+      const updates = {
+        external_payment_link:   link,
+        due_date:                dueDate,
+        payment_message_sent_at: new Date().toISOString(),
+      };
+      if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
+        updates.payment_status = 'charge_sent';
+      }
+      await AssessmentContract.update(id, updates);
+      await logEvent('external_charge_registered', { link, due_date: dueDate });
+      toast.success('Cobrança externa registrada!');
+      setExternalSaleModal(false);
+      await load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar cobrança externa');
+    } finally {
+      setExternalSaleSaving(false);
+    }
+  };
+
+  const removeExternalSale = async () => {
+    if (!window.confirm('Remover o link de cobrança externa? Isso volta o contrato para aguardando cobrança.')) return;
+    try {
+      const updates = {
+        external_payment_link:   null,
+        payment_message_sent_at: null,
+      };
+      if (contract.payment_status === 'charge_sent') {
+        updates.payment_status = 'pending';
+      }
+      await AssessmentContract.update(id, updates);
+      await logEvent('external_charge_removed', {});
+      toast.success('Cobrança externa removida.');
+      await load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao remover');
+    }
   };
 
   if (loading || !contract) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
@@ -1066,15 +1136,36 @@ export default function ContractDetail() {
               </div>
             </div>
           ) : contract.external_payment_link ? (
-            <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-              <Link2 className="w-4 h-4 text-amber-600 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-amber-800">Link externo salvo</p>
-                <p className="text-sm text-amber-700 truncate">{contract.external_payment_link}</p>
+            <div className="space-y-3">
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Link2 className="w-4 h-4 text-amber-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-amber-800">Cobrança externa registrada</p>
+                    <p className="text-sm text-amber-700 truncate">{contract.external_payment_link}</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(contract.external_payment_link); toast.success('Link copiado!'); }}>
+                    <Copy className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center justify-between text-xs text-amber-800">
+                  <span>📆 Vence em <strong>{contract.due_date ? formatDate(contract.due_date) : '—'}</strong></span>
+                  {contract.payment_message_sent_at && (
+                    <span className="text-amber-700">Enviado em {formatDate(contract.payment_message_sent_at)}</span>
+                  )}
+                </div>
               </div>
-              <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(contract.external_payment_link); toast.success('Link copiado!'); }}>
-                <Copy className="w-3.5 h-3.5" />
-              </Button>
+              <div className="flex gap-2 justify-center flex-wrap border-t pt-3">
+                <Button size="sm" variant="outline" onClick={openExternalSaleModal}>
+                  <PenLine className="w-3.5 h-3.5 mr-1.5" /> Editar link
+                </Button>
+                <Button size="sm" variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={removeExternalSale}>
+                  <XCircle className="w-3.5 h-3.5 mr-1.5" /> Remover
+                </Button>
+                <Button size="sm" variant="outline" className="text-green-700 border-green-300 hover:bg-green-50" onClick={openManualPay}>
+                  <HandCoins className="w-3.5 h-3.5 mr-1.5" /> Marcar como pago
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1087,7 +1178,10 @@ export default function ContractDetail() {
                   <Button size="sm" variant="outline" onClick={() => openChargeConfirm('CREDIT_CARD')} disabled={chargeLoading || !student?.cpf}>Cartão {contract.installments}x</Button>
                 </div>
               </div>
-              <div className="border-t pt-3 flex justify-center">
+              <div className="border-t pt-3 flex gap-2 justify-center flex-wrap">
+                <Button size="sm" variant="outline" className="text-amber-700 border-amber-300 hover:bg-amber-50" onClick={openExternalSaleModal}>
+                  <Link2 className="w-3.5 h-3.5 mr-1.5" /> Cadastrar cobrança externa
+                </Button>
                 <Button size="sm" variant="outline" className="text-green-700 border-green-300 hover:bg-green-50" onClick={openManualPay}>
                   <HandCoins className="w-3.5 h-3.5 mr-1.5" /> Registrar pagamento manual
                 </Button>
@@ -1390,6 +1484,52 @@ export default function ContractDetail() {
               O vencimento do contrato será estendido automaticamente pelos dias de licença.
             </div>
             <div className="flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setLeaveModal(false)}>Cancelar</Button><Button className="flex-1" onClick={addLeave}>Registrar</Button></div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: cadastrar/editar cobrança externa */}
+      <Dialog open={externalSaleModal} onOpenChange={setExternalSaleModal}>
+        <DialogContent className="max-w-md" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-amber-600" /> Cadastrar cobrança externa
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Use quando a cobrança foi gerada fora da plataforma (Asaas no painel, Stone, etc.).
+              O contrato entra em "vendas em aberto" e você acompanha pelo painel.
+            </p>
+            <div>
+              <Label className="text-xs">Link de pagamento *</Label>
+              <Input
+                className="mt-1 font-mono text-xs"
+                placeholder="https://..."
+                value={externalSaleForm.link}
+                onChange={e => setExternalSaleForm(f => ({ ...f, link: e.target.value }))}
+                autoFocus
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">Cole aqui o link da cobrança gerada externamente.</p>
+            </div>
+            <div>
+              <Label className="text-xs">Data de vencimento *</Label>
+              <Input
+                className="mt-1"
+                type="date"
+                value={externalSaleForm.due_date}
+                onChange={e => setExternalSaleForm(f => ({ ...f, due_date: e.target.value }))}
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" className="flex-1" onClick={() => setExternalSaleModal(false)} disabled={externalSaleSaving}>
+                Cancelar
+              </Button>
+              <Button className="flex-1" onClick={saveExternalSale} disabled={externalSaleSaving}>
+                <Check className="w-4 h-4 mr-1.5" />
+                {externalSaleSaving ? 'Salvando...' : 'Salvar cobrança'}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

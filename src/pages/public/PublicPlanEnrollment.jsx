@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { supabase } from '@/api/db';
 import { formatCurrency, maskCpf, validateCpf } from '@/lib/utils';
+import { PhoneInput } from '@/components/PhoneInput';
+import { normalizePhone, isValidPhone } from '@/lib/phone';
 import { toast } from 'sonner';
 
 function getPlanMonths(plan) {
@@ -134,6 +136,7 @@ export default function PublicPlanEnrollment() {
     e.preventDefault();
     if (!form.full_name.trim())  return toast.error('Nome obrigatório');
     if (!form.whatsapp.trim())   return toast.error('WhatsApp obrigatório');
+    if (!isValidPhone(form.whatsapp)) return toast.error('WhatsApp inválido');
     if (!form.cpf.trim())        return toast.error('CPF obrigatório');
     if (!validateCpf(form.cpf)) return toast.error('CPF inválido');
     if (!form.coach_id)          return toast.error('Selecione um coach');
@@ -146,7 +149,7 @@ export default function PublicPlanEnrollment() {
       const { data: customerId, error: custErr } = await supabase
         .rpc('upsert_assessment_customer', {
           p_full_name:  form.full_name.trim(),
-          p_whatsapp:   form.whatsapp.replace(/\D/g, '') || null,
+          p_whatsapp:   normalizePhone(form.whatsapp) || null,
           p_cpf:        cpfClean || null,
           p_gender:     form.gender    || null,
           p_birth_date: form.birth_date || null,
@@ -298,8 +301,9 @@ export default function PublicPlanEnrollment() {
 
             <div>
               <Label htmlFor="whatsapp">WhatsApp *</Label>
-              <Input id="whatsapp" type="tel" value={form.whatsapp}
-                onChange={e => set('whatsapp', e.target.value)} placeholder="(11) 99999-9999" className="mt-1" />
+              <PhoneInput id="whatsapp" value={form.whatsapp}
+                onChange={v => set('whatsapp', v)} className="mt-1" />
+              <p className="text-[11px] text-muted-foreground mt-1">Para internacional, comece com <code>+</code> (ex: +1 415 555 2671)</p>
             </div>
 
             <div>

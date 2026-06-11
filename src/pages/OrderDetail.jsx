@@ -14,6 +14,7 @@ import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
 import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
+import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
@@ -232,7 +233,7 @@ export default function OrderDetail() {
       `📅 Pago em: ${formatDate(manualPayForm.date || todayLocalStr())}\n\n` +
       `Em breve seu pedido será preparado para entrega. Qualquer dúvida, estamos por aqui!\n\n` +
       `🔍 *Acompanhe seu pedido:*\n${window.location.origin}/p/${publicTrackingToken(order)}`;
-    const phone = '55' + (order.checkout_whatsapp || '').replace(/\D/g, '');
+    const phone = phoneDigitsForWhatsApp(order.checkout_whatsapp);
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -455,7 +456,7 @@ export default function OrderDetail() {
   };
 
   const openWhatsAppDirect = () => {
-    const phone = '55' + (order.checkout_whatsapp || '').replace(/\D/g, '');
+    const phone = phoneDigitsForWhatsApp(order.checkout_whatsapp);
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
   };
 

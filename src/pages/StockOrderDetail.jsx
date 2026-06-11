@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
 import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
@@ -352,7 +353,7 @@ export default function StockOrderDetail() {
     setWhatsappModal(true);
   };
   const copyMessage = () => { navigator.clipboard.writeText(whatsappMsg).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
-  const openWhatsAppDirect = () => { window.open(`https://wa.me/55${(order.customer_whatsapp || '').replace(/\D/g, '')}?text=${encodeURIComponent(whatsappMsg)}`, '_blank'); };
+  const openWhatsAppDirect = () => { window.open(`https://wa.me/${phoneDigitsForWhatsApp(order.customer_whatsapp)}?text=${encodeURIComponent(whatsappMsg)}`, '_blank'); };
 
   const markMessageSent = async () => {
     try {

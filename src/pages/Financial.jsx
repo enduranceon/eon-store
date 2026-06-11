@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isEffectiveOpenSale, isSafePaymentUrl } from '@/lib/sales';
+import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { readPageCache, writePageCache } from '@/lib/page-cache';
 import { toast } from 'sonner';
 
@@ -822,7 +823,7 @@ export default function Financial() {
       toast.error('Cliente sem WhatsApp cadastrado');
       return;
     }
-    const phone = '55' + collectionModal.customer_whatsapp.replace(/\D/g, '');
+    const phone = phoneDigitsForWhatsApp(collectionModal.customer_whatsapp);
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(collectionForm.message)}`, '_blank');
   };
 

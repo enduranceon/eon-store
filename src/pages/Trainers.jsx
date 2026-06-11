@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PreSaleTrainer } from '@/api/entities';
 import { usePageData } from '@/hooks/usePageData';
+import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { toast } from 'sonner';
 
 async function loadTrainersPage() {
@@ -148,9 +149,9 @@ export default function Trainers() {
                     <p className="font-semibold text-gray-900">{t.name}</p>
                     <div className="flex gap-3 mt-0.5">
                       {t.whatsapp && (
-                        <a href={`https://wa.me/${t.whatsapp.replace(/\D/g,'')}`} target="_blank" rel="noreferrer"
+                        <a href={`https://wa.me/${phoneDigitsForWhatsApp(t.whatsapp)}`} target="_blank" rel="noreferrer"
                           className="text-xs text-muted-foreground hover:text-green-600 flex items-center gap-1">
-                          <Phone className="w-3 h-3" />{t.whatsapp}
+                          <Phone className="w-3 h-3" />{formatPhoneDisplay(t.whatsapp)}
                         </a>
                       )}
                       {t.email && (

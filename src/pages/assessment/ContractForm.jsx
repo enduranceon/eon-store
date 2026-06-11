@@ -14,6 +14,8 @@ import {
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr, maskCpf } from '@/lib/utils';
+import { PhoneInput } from '@/components/PhoneInput';
+import { normalizePhone } from '@/lib/phone';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
@@ -217,7 +219,7 @@ export default function ContractForm() {
     try {
       const payload = {
         full_name:  newCustomer.full_name.trim(),
-        whatsapp:   newCustomer.whatsapp?.replace(/\D/g, '') || null,
+        whatsapp:   normalizePhone(newCustomer.whatsapp) || null,
         email:      newCustomer.email?.trim().toLowerCase() || null,
         cpf:        newCustomer.cpf?.replace(/\D/g, '') || null,
         gender:     newCustomer.gender || null,
@@ -826,9 +828,8 @@ export default function ContractForm() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>WhatsApp</Label>
-                <Input className="mt-1" value={newCustomer.whatsapp}
-                  onChange={e => setNewCustomer(c => ({ ...c, whatsapp: e.target.value }))}
-                  placeholder="48999887766" />
+                <PhoneInput className="mt-1" value={newCustomer.whatsapp}
+                  onChange={v => setNewCustomer(c => ({ ...c, whatsapp: v }))} />
               </div>
               <div>
                 <Label>Email</Label>
