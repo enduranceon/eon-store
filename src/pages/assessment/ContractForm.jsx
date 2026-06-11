@@ -789,7 +789,7 @@ export default function ContractForm() {
       </div>
 
       {/* ── Modal: Cadastrar novo aluno inline ─────────────────────────────── */}
-      <Dialog open={newCustomerModal} onOpenChange={setNewCustomerModal}>
+      <Dialog open={newCustomerModal} onOpenChange={() => {}}>
         <DialogContent className="max-w-md" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
