@@ -55,9 +55,23 @@ export const PAYMENT_METHOD_LABELS = {
 };
 
 // Calcula taxa do gateway Asaas
-// PIX: 0,99% · Boleto: R$ 3,49 fixo · Cartão: 2,99% na 1x + 0,5% por parcela adicional
-// Pagamentos manuais (pix_manual, cash, transfer, card_machine) = taxa zero
+// PIX: 0,99% · Boleto: R$ 3,49 fixo
+// Cartão online (Asaas): faixas por nº de parcelas + R$ 0,49 fixo
+//   1x:     2,99% + R$ 0,49
+//   2-6x:   3,49% + R$ 0,49
+//   7-12x:  3,99% + R$ 0,49
+//   13-21x: 4,29% + R$ 0,49
+// Maquininha (Asaas Tap / card_machine): mesmas faixas, SEM R$ 0,49
+// Pagamentos manuais (pix_manual, cash, transfer) = taxa zero
 // Se `manualFee` for fornecido (não null/undefined), tem PRIORIDADE sobre o cálculo padrão.
+function asaasCardPercent(installments) {
+  const n = Math.max(1, Math.floor(installments) || 1);
+  if (n === 1)        return 0.0299;
+  if (n <= 6)         return 0.0349;
+  if (n <= 12)        return 0.0399;
+  return 0.0429;  // 13-21x
+}
+
 export function calcGatewayFee(totalValue, paymentMethod, manualFee = null) {
   // Override manual tem prioridade (pode ser 0 explícito também)
   if (manualFee !== null && manualFee !== undefined && manualFee !== '') {
@@ -75,13 +89,31 @@ export function calcGatewayFee(totalValue, paymentMethod, manualFee = null) {
 
   if (pm === 'pix')    return totalValue * 0.0099;
   if (pm === 'boleto') return 3.49;
+
+  // Maquininha Asaas Tap — faixas iguais ao online, sem R$ 0,49 fixo
+  if (pm === 'card_machine') {
+    return totalValue * asaasCardPercent(1);
+  }
+
+  // Cartão online via Asaas (card_Nx, credit_card)
+  if (pm === 'credit_card') {
+    return totalValue * asaasCardPercent(1) + 0.49;
+  }
   if (pm.startsWith('card_')) {
     const m = pm.match(/card_(\d+)x/);
     const n = m ? parseInt(m[1]) : 1;
-    return totalValue * (0.0299 + (n - 1) * 0.005);
+    return totalValue * asaasCardPercent(n) + 0.49;
   }
-  if (pm === 'credit_card') return totalValue * 0.0299;
   return 0;
+}
+
+// Sugere taxa fixa default em R$ (cartão online Asaas tem R$ 0,49 por transação)
+export function suggestFeeFixed(paymentMethod) {
+  if (!paymentMethod) return 0;
+  if (paymentMethod === 'boleto')      return 3.49;
+  if (paymentMethod === 'credit_card') return 0.49;
+  if (paymentMethod.startsWith('card_')) return 0.49;
+  return 0;  // PIX, maquininha, manuais → sem taxa fixa
 }
 
 // Sugere taxa default em % baseada no método (pra UI sugerir valor no campo)
@@ -89,11 +121,11 @@ export function suggestFeePercent(paymentMethod) {
   if (!paymentMethod) return 0;
   if (paymentMethod === 'pix')         return 0.99;
   if (paymentMethod === 'credit_card') return 2.99;
-  if (paymentMethod === 'card_machine') return 2.99;  // taxa típica de maquininha (Cielo/Stone)
+  if (paymentMethod === 'card_machine') return 2.99;  // Asaas Tap 1x
   if (paymentMethod.startsWith('card_')) {
     const m = paymentMethod.match(/card_(\d+)x/);
     const n = m ? parseInt(m[1]) : 1;
-    return 2.99 + (n - 1) * 0.5;
+    return Number((asaasCardPercent(n) * 100).toFixed(2));
   }
   return 0;  // pix_manual, cash, bank_transfer → sem taxa
 }
