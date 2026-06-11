@@ -71,6 +71,7 @@ const EVENT_META = {
   charge_generated:         { icon: Zap,        color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Cobrança gerada' },
   external_charge_registered: { icon: Link2,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Cobrança externa registrada' },
   external_charge_removed:    { icon: Link2,    color: 'text-gray-500',   bg: 'bg-gray-100',  label: 'Cobrança externa removida' },
+  payment_message_sent:       { icon: MessageCircle, color: 'text-green-600', bg: 'bg-green-50', label: 'Mensagem de cobrança enviada' },
   manual_payment_recorded:  { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Pagamento manual' },
   renewed:                  { icon: RefreshCcw, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovado' },
   cancelled:                { icon: Ban,        color: 'text-red-600',    bg: 'bg-red-50',    label: 'Cancelado' },
@@ -98,6 +99,8 @@ function formatEventSummary(ev) {
       return p.due_date ? `Vence em ${formatDate(p.due_date)}` : 'Link externo salvo';
     case 'external_charge_removed':
       return 'Link externo removido';
+    case 'payment_message_sent':
+      return p.via === 'whatsapp' ? 'Enviada via WhatsApp' : 'Confirmada como enviada';
     case 'renewed':
       return `Novo contrato ${p.new_contract_number || ''}`;
     case 'cancelled':
@@ -749,6 +752,26 @@ export default function ContractDetail() {
     });
   };
 
+  const markMessageSent = async () => {
+    try {
+      const updates = { payment_message_sent_at: new Date().toISOString() };
+      if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
+        updates.payment_status = 'charge_sent';
+      }
+      await AssessmentContract.update(id, updates);
+      await logEvent('payment_message_sent', {
+        via: 'whatsapp',
+        has_asaas_link:   !!contract.asaas_payment_link,
+        has_external_link: !!contract.external_payment_link,
+      });
+      toast.success('Mensagem marcada como enviada!');
+      setWhatsappModal(false);
+      await load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao registrar envio');
+    }
+  };
+
   const openExternalSaleModal = () => {
     setExternalSaleForm({
       link:     contract?.external_payment_link || '',
@@ -767,16 +790,15 @@ export default function ContractDetail() {
     setExternalSaleSaving(true);
     try {
       const updates = {
-        external_payment_link:   link,
-        due_date:                dueDate,
-        payment_message_sent_at: new Date().toISOString(),
+        external_payment_link: link,
+        due_date:              dueDate,
       };
       if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
         updates.payment_status = 'charge_sent';
       }
       await AssessmentContract.update(id, updates);
       await logEvent('external_charge_registered', { link, due_date: dueDate });
-      toast.success('Cobrança externa registrada!');
+      toast.success('Cobrança externa registrada! Agora envie a mensagem pro aluno.');
       setExternalSaleModal(false);
       await load();
     } catch (e) {
@@ -1175,8 +1197,12 @@ export default function ContractDetail() {
                 </div>
                 <div className="flex items-center justify-between text-xs text-amber-800">
                   <span>📆 Vence em <strong>{contract.due_date ? formatDate(contract.due_date) : '—'}</strong></span>
-                  {contract.payment_message_sent_at && (
-                    <span className="text-amber-700">Enviado em {formatDate(contract.payment_message_sent_at)}</span>
+                  {contract.payment_message_sent_at ? (
+                    <span className="text-green-700 flex items-center gap-1">
+                      <Check className="w-3 h-3" /> Mensagem enviada em {formatDate(contract.payment_message_sent_at)}
+                    </span>
+                  ) : (
+                    <span className="text-amber-700 italic">Mensagem ainda não enviada</span>
                   )}
                 </div>
               </div>
@@ -1553,6 +1579,15 @@ export default function ContractDetail() {
               <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={sendWhatsAppDirect}>
                 <ExternalLink className="w-4 h-4 mr-1.5" /> Abrir WhatsApp
               </Button>
+            </div>
+
+            <div className="border-t pt-3">
+              <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={markMessageSent}>
+                <Check className="w-4 h-4 mr-1.5" /> Marcar como enviada
+              </Button>
+              <p className="text-[11px] text-muted-foreground text-center mt-1.5">
+                Depois de enviar a mensagem pelo WhatsApp, clique aqui pra registrar o envio.
+              </p>
             </div>
           </div>
         </DialogContent>
