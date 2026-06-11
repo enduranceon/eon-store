@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   Link2, QrCode, RefreshCw, History, Pause, XCircle, RotateCcw,
-  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban,
+  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, AlertCircle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -21,7 +21,7 @@ import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { isSafePaymentUrl } from '@/lib/sales';
-import { phoneDigitsForWhatsApp } from '@/lib/phone';
+import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
@@ -191,6 +191,9 @@ export default function ContractDetail() {
   const [externalSaleModal, setExternalSaleModal] = useState(false);
   const [externalSaleForm, setExternalSaleForm]   = useState({ link: '', due_date: '' });
   const [externalSaleSaving, setExternalSaleSaving] = useState(false);
+  // WhatsApp — preview e envio
+  const [whatsappModal, setWhatsappModal] = useState(false);
+  const [whatsappCopied, setWhatsappCopied] = useState(false);
   const [methodGroups, setMethodGroups]     = useState([]);
 
   const load = async () => {
@@ -698,30 +701,51 @@ export default function ContractDetail() {
     finally { setManualPaySaving(false); }
   };
 
+  const buildMessage = () => {
+    if (!contract || !student || !plan || !modality) return '';
+    const total       = Number(planVal('price_total') || 0) - (contract.credit_balance || 0);
+    const enrollment  = Number(contract.enrollment_fee || 0);
+    const installments = contract.installments || 1;
+    const instValue   = installments > 1 ? total / installments : null;
+    const pix         = contract.asaas_pix_copy;
+    const link        = contract.asaas_payment_link || contract.external_payment_link;
+    const firstName   = (student.full_name || '').split(' ')[0] || 'aluno(a)';
+
+    let m = `Olá, ${firstName}! 👋\n\n`;
+    m += `Sua adesão na *Assessoria EON* está confirmada! 🎉\n\n`;
+    m += `📋 Contrato: *${contract.contract_number}*\n`;
+    m += `🏃 Modalidade: *${modality.name}*\n`;
+    m += `📅 Plano: *${periodLabel(plan)}*\n`;
+    if (coach?.name) m += `👤 Coach: *${coach.name}*\n`;
+    m += `💰 Total: *${formatCurrency(total)}*`;
+    if (instValue) m += ` em *${installments}x de ${formatCurrency(instValue)}*`;
+    m += '\n';
+    if (enrollment > 0) m += `📌 Matrícula: ${formatCurrency(enrollment)} _(cobrada na 1ª mensalidade)_\n`;
+    if (contract.due_date) m += `📆 Vencimento: *${formatDate(contract.due_date)}*\n`;
+    m += '\n';
+    if (pix)  m += `📲 PIX Copia e Cola:\n\`${pix}\`\n\n`;
+    if (link) m += `🔗 Link de pagamento:\n${link}\n\n`;
+    m += `Qualquer dúvida, estou à disposição! 🏆`;
+    return m;
+  };
+
   const openWhatsApp = () => {
     if (!student) return;
+    setWhatsappCopied(false);
+    setWhatsappModal(true);
+  };
+
+  const sendWhatsAppDirect = () => {
     const phone = phoneDigitsForWhatsApp(student.whatsapp);
     const msg = buildMessage();
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
-  const buildMessage = () => {
-    if (!contract || !student || !plan || !modality) return '';
-    const total = Number(planVal('price_total') || 0) - (contract.credit_balance || 0);
-    const pix  = contract.asaas_pix_copy;
-    const link = contract.asaas_payment_link || contract.external_payment_link;
-    let m = `Olá, ${student.full_name.split(' ')[0]}! 👋\n\n`;
-    m += `Aqui está sua cobrança da Assessoria EON:\n\n`;
-    m += `📋 Contrato: *${contract.contract_number}*\n`;
-    m += `🏃 Modalidade: ${modality.name}\n`;
-    m += `📅 Período: ${periodLabel(plan)} (${contract.installments}x)\n`;
-    m += `💰 Total: *${formatCurrency(total)}*\n`;
-    if (contract.due_date) m += `📆 Vencimento: *${formatDate(contract.due_date)}*\n`;
-    m += '\n';
-    if (pix)  m += `📲 PIX Copia e Cola:\n\`${pix}\`\n\n`;
-    if (link) m += `🔗 Link de pagamento:\n${link}\n\n`;
-    m += `Qualquer dúvida, estou aqui!`;
-    return m;
+  const copyWhatsAppMessage = () => {
+    navigator.clipboard.writeText(buildMessage()).then(() => {
+      setWhatsappCopied(true);
+      setTimeout(() => setWhatsappCopied(false), 2000);
+    });
   };
 
   const openExternalSaleModal = () => {
@@ -1156,6 +1180,11 @@ export default function ContractDetail() {
                 </div>
               </div>
               <div className="flex gap-2 justify-center flex-wrap border-t pt-3">
+                {student?.whatsapp && (
+                  <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp}>
+                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> Enviar via WhatsApp
+                  </Button>
+                )}
                 <Button size="sm" variant="outline" onClick={openExternalSaleModal}>
                   <PenLine className="w-3.5 h-3.5 mr-1.5" /> Editar link
                 </Button>
@@ -1484,6 +1513,46 @@ export default function ContractDetail() {
               O vencimento do contrato será estendido automaticamente pelos dias de licença.
             </div>
             <div className="flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setLeaveModal(false)}>Cancelar</Button><Button className="flex-1" onClick={addLeave}>Registrar</Button></div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: Enviar via WhatsApp */}
+      <Dialog open={whatsappModal} onOpenChange={setWhatsappModal}>
+        <DialogContent className="max-w-lg" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="w-4 h-4 text-green-600" /> Enviar mensagem via WhatsApp
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {!contract.asaas_charge_id && !contract.external_payment_link && (
+              <div className="flex items-start gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                <span className="text-amber-800">
+                  Sem cobrança gerada. A mensagem irá <strong>sem link de pagamento</strong>.
+                  Considere gerar uma cobrança Asaas ou cadastrar uma externa antes.
+                </span>
+              </div>
+            )}
+
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm whitespace-pre-wrap font-mono max-h-[50vh] overflow-y-auto text-green-900">
+              {buildMessage()}
+            </div>
+
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <MessageCircle className="w-3 h-3" />
+              <span>Para: <strong>{formatPhoneDisplay(student?.whatsapp)}</strong></span>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={copyWhatsAppMessage}>
+                {whatsappCopied ? <><Check className="w-4 h-4 mr-1.5 text-green-600" /> Copiado!</> : <><Copy className="w-4 h-4 mr-1.5" /> Copiar mensagem</>}
+              </Button>
+              <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={sendWhatsAppDirect}>
+                <ExternalLink className="w-4 h-4 mr-1.5" /> Abrir WhatsApp
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
