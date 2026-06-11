@@ -712,10 +712,11 @@ export default function ContractDetail() {
     const firstName   = (student.full_name || '').split(' ')[0] || 'aluno(a)';
 
     let m = `Olá, ${firstName}! 👋\n\n`;
-    m += `Sua adesão na *Assessoria EON* está confirmada! 🎉\n\n`;
+    m += `Sua adesão na *Assessoria Esportiva Endurance On* está confirmada! 💙🧡\n\n`;
     m += `📋 Contrato: *${contract.contract_number}*\n`;
-    m += `🏃 Modalidade: *${modality.name}*\n`;
-    m += `📅 Plano: *${periodLabel(plan)}*\n`;
+    m += `🏃 Modalidade: *${modality.name.charAt(0).toUpperCase() + modality.name.slice(1)}*\n`;
+    const periodName = { mensal: 'Mensal', trimestral: 'Trimestral', semestral: 'Semestral', anual: 'Anual' }[plan?.period] || periodLabel(plan);
+    m += `📅 Plano: *${periodName}*\n`;
     if (coach?.name) m += `👤 Coach: *${coach.name}*\n`;
     m += `💰 Total: *${formatCurrency(total)}*`;
     if (instValue) m += ` em *${installments}x de ${formatCurrency(instValue)}*`;
