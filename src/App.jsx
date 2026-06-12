@@ -61,6 +61,7 @@ import AssPainel from '@/pages/assessment/Painel';
 import AssRegua from '@/pages/assessment/Regua';
 import AssRenewals from '@/pages/assessment/Renewals';
 import AssProspects from '@/pages/assessment/Prospects';
+import AssCentralFinanceira from '@/pages/assessment/CentralFinanceira';
 
 function AdminLayout({ children }) {
   const { user, loading, signOut } = useAuth();
@@ -149,6 +150,7 @@ export default function App() {
           <Route path="/assessoria/contratos/:id" element={<AdminLayout><AssContractDetail /></AdminLayout>} />
           <Route path="/assessoria/renovacoes"    element={<AdminLayout><AssRenewals /></AdminLayout>} />
           <Route path="/assessoria/prospects"    element={<AdminLayout><AssProspects /></AdminLayout>} />
+          <Route path="/assessoria/central-financeira" element={<AdminLayout><AssCentralFinanceira /></AdminLayout>} />
           <Route path="/assessoria/fechamento"     element={<AdminLayout><AssMonthlyClosing /></AdminLayout>} />
           <Route path="/assessoria/fechamento/:id" element={<AdminLayout><AssClosingDetail /></AdminLayout>} />
           <Route path="/estoque" element={<AdminLayout><StockProducts /></AdminLayout>} />

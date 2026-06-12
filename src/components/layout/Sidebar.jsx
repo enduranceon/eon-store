@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Activity, FileText, Layers, CalendarClock, Award, DollarSign,
-  Users, BarChart3, TrendingUp,
+  Users, BarChart3, TrendingUp, Wallet,
   ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
   ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus,
@@ -16,25 +16,26 @@ import { isEffectiveOpenSale } from '@/lib/sales';
 // ─────────────────────────────────────────────────────────────────
 
 const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge: 'today' };
-// ASSESSORIA — core do negócio
+// OPERAÇÃO — assessoria esportiva
 const ASSESSORIA_ITEMS = [
   { label: 'Painel',         icon: Activity,      to: '/assessoria',              exact: true },
   { label: 'Contratos',      icon: FileText,      to: '/assessoria/contratos',    badge: 'assessoria' },
-  { label: 'Prospects',      icon: UserPlus,      to: '/assessoria/prospects',    badge: 'prospects' },
-  { label: 'Renovações',     icon: RefreshCcw,    to: '/assessoria/renovacoes',   badge: 'renewals' },
   { label: 'Alunos',         icon: Users,         to: '/assessoria/alunos' },
-  { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },
-  { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
-  { label: 'Fechamento',     icon: DollarSign,    to: '/assessoria/fechamento' },
+  { label: 'Renovações',     icon: RefreshCcw,    to: '/assessoria/renovacoes',   badge: 'renewals' },
+  { label: 'Prospects',      icon: UserPlus,      to: '/assessoria/prospects',    badge: 'prospects' },
   { label: 'Régua',          icon: CalendarClock, to: '/assessoria/regua' },
+  { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
+  { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },
+  { label: 'Fechamento',     icon: DollarSign,    to: '/assessoria/fechamento' },
 ];
 
-// FINANCEIRO — visão unificada
+// FINANCEIRO — visão financeira unificada
 const FINANCEIRO_ITEMS = [
-  { label: 'Vendas em aberto', icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' },
-  { label: 'Fluxo de caixa', icon: TrendingUp,    to: '/financeiro/fluxo-caixa' },
-  { label: 'Relatórios',     icon: BarChart3,     to: '/relatorios' },
-  { label: 'Clientes',       icon: Users,         to: '/clientes',   badge: 'clients' },
+  { label: 'Central Financeira', icon: Wallet,      to: '/assessoria/central-financeira' },
+  { label: 'Vendas em aberto',   icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' },
+  { label: 'Fluxo de caixa',     icon: TrendingUp,  to: '/financeiro/fluxo-caixa' },
+  { label: 'Relatórios',         icon: BarChart3,   to: '/relatorios' },
+  { label: 'Clientes',           icon: Users,       to: '/clientes',   badge: 'clients' },
 ];
 
 // LOJA — módulo secundário (colapsável)
@@ -237,8 +238,8 @@ export default function Sidebar({ open, onClose, onSignOut }) {
             <NavItem item={TODAY_ITEM} isActive={isActive} badges={badges} onClick={onClose} />
           </div>
 
-          {/* ── ASSESSORIA — seção principal ──────────────── */}
-          <SectionLabel label="Assessoria" />
+          {/* ── OPERAÇÃO — assessoria esportiva ───────────── */}
+          <SectionLabel label="Operação" />
           {ASSESSORIA_ITEMS.map(item => (
             <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
           ))}
