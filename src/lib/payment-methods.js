@@ -55,8 +55,9 @@ export const PAYMENT_METHOD_LABELS = {
 };
 
 // Calcula taxa do gateway Asaas
-// PIX: 0,99% · Boleto: R$ 3,49 fixo
-// Cartão online (Asaas): faixas por nº de parcelas + R$ 0,49 fixo
+// PIX: R$ 1,99 fixo por cobrança recebida
+// Boleto: R$ 1,99 fixo por boleto pago
+// Cartão de crédito online (Asaas): faixas por nº de parcelas + R$ 0,49 fixo (cobrado 1x)
 //   1x:     2,99% + R$ 0,49
 //   2-6x:   3,49% + R$ 0,49
 //   7-12x:  3,99% + R$ 0,49
@@ -80,22 +81,21 @@ export function calcGatewayFee(totalValue, paymentMethod, manualFee = null) {
   if (!paymentMethod || !totalValue) return 0;
 
   // Normaliza códigos novos (internal_codes da tabela payment_methods)
-  // para reaproveitar a lógica legacy
   let pm = paymentMethod;
   if (pm === 'pix_asaas')    pm = 'pix';
   if (pm === 'boleto_asaas') pm = 'boleto';
   const asaasCard = pm.match(/^card_asaas_(\d+)x$/);
   if (asaasCard) pm = `card_${asaasCard[1]}x`;
 
-  if (pm === 'pix')    return totalValue * 0.0099;
-  if (pm === 'boleto') return 3.49;
+  if (pm === 'pix')    return 1.99;   // R$ 1,99 fixo por cobrança
+  if (pm === 'boleto') return 1.99;   // R$ 1,99 fixo por boleto
 
-  // Maquininha Asaas Tap — faixas iguais ao online, sem R$ 0,49 fixo
+  // Maquininha Asaas Tap — faixas sem R$ 0,49 fixo
   if (pm === 'card_machine') {
     return totalValue * asaasCardPercent(1);
   }
 
-  // Cartão online via Asaas (card_Nx, credit_card)
+  // Cartão online via Asaas (card_Nx, credit_card) — faixas + R$ 0,49 por transação
   if (pm === 'credit_card') {
     return totalValue * asaasCardPercent(1) + 0.49;
   }
@@ -107,13 +107,14 @@ export function calcGatewayFee(totalValue, paymentMethod, manualFee = null) {
   return 0;
 }
 
-// Sugere taxa fixa default em R$ (cartão online Asaas tem R$ 0,49 por transação)
+// Sugere taxa fixa default em R$ por transação
 export function suggestFeeFixed(paymentMethod) {
   if (!paymentMethod) return 0;
-  if (paymentMethod === 'boleto')      return 3.49;
+  if (paymentMethod === 'pix')         return 1.99;
+  if (paymentMethod === 'boleto')      return 1.99;
   if (paymentMethod === 'credit_card') return 0.49;
   if (paymentMethod.startsWith('card_')) return 0.49;
-  return 0;  // PIX, maquininha, manuais → sem taxa fixa
+  return 0;  // maquininha, manuais → sem taxa fixa
 }
 
 // Sugere taxa default em % baseada no método (pra UI sugerir valor no campo)

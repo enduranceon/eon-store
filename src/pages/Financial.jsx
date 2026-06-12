@@ -96,12 +96,13 @@ function effectiveMonthlyValue(o) {
   return (o.total_value || 0) / getInstallmentN(o);
 }
 
-// Taxa de gateway proporcional à parcela mensal.
+// Taxa de gateway total dividida pelas parcelas (taxas fixas como R$1,99 são cobradas 1x só).
 function effectiveMonthlyFee(o) {
   const n = getInstallmentN(o);
-  const mVal = (o.total_value || 0) / n;
-  const mManualFee = (o.manual_fee != null && o.manual_fee !== '') ? (Number(o.manual_fee) / n) : null;
-  return calcGatewayFee(mVal, o.payment_method, mManualFee);
+  const totalFee = (o.manual_fee != null && o.manual_fee !== '')
+    ? Number(o.manual_fee)
+    : calcGatewayFee(o.total_value || 0, o.payment_method);
+  return totalFee / n;
 }
 
 // ─────────────────────────────────────────────────────────────────
