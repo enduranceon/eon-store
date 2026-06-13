@@ -32,6 +32,7 @@ const ASSESSORIA_ITEMS = [
 // FINANCEIRO — visão financeira unificada
 const FINANCEIRO_ITEMS = [
   { label: 'Central Financeira', icon: Wallet,      to: '/assessoria/central-financeira' },
+  { label: 'Repasse',            icon: DollarSign,  to: '/assessoria/repasse' },
   { label: 'Vendas em aberto',   icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' },
   { label: 'Fluxo de caixa',     icon: TrendingUp,  to: '/financeiro/fluxo-caixa' },
   { label: 'Relatórios',         icon: BarChart3,   to: '/relatorios' },
