@@ -941,6 +941,9 @@ export default function ContractDetail() {
             <div><p className="text-xs text-muted-foreground">Parcelas</p><p className="font-semibold">{contract.installments}x</p></div>
             <div><p className="text-xs text-muted-foreground">Mensal</p><p className="font-semibold">{formatCurrency(planVal('price_monthly'))}</p></div>
             <div><p className="text-xs text-muted-foreground">Total</p><p className="font-semibold">{formatCurrency(planVal('price_total'))}</p></div>
+            {contract.payment_method && (
+              <div><p className="text-xs text-muted-foreground">Forma pref.</p><p className="font-semibold">{{ card: 'Cartão de crédito', pix_boleto: 'PIX / Boleto', pix_manual: 'PIX manual', cash: 'Dinheiro', bank_transfer: 'Transferência', card_machine: 'Maquininha' }[contract.payment_method] || contract.payment_method}</p></div>
+            )}
             {contract.credit_balance > 0 && <div><p className="text-xs text-muted-foreground">Crédito</p><p className="font-semibold text-green-600">-{formatCurrency(contract.credit_balance)}</p></div>}
           </div>
           <div className="border-t mt-4 pt-3 flex items-center justify-between text-sm flex-wrap gap-2">
