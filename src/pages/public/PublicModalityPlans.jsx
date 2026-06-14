@@ -103,7 +103,7 @@ export default function PublicModalityPlans() {
 
   const [form, setForm] = useState({
     full_name: '', gender: '', birth_date: '',
-    whatsapp: '', cpf: '', coach_id: '',
+    whatsapp: '', email: '', cpf: '', coach_id: '',
     payment_type: '', installments: 1,
   });
   const [cpfTouched, setCpfTouched] = useState(false);
@@ -153,6 +153,7 @@ export default function PublicModalityPlans() {
           p_cpf:        cpfClean || null,
           p_gender:     form.gender    || null,
           p_birth_date: form.birth_date || null,
+          p_email:      form.email.trim() || null,
         });
       if (custErr) throw custErr;
       const customer = { id: customerId };
@@ -388,6 +389,13 @@ export default function PublicModalityPlans() {
               <PhoneInput id="whatsapp" value={form.whatsapp}
                 onChange={v => set('whatsapp', v)} className="mt-1" />
               <p className="text-[11px] text-muted-foreground mt-1">Para internacional, comece com <code>+</code> (ex: +1 415 555 2671)</p>
+            </div>
+
+            <div>
+              <Label htmlFor="email">E-mail</Label>
+              <Input id="email" type="email" value={form.email}
+                onChange={e => set('email', e.target.value)}
+                placeholder="seu@email.com" className="mt-1" />
             </div>
 
             <div>
