@@ -560,7 +560,8 @@ export default function Financial() {
     return { bruto, liquido };
   };
 
-  const activeOrders = orders.filter(isEffectiveOpenSale);
+  // Exclui pedidos que já têm pagamento confirmado no Asaas mesmo que payment_status ainda não foi sincronizado
+  const activeOrders = orders.filter(o => isEffectiveOpenSale(o) && !ordersWithAsaasCache.has(o.id));
 
   const paidThisMonth = orders
     .filter(o => o.payment_status === 'paid' && o.payment_date >= monthStart)
