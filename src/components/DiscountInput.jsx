@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Tag, Lock, Pencil, X, Check, Info } from 'lucide-react';
+import { Tag, Lock, Pencil, X, Check, Info, RefreshCcw } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -14,32 +14,41 @@ import { toast } from 'sonner';
  *  - subtotal: número (valor base antes do desconto)
  *  - currentDiscount: número atual do desconto (R$)
  *  - currentReason: motivo atual
+ *  - currentRecurring: boolean — se o desconto é recorrente (se renova junto)
+ *  - showRecurring: boolean — exibe opção de desconto recorrente (só em contratos)
  *  - lockedReason: se truthy, bloqueia edição (ex: "Cobrança já gerada no Asaas")
  *  - entityType: 'stock_order' | 'presale_order' | 'assessment_contract'
  *  - entityId: uuid (necessário pra registrar no log; se vazio, pula log)
- *  - onSave: async (newValue, reason) => void  — chamado quando salva
+ *  - onSave: async (newValue, reason, recurring) => void  — chamado quando salva
  *  - compact: boolean — modo compacto pra usar em formulários de criação
  */
 export default function DiscountInput({
   subtotal,
-  currentDiscount = 0,
-  currentReason   = '',
-  lockedReason    = null,
+  currentDiscount  = 0,
+  currentReason    = '',
+  currentRecurring = false,
+  showRecurring    = false,
+  lockedReason     = null,
   entityType,
   entityId,
   onSave,
   compact = false,
 }) {
-  const [editing, setEditing]   = useState(compact);
-  const [mode, setMode]         = useState('value'); // 'value' | 'percent'
-  const [value, setValue]       = useState(currentDiscount || 0);
-  const [reason, setReason]     = useState(currentReason || '');
-  const [saving, setSaving]     = useState(false);
-  const [history, setHistory]   = useState([]);
+  const [editing, setEditing]     = useState(compact);
+  const [mode, setMode]           = useState('value'); // 'value' | 'percent'
+  const [value, setValue]         = useState(currentDiscount || 0);
+  const [reason, setReason]       = useState(currentReason || '');
+  const [recurring, setRecurring] = useState(currentRecurring || false);
+  const [saving, setSaving]       = useState(false);
+  const [history, setHistory]     = useState([]);
   const [showHistory, setShowHistory] = useState(false);
 
   // Sincroniza com props quando muda
-  useEffect(() => { setValue(currentDiscount || 0); setReason(currentReason || ''); }, [currentDiscount, currentReason]);
+  useEffect(() => {
+    setValue(currentDiscount || 0);
+    setReason(currentReason || '');
+    setRecurring(currentRecurring || false);
+  }, [currentDiscount, currentReason, currentRecurring]);
 
   // Carrega histórico
   useEffect(() => {
@@ -64,7 +73,7 @@ export default function DiscountInput({
     if (numValue > safeSubtotal) return toast.error('Desconto maior que o subtotal');
     setSaving(true);
     try {
-      await onSave?.(numValue, reason);
+      await onSave?.(numValue, reason, recurring);
       // Log auditoria (não bloqueia salvar se falhar)
       if (entityId && entityType && numValue !== currentDiscount) {
         try {
@@ -182,12 +191,19 @@ export default function DiscountInput({
           // Display
           currentDiscount > 0 ? (
             <div className="mt-3 space-y-1">
-              <p className="text-2xl font-bold text-green-700">
-                − {formatCurrency(currentDiscount)}
-                <span className="text-sm font-normal text-muted-foreground ml-2">
-                  ({((currentDiscount / safeSubtotal) * 100).toFixed(1)}%)
-                </span>
-              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-2xl font-bold text-green-700">
+                  − {formatCurrency(currentDiscount)}
+                  <span className="text-sm font-normal text-muted-foreground ml-2">
+                    ({((currentDiscount / safeSubtotal) * 100).toFixed(1)}%)
+                  </span>
+                </p>
+                {currentRecurring && (
+                  <span className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                    <RefreshCcw className="w-3 h-3" /> Recorrente
+                  </span>
+                )}
+              </div>
               {currentReason && (
                 <p className="text-xs text-muted-foreground italic">{currentReason}</p>
               )}
@@ -238,6 +254,31 @@ export default function DiscountInput({
                 placeholder="ex: cliente fidelidade, promoção interna..." />
             </div>
 
+            {showRecurring && (
+              <button
+                type="button"
+                onClick={() => setRecurring(r => !r)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border-2 text-sm transition-colors ${
+                  recurring
+                    ? 'border-blue-400 bg-blue-50 text-blue-800'
+                    : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                }`}
+              >
+                <RefreshCcw className={`w-4 h-4 shrink-0 ${recurring ? 'text-blue-600' : 'text-gray-400'}`} />
+                <div className="text-left">
+                  <p className="font-medium leading-tight">Desconto recorrente</p>
+                  <p className="text-xs opacity-70 leading-tight">
+                    {recurring ? 'Será aplicado automaticamente nas renovações' : 'Só neste contrato (pontual)'}
+                  </p>
+                </div>
+                <div className={`ml-auto w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center ${
+                  recurring ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+                }`}>
+                  {recurring && <Check className="w-2.5 h-2.5 text-white" />}
+                </div>
+              </button>
+            )}
+
             {/* Preview do cálculo */}
             <div className="rounded-lg bg-blue-50/50 border border-blue-100 p-3 space-y-1 text-sm">
               <div className="flex justify-between">
@@ -261,6 +302,7 @@ export default function DiscountInput({
                 setEditing(false);
                 setValue(currentDiscount || 0);
                 setReason(currentReason || '');
+                setRecurring(currentRecurring || false);
               }} disabled={saving}>
                 <X className="w-3 h-3 mr-1" /> Cancelar
               </Button>

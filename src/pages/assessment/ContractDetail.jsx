@@ -595,10 +595,16 @@ export default function ContractDetail() {
         original_end_date:  newEnd,
         due_date:           defaultAsaasDueDate(),
         installments:       contract.installments,
-        enrollment_fee:     0, // renovações não cobram taxa de matrícula
+        enrollment_fee:     0,
         auto_renewal:       contract.auto_renewal ?? false,
         parent_contract_id: contract.id,
         notes:              `Renovação manual de ${contract.contract_number}`,
+        // Copia desconto se marcado como recorrente
+        ...(contract.discount_recurring && contract.manual_discount > 0 ? {
+          manual_discount:    contract.manual_discount,
+          discount_reason:    contract.discount_reason || null,
+          discount_recurring: true,
+        } : {}),
       });
       await AssessmentContract.update(id, { renewal_generated: true, status: 'finished' });
       await logEvent('renewed', {
@@ -973,15 +979,18 @@ export default function ContractDetail() {
         subtotal={Number(plan?.price_total || 0) + (Number(contract.enrollment_fee) || 0)}
         currentDiscount={Number(contract.manual_discount) || 0}
         currentReason={contract.discount_reason || ''}
+        currentRecurring={contract.discount_recurring || false}
+        showRecurring={true}
         lockedReason={contract.asaas_charge_id
           ? 'Já existe uma cobrança gerada no Asaas. Cancele a cobrança atual antes de aplicar desconto.'
           : null}
         entityType="assessment_contract"
         entityId={contract.id}
-        onSave={async (newValue, reason) => {
+        onSave={async (newValue, reason, recurring) => {
           await AssessmentContract.update(contract.id, {
-            manual_discount: newValue,
-            discount_reason: reason || null,
+            manual_discount:    newValue,
+            discount_reason:    reason || null,
+            discount_recurring: recurring || false,
           });
           // Recalcula parcelas manuais se já estava pago manualmente
           if (contract.manual_payment && contract.payment_status === 'paid') {
