@@ -45,6 +45,7 @@ function periodLabel(plan) {
 import { toast } from 'sonner';
 
 const STATUS = {
+  draft:     { label: 'Prospect',  badge: 'secondary' },
   active:    { label: 'Ativo',     badge: 'success' },
   overdue:   { label: 'Atrasado',  badge: 'destructive' },
   on_leave:  { label: 'Em licença',badge: 'warning' },
@@ -76,6 +77,8 @@ const EVENT_META = {
   renewed:                  { icon: RefreshCcw, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovado' },
   cancelled:                { icon: Ban,        color: 'text-red-600',    bg: 'bg-red-50',    label: 'Cancelado' },
   refund_completed:         { icon: HandCoins,  color: 'text-purple-600', bg: 'bg-purple-50', label: 'Estorno realizado' },
+  dates_changed:            { icon: Calendar,   color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Datas alteradas' },
+  enrollment_activated:     { icon: Check,      color: 'text-green-600',  bg: 'bg-green-50',  label: 'Adesão confirmada' },
 };
 
 function formatEventSummary(ev) {
@@ -105,6 +108,8 @@ function formatEventSummary(ev) {
       return `Novo contrato ${p.new_contract_number || ''}`;
     case 'cancelled':
       return `Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`;
+    case 'dates_changed':
+      return `${formatDate(p.old_start)} → ${formatDate(p.new_start)} · fim: ${formatDate(p.new_end)}`;
     default:
       return ev.notes || '';
   }
@@ -198,6 +203,10 @@ export default function ContractDetail() {
   const [whatsappModal, setWhatsappModal] = useState(false);
   const [whatsappCopied, setWhatsappCopied] = useState(false);
   const [methodGroups, setMethodGroups]     = useState([]);
+  // Edição de datas
+  const [dateModal, setDateModal]     = useState(false);
+  const [dateForm, setDateForm]       = useState({ start_date: '', end_date: '' });
+  const [dateSaving, setDateSaving]   = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -263,6 +272,49 @@ export default function ContractDetail() {
     }
   };
 
+  // Ativa contrato se ainda estiver como draft (prospect)
+  const activateDraftIfNeeded = async () => {
+    if (contract?.status !== 'draft') return;
+    await AssessmentContract.update(id, { status: 'active' });
+    await logEvent('enrollment_activated', { source: 'admin_action' });
+  };
+
+  // Edição de datas
+  const openDateModal = () => {
+    setDateForm({ start_date: contract.start_date || '', end_date: contract.end_date || '' });
+    setDateModal(true);
+  };
+
+  const onDateStartChange = (val) => {
+    const newEnd = val && plan ? addPeriod(val, plan) : dateForm.end_date;
+    setDateForm(f => ({ ...f, start_date: val, end_date: newEnd }));
+  };
+
+  const saveDates = async () => {
+    if (!dateForm.start_date || !dateForm.end_date) return toast.error('Preencha ambas as datas');
+    if (dateForm.end_date <= dateForm.start_date) return toast.error('Data final deve ser após a inicial');
+    setDateSaving(true);
+    try {
+      await AssessmentContract.update(id, {
+        start_date: dateForm.start_date,
+        end_date:   dateForm.end_date,
+      });
+      await logEvent('dates_changed', {
+        old_start: contract.start_date,
+        new_start: dateForm.start_date,
+        old_end:   contract.end_date,
+        new_end:   dateForm.end_date,
+      });
+      toast.success('Datas atualizadas');
+      setDateModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar datas');
+    } finally {
+      setDateSaving(false);
+    }
+  };
+
   // ───────── ACTIONS ─────────
   // Abre modal de confirmação (não chama Asaas ainda)
   const openChargeConfirm = (billing_type = 'PIX') => {
@@ -294,6 +346,7 @@ export default function ContractDetail() {
         throw new Error(realMessage);
       }
       if (data?.error) throw new Error(data.error);
+      await activateDraftIfNeeded();
       await logEvent('charge_generated', {
         billing_type,
         installments: contract.installments,
@@ -695,6 +748,7 @@ export default function ContractDetail() {
         { order_id: id, order_type: 'contract', external_reference: contract.contract_number },
         totalV,
       );
+      await activateDraftIfNeeded();
       await logEvent('manual_payment_recorded', {
         method:       method.internal_code || method.kind,
         method_name:  method.name,
@@ -802,6 +856,7 @@ export default function ContractDetail() {
         updates.payment_status = 'charge_sent';
       }
       await AssessmentContract.update(id, updates);
+      await activateDraftIfNeeded();
       await logEvent('external_charge_registered', { link, due_date: dueDate });
       toast.success('Cobrança externa registrada! Agora envie a mensagem pro aluno.');
       setExternalSaleModal(false);
@@ -952,7 +1007,12 @@ export default function ContractDetail() {
             {contract.credit_balance > 0 && <div><p className="text-xs text-muted-foreground">Crédito</p><p className="font-semibold text-green-600">-{formatCurrency(contract.credit_balance)}</p></div>}
           </div>
           <div className="border-t mt-4 pt-3 flex items-center justify-between text-sm flex-wrap gap-2">
-            <span><Calendar className="w-3.5 h-3.5 inline mr-1" /> {formatDate(contract.start_date)} → {formatDate(contract.end_date)}</span>
+            <span className="flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 inline" /> {formatDate(contract.start_date)} → {formatDate(contract.end_date)}
+              <button onClick={openDateModal} className="text-blue-600 hover:underline text-xs ml-1 inline-flex items-center gap-0.5">
+                <PenLine className="w-3 h-3" /> editar
+              </button>
+            </span>
             <div className="flex items-center gap-2 flex-wrap">
               {contract.original_end_date !== contract.end_date && (
                 <span className="text-xs text-amber-700">Original: {formatDate(contract.original_end_date)} (estendido por licenças)</span>
@@ -1901,6 +1961,39 @@ export default function ContractDetail() {
               <Button variant="outline" className="flex-1" onClick={() => setReopenModal(false)} disabled={reopenLoading}>Voltar</Button>
               <Button className="flex-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={reopenPayment} disabled={reopenLoading}>
                 {reopenLoading ? 'Revertendo...' : 'Confirmar reabertura'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: editar datas */}
+      <Dialog open={dateModal} onOpenChange={open => !open && !dateSaving && setDateModal(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-blue-600" /> Editar datas do contrato
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <Label>Data de início</Label>
+              <Input type="date" className="mt-1" value={dateForm.start_date}
+                onChange={e => onDateStartChange(e.target.value)} />
+              <p className="text-xs text-muted-foreground">A data final é recalculada automaticamente pelo período do plano.</p>
+            </div>
+            <div className="space-y-1">
+              <Label>Data final</Label>
+              <Input type="date" className="mt-1" value={dateForm.end_date}
+                onChange={e => setDateForm(f => ({ ...f, end_date: e.target.value }))} />
+              <p className="text-xs text-muted-foreground">Pode ajustar manualmente se precisar adiar ou antecipar o término.</p>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setDateModal(false)} disabled={dateSaving}>
+                Cancelar
+              </Button>
+              <Button className="flex-1" onClick={saveDates} disabled={dateSaving}>
+                <Check className="w-3.5 h-3.5 mr-1" /> {dateSaving ? 'Salvando...' : 'Salvar'}
               </Button>
             </div>
           </div>
