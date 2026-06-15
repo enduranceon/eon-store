@@ -720,9 +720,8 @@ export default function ContractDetail() {
     const link        = contract.asaas_payment_link || contract.external_payment_link;
     const firstName   = (student.full_name || '').split(' ')[0] || 'aluno(a)';
 
-    let m = `Olá, ${firstName}! 👋\n\n`;
+    let m = `Olá, ${firstName}!\n\n`;
     m += `Sua adesão na *Assessoria Esportiva Endurance On* está confirmada! 💙🧡\n\n`;
-    m += `📋 Contrato: *${contract.contract_number}*\n`;
     m += `🏃 Modalidade: *${modality.name.charAt(0).toUpperCase() + modality.name.slice(1)}*\n`;
     const periodName = { mensal: 'Mensal', trimestral: 'Trimestral', semestral: 'Semestral', anual: 'Anual' }[plan?.period] || periodLabel(plan);
     m += `📅 Plano: *${periodName}*\n`;
@@ -735,7 +734,7 @@ export default function ContractDetail() {
     m += '\n';
     if (pix)  m += `📲 PIX Copia e Cola:\n\`${pix}\`\n\n`;
     if (link) m += `🔗 Link de pagamento:\n${link}\n\n`;
-    m += `Qualquer dúvida, estou à disposição! 🏆`;
+    m += `Qualquer dúvida, estou à disposição!`;
     return m;
   };
 
