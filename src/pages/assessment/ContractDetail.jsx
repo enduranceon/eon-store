@@ -79,6 +79,7 @@ const EVENT_META = {
   refund_completed:         { icon: HandCoins,  color: 'text-purple-600', bg: 'bg-purple-50', label: 'Estorno realizado' },
   dates_changed:            { icon: Calendar,   color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Datas alteradas' },
   enrollment_activated:     { icon: Check,      color: 'text-green-600',  bg: 'bg-green-50',  label: 'Adesão confirmada' },
+  charge_cancelled:         { icon: XCircle,    color: 'text-red-500',    bg: 'bg-red-50',    label: 'Cobrança cancelada' },
 };
 
 function formatEventSummary(ev) {
@@ -207,6 +208,9 @@ export default function ContractDetail() {
   const [dateModal, setDateModal]     = useState(false);
   const [dateForm, setDateForm]       = useState({ start_date: '', end_date: '' });
   const [dateSaving, setDateSaving]   = useState(false);
+  // Cancelar cobrança Asaas
+  const [cancelChargeModal, setCancelChargeModal] = useState(false);
+  const [cancelChargeLoading, setCancelChargeLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -312,6 +316,38 @@ export default function ContractDetail() {
       toast.error(e.message || 'Erro ao salvar datas');
     } finally {
       setDateSaving(false);
+    }
+  };
+
+  const cancelAsaasCharge = async () => {
+    setCancelChargeLoading(true);
+    try {
+      // Cancela no Asaas (best-effort — pode já ter expirado)
+      if (contract.asaas_charge_id) {
+        try {
+          await supabase.functions.invoke('create-asaas-charge', {
+            body: { action: 'cancel', order_id: id, order_type: 'contract' },
+          });
+        } catch (e) {
+          console.warn('[cancel-charge] Asaas cancel failed (continuing anyway):', e.message);
+        }
+      }
+      // Limpa cobrança do contrato, volta pro pendente
+      await AssessmentContract.update(id, {
+        asaas_charge_id:         null,
+        asaas_payment_link:      null,
+        asaas_pix_copy:          null,
+        payment_message_sent_at: null,
+        payment_status:          'pending',
+      });
+      await logEvent('charge_cancelled', { previous_charge_id: contract.asaas_charge_id });
+      toast.success('Cobrança cancelada. Aplique o desconto e gere uma nova cobrança.');
+      setCancelChargeModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cancelar cobrança');
+    } finally {
+      setCancelChargeLoading(false);
     }
   };
 
@@ -1241,6 +1277,14 @@ export default function ContractDetail() {
                   </div>
                 </div>
               )}
+              <div className="border-t pt-3">
+                <button
+                  onClick={() => setCancelChargeModal(true)}
+                  className="text-xs text-red-600 hover:underline flex items-center gap-1"
+                >
+                  <XCircle className="w-3.5 h-3.5" /> Cancelar cobrança (para aplicar desconto e gerar nova)
+                </button>
+              </div>
             </div>
           ) : contract.manual_payment ? (
             <div className="flex items-center gap-3 py-2">
@@ -1994,6 +2038,36 @@ export default function ContractDetail() {
               </Button>
               <Button className="flex-1" onClick={saveDates} disabled={dateSaving}>
                 <Check className="w-3.5 h-3.5 mr-1" /> {dateSaving ? 'Salvando...' : 'Salvar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: cancelar cobrança Asaas */}
+      <Dialog open={cancelChargeModal} onOpenChange={open => !open && !cancelChargeLoading && setCancelChargeModal(false)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <XCircle className="w-5 h-5" /> Cancelar cobrança Asaas
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm space-y-2">
+              <p className="font-semibold text-amber-900">O que vai acontecer:</p>
+              <div className="space-y-1 text-amber-800">
+                <p>• A cobrança atual no Asaas será <strong>cancelada</strong></p>
+                <p>• O link/PIX enviado anteriormente deixará de funcionar</p>
+                <p>• O contrato continua <strong>ativo</strong> (não é um cancelamento de contrato)</p>
+                <p>• Você poderá aplicar o desconto e gerar uma nova cobrança</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setCancelChargeModal(false)} disabled={cancelChargeLoading}>
+                Voltar
+              </Button>
+              <Button className="flex-1 bg-red-500 hover:bg-red-600 text-white" onClick={cancelAsaasCharge} disabled={cancelChargeLoading}>
+                {cancelChargeLoading ? 'Cancelando...' : 'Confirmar cancelamento'}
               </Button>
             </div>
           </div>
