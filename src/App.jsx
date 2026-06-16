@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/components/AuthProvider';
 import { useAuth } from '@/hooks/useAuth';
@@ -67,6 +68,7 @@ import AssRepasse from '@/pages/assessment/Repasse';
 function AdminLayout({ children }) {
   const { user, loading, signOut } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
@@ -82,7 +84,9 @@ function AdminLayout({ children }) {
       <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
-          {children}
+          <ErrorBoundary routeKey={location.pathname}>
+            {children}
+          </ErrorBoundary>
         </main>
       </div>
     </div>

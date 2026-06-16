@@ -370,7 +370,9 @@ export default function HealthCheck() {
       {/* Lista de checks */}
       <div className="space-y-2">
         {CHECKS.map(check => {
-          const result = results[check.id];
+          // Antes do useEffect rodar, results ainda está {} — trata como "carregando"
+          // pra não acessar result.count de undefined (quebrava a tela inteira).
+          const result = results[check.id] || { loading: true };
           const isOpen = expanded.has(check.id);
           const sev = SEVERITY_CONFIG[check.severity];
           const SevIcon = sev.icon;
