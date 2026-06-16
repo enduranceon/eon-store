@@ -219,21 +219,40 @@ export default function ClosingDetail() {
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Total a pagar</p>
           <p className="text-2xl font-bold text-green-600">{formatCurrency(total)}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Automático {formatCurrency(total - adjustmentsTotal)}
+            {adjustmentsTotal !== 0 && ` + ajustes ${adjustmentsTotal >= 0 ? '+' : ''}${formatCurrency(adjustmentsTotal)}`}
+          </p>
         </CardContent></Card>
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Coaches</p>
           <p className="text-2xl font-bold">{grouped.length}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">com repasse neste mês</p>
         </CardContent></Card>
         <Card><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">Itens</p>
-          <p className="text-2xl font-bold">{items.length}</p>
+          <p className="text-xs text-muted-foreground">Itens calculados</p>
+          <p className="text-2xl font-bold">{items.filter(i => i.source_type !== 'manual_adjustment').length}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">alunos/bônus processados</p>
         </CardContent></Card>
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Ajustes manuais</p>
-          <p className={`text-2xl font-bold ${adjustmentsTotal >= 0 ? 'text-amber-700' : 'text-red-700'}`}>
-            {adjustmentsTotal !== 0 ? formatCurrency(adjustmentsTotal) : '—'}
+          <p className={`text-2xl font-bold ${adjustmentsTotal > 0 ? 'text-amber-700' : adjustmentsTotal < 0 ? 'text-red-700' : 'text-gray-400'}`}>
+            {adjustmentsTotal !== 0 ? `${adjustmentsTotal > 0 ? '+' : ''}${formatCurrency(adjustmentsTotal)}` : '—'}
+          </p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            {items.filter(i => i.source_type === 'manual_adjustment').length} ajuste(s)
           </p>
         </CardContent></Card>
+      </div>
+
+      {/* Legenda de tipos */}
+      <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+        <span className="font-medium text-gray-700">Tipos de item:</span>
+        {Object.entries(SOURCE).map(([k, v]) => (
+          <span key={k} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold ${v.cls}`}>
+            {v.label}
+          </span>
+        ))}
       </div>
 
       {isDraft && (

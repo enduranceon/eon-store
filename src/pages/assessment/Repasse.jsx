@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Users, TrendingUp, Award, RefreshCw, ChevronDown, ChevronUp,
-  Star, Shield, Zap,
+  Star, Shield, Zap, FileCheck, ArrowRight, Info,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -363,6 +364,26 @@ export default function Repasse() {
           <RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />
           Atualizar
         </Button>
+      </div>
+
+      {/* ── Banner previsão ────────────────────────────────── */}
+      <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+        <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-blue-900 font-medium">Esta página é uma previsão em tempo real</p>
+          <p className="text-xs text-blue-700 mt-0.5">
+            Os valores são calculados com base nos contratos ativos agora e não estão salvos em lugar nenhum.
+            No fim do mês, gere o <strong>Fechamento Mensal</strong> para congelar os valores, adicionar ajustes e registrar o pagamento dos coaches.
+          </p>
+        </div>
+        <Link
+          to="/assessoria/fechamento"
+          className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-white border border-blue-300 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors"
+        >
+          <FileCheck className="w-3.5 h-3.5" />
+          Ir para Fechamento
+          <ArrowRight className="w-3 h-3" />
+        </Link>
       </div>
 
       {/* ── KPIs ───────────────────────────────────────────── */}
