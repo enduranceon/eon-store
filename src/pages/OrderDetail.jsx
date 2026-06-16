@@ -107,6 +107,8 @@ export default function OrderDetail() {
   const [cancelOrderReason, setCancelOrderReason] = useState('');
   const [cancelOrderReasonCustom, setCancelOrderReasonCustom] = useState('');
   const [cancelOrderLoading, setCancelOrderLoading] = useState(false);
+  // Remover link externo
+  const [removeLinkLoading, setRemoveLinkLoading] = useState(false);
   // Adicionar peça
   const [campaignProducts, setCampaignProducts] = useState([]);
   const [addItemModal, setAddItemModal] = useState(false);
@@ -688,6 +690,23 @@ export default function OrderDetail() {
       toast.error(e.message || 'Erro ao cancelar pedido');
     } finally {
       setCancelOrderLoading(false);
+    }
+  };
+
+  // ── Remover link externo de pagamento ────────────────────────────
+  const removeExternalLink = async () => {
+    setRemoveLinkLoading(true);
+    try {
+      await supabase.from('presale_orders').update({
+        external_payment_link: null,
+        payment_preference: null,
+      }).eq('id', id);
+      toast.success('Link removido. Agora você pode enviar um novo link via WhatsApp.');
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao remover link');
+    } finally {
+      setRemoveLinkLoading(false);
     }
   };
 
@@ -1616,15 +1635,25 @@ export default function OrderDetail() {
           ) : (
             <div className="space-y-3">
               {order.external_payment_link && (
-                <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                  <Link2 className="w-4 h-4 text-amber-600 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-amber-800">Link externo salvo</p>
-                    <p className="text-sm text-amber-700 truncate">{order.external_payment_link}</p>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-4 h-4 text-amber-600 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-amber-800">Link externo salvo</p>
+                      <p className="text-sm text-amber-700 truncate">{order.external_payment_link}</p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(order.external_payment_link); toast.success('Link copiado!'); }}>
+                      <Copy className="w-3.5 h-3.5" />
+                    </Button>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(order.external_payment_link); toast.success('Link copiado!'); }}>
-                    <Copy className="w-3.5 h-3.5" />
-                  </Button>
+                  <button
+                    type="button"
+                    disabled={removeLinkLoading}
+                    onClick={removeExternalLink}
+                    className="text-xs text-red-600 hover:text-red-800 underline disabled:opacity-50"
+                  >
+                    {removeLinkLoading ? 'Removendo...' : '✕ Remover link (para enviar novo)'}
+                  </button>
                 </div>
               )}
               {/* Preferência do cliente */}
