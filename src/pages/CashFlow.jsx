@@ -131,7 +131,69 @@ async function loadCashFlowPayments() {
     .order('credit_date', { ascending: true });
 
   if (error) throw error;
-  return data || [];
+  const payments = data || [];
+
+  // ── Enriquece cada parcela com o nome do cliente ─────────────────
+  // O cliente fica em lugares diferentes conforme o tipo de pedido:
+  //  presale  → presale_orders.checkout_name
+  //  stock    → stock_orders.customer_name
+  //  contract → assessment_contracts.customer_id → presale_customers.full_name
+  const idsByType = { presale: new Set(), stock: new Set(), contract: new Set() };
+  for (const p of payments) {
+    if (p.order_id && idsByType[p.order_type]) idsByType[p.order_type].add(p.order_id);
+  }
+
+  const nameMap = {}; // order_id -> { customer, orderNumber }
+  const tasks = [];
+
+  if (idsByType.presale.size) {
+    tasks.push(
+      supabase.from('presale_orders')
+        .select('id, order_number, checkout_name')
+        .in('id', [...idsByType.presale])
+        .then(({ data }) => {
+          for (const o of data || []) nameMap[o.id] = { customer: o.checkout_name, orderNumber: o.order_number };
+        })
+    );
+  }
+  if (idsByType.stock.size) {
+    tasks.push(
+      supabase.from('stock_orders')
+        .select('id, order_number, customer_name')
+        .in('id', [...idsByType.stock])
+        .then(({ data }) => {
+          for (const o of data || []) nameMap[o.id] = { customer: o.customer_name, orderNumber: o.order_number };
+        })
+    );
+  }
+  if (idsByType.contract.size) {
+    tasks.push(
+      supabase.from('assessment_contracts')
+        .select('id, contract_number, customer_id')
+        .in('id', [...idsByType.contract])
+        .then(async ({ data }) => {
+          const contracts = data || [];
+          const custIds = [...new Set(contracts.map(c => c.customer_id).filter(Boolean))];
+          let custMap = {};
+          if (custIds.length) {
+            const { data: custs } = await supabase
+              .from('presale_customers').select('id, full_name').in('id', custIds);
+            custMap = Object.fromEntries((custs || []).map(c => [c.id, c.full_name]));
+          }
+          for (const c of contracts) {
+            nameMap[c.id] = { customer: custMap[c.customer_id] || '—', orderNumber: c.contract_number };
+          }
+        })
+    );
+  }
+
+  await Promise.all(tasks);
+
+  return payments.map(p => ({
+    ...p,
+    _customer: nameMap[p.order_id]?.customer || null,
+    _orderNumber: nameMap[p.order_id]?.orderNumber || null,
+  }));
 }
 
 // ─────────────────────────────────────────────────────────────────

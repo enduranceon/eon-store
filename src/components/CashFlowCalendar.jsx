@@ -255,12 +255,17 @@ export default function CashFlowCalendar({ payments }) {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate text-xs">
-                          {item.description || item.external_reference || `Parcela #${item.installment_number || '?'}`}
+                          {item._customer
+                            || item.description
+                            || item.external_reference
+                            || `Parcela #${item.installment_number || '?'}`}
                         </p>
-                        <p className="text-[10px] text-muted-foreground">
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {item._orderNumber ? `#${item._orderNumber} · ` : ''}
                           {item.source === 'manual' ? '✋ Manual' : '⚡ Asaas'}
                           {item.installment_number && item.total_installments > 1 &&
                             ` · ${item.installment_number}/${item.total_installments}`}
+                          {item._customer && item.description ? ` · ${item.description}` : ''}
                         </p>
                       </div>
                       <div className="text-right shrink-0">
