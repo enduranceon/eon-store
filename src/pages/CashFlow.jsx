@@ -416,7 +416,7 @@ export default function CashFlow() {
                   </button>
                   {isOpen && (
                     <div className="border-t divide-y">
-                      {m.items
+                      {[...m.items]
                         .sort((a, b) => (a.credit_date || '').localeCompare(b.credit_date || ''))
                         .map(item => (
                           <div key={item.id} className="flex items-center gap-3 p-3 text-sm hover:bg-gray-50">
