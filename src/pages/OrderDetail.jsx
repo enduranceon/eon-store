@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight, Pencil, Plus, Minus } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +46,37 @@ const CANCEL_REASONS = [
   'Erro no pedido',
   'Outro',
 ];
+
+// Motivos para cancelar/trocar uma cobrança já gerada (volta o pedido para "Aguardando cobrança")
+const CHARGE_CANCEL_REASONS = [
+  'Cliente pediu outra forma de pagamento',
+  'Aplicar desconto / ajustar valor',
+  'Link ou valor incorreto',
+  'Cliente desistiu da compra',
+  'Outro',
+];
+
+// Rótulo + cor do marcador para cada ação no histórico da venda
+function SALE_EVENT_META(ev) {
+  const byAction = {
+    asaas_charge_created: { label: 'Cobrança Asaas gerada',  dot: 'bg-blue-500' },
+    charge_sent:          { label: 'Cobrança enviada',       dot: 'bg-green-500' },
+    charge_resent:        { label: 'Cobrança reenviada',     dot: 'bg-green-500' },
+    charge_cancelled:     { label: 'Cobrança cancelada',     dot: 'bg-red-500' },
+    order_cancelled:      { label: 'Pedido cancelado',       dot: 'bg-red-600' },
+    refunded:             { label: 'Pagamento estornado',    dot: 'bg-purple-500' },
+  };
+  const byStatus = {
+    awaiting_charge: { label: 'Aguardando cobrança', dot: 'bg-gray-400' },
+    charge_sent:     { label: 'Cobrança enviada',    dot: 'bg-green-500' },
+    paid:            { label: 'Pagamento confirmado', dot: 'bg-green-600' },
+    cancelled:       { label: 'Pedido cancelado',    dot: 'bg-red-600' },
+    refunded:        { label: 'Pagamento estornado', dot: 'bg-purple-500' },
+  };
+  return byAction[ev.metadata?.action]
+      || byStatus[ev.new_status]
+      || { label: ev.reason || ev.new_status || 'Atualização', dot: 'bg-gray-400' };
+}
 
 export default function OrderDetail() {
   const { id } = useParams();
@@ -107,8 +138,12 @@ export default function OrderDetail() {
   const [cancelOrderReason, setCancelOrderReason] = useState('');
   const [cancelOrderReasonCustom, setCancelOrderReasonCustom] = useState('');
   const [cancelOrderLoading, setCancelOrderLoading] = useState(false);
-  // Remover link externo
-  const [removeLinkLoading, setRemoveLinkLoading] = useState(false);
+  // Cancelar/trocar cobrança (volta para aguardando cobrança)
+  const [cancelChargeLoading, setCancelChargeLoading] = useState(false);
+  // Vencimento escolhido ao enviar/registrar cobrança externa
+  const [whatsappDueDate, setWhatsappDueDate] = useState('');
+  // Histórico de ações da venda (sales_status_events)
+  const [saleEvents, setSaleEvents] = useState([]);
   // Adicionar peça
   const [campaignProducts, setCampaignProducts] = useState([]);
   const [addItemModal, setAddItemModal] = useState(false);
@@ -162,6 +197,15 @@ export default function OrderDetail() {
       .order('installment_number', { ascending: true })
       .then(({ data }) => setPaymentInstallments(data || []))
       .catch(() => setPaymentInstallments([]));
+
+    // Histórico de ações da venda (cobranças geradas, canceladas, etc.)
+    supabase.from('sales_status_events')
+      .select('*')
+      .eq('order_type', 'presale')
+      .eq('order_id', id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setSaleEvents(data || []))
+      .catch(() => setSaleEvents([]));
   };
 
   useEffect(() => { load(); }, [id]);
@@ -308,12 +352,34 @@ export default function OrderDetail() {
     }
   };
 
+  // Registra uma ação no histórico da venda (sales_status_events)
+  const logSaleEvent = async (newStatus, reason, metadata = {}) => {
+    try {
+      await supabase.from('sales_status_events').insert({
+        order_type:      'presale',
+        order_id:        id,
+        previous_status: order?.payment_status || null,
+        new_status:      newStatus,
+        reason,
+        metadata,
+      });
+    } catch (e) {
+      console.warn('[sales_status_events] falha ao registrar:', e.message);
+    }
+  };
+
   const createAsaasCharge = async (billingType) => {
     const cpf = asaasCpf.replace(/\D/g, '');
     if (cpf.length < 11) return toast.error('Informe o CPF do cliente (11 dígitos)');
     try {
       await callAsaas('create', { cpf: asaasCpf, billing_type: billingType, due_date: asaasDueDate, installments: asaasInstallments });
       await supabase.from('presale_orders').update({ due_date: asaasDueDate }).eq('id', id);
+      await logSaleEvent('charge_sent', 'Cobrança Asaas gerada', {
+        action:       'asaas_charge_created',
+        billing_type: billingType,
+        installments: billingType === 'CREDIT_CARD' ? asaasInstallments : 1,
+        due_date:     asaasDueDate,
+      });
       toast.success('Cobrança criada com sucesso!');
       load();
     } catch (e) { toast.error(e.message || 'Erro ao criar cobrança'); }
@@ -332,25 +398,59 @@ export default function OrderDetail() {
     } catch (e) { toast.error(e.message || 'Erro ao verificar'); }
   };
 
-  // Abre modal de cancelamento
-  const cancelAsaasCharge = () => {
+  // Abre modal de cancelamento de cobrança
+  const openCancelCharge = () => {
     setCancelReason('');
     setCancelReasonCustom('');
     setCancelModal(true);
   };
 
-  // Confirma cancelamento com motivo
-  const confirmCancelAsaasCharge = async () => {
-    const reason = cancelReason === 'Outro' ? cancelReasonCustom : cancelReason;
+  // Cancela a cobrança atual (Asaas ou link externo) e volta o pedido para
+  // "Aguardando cobrança" — limpando vencimento e link — para gerar/enviar uma nova.
+  const confirmCancelCharge = async () => {
+    const reason = cancelReason === 'Outro' ? cancelReasonCustom.trim() : cancelReason;
+    if (!reason) return toast.error('Selecione o motivo');
+
+    setCancelChargeLoading(true);
     try {
-      await callAsaas('cancel');
-      await supabase.from('presale_orders').update({ cancellation_reason: reason || null }).eq('id', id);
-      await returnCouponUse(id, 'presale');
+      const hadAsaas    = !!order.asaas_charge_id;
+      const hadExternal = !!order.external_payment_link;
+
+      // Se há cobrança nativa no Asaas (não paga), cancela no gateway primeiro
+      if (hadAsaas && order.payment_status !== 'paid') {
+        try { await callAsaas('cancel'); }
+        catch (e) { console.warn('Falha ao cancelar cobrança Asaas:', e.message); }
+      }
+
+      await supabase.from('presale_orders').update({
+        payment_status:          'awaiting_charge',
+        external_payment_link:   null,
+        asaas_charge_id:         null,
+        asaas_payment_link:      null,
+        asaas_pix_qrcode:        null,
+        asaas_pix_copy:          null,
+        payment_message_sent_at: null,
+        due_date:                null,
+        cancellation_reason:     reason,
+      }).eq('id', id);
+
+      await logSaleEvent('awaiting_charge', reason, {
+        action:                'charge_cancelled',
+        had_asaas_charge:      hadAsaas,
+        had_external_link:     hadExternal,
+        previous_due_date:     order.due_date || null,
+        previous_external_link: order.external_payment_link || null,
+      });
+
       setCancelModal(false);
       setAsaasStatus(null);
-      toast.success('Cobrança cancelada.');
+      toast.success('Cobrança cancelada. Pedido voltou para "Aguardando cobrança" — gere ou envie uma nova com novo vencimento.');
       load();
-    } catch (e) { toast.error(e.message || 'Erro ao cancelar'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cancelar cobrança');
+    } finally {
+      setCancelChargeLoading(false);
+    }
   };
 
   // Confirma estorno com motivo
@@ -360,6 +460,7 @@ export default function OrderDetail() {
       await callAsaas('refund', { reason });
       await supabase.from('presale_orders').update({ cancellation_reason: reason || null }).eq('id', id);
       await returnCouponUse(id, 'presale');
+      await logSaleEvent('refunded', reason || 'Estorno', { action: 'refunded', value: order.total_value });
       setRefundModal(false);
       toast.success('Estorno realizado com sucesso!');
       load();
@@ -376,7 +477,7 @@ export default function OrderDetail() {
     card_10x: 'Cartão 10x', card_11x: 'Cartão 11x', card_12x: 'Cartão 12x',
   };
 
-  const buildMessage = (manualLink = '') => {
+  const buildMessage = (manualLink = '', dueDate = order.due_date) => {
     const itemLines = (order.items || []).filter(it => !it.cancelled).map(item => {
       const extras = (item.extras || []).map(e => `   ➕ ${e.name}: ${formatCurrency(e.price)}`).join('\n');
       const itemTotal = ((item.sale_price || 0) + (item.extras_total || 0)) * item.quantity;
@@ -386,6 +487,7 @@ export default function OrderDetail() {
     const total = order.total_value || 0;
     const trackingLink = `${window.location.origin}/p/${publicTrackingToken(order)}`;
     const trackingLine = `\n\n🔍 *Acompanhe seu pedido:*\n${trackingLink}`;
+    const dueLine = dueDate ? `📅 *Vencimento:* ${formatDate(dueDate)}\n\n` : '';
 
     // Modo Asaas: tem link ou PIX do gateway
     const chargeLink = order.asaas_payment_link;
@@ -396,6 +498,7 @@ export default function OrderDetail() {
         `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
         `📦 *Itens:*\n${itemLines}\n\n` +
         `💰 *Total: ${formatCurrency(total)}*\n\n` +
+        dueLine +
         (pixCopy ? `📲 *PIX Copia e Cola:*\n\`${pixCopy}\`\n\n` : '') +
         (chargeLink ? `🔗 *Link de pagamento:*\n${chargeLink}` : '') +
         trackingLine
@@ -413,6 +516,7 @@ export default function OrderDetail() {
         `📦 *Itens:*\n${itemLines}\n\n` +
         `💰 *Total: ${formatCurrency(total)}*\n\n` +
         (payLabel ? `💳 *Forma de pagamento:* ${payLabel}\n\n` : '') +
+        dueLine +
         `🔗 *Link de pagamento:*\n${linkTrim}` +
         trackingLine
       );
@@ -444,8 +548,10 @@ export default function OrderDetail() {
 
   const openWhatsApp = () => {
     const savedExternalLink = order.external_payment_link || '';
+    const due = order.due_date || defaultPaymentDueDate();
     setWhatsappManualLink(savedExternalLink);
-    setWhatsappMsg(buildMessage(savedExternalLink));
+    setWhatsappDueDate(due);
+    setWhatsappMsg(buildMessage(savedExternalLink, due));
     setCopied(false);
     setWhatsappModal(true);
   };
@@ -521,18 +627,31 @@ export default function OrderDetail() {
         toast.error('Gere uma cobrança ou informe o link externo antes de efetivar a venda.');
         return;
       }
+      // Para cobrança externa, o vencimento é definido/ajustado aqui
+      const isExternal = !order.asaas_charge_id;
+      const dueDate = isExternal ? (whatsappDueDate || defaultPaymentDueDate()) : order.due_date;
+      if (isExternal && !whatsappDueDate) {
+        toast.error('Informe a data de vencimento da cobrança');
+        return;
+      }
+      const wasResent = order.payment_status === 'charge_sent';
       const updates = { payment_message_sent_at: new Date().toISOString() };
-      if (!order.asaas_charge_id) {
+      if (isExternal) {
         updates.external_payment_link = externalLink || null;
-        if (!order.due_date) {
-          updates.due_date = defaultPaymentDueDate();
-        }
+        updates.due_date = dueDate;
       }
       if (['awaiting_charge', 'pending'].includes(order.payment_status)) {
         updates.payment_status = 'charge_sent';
       }
       await PreSaleOrder.update(id, updates);
-      toast.success('Mensagem marcada como enviada!');
+      await logSaleEvent('charge_sent', wasResent ? 'Cobrança reenviada' : 'Cobrança enviada', {
+        action:    wasResent ? 'charge_resent' : 'charge_sent',
+        channel:   'whatsapp',
+        via:       isExternal ? (externalLink ? 'external_link' : 'message_only') : 'asaas',
+        due_date:  dueDate || null,
+        link:      isExternal ? (externalLink || null) : (order.asaas_payment_link || null),
+      });
+      toast.success(wasResent ? 'Reenvio registrado!' : 'Mensagem marcada como enviada!');
       setWhatsappModal(false);
       load();
     } catch (e) {
@@ -683,6 +802,8 @@ export default function OrderDetail() {
       // 4) Devolve uso de cupom (se houver)
       await returnCouponUse(id, 'presale');
 
+      await logSaleEvent('cancelled', reason, { action: 'order_cancelled' });
+
       toast.success('Pedido cancelado.');
       setCancelOrderModal(false);
       load();
@@ -690,23 +811,6 @@ export default function OrderDetail() {
       toast.error(e.message || 'Erro ao cancelar pedido');
     } finally {
       setCancelOrderLoading(false);
-    }
-  };
-
-  // ── Remover link externo de pagamento ────────────────────────────
-  const removeExternalLink = async () => {
-    setRemoveLinkLoading(true);
-    try {
-      await supabase.from('presale_orders').update({
-        external_payment_link: null,
-        payment_preference: null,
-      }).eq('id', id);
-      toast.success('Link removido. Agora você pode enviar um novo link via WhatsApp.');
-      load();
-    } catch (e) {
-      toast.error(e.message || 'Erro ao remover link');
-    } finally {
-      setRemoveLinkLoading(false);
     }
   };
 
@@ -1026,18 +1130,33 @@ export default function OrderDetail() {
                 <Link2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span className="text-amber-800">Sem cobrança Asaas — você pode inserir um link externo abaixo (Stone, PagSeguro, etc.)</span>
               </div>
-              <div>
-                <Label className="text-xs">Link de cobrança externo (opcional)</Label>
-                <Input
-                  className="mt-1 font-mono text-xs"
-                  placeholder="https://..."
-                  value={whatsappManualLink}
-                  onChange={e => {
-                    setWhatsappManualLink(e.target.value);
-                    setWhatsappMsg(buildMessage(e.target.value));
-                    setCopied(false);
-                  }}
-                />
+              <div className="grid grid-cols-2 gap-2">
+                <div className="col-span-2">
+                  <Label className="text-xs">Link de cobrança externo (opcional)</Label>
+                  <Input
+                    className="mt-1 font-mono text-xs"
+                    placeholder="https://..."
+                    value={whatsappManualLink}
+                    onChange={e => {
+                      setWhatsappManualLink(e.target.value);
+                      setWhatsappMsg(buildMessage(e.target.value, whatsappDueDate));
+                      setCopied(false);
+                    }}
+                  />
+                </div>
+                <div className="col-span-2">
+                  <Label className="text-xs">Vencimento da cobrança</Label>
+                  <Input
+                    type="date"
+                    className="mt-1 text-sm"
+                    value={whatsappDueDate}
+                    onChange={e => {
+                      setWhatsappDueDate(e.target.value);
+                      setWhatsappMsg(buildMessage(whatsappManualLink, e.target.value));
+                      setCopied(false);
+                    }}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -1104,7 +1223,7 @@ export default function OrderDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal cancelar cobrança */}
+      {/* Modal cancelar/trocar cobrança */}
       <Dialog open={cancelModal} onOpenChange={setCancelModal}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -1113,9 +1232,16 @@ export default function OrderDetail() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Selecione o motivo do cancelamento:</p>
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-800 flex gap-2">
+              <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                A cobrança atual será cancelada {order.asaas_charge_id ? '(inclusive no Asaas) ' : ''}e o pedido volta para
+                <strong> Aguardando cobrança</strong>. Depois você gera/envia uma nova com novo vencimento — útil pra trocar a forma de pagamento ou aplicar desconto.
+              </span>
+            </div>
+            <p className="text-sm text-muted-foreground">Selecione o motivo:</p>
             <div className="space-y-1.5">
-              {CANCEL_REASONS.map(r => (
+              {CHARGE_CANCEL_REASONS.map(r => (
                 <button key={r} type="button" onClick={() => setCancelReason(r)}
                   className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-all ${
                     cancelReason === r ? 'border-red-400 bg-red-50 text-red-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-700'
@@ -1137,10 +1263,10 @@ export default function OrderDetail() {
               <Button variant="outline" className="flex-1" onClick={() => setCancelModal(false)}>Voltar</Button>
               <Button
                 className="flex-1 bg-red-500 hover:bg-red-600 text-white"
-                onClick={confirmCancelAsaasCharge}
-                disabled={asaasLoading || !cancelReason}
+                onClick={confirmCancelCharge}
+                disabled={cancelChargeLoading || !cancelReason || (cancelReason === 'Outro' && !cancelReasonCustom.trim())}
               >
-                {asaasLoading ? 'Cancelando...' : 'Confirmar cancelamento'}
+                {cancelChargeLoading ? 'Cancelando...' : 'Confirmar cancelamento'}
               </Button>
             </div>
           </div>
@@ -1599,12 +1725,18 @@ export default function OrderDetail() {
                   )}
                   {/* Botão cancelar — só aparece quando não pago/estornado */}
                   {!['paid', 'refunded', 'cancelled'].includes(order.payment_status) && (
-                    <Button size="sm" variant="outline" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={cancelAsaasCharge} disabled={asaasLoading}>
+                    <Button size="sm" variant="outline" className="text-red-500 hover:text-red-700 hover:bg-red-50" onClick={openCancelCharge} disabled={asaasLoading}>
                       <X className="w-3.5 h-3.5 mr-1" /> Cancelar
                     </Button>
                   )}
                 </div>
               </div>
+              {/* Vencimento da cobrança */}
+              {order.due_date && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Calendar className="w-3.5 h-3.5" /> Vence em <span className="font-semibold text-gray-700">{formatDate(order.due_date)}</span>
+                </div>
+              )}
               {/* PIX copia e cola */}
               {order.asaas_pix_copy && (
                 <div>
@@ -1628,7 +1760,7 @@ export default function OrderDetail() {
                 </div>
               )}
               {/* Enviar WhatsApp */}
-              <Button className="w-full bg-green-600 hover:bg-green-700 text-white gap-2" onClick={() => { setWhatsappMsg(buildMessage()); setCopied(false); setWhatsappModal(true); }}>
+              <Button className="w-full bg-green-600 hover:bg-green-700 text-white gap-2" onClick={() => { setWhatsappManualLink(''); setWhatsappDueDate(order.due_date || ''); setWhatsappMsg(buildMessage()); setCopied(false); setWhatsappModal(true); }}>
                 <MessageCircle className="w-4 h-4" /> Enviar cobrança via WhatsApp
               </Button>
             </div>
@@ -1646,13 +1778,18 @@ export default function OrderDetail() {
                       <Copy className="w-3.5 h-3.5" />
                     </Button>
                   </div>
+                  {order.due_date && (
+                    <div className="flex items-center gap-1.5 text-xs text-amber-700">
+                      <Calendar className="w-3.5 h-3.5" /> Vence em <span className="font-semibold">{formatDate(order.due_date)}</span>
+                    </div>
+                  )}
                   <button
                     type="button"
-                    disabled={removeLinkLoading}
-                    onClick={removeExternalLink}
+                    disabled={cancelChargeLoading}
+                    onClick={openCancelCharge}
                     className="text-xs text-red-600 hover:text-red-800 underline disabled:opacity-50"
                   >
-                    {removeLinkLoading ? 'Removendo...' : '✕ Remover link (para enviar novo)'}
+                    ✕ Cancelar cobrança (trocar link / aplicar desconto)
                   </button>
                 </div>
               )}
@@ -1990,6 +2127,41 @@ export default function OrderDetail() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Histórico de ações da cobrança/venda */}
+      {saleEvents.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-500" /> Histórico
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ol className="relative border-l border-gray-200 ml-1.5 space-y-4">
+              {saleEvents.map(ev => {
+                const meta = SALE_EVENT_META(ev);
+                return (
+                  <li key={ev.id} className="ml-4">
+                    <span className={`absolute -left-1.5 w-3 h-3 rounded-full ${meta.dot}`} />
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <p className="text-sm font-medium text-gray-800">{meta.label}</p>
+                      <time className="text-xs text-muted-foreground">
+                        {new Date(ev.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </time>
+                    </div>
+                    {ev.reason && ev.reason !== meta.label && (
+                      <p className="text-xs text-muted-foreground mt-0.5">{ev.reason}</p>
+                    )}
+                    {ev.metadata?.due_date && (
+                      <p className="text-xs text-muted-foreground mt-0.5">Vencimento: {formatDate(ev.metadata.due_date)}</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Modal editar forma de pagamento */}
       <Dialog open={editPayMethodModal} onOpenChange={setEditPayMethodModal}>
