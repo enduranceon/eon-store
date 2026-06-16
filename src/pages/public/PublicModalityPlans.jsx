@@ -104,7 +104,7 @@ export default function PublicModalityPlans() {
   const [form, setForm] = useState({
     full_name: '', gender: '', birth_date: '',
     whatsapp: '', email: '', cpf: '', coach_id: '',
-    payment_type: '', installments: 1,
+    payment_type: 'card', installments: 1,
   });
   const [cpfTouched, setCpfTouched] = useState(false);
 
