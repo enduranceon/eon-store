@@ -13,6 +13,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Cell, LineChart, Line,
 } from 'recharts';
+import CashFlowCalendar from '@/components/CashFlowCalendar';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -379,6 +380,9 @@ export default function CashFlow() {
           )}
         </CardContent>
       </Card>
+
+      {/* ── Calendário de recebimentos ──────────────────────── */}
+      <CashFlowCalendar payments={payments} />
 
       {/* ── Detalhamento mensal expansível ──────────────────── */}
       <Card>
