@@ -1056,10 +1056,10 @@ export default function OrderDetail() {
               Abrir no WhatsApp
             </Button>
           </div>
-          {order.payment_status === 'awaiting_charge' && (
+          {['awaiting_charge', 'charge_sent'].includes(order.payment_status) && (
             <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={markMessageSent}>
               <Check className="w-4 h-4 mr-1.5" />
-              Efetivar venda externa enviada
+              {order.payment_status === 'charge_sent' ? 'Registrar reenvio de cobrança' : 'Efetivar venda externa enviada'}
             </Button>
           )}
           {/* Atalho: se já está cobrando manualmente e o cliente confirmar pagamento */}
