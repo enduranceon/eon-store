@@ -8,6 +8,7 @@ import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
+import BusinessPulse from '@/components/BusinessPulse';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -263,7 +264,7 @@ export default function Today() {
     receivedReturns.length + pendingRefunds.length;
 
   return (
-    <div className="space-y-5 max-w-4xl mx-auto">
+    <div className="space-y-5 max-w-5xl mx-auto">
 
       {/* Cabeçalho */}
       <div>
@@ -274,6 +275,9 @@ export default function Today() {
             : `Você tem ${totalActions} ${totalActions === 1 ? 'item' : 'itens'} para revisar hoje`}
         </p>
       </div>
+
+      {/* Pulso do negócio — KPIs executivos da assessoria */}
+      <BusinessPulse />
 
       {totalActions === 0 ? (
         <Card>
