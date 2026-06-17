@@ -14,6 +14,10 @@ import {
   AssessmentCoach, PreSaleCustomer, RenewalRule, ContractRenewalAction,
 } from '@/api/entities';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr, utcToLocalDateStr, renderMessageTemplate } from '@/lib/utils';
+import { computeMrrHistory } from '@/lib/assessment-metrics';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
+} from 'recharts';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { toast } from 'sonner';
@@ -122,6 +126,11 @@ export default function Painel() {
     const p = plans.find(pl => pl.id === c.plan_id);
     return acc + (p ? Number(p.price_monthly) : 0);
   }, 0);
+
+  // Evolução do MRR nos últimos 6 meses (aproximação por vigência dos contratos)
+  const mrrHistory = computeMrrHistory(contracts, plans, 6);
+  const mrrPrev = mrrHistory.length >= 2 ? mrrHistory[mrrHistory.length - 2].mrr : 0;
+  const mrrGrowthPct = mrrPrev > 0 ? ((monthlyRevenue - mrrPrev) / mrrPrev) * 100 : null;
 
   // Contratos com auto_renewal que já venceram e ainda não foram renovados
   const pendingRenewal = contracts.filter(c =>
@@ -610,6 +619,57 @@ export default function Painel() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Evolução do MRR — últimos 6 meses */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-emerald-600" />
+                Evolução da receita recorrente (MRR)
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Últimos 6 meses — estimativa pela vigência dos contratos
+              </p>
+            </div>
+            {mrrGrowthPct != null && (
+              <span className={`flex items-center gap-1 text-sm font-semibold ${mrrGrowthPct >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                {mrrGrowthPct >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                {mrrGrowthPct >= 0 ? '+' : ''}{mrrGrowthPct.toFixed(0)}% vs mês anterior
+              </span>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {mrrHistory.every(d => d.mrr === 0) ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Sem dados suficientes para o histórico.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mrrHistory} barCategoryGap="25%" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                <YAxis
+                  tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false}
+                  tickFormatter={v => v === 0 ? '' : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v} width={42}
+                />
+                <Tooltip
+                  cursor={{ fill: '#f9fafb' }}
+                  formatter={(value, name, props) => [
+                    `${formatCurrency(value)} · ${props.payload.count} aluno${props.payload.count !== 1 ? 's' : ''}`,
+                    'MRR',
+                  ]}
+                />
+                <Bar dataKey="mrr" radius={[6, 6, 0, 0]} maxBarSize={64}>
+                  {mrrHistory.map((d, i) => (
+                    <Cell key={d.ym} fill={i === mrrHistory.length - 1 ? '#059669' : '#6ee7b7'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Dois alertas lado a lado */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

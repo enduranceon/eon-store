@@ -85,6 +85,7 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
 
   return {
     mrr,
+    plansMap,
     activeContracts: active.length,
     activeStudents,
     ticketMedio,
@@ -100,4 +101,54 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
     inadimplenciaValor,
     expiring: expiring.length,
   };
+}
+
+// Reconstrói o MRR histórico dos últimos N meses a partir das datas dos contratos.
+// Para cada mês, considera "ativo" o contrato cuja vigência (start_date → end_date,
+// ou cancelamento, o que vier primeiro) cobre o último dia daquele mês.
+// É uma aproximação — não temos snapshot mensal — mas dá a tendência de crescimento.
+export function computeMrrHistory(contracts = [], plans = [], months = 6) {
+  const plansMap = Object.fromEntries(plans.map(p => [p.id, p]));
+
+  const series = [];
+  const base = new Date(); base.setDate(1);
+
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+    // último dia do mês de referência
+    const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    const refStr = toLocalDateStr(monthEnd);
+    const ym = refStr.slice(0, 7);
+
+    let mrr = 0;
+    let count = 0;
+    for (const c of contracts) {
+      if (c.status === 'draft') continue;
+      const start = c.start_date || utcToLocalDateStr(c.created_at);
+      if (!start || start > refStr) continue; // ainda não tinha começado
+
+      // Data efetiva de término: cancelamento (se houve) ou fim de vigência
+      const cancel = c.status === 'cancelled'
+        ? (c.cancellation_date || utcToLocalDateStr(c.updated_at))
+        : null;
+      const endRef = cancel || c.end_date || null;
+      if (endRef && endRef < refStr) continue; // já tinha encerrado antes do mês
+
+      const snap = c.plan_snapshot;
+      const monthly = snap && snap.price_monthly != null
+        ? Number(snap.price_monthly) || 0
+        : (plansMap[c.plan_id] ? Number(plansMap[c.plan_id].price_monthly) || 0 : 0);
+      mrr += monthly;
+      count += 1;
+    }
+
+    series.push({
+      ym,
+      month: monthEnd.toLocaleString('pt-BR', { month: 'short' }).replace('.', ''),
+      mrr,
+      count,
+    });
+  }
+
+  return series;
 }
