@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Activity, FileText, Layers, CalendarClock, Award, DollarSign,
-  Users, BarChart3, TrendingUp, Wallet,
+  Users, BarChart3, TrendingUp, Wallet, TrendingDown,
   ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
   ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus,
@@ -23,6 +23,7 @@ const ASSESSORIA_ITEMS = [
   { label: 'Alunos',         icon: Users,         to: '/assessoria/alunos' },
   { label: 'Renovações',     icon: RefreshCcw,    to: '/assessoria/renovacoes',   badge: 'renewals' },
   { label: 'Prospects',      icon: UserPlus,      to: '/assessoria/prospects',    badge: 'prospects' },
+  { label: 'Retenção',       icon: TrendingDown,  to: '/assessoria/retencao' },
   { label: 'Régua',          icon: CalendarClock, to: '/assessoria/regua' },
   { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
   { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },

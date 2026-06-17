@@ -113,6 +113,13 @@ function ContractExpirationRow({ contract }) {
 
 const PAID_STATUSES = new Set(['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH']);
 
+// Valor mensal de um contrato — usa plan_snapshot quando disponível
+function monthlyValue(contract, planMap) {
+  const snap = contract.plan_snapshot;
+  if (snap?.price_monthly != null) return Number(snap.price_monthly) || 0;
+  return Number(planMap[contract.plan_id]?.price_monthly) || 0;
+}
+
 function CoachCard({ entry }) {
   const pct = entry.total > 0 ? (entry.received / entry.total) * 100 : 0;
   const days = Object.entries(entry.byDay).sort(([a], [b]) => Number(a) - Number(b));
@@ -213,7 +220,7 @@ export default function CentralFinanceira() {
     const [contractsRes, plansRes, modalitiesRes, coachesRes, customersRes, paymentsRes] = await Promise.all([
       supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, start_date, end_date, created_at, updated_at, parent_contract_id')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, status, payment_status, start_date, end_date, cancellation_date, created_at, updated_at, parent_contract_id')
         .neq('status', 'draft')
         .order('created_at', { ascending: false }),
       supabase.from('assessment_plans').select('id, name, price_monthly, price_total, period, period_months, modality_id'),
@@ -397,6 +404,29 @@ export default function CentralFinanceira() {
   const warningContracts = activeContractsSorted.filter(c => c.urgency === 'warning');
   const normalContracts  = activeContractsSorted.filter(c => c.urgency === 'normal');
 
+  // ── Inadimplência detalhada ──────────────────────────────────────
+  const inadimplenciaList = useMemo(() => {
+    const today = new Date(data.todayStr + 'T12:00:00');
+    return data.contracts
+      .filter(c => c.status === 'overdue')
+      .map(c => {
+        const plan     = planMap[c.plan_id];
+        const modality = modalityMap[plan?.modality_id];
+        const coach    = coachMap[c.coach_id];
+        const customer = customerMap[c.customer_id];
+        const endDate  = c.end_date ? new Date(c.end_date + 'T12:00:00') : null;
+        const daysOverdue = endDate ? Math.max(0, Math.round((today - endDate) / 86400000)) : 0;
+        const monthly  = monthlyValue(c, planMap);
+        return { ...c, plan, modality, coach, customer, daysOverdue, monthly };
+      })
+      .sort((a, b) => b.daysOverdue - a.daysOverdue);
+  }, [data, planMap, modalityMap, coachMap, customerMap]);
+
+  const inadimplenciaTotal = inadimplenciaList.reduce((s, c) => s + c.monthly, 0);
+  const avgDaysOverdue = inadimplenciaList.length > 0
+    ? inadimplenciaList.reduce((s, c) => s + c.daysOverdue, 0) / inadimplenciaList.length
+    : 0;
+
   // ─────────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -467,11 +497,12 @@ export default function CentralFinanceira() {
       </div>
 
       {/* ── Tabs ─────────────────────────────────────────────── */}
-      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit flex-wrap">
         {[
-          { key: 'overview',   label: 'Previsão de receita', icon: BarChart3 },
-          { key: 'coaches',    label: 'Por treinador',       icon: Award },
-          { key: 'contratos',  label: 'Contratos ativos',    icon: Calendar },
+          { key: 'overview',        label: 'Previsão de receita', icon: BarChart3 },
+          { key: 'coaches',         label: 'Por treinador',       icon: Award },
+          { key: 'contratos',       label: 'Contratos ativos',    icon: Calendar },
+          { key: 'inadimplencia',   label: 'Inadimplência',       icon: AlertTriangle, badge: inadimplenciaList.length },
         ].map(tab => (
           <button
             key={tab.key}
@@ -485,6 +516,14 @@ export default function CentralFinanceira() {
           >
             <tab.icon className="w-4 h-4" />
             {tab.label}
+            {tab.badge > 0 && (
+              <span className={cn(
+                'text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center',
+                activeTab === tab.key ? 'bg-red-100 text-red-700' : 'bg-red-500 text-white'
+              )}>
+                {tab.badge}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -731,6 +770,101 @@ export default function CentralFinanceira() {
               </h3>
               {normalContracts.map(c => <ContractExpirationRow key={c.id} contract={c} />)}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── TAB: Inadimplência ──────────────────────────── */}
+      {activeTab === 'inadimplencia' && (
+        <div className="space-y-4">
+          {inadimplenciaList.length === 0 ? (
+            <Card>
+              <CardContent className="py-14 text-center text-gray-400">
+                <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-green-400" />
+                <p className="font-semibold text-gray-600">Tudo em dia!</p>
+                <p className="text-sm mt-1">Nenhum contrato com pagamento atrasado.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Resumo */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Card className="border-red-100 bg-red-50/30">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <AlertTriangle className="w-5 h-5 text-red-500" />
+                    <div>
+                      <p className="text-xs text-gray-500">Contratos em atraso</p>
+                      <p className="font-bold text-red-700 text-xl">{inadimplenciaList.length}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-amber-100 bg-amber-50/30">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <DollarSign className="w-5 h-5 text-amber-500" />
+                    <div>
+                      <p className="text-xs text-gray-500">Receita em risco / mês</p>
+                      <p className="font-bold text-amber-700 text-xl">{formatCurrency(inadimplenciaTotal)}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="border-orange-100 bg-orange-50/30">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <Clock className="w-5 h-5 text-orange-500" />
+                    <div>
+                      <p className="text-xs text-gray-500">Média de atraso</p>
+                      <p className="font-bold text-orange-700 text-xl">{avgDaysOverdue.toFixed(0)} dias</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Lista */}
+              <Card>
+                <CardContent className="p-0">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100">
+                          <th className="text-left text-xs text-gray-400 font-medium px-5 py-3">Aluno</th>
+                          <th className="text-left text-xs text-gray-400 font-medium px-4 py-3">Coach / Plano</th>
+                          <th className="text-right text-xs text-gray-400 font-medium px-4 py-3">Valor/mês</th>
+                          <th className="text-right text-xs text-gray-400 font-medium px-5 py-3">Atraso</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {inadimplenciaList.map(c => (
+                          <Link key={c.id} to={`/assessoria/contratos/${c.id}`} className="contents">
+                            <tr className="border-b border-gray-50 last:border-0 hover:bg-red-50/30 cursor-pointer">
+                              <td className="px-5 py-3">
+                                <div className="font-medium text-gray-900">{c.customer?.full_name || '—'}</div>
+                                <div className="text-xs text-gray-400">#{c.contract_number}</div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="text-gray-700">{c.coach?.name || '—'}</div>
+                                <div className="text-xs text-gray-400">{c.plan?.name || c.plan_snapshot?.name || '—'}</div>
+                              </td>
+                              <td className="px-4 py-3 text-right font-semibold text-red-700">
+                                {formatCurrency(c.monthly)}
+                              </td>
+                              <td className="px-5 py-3 text-right">
+                                <span className={cn(
+                                  'text-xs font-bold px-2 py-1 rounded-full',
+                                  c.daysOverdue > 30 ? 'bg-red-100 text-red-700' :
+                                  c.daysOverdue > 7  ? 'bg-orange-100 text-orange-700' :
+                                  'bg-amber-100 text-amber-700'
+                                )}>
+                                  {c.daysOverdue === 0 ? 'Hoje' : `${c.daysOverdue}d`}
+                                </span>
+                              </td>
+                            </tr>
+                          </Link>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
           )}
         </div>
       )}

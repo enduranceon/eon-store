@@ -402,6 +402,12 @@ export default function Prospects() {
   };
 
   const totalValue = drafts.reduce((s, d) => s + contractTotal(d), 0);
+  const avgDaysInPipeline = drafts.length > 0
+    ? Math.round(drafts.reduce((s, d) => {
+        const days = (Date.now() - new Date(d.created_at).getTime()) / 86400000;
+        return s + days;
+      }, 0) / drafts.length)
+    : 0;
 
   return (
     <div className="space-y-5">
@@ -418,7 +424,7 @@ export default function Prospects() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
             <div className="p-2 rounded-full bg-green-50 shrink-0">
@@ -438,6 +444,19 @@ export default function Prospects() {
             <div>
               <p className="text-xs text-muted-foreground">Valor potencial</p>
               <p className="text-2xl font-bold text-blue-700">{formatCurrency(totalValue)}</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-amber-50 shrink-0">
+              <Calendar className="w-5 h-5 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Média no pipeline</p>
+              <p className="text-2xl font-bold text-amber-700">
+                {drafts.length > 0 ? `${avgDaysInPipeline}d` : '—'}
+              </p>
             </div>
           </CardContent>
         </Card>
