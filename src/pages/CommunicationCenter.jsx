@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Calendar, Check, CheckCircle2, Copy, ExternalLink, Link2,
-  Loader2, MessageCircle, RefreshCw, Search, Send, Settings, UserRoundCheck,
+  Calendar, CheckCircle2, Loader2, MessageCircle, RefreshCw, Search, Settings,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/api/db';
 import { DEFAULT_COMMUNITY_LINK, loadCommunicationConfig } from '@/lib/communication-config';
 import {
@@ -20,14 +16,12 @@ import {
   TASK_BUCKET,
   TASK_KIND,
   buildCommunicationTasks,
-  buildTaskMessage,
   taskChannelLabel,
-  taskEventType,
 } from '@/lib/communication-tasks';
-import { defaultPaymentDueDate } from '@/lib/payment-methods';
-import { isSafePaymentUrl } from '@/lib/sales';
+import { hasNativePaymentInfo } from '@/lib/communication-send';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
-import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
+import { formatPhoneDisplay } from '@/lib/phone';
 
 const TAB_INFO = [
   { value: 'pending', label: 'Pendentes' },
@@ -54,14 +48,6 @@ function communicationTone(task) {
   if (task.bucket === TASK_BUCKET.ONBOARDING) return 'success';
   if (task.bucket === TASK_BUCKET.RENEWAL) return 'purple';
   return 'secondary';
-}
-
-function hasNativePaymentInfo(task) {
-  return Boolean(task?.asaasPaymentLink || task?.asaasPixCopy || task?.asaasChargeId);
-}
-
-function hasAnyPaymentLink(task, externalLink = task?.externalPaymentLink) {
-  return Boolean(task?.asaasPaymentLink || task?.asaasPixCopy || String(externalLink || '').trim());
 }
 
 function normalizeSaleHistory(ev, presaleMap, stockMap) {
@@ -244,11 +230,6 @@ export default function CommunicationCenter() {
   const [activeTab, setActiveTab] = useState('pending');
   const [search, setSearch] = useState('');
   const [selectedTask, setSelectedTask] = useState(null);
-  const [messageText, setMessageText] = useState('');
-  const [externalLink, setExternalLink] = useState('');
-  const [dueDate, setDueDate] = useState(defaultPaymentDueDate());
-  const [copied, setCopied] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [communityLink, setCommunityLink] = useState(DEFAULT_COMMUNITY_LINK);
 
   const load = useCallback(async ({ quiet = false } = {}) => {
@@ -321,163 +302,10 @@ export default function CommunicationCenter() {
     ].some(value => String(value || '').toLowerCase().includes(q)));
   }, [history, search]);
 
-  const openTask = (task) => {
-    const nextExternalLink = task.externalPaymentLink || '';
-    const nextDueDate = task.dueDate || defaultPaymentDueDate();
-    setSelectedTask(task);
-    setExternalLink(nextExternalLink);
-    setDueDate(nextDueDate);
-    setCopied(false);
-    setMessageText(buildTaskMessage(task, {
-      externalLink: nextExternalLink,
-      dueDate: nextDueDate,
-      communityLink,
-    }));
-  };
-
-  const rebuildMessage = (patch = {}) => {
-    if (!selectedTask) return;
-    const nextExternalLink = patch.externalLink ?? externalLink;
-    const nextDueDate = patch.dueDate ?? dueDate;
-    const nextCommunityLink = patch.communityLink ?? communityLink;
-    setMessageText(buildTaskMessage(selectedTask, {
-      externalLink: nextExternalLink,
-      dueDate: nextDueDate,
-      communityLink: nextCommunityLink,
-    }));
-  };
-
-  const updateExternalLink = (value) => {
-    setExternalLink(value);
-    rebuildMessage({ externalLink: value });
-  };
-
-  const updateDueDate = (value) => {
-    setDueDate(value);
-    rebuildMessage({ dueDate: value });
-  };
-
-  const updateCommunityLink = (value) => {
-    setCommunityLink(value);
-    rebuildMessage({ communityLink: value });
-  };
-
-  const copyMessage = async () => {
-    try {
-      await navigator.clipboard.writeText(messageText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-      toast.success('Mensagem copiada');
-    } catch {
-      toast.error('Não foi possível copiar');
-    }
-  };
-
-  const openWhatsApp = () => {
-    if (!selectedTask) return;
-    const phone = phoneDigitsForWhatsApp(selectedTask.customerWhatsapp);
-    if (!phone || phone === '55') return toast.error('Cliente sem WhatsApp cadastrado');
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(messageText)}`, '_blank');
-  };
-
-  const insertContractEvent = async (task, eventType, payload, notes) => {
-    const { error } = await supabase.from('assessment_contract_event').insert({
-      contract_id: task.sourceId,
-      event_type: eventType,
-      payload,
-      notes,
-    });
-    if (error) throw error;
-  };
-
-  const insertSaleEvent = async (task, newStatus, payload, reason) => {
-    const { error } = await supabase.from('sales_status_events').insert({
-      order_type: task.sourceType === 'stock' ? 'stock' : 'presale',
-      order_id: task.sourceId,
-      previous_status: task.paymentStatus || null,
-      new_status: newStatus,
-      reason,
-      metadata: payload,
-    });
-    if (error) throw error;
-  };
-
-  const markAsSent = async () => {
-    if (!selectedTask) return;
-    const message = messageText.trim();
-    if (!message) return toast.error('Mensagem vazia');
-
-    const trimmedLink = externalLink.trim();
-    const isChargeTask = selectedTask.bucket === TASK_BUCKET.CHARGES;
-    const nativePaymentInfo = hasNativePaymentInfo(selectedTask);
-
-    if (isChargeTask && !nativePaymentInfo && !trimmedLink) {
-      return toast.error('Informe o link externo antes de registrar o envio');
-    }
-    if (trimmedLink && !isSafePaymentUrl(trimmedLink)) {
-      return toast.error('Informe um link válido começando com http:// ou https://');
-    }
-
-    setSaving(true);
-    try {
-      const eventType = taskEventType(selectedTask);
-      const payload = {
-        source: 'communication_center',
-        task_kind: selectedTask.kind,
-        rule_slug: selectedTask.ruleSlug || null,
-        rule_name: selectedTask.ruleName || null,
-        channel: 'whatsapp',
-        message,
-        due_date: dueDate || null,
-        external_payment_link: trimmedLink || null,
-        has_asaas_link: Boolean(selectedTask.asaasPaymentLink || selectedTask.asaasPixCopy),
-        community_link: selectedTask.kind === TASK_KIND.ONBOARDING_WELCOME ? (communityLink.trim() || null) : null,
-      };
-
-      if (isChargeTask) {
-        const updates = { payment_message_sent_at: new Date().toISOString() };
-        if (!nativePaymentInfo) {
-          updates.external_payment_link = trimmedLink || null;
-          updates.due_date = dueDate || defaultPaymentDueDate();
-        }
-        if (['awaiting_charge', 'pending'].includes(selectedTask.paymentStatus)) {
-          updates.payment_status = 'charge_sent';
-        }
-
-        const { error } = await supabase
-          .from(selectedTask.tableName)
-          .update(updates)
-          .eq('id', selectedTask.sourceId);
-        if (error) throw error;
-
-        if (selectedTask.sourceType === 'contract') {
-          await insertContractEvent(selectedTask, eventType, payload, 'Mensagem enviada pela Central de Comunicação');
-        } else {
-          await insertSaleEvent(
-            selectedTask,
-            updates.payment_status || selectedTask.paymentStatus || 'charge_sent',
-            payload,
-            selectedTask.kind === TASK_KIND.CHARGE_OVERDUE ? 'Cobrança vencida reenviada' : 'Cobrança enviada pela Central de Comunicação'
-          );
-        }
-      } else {
-        await insertContractEvent(
-          selectedTask,
-          eventType,
-          payload,
-          `${selectedTask.title} pela Central de Comunicação`
-        );
-      }
-
-      toast.success('Envio registrado');
-      setSelectedTask(null);
-      await load({ quiet: true });
-    } catch (e) {
-      toast.error(e.message || 'Erro ao registrar envio');
-    } finally {
-      setSaving(false);
-    }
-  };
+  const handleSent = useCallback(() => {
+    setSelectedTask(null);
+    load({ quiet: true });
+  }, [load]);
 
   if (loading) {
     return (
@@ -563,125 +391,17 @@ export default function CommunicationCenter() {
               <p className="font-semibold text-gray-900">Nada pendente nessa fila</p>
               <p className="text-sm text-muted-foreground mt-1">As próximas mensagens aparecerão aqui conforme os dados mudarem.</p>
             </div>
-          ) : visibleTasks.map(task => <TaskCard key={task.id} task={task} onOpen={openTask} />)}
+          ) : visibleTasks.map(task => <TaskCard key={task.id} task={task} onOpen={setSelectedTask} />)}
         </div>
       )}
 
-      <Dialog open={!!selectedTask} onOpenChange={open => !open && setSelectedTask(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          {selectedTask && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Send className="w-5 h-5 text-blue-600" />
-                  {selectedTask.title}
-                </DialogTitle>
-              </DialogHeader>
-
-              <div className="space-y-4">
-                <div className="rounded-lg border bg-gray-50 p-3 text-sm grid gap-2 md:grid-cols-2">
-                  <div>
-                    <span className="text-muted-foreground block text-xs">Cliente</span>
-                    <span className="font-semibold">{selectedTask.customerName}</span>
-                    {selectedTask.customerWhatsapp && (
-                      <span className="text-muted-foreground block text-xs mt-0.5">{formatPhoneDisplay(selectedTask.customerWhatsapp)}</span>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground block text-xs">{selectedTask.sourceLabel}</span>
-                    <Link to={selectedTask.href} className="font-mono font-semibold text-blue-700 hover:underline">
-                      {selectedTask.orderNumber}
-                    </Link>
-                  </div>
-                </div>
-
-                {selectedTask.bucket === TASK_BUCKET.CHARGES && (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {!hasNativePaymentInfo(selectedTask) && (
-                      <div>
-                        <Label className="text-xs">Link externo</Label>
-                        <div className="relative mt-1">
-                          <Link2 className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-                          <Input
-                            className="pl-9 font-mono text-xs"
-                            placeholder="https://..."
-                            value={externalLink}
-                            onChange={e => updateExternalLink(e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {!hasNativePaymentInfo(selectedTask) && (
-                      <div>
-                        <Label className="text-xs">Vencimento</Label>
-                        <Input
-                          type="date"
-                          className="mt-1"
-                          value={dueDate}
-                          onChange={e => updateDueDate(e.target.value)}
-                        />
-                      </div>
-                    )}
-                    {hasNativePaymentInfo(selectedTask) && (
-                      <div className="md:col-span-2 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-                        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-                        <span>Cobrança Asaas ou link salvo encontrado. A mensagem usa esses dados automaticamente.</span>
-                      </div>
-                    )}
-                    {!hasAnyPaymentLink(selectedTask, externalLink) && (
-                      <div className="md:col-span-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                        <span>Para registrar envio de cobrança, informe um link externo ou gere a cobrança Asaas na tela de origem.</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {selectedTask.kind === TASK_KIND.ONBOARDING_WELCOME && (
-                  <div>
-                    <Label className="text-xs">Link da comunidade</Label>
-                    <Input
-                      className="mt-1 font-mono text-xs"
-                      placeholder="https://chat.whatsapp.com/..."
-                      value={communityLink}
-                      onChange={e => updateCommunityLink(e.target.value)}
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <Label className="text-xs">Mensagem</Label>
-                  <Textarea
-                    rows={12}
-                    className="mt-1 font-mono text-xs leading-relaxed"
-                    value={messageText}
-                    onChange={e => {
-                      setMessageText(e.target.value);
-                      setCopied(false);
-                    }}
-                  />
-                </div>
-
-                <div className="flex gap-2 flex-wrap">
-                  <Button variant="outline" className="flex-1 min-w-36" onClick={copyMessage}>
-                    {copied ? <Check className="w-4 h-4 mr-1.5 text-green-600" /> : <Copy className="w-4 h-4 mr-1.5" />}
-                    {copied ? 'Copiado' : 'Copiar'}
-                  </Button>
-                  <Button className="flex-1 min-w-36 bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp}>
-                    <ExternalLink className="w-4 h-4 mr-1.5" />
-                    WhatsApp
-                  </Button>
-                </div>
-
-                <Button className="w-full" onClick={markAsSent} disabled={saving}>
-                  {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <UserRoundCheck className="w-4 h-4 mr-1.5" />}
-                  {saving ? 'Registrando...' : 'Marcar como enviada'}
-                </Button>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      <CommunicationSendDialog
+        key={selectedTask?.id || 'none'}
+        task={selectedTask}
+        communityLink={communityLink}
+        onClose={() => setSelectedTask(null)}
+        onSent={handleSent}
+      />
     </div>
   );
 }
