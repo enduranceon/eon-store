@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Phone, Mail, FileText, Plus, ChevronRight, IdCard } from 'lucide-react';
+import { ArrowLeft, Phone, Mail, FileText, Plus, ChevronRight, IdCard, MessageCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   PreSaleCustomer, AssessmentContract, AssessmentCoach,
-  AssessmentPlan, AssessmentModality, AssessmentLeave,
+  AssessmentPlan, AssessmentModality, AssessmentLeave, AssessmentContractEvent,
 } from '@/api/entities';
+import { supabase } from '@/api/db';
+import { COMMUNICATION_EVENT_TYPES } from '@/lib/communication-tasks';
+import CommunicationHistory from '@/components/CommunicationHistory';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const STATUS = {
@@ -37,23 +40,33 @@ export default function StudentDetail() {
   const [plans, setPlans] = useState([]);
   const [modalities, setModalities] = useState([]);
   const [leaves, setLeaves] = useState([]);
+  const [commEvents, setCommEvents] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [s, c, allCoaches, allPlans, allMod] = await Promise.all([
+        const [s, c, allCoaches, allPlans, allMod, authRes] = await Promise.all([
           PreSaleCustomer.get(id),
           AssessmentContract.filter({ customer_id: id }, '-created_at').catch(() => []),
           AssessmentCoach.list().catch(() => []),
           AssessmentPlan.list().catch(() => []),
           AssessmentModality.list().catch(() => []),
+          supabase.auth.getUser().catch(() => null),
         ]);
         setCustomer(s); setContracts(c); setCoaches(allCoaches); setPlans(allPlans); setModalities(allMod);
+        setCurrentUserId(authRes?.data?.user?.id || null);
         if (c.length > 0) {
-          const allLeaves = await Promise.all(
-            c.map(co => AssessmentLeave.filter({ contract_id: co.id }).catch(() => []))
-          );
+          const contractIds = c.map(co => co.id);
+          const [allLeaves, events] = await Promise.all([
+            Promise.all(c.map(co => AssessmentLeave.filter({ contract_id: co.id }).catch(() => []))),
+            AssessmentContractEvent.filter(
+              { contract_id: contractIds, event_type: COMMUNICATION_EVENT_TYPES },
+              '-created_at',
+            ).catch(() => []),
+          ]);
           setLeaves(allLeaves.flat().sort((a, b) => b.start_date.localeCompare(a.start_date)));
+          setCommEvents(events);
         }
       } catch (e) {
         console.error('Erro ao carregar aluno:', e);
@@ -117,6 +130,18 @@ export default function StudentDetail() {
               })}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Histórico de contatos */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <MessageCircle className="w-4 h-4" /> Histórico de contatos ({commEvents.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <CommunicationHistory events={commEvents} currentUserId={currentUserId} />
         </CardContent>
       </Card>
 

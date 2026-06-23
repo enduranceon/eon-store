@@ -489,3 +489,24 @@ export function taskChannelLabel(task) {
   if (task.bucket === TASK_BUCKET.RENEWAL) return 'Renovação';
   return 'Comunicação';
 }
+
+// Metadados dos eventos de comunicação para exibição em históricos (perfil do aluno).
+export const COMMUNICATION_EVENT_META = {
+  payment_message_sent:    { label: 'Cobrança enviada', tone: 'info' },
+  onboarding_welcome_sent: { label: 'Boas-vindas',      tone: 'success' },
+  onboarding_checkin_sent: { label: 'Check-in',         tone: 'success' },
+  renewal_message_sent:    { label: 'Renovação',        tone: 'purple' },
+};
+
+const CHANNEL_LABEL = { whatsapp: 'WhatsApp', email: 'E-mail' };
+
+// Resumo curto de um evento de comunicação a partir do payload, tolerante a
+// eventos antigos (gerados na tela do contrato) e novos (Central de Comunicação).
+export function summarizeCommunicationEvent(event) {
+  const p = event?.payload || {};
+  const channel = CHANNEL_LABEL[p.channel || p.via] || '';
+  const parts = [];
+  if (channel) parts.push(`via ${channel}`);
+  if (p.rule_name) parts.push(p.rule_name);
+  return parts.join(' · ');
+}
