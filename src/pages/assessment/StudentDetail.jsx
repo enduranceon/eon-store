@@ -16,6 +16,16 @@ const STATUS = {
   on_leave:  'bg-amber-100 text-amber-700',
   finished:  'bg-gray-100 text-gray-600',
   cancelled: 'bg-red-100 text-red-500',
+  voided:    'bg-amber-100 text-amber-700',
+};
+
+const STATUS_LABEL = {
+  active: 'Ativo',
+  overdue: 'Atrasado',
+  on_leave: 'Licença',
+  finished: 'Concluído',
+  cancelled: 'Cancelado',
+  voided: 'Descartado',
 };
 
 export default function StudentDetail() {
@@ -97,7 +107,9 @@ export default function StudentDetail() {
                     </div>
                     <div className="text-right">
                       <p className="font-bold text-sm">{formatCurrency(plan?.price_total)}</p>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS[c.status]}`}>{c.status}</span>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS[c.status]}`}>
+                        {STATUS_LABEL[c.status] || c.status}
+                      </span>
                     </div>
                     <ChevronRight className="w-4 h-4 text-muted-foreground" />
                   </Link>

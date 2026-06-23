@@ -176,7 +176,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
             .eq('status', 'draft').is('parent_contract_id', null),
           supabase.from('assessment_contracts')
             .select('id, payment_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
-            .neq('status', 'cancelled').neq('status', 'draft')
+            .not('status', 'in', '("cancelled","draft","voided")')
             .neq('payment_status', 'paid').neq('payment_status', 'refunded'),
         ]);
 
@@ -185,13 +185,13 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           allOrders.filter(isEffectiveOpenSale).length +
           (contractsOpenPayments.data || []).filter(isEffectiveOpenSale).length;
         const todayCount =
-          allOrders.filter(o => ['awaiting_charge'].includes(o.payment_status)).length +
+          allOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status)).length +
           allOrders.filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o)).length +
           (returnsRes.count || 0) +
           (pendingRefunds.count || 0);
 
         setBadges({
-          orders:     allOrders.filter(o => ['awaiting_charge'].includes(o.payment_status)).length,
+          orders:     allOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status)).length,
           clients:    clientsRes.count || 0,
           today:      todayCount,
           assessoria: (contractsOverdue.count || 0) + (contractsExpiring.count || 0),

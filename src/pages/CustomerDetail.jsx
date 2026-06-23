@@ -184,6 +184,7 @@ export default function CustomerDetail() {
     on_leave:  { label: 'Licença',    cls: 'bg-amber-100 text-amber-700' },
     finished:  { label: 'Concluído',  cls: 'bg-gray-100 text-gray-600' },
     cancelled: { label: 'Cancelado',  cls: 'bg-red-100 text-red-500' },
+    voided:    { label: 'Descartado', cls: 'bg-amber-100 text-amber-700' },
   };
 
   const activeContracts = contracts.filter(c => ['active', 'overdue', 'on_leave'].includes(c.status));
@@ -192,7 +193,7 @@ export default function CustomerDetail() {
   // Conta apenas contratos PAGOS (LTV = valor que realmente entrou)
   // Contratos cancelados sem pagamento ou ainda em aberto não contam
   const assessTotal    = contracts
-    .filter(c => c.payment_status === 'paid' && c.status !== 'cancelled')
+    .filter(c => c.payment_status === 'paid' && !['cancelled', 'voided'].includes(c.status))
     .reduce((acc, c) => {
       const plan = plans.find(p => p.id === c.plan_id);
       const base     = plan ? Number(plan.price_total) : 0;
@@ -210,7 +211,7 @@ export default function CustomerDetail() {
   // ── Pagamentos em aberto (contratos + pedidos não pagos) ────────────────────
   const todayStr = new Date().toISOString().slice(0, 10);
   const openContracts = contracts
-    .filter(c => !['paid', 'refunded', 'cancelled'].includes(c.payment_status) && c.status !== 'cancelled')
+    .filter(c => !['paid', 'refunded', 'cancelled'].includes(c.payment_status) && !['cancelled', 'voided', 'draft'].includes(c.status))
     .map(c => {
       const plan = plans.find(p => p.id === c.plan_id);
       const base = plan ? Number(plan.price_total) : 0;

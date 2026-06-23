@@ -35,6 +35,7 @@ function KPICard({ title, value, sub, icon: Icon, color = 'blue' }) {
 }
 
 const PAYMENT_STATUS_LABEL = {
+  pending: 'Pedido recebido',
   awaiting_charge: 'Pedido recebido',
   charge_sent: 'Cobrança enviada',
   paid: 'Pago',
@@ -46,6 +47,7 @@ const PAYMENT_STATUS_LABEL = {
 const PAYMENT_BADGE = {
   paid: 'success',
   partially_paid: 'warning',
+  pending: 'secondary',
   awaiting_charge: 'secondary',
   charge_sent: 'info',
   cancelled: 'destructive',
@@ -87,7 +89,7 @@ export default function Dashboard() {
 
   // Alertas de ação
   const clientsNoCpf = customers.filter(c => !c.cpf);
-  const ordersAwaitingCharge = activeOrders.filter(o => o.payment_status === 'awaiting_charge');
+  const ordersAwaitingCharge = activeOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status));
   const ordersPaidNoDate = activeOrders.filter(o => o.payment_status === 'paid' && !o.payment_date);
   const ordersNoPaymentMethod = activeOrders.filter(o => !o.payment_method && o.payment_status !== 'paid' && o.payment_status !== 'cancelled');
 

@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
 
 const PAYMENT_STATUS = {
+  pending:         { label: 'Pedido recebido',   badge: 'secondary' },
   awaiting_charge: { label: 'Pedido recebido', badge: 'secondary' },
   charge_sent:     { label: 'Cobrança enviada',   badge: 'info' },
   paid:            { label: 'Pago',               badge: 'success' },
@@ -743,7 +744,7 @@ export default function StockOrderDetail() {
               <ExternalLink className="w-4 h-4 mr-1.5" /> Abrir no WhatsApp
             </Button>
           </div>
-          {order.payment_status === 'awaiting_charge' && (
+          {['awaiting_charge', 'pending'].includes(order.payment_status) && (
             <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={markMessageSent}>
               <Check className="w-4 h-4 mr-1.5" /> Efetivar venda externa enviada
             </Button>

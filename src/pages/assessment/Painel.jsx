@@ -13,8 +13,12 @@ import {
   AssessmentContract, AssessmentPlan, AssessmentModality,
   AssessmentCoach, PreSaleCustomer, RenewalRule, ContractRenewalAction,
 } from '@/api/entities';
-import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr, utcToLocalDateStr, renderMessageTemplate } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr, renderMessageTemplate } from '@/lib/utils';
 import { computeMrrHistory } from '@/lib/assessment-metrics';
+import {
+  buildContractLifecycleRows,
+  getLifecycleMonthStart,
+} from '@/lib/assessment-contract-lifecycle';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts';
@@ -51,10 +55,12 @@ const STATUS_CLS = {
   on_leave:  'bg-amber-100 text-amber-700',
   finished:  'bg-gray-100 text-gray-600',
   cancelled: 'bg-red-100 text-red-500',
+  voided:    'bg-amber-100 text-amber-700',
 };
 const STATUS_LABEL = {
   active: 'Ativo', overdue: 'Atrasado', on_leave: 'Licença',
   finished: 'Concluído', cancelled: 'Cancelado',
+  voided: 'Descartado',
 };
 
 export default function Painel() {
@@ -112,20 +118,24 @@ export default function Painel() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 0);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   // ── KPIs ────────────────────────────────────────────────────────────────────
   const today      = todayLocalStr();
   const in30days   = (() => { const d = new Date(); d.setDate(d.getDate() + 30); return toLocalDateStr(d); })();
+  const monthStart = getLifecycleMonthStart();
+  const monthLabel = new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+  const plansById = Object.fromEntries(plans.map(p => [p.id, p]));
+  const lifecycleRows = buildContractLifecycleRows(contracts, { monthStart, plansById });
 
-  const active     = contracts.filter(c => ['active', 'overdue', 'on_leave'].includes(c.status));
-  const overdue    = contracts.filter(c => c.status === 'overdue');
-  const expiring   = contracts.filter(c => c.status === 'active' && c.end_date >= today && c.end_date <= in30days);
+  const active     = lifecycleRows.filter(c => c.lifecycle.counts.active);
+  const overdue    = lifecycleRows.filter(c => c.status === 'overdue' && c.lifecycle.counts.active);
+  const expiring   = lifecycleRows.filter(c => c.lifecycle.counts.active && c.status === 'active' && c.end_date >= today && c.end_date <= in30days);
 
-  const monthlyRevenue = active.reduce((acc, c) => {
-    const p = plans.find(pl => pl.id === c.plan_id);
-    return acc + (p ? Number(p.price_monthly) : 0);
-  }, 0);
+  const monthlyRevenue = active.reduce((acc, c) => acc + (c.monthly || 0), 0);
 
   // Evolução do MRR nos últimos 6 meses (aproximação por vigência dos contratos)
   const mrrHistory = computeMrrHistory(contracts, plans, 6);
@@ -133,11 +143,10 @@ export default function Painel() {
   const mrrGrowthPct = mrrPrev > 0 ? ((monthlyRevenue - mrrPrev) / mrrPrev) * 100 : null;
 
   // Contratos com auto_renewal que já venceram e ainda não foram renovados
-  const pendingRenewal = contracts.filter(c =>
+  const pendingRenewal = active.filter(c =>
     c.auto_renewal &&
     !c.renewal_generated &&
-    c.end_date < today &&
-    !['cancelled'].includes(c.status)
+    c.end_date < today
   );
 
   // ── Processar renovações automáticas ────────────────────────────────────────
@@ -214,12 +223,11 @@ export default function Painel() {
     // Universo de contratos pra avaliar
     let pool;
     if (ruleType === 'payment') {
-      // Inclui ativos E cancelados COM saldo em aberto. Exclui contratos já pagos.
-      pool = contracts.filter(c => {
+      // Pagamento só entra na régua se o contrato continua operacionalmente ativo.
+      pool = lifecycleRows.filter(c => {
+        if (!c.lifecycle?.counts?.active) return false;
         if (c.payment_status === 'paid') return false;
         if (c.payment_status === 'refunded') return false;
-        // Cancelado SEM saldo? Pula
-        if (c.status === 'cancelled' && !c.asaas_charge_id) return false;
         return true;
       });
     } else {
@@ -411,70 +419,57 @@ export default function Painel() {
     return {
       name:    m.name,
       count:   mContracts.length,
-      revenue: mContracts.reduce((acc, c) => {
-        const p = plans.find(pl => pl.id === c.plan_id);
-        return acc + (p ? Number(p.price_monthly) : 0);
-      }, 0),
+      revenue: mContracts.reduce((acc, c) => acc + (c.monthly || 0), 0),
     };
   }).filter(m => m.count > 0).sort((a, b) => b.revenue - a.revenue);
 
   // ── Movimentação do mês ───────────────────────────────────────────────────
-  const monthStart = (() => {
-    const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0);
-    return toLocalDateStr(d);
-  })();
-  const monthLabel = new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
-
-  // Contratos criados nesse mês (usa data LOCAL, não UTC)
-  const contratosNoMes  = contracts.filter(c => utcToLocalDateStr(c.created_at) >= monthStart);
-  const novosContratos  = contratosNoMes.filter(c => !c.parent_contract_id);
-  const renovacoesNoMes = contratosNoMes.filter(c => !!c.parent_contract_id);
+  const novosContratos  = lifecycleRows.filter(c => c.lifecycle.counts.entry);
+  const renovacoesNoMes = lifecycleRows.filter(c => c.lifecycle.counts.renewal);
   const idsAntesDoMes = new Set(
-    contracts.filter(c => utcToLocalDateStr(c.created_at) < monthStart).map(c => c.customer_id)
+    lifecycleRows
+      .filter(c =>
+        (c.lifecycle.createdLocal || '') < monthStart &&
+        !['pending_sale', 'voided_sale'].includes(c.lifecycle.type)
+      )
+      .map(c => c.customer_id)
   );
+  const contratosDeAlunosNovos = novosContratos.filter(c => !idsAntesDoMes.has(c.customer_id));
   const alunosNovosUnicos = new Set(
-    novosContratos.filter(c => !idsAntesDoMes.has(c.customer_id)).map(c => c.customer_id)
+    contratosDeAlunosNovos.map(c => c.customer_id)
   );
 
-  // Saídas: contratos que viraram cancelled nesse mês
-  const saidasNoMes = contracts.filter(c =>
-    c.status === 'cancelled' && utcToLocalDateStr(c.updated_at) >= monthStart
+  // Saídas reais: contratos efetivados que foram cancelados nesse mês.
+  // Registros descartados antes do pagamento são ignorados nas métricas.
+  const saidasNoMes = lifecycleRows.filter(c =>
+    c.lifecycle.counts.exit && c.lifecycle.cancelDate >= monthStart
   );
 
   // Churn rate (proxy): saídas / (ativos + saídas)
   const churnDenom = active.length + saidasNoMes.length;
   const churnRate  = churnDenom > 0 ? (saidasNoMes.length / churnDenom) * 100 : 0;
 
-  // Saldo líquido (novos contratos - saídas)
-  const saldoLiquido = novosContratos.length - saidasNoMes.length;
+  // Saldo de alunos (entradas reais - saídas reais)
+  const saldoAlunos = alunosNovosUnicos.size - saidasNoMes.length;
 
   // ── Performance por coach ──────────────────────────────────────────────────
   const coachStats = coaches
     .filter(co => co.active !== false)
     .map(co => {
-      const cContracts = contracts.filter(c => c.coach_id === co.id);
-      const cAtivos    = cContracts.filter(c => ['active', 'overdue', 'on_leave'].includes(c.status));
-      const cNovos     = cContracts.filter(c =>
-        utcToLocalDateStr(c.created_at) >= monthStart && !c.parent_contract_id
+      const cLifecycle = lifecycleRows.filter(c => c.coach_id === co.id);
+      const cAtivos    = cLifecycle.filter(c => c.lifecycle.counts.active);
+      const cNovosContratos = cLifecycle.filter(c => c.lifecycle.counts.entry);
+      const cNovos = new Set(
+        cNovosContratos.filter(c => !idsAntesDoMes.has(c.customer_id)).map(c => c.customer_id)
       );
-      const cRenov     = cContracts.filter(c =>
-        utcToLocalDateStr(c.created_at) >= monthStart && !!c.parent_contract_id
-      );
-      // Use cancellation_date se disponível (data de negócio do cancelamento),
-      // senão usa updated_at (para contratos antigos que não têm cancellation_date)
-      const cSaidas    = cContracts.filter(c => {
-        if (c.status !== 'cancelled') return false;
-        const cancelDate = c.cancellation_date || utcToLocalDateStr(c.updated_at);
-        return cancelDate >= monthStart;
-      });
-      const cMrr = cAtivos.reduce((acc, c) => {
-        const p = plans.find(pl => pl.id === c.plan_id);
-        return acc + (p ? Number(p.price_monthly) : 0);
-      }, 0);
+      const cRenov     = cLifecycle.filter(c => c.lifecycle.counts.renewal);
+      const cSaidas    = cLifecycle.filter(c => c.lifecycle.counts.exit && c.lifecycle.cancelDate >= monthStart);
+      const cMrr = cAtivos.reduce((acc, c) => acc + (c.monthly || 0), 0);
       return {
         coach:   co,
         ativos:  cAtivos.length,
-        novos:   cNovos.length,
+        novos:   cNovos.size,
+        novosContratos: cNovosContratos.length,
         renov:   cRenov.length,
         saidas:  cSaidas.length,
         mrr:     cMrr,
@@ -753,16 +748,16 @@ export default function Painel() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {/* Novos contratos */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Entradas reais */}
             <div className="rounded-xl border border-green-200 bg-green-50/50 p-3">
               <div className="flex items-center gap-2 mb-1">
                 <UserPlus className="w-4 h-4 text-green-600" />
-                <p className="text-xs text-green-700 font-medium">Novos contratos</p>
+                <p className="text-xs text-green-700 font-medium">Entradas reais</p>
               </div>
-              <p className="text-2xl font-bold text-green-700">{novosContratos.length}</p>
+              <p className="text-2xl font-bold text-green-700">{alunosNovosUnicos.size}</p>
               <p className="text-xs text-green-600 mt-0.5">
-                {alunosNovosUnicos.size} aluno{alunosNovosUnicos.size !== 1 ? 's' : ''} novo{alunosNovosUnicos.size !== 1 ? 's' : ''}
+                {novosContratos.length} contrato{novosContratos.length !== 1 ? 's' : ''} {novosContratos.length !== 1 ? 'reais' : 'real'}
               </p>
             </div>
 
@@ -780,24 +775,24 @@ export default function Painel() {
             <div className={`rounded-xl border p-3 ${saidasNoMes.length > 0 ? 'border-red-200 bg-red-50/50' : 'border-gray-200 bg-gray-50'}`}>
               <div className="flex items-center gap-2 mb-1">
                 <UserMinus className={`w-4 h-4 ${saidasNoMes.length > 0 ? 'text-red-600' : 'text-gray-400'}`} />
-                <p className={`text-xs font-medium ${saidasNoMes.length > 0 ? 'text-red-700' : 'text-muted-foreground'}`}>Saídas</p>
+                <p className={`text-xs font-medium ${saidasNoMes.length > 0 ? 'text-red-700' : 'text-muted-foreground'}`}>Saídas reais</p>
               </div>
               <p className={`text-2xl font-bold ${saidasNoMes.length > 0 ? 'text-red-600' : 'text-gray-500'}`}>{saidasNoMes.length}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">cancelados</p>
+              <p className="text-xs text-muted-foreground mt-0.5">cancelamentos</p>
             </div>
 
             {/* Churn % */}
             <div className={`rounded-xl border p-3 ${churnRate > 5 ? 'border-red-200 bg-red-50/50' : churnRate > 2 ? 'border-amber-200 bg-amber-50/50' : 'border-gray-200 bg-gray-50'}`}>
               <div className="flex items-center gap-2 mb-1">
                 <TrendingDown className={`w-4 h-4 ${churnRate > 5 ? 'text-red-600' : churnRate > 2 ? 'text-amber-600' : 'text-gray-400'}`} />
-                <p className="text-xs font-medium text-muted-foreground">Taxa de churn</p>
+                <p className="text-xs font-medium text-muted-foreground">Churn</p>
               </div>
               <p className={`text-2xl font-bold ${churnRate > 5 ? 'text-red-600' : churnRate > 2 ? 'text-amber-600' : 'text-gray-700'}`}>
                 {churnRate.toFixed(1)}%
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                saldo: <span className={saldoLiquido >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
-                  {saldoLiquido >= 0 ? '+' : ''}{saldoLiquido}
+                saldo: <span className={saldoAlunos >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                  {saldoAlunos >= 0 ? '+' : ''}{saldoAlunos}
                 </span>
               </p>
             </div>
@@ -821,9 +816,9 @@ export default function Painel() {
                   <tr className="text-xs text-muted-foreground">
                     <th className="text-left py-2 font-medium">Coach</th>
                     <th className="text-right py-2 font-medium">Ativos</th>
-                    <th className="text-right py-2 font-medium" title="Novos contratos esse mês">Novos</th>
+                    <th className="text-right py-2 font-medium" title="Alunos novos reais este mês">Entradas</th>
                     <th className="text-right py-2 font-medium" title="Renovações esse mês">Renov.</th>
-                    <th className="text-right py-2 font-medium" title="Cancelamentos esse mês">Saídas</th>
+                    <th className="text-right py-2 font-medium" title="Cancelamentos reais esse mês">Saídas</th>
                     <th className="text-right py-2 font-medium">MRR</th>
                   </tr>
                 </thead>
@@ -837,7 +832,7 @@ export default function Painel() {
                       <td className="py-2.5 text-right font-bold text-blue-700">{s.ativos}</td>
                       <td className="py-2.5 text-right">
                         {s.novos > 0
-                          ? <span className="text-green-600 font-semibold">+{s.novos}</span>
+                          ? <span className="text-green-600 font-semibold" title={`${s.novosContratos} contrato(s) real(is)`}>+{s.novos}</span>
                           : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="py-2.5 text-right">

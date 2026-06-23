@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Users, Phone, Mail, ChevronRight, Filter } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { PreSaleCustomer, AssessmentContract } from '@/api/entities';
 import { normalizePhone } from '@/api/db';
 import { usePageData } from '@/hooks/usePageData';
+import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { toast } from 'sonner';
 
 const empty = { full_name: '', email: '', whatsapp: '', cpf: '', active: true };
@@ -39,6 +40,10 @@ export default function Students() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
   const [saving, setSaving] = useState(false);
+  const lifecycleRows = useMemo(
+    () => buildContractLifecycleRows(contracts),
+    [contracts]
+  );
 
   const open = (s) => {
     if (s) { setEditing(s); setForm({ ...s, active: s.active ?? true }); }
@@ -67,10 +72,13 @@ export default function Students() {
   };
 
   const activeContractsByCustomer = (id) =>
-    contracts.filter(c => c.customer_id === id && ['active', 'overdue', 'on_leave'].includes(c.status));
+    lifecycleRows.filter(c => c.customer_id === id && c.lifecycle?.counts?.active);
 
   const totalContractsByCustomer = (id) =>
-    contracts.filter(c => c.customer_id === id);
+    lifecycleRows.filter(c =>
+      c.customer_id === id &&
+      !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type)
+    );
 
   const filtered = customers.filter(c => {
     if (onlyStudents && totalContractsByCustomer(c.id).length === 0) return false;

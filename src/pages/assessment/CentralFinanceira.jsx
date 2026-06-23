@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Users, TrendingUp, DollarSign, AlertTriangle, RefreshCw,
+  Users, TrendingUp, AlertTriangle, RefreshCw,
   Award, ChevronRight, UserPlus, UserMinus, Activity,
   Calendar, CheckCircle2, Clock, BarChart3, Wallet,
 } from 'lucide-react';
@@ -14,6 +14,10 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid,
 } from 'recharts';
+import {
+  buildContractLifecycleRows,
+  getLifecycleMonthStart,
+} from '@/lib/assessment-contract-lifecycle';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -213,7 +217,7 @@ export default function CentralFinanceira() {
     const [contractsRes, plansRes, modalitiesRes, coachesRes, customersRes, paymentsRes] = await Promise.all([
       supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, start_date, end_date, created_at, updated_at, parent_contract_id')
+        .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, manual_payment, start_date, end_date, due_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, enrollment_fee, manual_discount, credit_balance, plan_snapshot, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link')
         .neq('status', 'draft')
         .order('created_at', { ascending: false }),
       supabase.from('assessment_plans').select('id, name, price_monthly, price_total, period, period_months, modality_id'),
@@ -222,7 +226,7 @@ export default function CentralFinanceira() {
       supabase.from('presale_customers').select('id, full_name'),
       supabase
         .from('asaas_payments')
-        .select('id, order_id, order_type, credit_date, value, net_value, status, source')
+        .select('id, order_id, order_type, credit_date, value, status, source')
         .eq('order_type', 'contract')
         .gte('credit_date', rangeStart)
         .lte('credit_date', rangeEnd)
@@ -241,8 +245,11 @@ export default function CentralFinanceira() {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
-    load().catch(console.error).finally(() => setLoading(false));
+    const timer = setTimeout(() => {
+      setLoading(true);
+      load().catch(console.error).finally(() => setLoading(false));
+    }, 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   const handleRefresh = async () => {
@@ -256,40 +263,46 @@ export default function CentralFinanceira() {
   const coachMap    = useMemo(() => Object.fromEntries(data.coaches.map(c   => [c.id, c])), [data.coaches]);
   const customerMap = useMemo(() => Object.fromEntries(data.customers.map(c => [c.id, c])), [data.customers]);
   const modalityMap = useMemo(() => Object.fromEntries(data.modalities.map(m => [m.id, m])), [data.modalities]);
-  const contractMap = useMemo(() => Object.fromEntries(data.contracts.map(c => [c.id, c])), [data.contracts]);
+  const lifecycleMonthStart = useMemo(
+    () => getLifecycleMonthStart(new Date(`${data.todayStr}T12:00:00`)),
+    [data.todayStr]
+  );
+  const lifecycleRows = useMemo(
+    () => buildContractLifecycleRows(data.contracts, {
+      monthStart: lifecycleMonthStart,
+      plansById: planMap,
+      studentsById: customerMap,
+      coachesById: coachMap,
+      modalitiesById: modalityMap,
+    }),
+    [data.contracts, lifecycleMonthStart, planMap, customerMap, coachMap, modalityMap]
+  );
+  const contractMap = useMemo(() => Object.fromEntries(lifecycleRows.map(c => [c.id, c])), [lifecycleRows]);
 
   // ── KPIs ────────────────────────────────────────────────────
   const kpis = useMemo(() => {
     const curMonthKey = data.todayStr.slice(0, 7);
-    const all = data.contracts.filter(c => ['active', 'overdue'].includes(c.status));
-    const overdueCount = data.contracts.filter(c => c.status === 'overdue').length;
+    const active = lifecycleRows.filter(c => c.lifecycle?.counts?.active);
+    const overdueCount = active.filter(c => c.status === 'overdue').length;
 
-    const newThisMonth = data.contracts.filter(c =>
-      !['draft', 'cancelled'].includes(c.status) &&
-      !c.parent_contract_id &&
-      c.created_at?.slice(0, 7) === curMonthKey
+    const newThisMonth = lifecycleRows.filter(c => c.lifecycle?.counts?.entry);
+    const exitsThisMonth = lifecycleRows.filter(c =>
+      c.lifecycle?.counts?.exit &&
+      c.lifecycle?.cancelDate?.slice(0, 7) === curMonthKey
     );
 
-    const exitsThisMonth = data.contracts.filter(c =>
-      ['cancelled', 'finished'].includes(c.status) &&
-      c.updated_at?.slice(0, 7) === curMonthKey
-    );
+    const mrr = active.reduce((sum, c) => sum + (Number(c.monthly) || 0), 0);
 
-    const mrr = all.reduce((sum, c) => {
-      const plan = planMap[c.plan_id];
-      return sum + (Number(plan?.price_monthly) || 0);
-    }, 0);
-
-    const churnPct = (all.length + exitsThisMonth.length) > 0
-      ? (exitsThisMonth.length / (all.length + exitsThisMonth.length)) * 100
+    const churnPct = (active.length + exitsThisMonth.length) > 0
+      ? (exitsThisMonth.length / (active.length + exitsThisMonth.length)) * 100
       : 0;
 
     const guaranteedThisMonth = data.payments
       .filter(p => p.credit_date?.slice(0, 7) === curMonthKey)
       .reduce((sum, p) => sum + (Number(p.value) || 0), 0);
 
-    return { active: all.length, overdueCount, newThisMonth: newThisMonth.length, exitsThisMonth: exitsThisMonth.length, mrr, churnPct, guaranteedThisMonth };
-  }, [data, planMap]);
+    return { active: active.length, overdueCount, newThisMonth: newThisMonth.length, exitsThisMonth: exitsThisMonth.length, mrr, churnPct, guaranteedThisMonth };
+  }, [data.payments, data.todayStr, lifecycleRows]);
 
   // ── Previsão de receita ──────────────────────────────────────
   const forecastData = useMemo(() => {
@@ -301,10 +314,10 @@ export default function CentralFinanceira() {
         .filter(p => p.credit_date?.slice(0, 7) === yyyymm)
         .reduce((sum, p) => sum + (Number(p.value) || 0), 0);
 
-      const projected = data.contracts
-        .filter(c => ['active', 'overdue'].includes(c.status))
+      const projected = lifecycleRows
+        .filter(c => c.lifecycle?.counts?.active)
         .filter(c => c.start_date <= end && (c.end_date || '9999-12-31') >= monthStart)
-        .reduce((sum, c) => sum + (Number(planMap[c.plan_id]?.price_monthly) || 0), 0);
+        .reduce((sum, c) => sum + (Number(c.monthly) || 0), 0);
 
       return {
         month: yyyymm,
@@ -314,16 +327,16 @@ export default function CentralFinanceira() {
         projected,
       };
     });
-  }, [data, planMap]);
+  }, [data.payments, lifecycleRows]);
 
   // ── Scoreboard por coach (mês atual) ────────────────────────
   const coachScoreboard = useMemo(() => {
     const curMonthKey = data.todayStr.slice(0, 7);
     const monthPayments = data.payments.filter(p => p.credit_date?.slice(0, 7) === curMonthKey);
+    const activeContracts = lifecycleRows.filter(c => c.lifecycle?.counts?.active);
 
     const coachContractCount = {};
-    data.contracts
-      .filter(c => ['active', 'overdue'].includes(c.status))
+    activeContracts
       .forEach(c => {
         if (c.coach_id) coachContractCount[c.coach_id] = (coachContractCount[c.coach_id] || 0) + 1;
       });
@@ -331,8 +344,8 @@ export default function CentralFinanceira() {
     const coachData = {};
 
     // Preenche dados de coaches com contratos ativos (mesmo sem pagamentos registrados)
-    data.contracts
-      .filter(c => ['active', 'overdue'].includes(c.status) && c.coach_id)
+    activeContracts
+      .filter(c => c.coach_id)
       .forEach(c => {
         if (!coachData[c.coach_id]) {
           coachData[c.coach_id] = {
@@ -341,6 +354,7 @@ export default function CentralFinanceira() {
             total: 0, received: 0, pending: 0, byDay: {},
           };
         }
+        coachData[c.coach_id].total += Number(c.monthly) || 0;
       });
 
     for (const payment of monthPayments) {
@@ -357,28 +371,28 @@ export default function CentralFinanceira() {
       }
 
       const amount = Number(payment.value) || 0;
-      coachData[coachId].total += amount;
       if (PAID_STATUSES.has(payment.status)) coachData[coachId].received += amount;
-      else coachData[coachId].pending += amount;
 
       const day = payment.credit_date.slice(8, 10);
       coachData[coachId].byDay[day] = (coachData[coachId].byDay[day] || 0) + amount;
     }
 
-    return Object.values(coachData).sort((a, b) => b.total - a.total);
-  }, [data, contractMap, coachMap]);
+    return Object.values(coachData)
+      .map(entry => ({ ...entry, pending: Math.max(0, entry.total - entry.received) }))
+      .sort((a, b) => b.total - a.total);
+  }, [data.payments, data.todayStr, lifecycleRows, contractMap, coachMap]);
 
   // ── Contratos ativos ordenados por vencimento ────────────────
   const activeContractsSorted = useMemo(() => {
     const today = new Date(data.todayStr + 'T12:00:00');
 
-    return data.contracts
-      .filter(c => ['active', 'overdue'].includes(c.status))
+    return lifecycleRows
+      .filter(c => c.lifecycle?.counts?.active)
       .map(c => {
-        const plan     = planMap[c.plan_id];
-        const modality = modalityMap[plan?.modality_id];
-        const coach    = coachMap[c.coach_id];
-        const customer = customerMap[c.customer_id];
+        const plan     = c.plan || planMap[c.plan_id];
+        const modality = c.modality || modalityMap[plan?.modality_id];
+        const coach    = c.coach || coachMap[c.coach_id];
+        const customer = c.student || customerMap[c.customer_id];
 
         const endDate  = c.end_date ? new Date(c.end_date + 'T12:00:00') : null;
         const daysLeft = endDate ? Math.round((endDate - today) / 86400000) : 9999;
@@ -391,7 +405,7 @@ export default function CentralFinanceira() {
         return { ...c, plan, modality, coach, customer, daysLeft, urgency };
       })
       .sort((a, b) => a.daysLeft - b.daysLeft);
-  }, [data, planMap, modalityMap, coachMap, customerMap]);
+  }, [data.todayStr, lifecycleRows, planMap, modalityMap, coachMap, customerMap]);
 
   const urgentContracts  = activeContractsSorted.filter(c => ['expired', 'critical'].includes(c.urgency));
   const warningContracts = activeContractsSorted.filter(c => c.urgency === 'warning');

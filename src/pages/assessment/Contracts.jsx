@@ -18,6 +18,7 @@ const STATUS = {
   on_leave:  { label: 'Licença',   cls: 'bg-amber-100 text-amber-700' },
   finished:  { label: 'Concluído', cls: 'bg-gray-100 text-gray-600' },
   cancelled: { label: 'Cancelado', cls: 'bg-red-100 text-red-500' },
+  voided:    { label: 'Descartado', cls: 'bg-amber-100 text-amber-700' },
 };
 
 const PAY = {

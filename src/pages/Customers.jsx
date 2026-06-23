@@ -61,13 +61,13 @@ export default function Customers() {
     )[0];
 
     // Contratos de assessoria
-    const clientContracts = contracts.filter(c => c.customer_id === customerId);
+    const clientContracts = contracts.filter(c => c.customer_id === customerId && c.status !== 'voided');
     const activeContracts = clientContracts.filter(c =>
       ['active', 'overdue', 'on_leave'].includes(c.status)
     );
     // Só conta contratos pagos (LTV real)
     const assessTotal = clientContracts
-      .filter(c => c.payment_status === 'paid' && c.status !== 'cancelled')
+      .filter(c => c.payment_status === 'paid' && !['cancelled', 'voided'].includes(c.status))
       .reduce((s, c) => {
         const plan = plans.find(p => p.id === c.plan_id);
         return s + (plan ? Number(plan.price_total) : 0);
@@ -127,7 +127,7 @@ export default function Customers() {
   });
 
   const noCpfCount       = customers.filter(c => !c.cpf).length;
-  const withAssessment   = customers.filter(c => contracts.some(ct => ct.customer_id === c.id)).length;
+  const withAssessment   = customers.filter(c => contracts.some(ct => ct.customer_id === c.id && ct.status !== 'voided')).length;
   const inadimplentes    = enriched.filter(c => c._data.assessmentStatus === 'overdue').length;
   const totalLTV         = enriched.reduce((s, c) => s + c._data.ltv, 0);
   const monthlyRecurring = enriched.reduce((s, c) => s + c._data.monthlyRecurring, 0);

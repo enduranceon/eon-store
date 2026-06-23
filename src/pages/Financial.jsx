@@ -6,7 +6,7 @@ import {
   BarChart3, RotateCcw, CheckCheck, MessageCircle,
   Copy, ExternalLink, Link2, Check,
 } from 'lucide-react';
-import { calcGatewayFee, defaultPaymentDueDate } from '@/lib/payment-methods';
+import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -19,6 +19,7 @@ import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib
 import { isEffectiveOpenSale, isSafePaymentUrl } from '@/lib/sales';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { readPageCache, writePageCache } from '@/lib/page-cache';
+import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
@@ -53,32 +54,11 @@ function patchFinancialPageCache(partial) {
 // ─────────────────────────────────────────────────────────────────
 function getTodayStr()      { return todayLocalStr(); }
 function getMonthStartStr() { const d = new Date(); d.setDate(1); return toLocalDateStr(d); }
-function getLastMonthStart() {
-  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return toLocalDateStr(d);
-}
-function getLastMonthEnd() {
-  const d = new Date(); d.setDate(0); return toLocalDateStr(d); // dia 0 do mês atual = último dia do mês anterior
-}
 
 function daysDiff(dateStr) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const due   = new Date(dateStr + 'T00:00:00');
   return Math.round((due - today) / 86400000);
-}
-
-function monthLabel(yyyymm) {
-  const [y, m] = yyyymm.split('-');
-  return new Date(Number(y), Number(m) - 1, 1)
-    .toLocaleString('pt-BR', { month: 'short' })
-    .replace('.', '');
-}
-
-function trendIcon(current, previous) {
-  if (!previous || previous === 0) return null;
-  const pct = ((current - previous) / previous) * 100;
-  if (Math.abs(pct) < 1) return { icon: Minus, color: 'text-gray-400', label: '0%' };
-  if (pct > 0) return { icon: ArrowUpRight, color: 'text-green-600', label: `+${pct.toFixed(0)}%` };
-  return { icon: ArrowDownRight, color: 'text-red-500', label: `${pct.toFixed(0)}%` };
 }
 
 // Para contratos parcelados (card_6x, card_3x…), apenas 1 parcela é creditada por mês.
@@ -94,15 +74,6 @@ function getInstallmentN(o) {
 // Valor efetivo que chega em caixa por mês para um pedido/contrato.
 function effectiveMonthlyValue(o) {
   return (o.total_value || 0) / getInstallmentN(o);
-}
-
-// Taxa de gateway total dividida pelas parcelas (taxas fixas como R$1,99 são cobradas 1x só).
-function effectiveMonthlyFee(o) {
-  const n = getInstallmentN(o);
-  const totalFee = (o.manual_fee != null && o.manual_fee !== '')
-    ? Number(o.manual_fee)
-    : calcGatewayFee(o.total_value || 0, o.payment_method);
-  return totalFee / n;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -125,7 +96,7 @@ function PaymentStageChip({ status, hasAsaasCharge }) {
   let label = status || 'Pendente';
   let cls = 'bg-gray-100 text-gray-600';
 
-  if (status === 'awaiting_charge') {
+  if (status === 'awaiting_charge' || status === 'pending') {
     label = 'Pedido recebido';
     cls = 'bg-gray-100 text-gray-700';
   } else if (status === 'charge_sent') {
@@ -306,37 +277,6 @@ function KpiCard({ label, value, sub, icon: Icon, iconBg, iconColor, valueColor,
   );
 }
 
-// Tooltip customizado para o gráfico
-function CustomTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  const bruto  = (payload.find(p => p.dataKey === 'liquido')?.value || 0) + (payload.find(p => p.dataKey === 'taxas')?.value || 0);
-  const liquido = payload.find(p => p.dataKey === 'liquido')?.value || 0;
-  const taxas   = payload.find(p => p.dataKey === 'taxas')?.value || 0;
-  return (
-    <div className="bg-white border rounded-lg shadow-lg p-3 text-sm min-w-40">
-      <p className="font-semibold text-gray-700 mb-2 capitalize">{label}</p>
-      <div className="space-y-1">
-        <div className="flex justify-between gap-4">
-          <span className="text-muted-foreground">Bruto</span>
-          <span className="font-medium">{formatCurrency(bruto)}</span>
-        </div>
-        {taxas > 0 && (
-          <div className="flex justify-between gap-4">
-            <span className="text-orange-500 flex items-center gap-1">
-              <span className="w-2 h-2 rounded-sm bg-orange-400 inline-block" /> Taxas
-            </span>
-            <span className="text-orange-600 font-medium">− {formatCurrency(taxas)}</span>
-          </div>
-        )}
-        <div className="flex justify-between gap-4 border-t pt-1 mt-1">
-          <span className="font-semibold text-blue-700">Líquido</span>
-          <span className="font-bold text-blue-700">{formatCurrency(liquido)}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────
 // COMPONENTE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────
@@ -418,21 +358,21 @@ export default function Financial() {
 
         const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes, paymentsRes] = await Promise.all([
           supabase.from('presale_orders')
-            .select('id, order_number, checkout_name, checkout_whatsapp, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items')
+            .select('id, order_number, checkout_name, checkout_whatsapp, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('stock_orders')
-            .select('id, order_number, customer_name, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items')
+            .select('id, order_number, customer_name, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, plan_snapshot')
-            .neq('status', 'cancelled').neq('status', 'draft').neq('payment_status', 'refunded'),
-          supabase.from('assessment_plans').select('id, price_total, name, revenue_center_id'),
+            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, manual_payment, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, credit_balance, status, installments, plan_snapshot')
+            .not('status', 'in', '("cancelled","draft","voided")').neq('payment_status', 'refunded'),
+          supabase.from('assessment_plans').select('id, price_total, price_monthly, name, revenue_center_id'),
           supabase.from('presale_customers').select('id, full_name, whatsapp'),
           supabase.from('revenue_centers').select('id, name, color'),
           supabase.from('stock_products').select('id, revenue_center_id'),
           // Pagamentos reais do Asaas — fonte de verdade do fluxo de caixa
           supabase.from('asaas_payments')
-            .select('id, asaas_payment_id, order_id, order_type, status, value, net_value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
+            .select('id, asaas_payment_id, order_id, order_type, status, value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
             .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
             .gte('credit_date', apFromStr)
             .order('credit_date', { ascending: false }),
@@ -455,29 +395,32 @@ export default function Financial() {
           revenue_center_id: orderCenter(o.items),
         }));
         const stock     = (stockRes.data     || []).map(o => ({ ...o, type: 'stock',    customer: o.customer_name,  revenue_center_id: orderCenter(o.items) }));
-        const contracts = (contractRes.data  || []).map(c => {
-          const plan = plansMap[c.plan_id];
-          // Preserva histórico financeiro: snapshot tem prioridade sobre o plano vivo
-          const snapPrice = c.plan_snapshot?.price_total;
-          const base = snapPrice != null ? Number(snapPrice) : (plan ? Number(plan.price_total) : 0);
-          const total_value = Math.max(0, base + (Number(c.enrollment_fee) || 0) - (Number(c.manual_discount) || 0));
-          return {
-            id: c.id, order_number: c.contract_number,
-            customer: customersMap[c.customer_id]?.full_name || '—',
-            customer_whatsapp: customersMap[c.customer_id]?.whatsapp || null,
-            total_value, payment_status: c.payment_status, payment_method: c.payment_method,
-            payment_date: c.payment_date, due_date: c.due_date,
-            asaas_charge_id: c.asaas_charge_id,
-            asaas_payment_link: c.asaas_payment_link,
-            asaas_pix_copy: c.asaas_pix_copy,
-            external_payment_link: c.external_payment_link,
-            payment_message_sent_at: c.payment_message_sent_at,
-            manual_fee: c.manual_fee,
-            type: 'contract',
-            revenue_center_id: c.plan_snapshot?.revenue_center_id || plan?.revenue_center_id || null,
-            installments: c.installments || 1,
-          };
-        });
+        const contracts = buildContractLifecycleRows(contractRes.data || [], { plansById: plansMap })
+          .filter(c =>
+            !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type) &&
+            (c.lifecycle?.counts?.active || c.payment_status === 'paid')
+          )
+          .map(c => {
+            const plan = plansMap[c.plan_id];
+            return {
+              id: c.id, order_number: c.contract_number,
+              customer: customersMap[c.customer_id]?.full_name || '—',
+              customer_whatsapp: customersMap[c.customer_id]?.whatsapp || null,
+              total_value: Number(c.value) || 0,
+              payment_status: c.payment_status,
+              payment_method: c.payment_method,
+              payment_date: c.payment_date, due_date: c.due_date,
+              asaas_charge_id: c.asaas_charge_id,
+              asaas_payment_link: c.asaas_payment_link,
+              asaas_pix_copy: c.asaas_pix_copy,
+              external_payment_link: c.external_payment_link,
+              payment_message_sent_at: c.payment_message_sent_at,
+              status: c.status,
+              type: 'contract',
+              revenue_center_id: c.plan_snapshot?.revenue_center_id || plan?.revenue_center_id || null,
+              installments: c.installments || 1,
+            };
+          });
 
         const nextOrders = [...presale, ...stock, ...contracts];
         const nextCenters = centersRes.data || [];
@@ -525,8 +468,6 @@ export default function Financial() {
   // ── Cálculos ──────────────────────────────────────────────────
   const todayStr       = getTodayStr();
   const monthStart     = getMonthStartStr();
-  const lastMonthStart = getLastMonthStart();
-  const lastMonthEnd   = getLastMonthEnd();
 
   // Set de order_id (qualquer tipo) que tem pagamentos reais cacheados.
   // Pra esses, asaas_payments é fonte de verdade; orders pulam o fallback.
@@ -536,28 +477,23 @@ export default function Financial() {
     return set;
   }, [asaasPayments]);
 
-  // Calcula bruto + líquido recebidos num período (yyyymm) ou entre 2 datas
+  // Calcula recebimentos em um período.
   const sumReceived = (predicateAsaas, predicateOrder) => {
-    // 1) Fonte de verdade: net_value dos pagamentos Asaas
-    let bruto = 0, liquido = 0;
+    let total = 0;
     for (const p of asaasPayments) {
       if (!predicateAsaas(p)) continue;
       const v  = Number(p.value) || 0;
-      const nv = p.net_value != null ? Number(p.net_value) : v;
-      bruto   += v;
-      liquido += nv;
+      total += v;
     }
-    // 2) Fallback: orders pagos que NÃO têm cache (pagamentos manuais ou ainda não sincronizados)
+    // Fallback: vendas pagas que não têm cache Asaas.
     for (const o of orders) {
       if (o.payment_status !== 'paid') continue;
       if (ordersWithAsaasCache.has(o.id)) continue;
       if (!predicateOrder(o)) continue;
       const mVal = effectiveMonthlyValue(o);
-      const mFee = effectiveMonthlyFee(o);
-      bruto   += mVal;
-      liquido += (mVal - mFee);
+      total += mVal;
     }
-    return { bruto, liquido };
+    return { total };
   };
 
   // Exclui pedidos que já têm pagamento confirmado no Asaas mesmo que payment_status ainda não foi sincronizado
@@ -580,15 +516,7 @@ export default function Financial() {
     p => p.credit_date >= monthStart,
     o => o.payment_date >= monthStart,
   );
-  const lastResult = sumReceived(
-    p => p.credit_date >= lastMonthStart && p.credit_date <= lastMonthEnd,
-    o => o.payment_date >= lastMonthStart && o.payment_date <= lastMonthEnd,
-  );
-  const receivedMonth = monthResult.bruto;
-  const feesMonth     = monthResult.bruto - monthResult.liquido;
-  const netMonth      = monthResult.liquido;
-  const receivedLast  = lastResult.bruto;
-  const netLast       = lastResult.liquido;
+  const receivedMonth = monthResult.total;
 
   const openSalesTotal = activeOrders.reduce((s, o) => s + (o.total_value || 0), 0);
   const overdueTotal = overdue.reduce((s, o) => s + (o.total_value || 0), 0);
@@ -597,47 +525,7 @@ export default function Financial() {
   const sentChargeTotal = sentCharge.reduce((s, o) => s + (o.total_value || 0), 0);
   const noChargeTotal = noCharge.reduce((s, o) => s + (o.total_value || 0), 0);
 
-  // ticket médio
-  const avgTicket = paidThisMonth.length > 0 ? receivedMonth / paidThisMonth.length : 0;
-
   const pipelineTotal = openSalesTotal;
-
-  // ── Gráfico: últimos 6 meses ──────────────────────────────────
-  // Combina asaas_payments (real, via credit_date) + orders manuais sem cache
-  const chartData = useMemo(() => {
-    const now = new Date();
-    const months = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      months.push(toLocalDateStr(d).slice(0, 7));
-    }
-    return months.map(ym => {
-      let bruto = 0, liquido = 0, count = 0;
-      // 1) Asaas payments — fonte de verdade
-      for (const p of asaasPayments) {
-        if (!p.credit_date?.startsWith(ym)) continue;
-        const v  = Number(p.value) || 0;
-        const nv = p.net_value != null ? Number(p.net_value) : v;
-        bruto   += v;
-        liquido += nv;
-        count++;
-      }
-      // 2) Orders manuais (sem cache Asaas)
-      for (const o of orders) {
-        if (o.payment_status !== 'paid') continue;
-        if (ordersWithAsaasCache.has(o.id)) continue;
-        if (!o.payment_date?.startsWith(ym)) continue;
-        const mVal = effectiveMonthlyValue(o);
-        const mFee = effectiveMonthlyFee(o);
-        bruto   += mVal;
-        liquido += (mVal - mFee);
-        count++;
-      }
-      return { month: monthLabel(ym), ym, bruto, liquido, taxas: bruto - liquido, count };
-    });
-  }, [orders, asaasPayments, ordersWithAsaasCache]);
-
-  const currentYM = monthStart.slice(0, 7);
 
   // ── Recebíveis Asaas agrupados ────────────────────────────────
   const receivablesByMonth = useMemo(() => {
@@ -645,10 +533,9 @@ export default function Financial() {
     for (const p of receivables) {
       const date = p.creditDate || p.dueDate; if (!date) continue;
       const key = date.slice(0, 7);
-      if (!byMonth[key]) byMonth[key] = { month: key, total: 0, netTotal: 0, count: 0, confirmed: 0, pending: 0, overdue: 0, items: [] };
+      if (!byMonth[key]) byMonth[key] = { month: key, total: 0, count: 0, confirmed: 0, pending: 0, overdue: 0, items: [] };
       const m = byMonth[key];
       m.total    += Number(p.value)    || 0;
-      m.netTotal += Number(p.netValue) || Number(p.value) || 0;
       m.count++;
       if (p.status === 'CONFIRMED') m.confirmed++;
       if (p.status === 'PENDING')   m.pending++;
@@ -658,7 +545,7 @@ export default function Financial() {
     return Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month));
   }, [receivables]);
 
-  const grandTotalNet = useMemo(() => receivablesByMonth.reduce((s, m) => s + m.netTotal, 0), [receivablesByMonth]);
+  const receivablesTotal = useMemo(() => receivablesByMonth.reduce((s, m) => s + m.total, 0), [receivablesByMonth]);
 
   // ── Centros de receita ────────────────────────────────────────
   const centerBreakdown = useMemo(() => {
@@ -693,7 +580,7 @@ export default function Financial() {
       sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
       sevenMonthsAgo.setDate(1);
       const { data: payments } = await supabase.from('asaas_payments')
-        .select('id, asaas_payment_id, order_id, order_type, status, value, net_value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
+        .select('id, asaas_payment_id, order_id, order_type, status, value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
         .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
         .gte('credit_date', toLocalDateStr(sevenMonthsAgo))
         .order('credit_date', { ascending: false });
@@ -922,6 +809,13 @@ export default function Financial() {
           <p className="text-sm text-muted-foreground mt-0.5">
             Cobranças pendentes — quem ainda não pagou · Loja · Pré-venda · Assessoria
           </p>
+          {(loadingRec || fetchedAt) && (
+            <p className="text-xs text-muted-foreground mt-1">
+              {loadingRec
+                ? 'Atualizando recebíveis Asaas...'
+                : `Recebíveis Asaas atualizados às ${fetchedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Link to="/financeiro/fluxo-caixa">
@@ -1141,7 +1035,7 @@ export default function Financial() {
                   <CheckCircle2 className="w-4 h-4" />
                   Recebido por centro de receita (mês)
                 </CardTitle>
-                <p className="text-xs text-muted-foreground">Divisão do recebimento bruto de {formatCurrency(receivedMonth)}</p>
+                <p className="text-xs text-muted-foreground">Divisão dos recebimentos de {formatCurrency(receivedMonth)}</p>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -1204,7 +1098,11 @@ export default function Financial() {
             </div>
             <div>
               <p className="font-semibold text-sm text-gray-900">Quer ver o que já está confirmado pra entrar?</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Parcelas de cartão, recebíveis Asaas e histórico ficam agora no Fluxo de Caixa.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {receivablesTotal > 0
+                  ? `Recebíveis Asaas carregados: ${formatCurrency(receivablesTotal)}. Parcelas e histórico ficam no Fluxo de Caixa.`
+                  : 'Parcelas de cartão, recebíveis Asaas e histórico ficam agora no Fluxo de Caixa.'}
+              </p>
             </div>
           </div>
           <Link to="/financeiro/fluxo-caixa">

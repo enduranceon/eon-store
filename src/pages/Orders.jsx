@@ -12,6 +12,7 @@ import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
+  pending:         { label: 'Pedido recebido',   color: 'bg-gray-100 text-gray-700' },
   awaiting_charge: { label: 'Pedido recebido',   color: 'bg-gray-100 text-gray-700' },
   charge_sent:     { label: 'Cobrança enviada',   color: 'bg-blue-100 text-blue-700' },
   paid:            { label: 'Pago',               color: 'bg-green-100 text-green-700' },

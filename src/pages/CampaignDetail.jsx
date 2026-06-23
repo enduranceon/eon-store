@@ -15,8 +15,8 @@ import { toast } from 'sonner';
 
 const STATUS_LABEL = { active: 'Ativa', ended: 'Encerrada', archived: 'Arquivada' };
 const STATUS_BADGE = { active: 'success', ended: 'warning', archived: 'secondary' };
-const PAYMENT_LABEL = { awaiting_charge: 'Pedido recebido', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcial', cancelled: 'Cancelado', refunded: 'Reembolsado' };
-const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
+const PAYMENT_LABEL = { pending: 'Pedido recebido', awaiting_charge: 'Pedido recebido', charge_sent: 'Cobrança enviada', paid: 'Pago', partially_paid: 'Parcial', cancelled: 'Cancelado', refunded: 'Reembolsado' };
+const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', pending: 'secondary', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
 export default function CampaignDetail() {
   const { id } = useParams();
   const navigate = useNavigate();

@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
 
 const PAYMENT_STATUS = {
+  pending: { label: 'Pedido recebido', badge: 'secondary' },
   awaiting_charge: { label: 'Pedido recebido', badge: 'secondary' },
   charge_sent: { label: 'Cobrança enviada', badge: 'info' },
   paid: { label: 'Pago', badge: 'success' },

@@ -339,7 +339,7 @@ export default function ClosingDetail() {
                                 )}
                                 {it.rate_applied != null && (
                                   <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Taxa aplicada</span>
+                                    <span className="text-muted-foreground">Valor aplicado</span>
                                     <span className="font-medium">{formatCurrency(it.rate_applied)}</span>
                                   </div>
                                 )}

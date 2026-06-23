@@ -8,6 +8,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AssessmentCoach, AssessmentContract } from '@/api/entities';
 import { usePageData } from '@/hooks/usePageData';
+import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { toast } from 'sonner';
 
 const ROLE_LABEL = { junior: 'Junior', pleno: 'Pleno', senior: 'Senior' };
@@ -22,12 +23,14 @@ const emptyForm = { name: '', email: '', phone: '', role: 'junior', leader_id: n
 async function loadCoachesPage() {
   const [coaches, contracts] = await Promise.all([
     AssessmentCoach.list('name').catch(() => []),
-    AssessmentContract.filter({ status: 'active' }, '-created_at').catch(() => []),
+    AssessmentContract.list('-created_at').catch(() => []),
   ]);
   const counts = {};
-  contracts.forEach(contract => {
-    counts[contract.coach_id] = (counts[contract.coach_id] || 0) + 1;
-  });
+  buildContractLifecycleRows(contracts)
+    .filter(contract => contract.lifecycle?.counts?.active && contract.coach_id)
+    .forEach(contract => {
+      counts[contract.coach_id] = (counts[contract.coach_id] || 0) + 1;
+    });
   return { coaches, counts };
 }
 

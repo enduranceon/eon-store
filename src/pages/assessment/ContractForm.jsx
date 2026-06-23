@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, FileText, Save, Check, ChevronRight, Users, Calendar, RotateCcw, BadgeDollarSign, Plus, UserPlus, AlertTriangle, BadgeCheck, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import { formatCurrency, todayLocalStr, toLocalDateStr, maskCpf } from '@/lib/ut
 import { PhoneInput } from '@/components/PhoneInput';
 import { normalizePhone } from '@/lib/phone';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
+import { classifyContractLifecycle, isContractVoidedSale } from '@/lib/assessment-contract-lifecycle';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 
@@ -106,11 +107,13 @@ export default function ContractForm() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const preselectedId = searchParams.get('customer_id') || '';
+  const replacementId = searchParams.get('replace_contract_id') || '';
 
   const [customers, setCustomers]     = useState([]);
   const [coaches, setCoaches]         = useState([]);
   const [plans, setPlans]             = useState([]);
   const [modalities, setModalities]   = useState([]);
+  const [replacementContract, setReplacementContract] = useState(null);
   const [saving, setSaving]           = useState(false);
   const [customerSearch, setCustomerSearch] = useState('');
   // Modal de cadastro rápido de aluno
@@ -147,18 +150,38 @@ export default function ContractForm() {
   useEffect(() => {
     (async () => {
       try {
-        const [s, co, p, m] = await Promise.all([
+        const [s, co, p, m, replacementResult] = await Promise.all([
           PreSaleCustomer.list('full_name').catch(() => []),
           AssessmentCoach.filter({ active: true }, 'name').catch(() => []),
           AssessmentPlan.filter({ active: true }).catch(() => []),
           AssessmentModality.filter({ active: true }).catch(() => []),
+          replacementId
+            ? supabase
+              .from('assessment_contracts')
+              .select('id, contract_number, customer_id, coach_id, start_date, end_date, plan_id, status, payment_status')
+              .eq('id', replacementId)
+              .maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
         ]);
         setCustomers(s); setCoaches(co); setPlans(p); setModalities(m);
+        if (replacementResult?.error) throw replacementResult.error;
+        if (replacementResult?.data) {
+          const replacement = replacementResult.data;
+          setReplacementContract(replacement);
+          setForm(f => ({
+            ...f,
+            customer_id: replacement.customer_id || f.customer_id,
+            coach_id:    replacement.coach_id || f.coach_id,
+            start_date:  replacement.start_date || f.start_date,
+            notes:       f.notes || `Substitui registro descartado ${replacement.contract_number}`,
+          }));
+        }
       } catch (e) {
         console.error('Erro ao carregar formulário:', e);
+        toast.error(e.message || 'Erro ao carregar formulário');
       }
     })();
-  }, []);
+  }, [replacementId]);
 
   // Group plans by modality (só modalidades ativas + planos ativos)
   const plansByModality = modalities
@@ -255,10 +278,15 @@ export default function ContractForm() {
     try {
       const { data } = await supabase
         .from('assessment_contracts')
-        .select('id, status')
+        .select('id, customer_id, status, payment_status, payment_date, manual_payment, refund_status, refund_amount, cancellation_fee, cancellation_reason, cancellation_date, created_at, updated_at, parent_contract_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link')
         .eq('customer_id', form.customer_id);
-      const total = data?.length || 0;
-      const cancelled = (data || []).filter(c => c.status === 'cancelled').length;
+      const relevantContracts = (data || [])
+        .filter(c => c.id !== replacementId)
+        .filter(c => !isContractVoidedSale(c));
+      const total = relevantContracts.length;
+      const cancelled = relevantContracts.filter(c =>
+        classifyContractLifecycle(c, { contracts: data || [] }).counts.exit
+      ).length;
       setPriorContracts({ total, cancelled, loading: false });
     } catch {
       setPriorContracts({ total: 0, cancelled: 0, loading: false });
@@ -295,11 +323,18 @@ export default function ContractForm() {
 
     setSaving(true);
     try {
+      const planSnapshot = buildPlanSnapshot(selectedPlan);
+      const replacementNote = replacementContract
+        ? `Substitui registro descartado ${replacementContract.contract_number}`
+        : null;
+      const finalNotes = [replacementNote, form.notes && form.notes !== replacementNote ? form.notes : null]
+        .filter(Boolean)
+        .join(' · ') || null;
       const created = await AssessmentContract.create({
         customer_id:       form.customer_id,
         coach_id:          form.coach_id,
         plan_id:           selectedPlan.id,
-        plan_snapshot:     buildPlanSnapshot(selectedPlan),
+        plan_snapshot:     planSnapshot,
         start_date:        form.start_date,
         end_date:          endDate,
         original_end_date: endDate,
@@ -309,7 +344,7 @@ export default function ContractForm() {
         manual_discount:   manualDiscount,
         discount_reason:   form.discount_reason || null,
         auto_renewal:      !!form.auto_renewal,
-        notes:             form.notes || null,
+        notes:             finalNotes,
       });
 
       // Registra evento de criação (auditoria) — best-effort, não bloqueia.
@@ -318,7 +353,7 @@ export default function ContractForm() {
           contract_id: created.id,
           event_type:  'created',
           payload: {
-            plan_snapshot: buildPlanSnapshot(selectedPlan),
+            plan_snapshot: planSnapshot,
             coach_id:        form.coach_id,
             installments,
             enrollment_fee:  enrollmentFee,
@@ -328,11 +363,28 @@ export default function ContractForm() {
             total_value:     Number(selectedPlan.price_total) + enrollmentFee - manualDiscount,
             prior_contracts: priorContracts.total,
             prior_cancelled: priorContracts.cancelled,
+            replacement_of_contract_id: replacementContract?.id || null,
+            replacement_of_contract_number: replacementContract?.contract_number || null,
           },
-          notes: priorContracts.cancelled > 0
+          notes: replacementContract
+            ? `Criado como substituição de ${replacementContract.contract_number}`
+            : priorContracts.cancelled > 0
             ? `Aluno tem ${priorContracts.cancelled} contrato(s) cancelado(s) anteriormente`
             : null,
         });
+        if (replacementContract) {
+          await AssessmentContractEvent.create({
+            contract_id: replacementContract.id,
+            event_type:  'sale_replaced',
+            payload: {
+              new_contract_id:     created.id,
+              new_contract_number: created.contract_number,
+              new_plan_id:         selectedPlan.id,
+              new_plan_snapshot:   planSnapshot,
+            },
+            notes: `Substituída pelo contrato ${created.contract_number}`,
+          });
+        }
       } catch (eventErr) {
         console.warn('[contract_event] falha ao registrar criação:', eventErr.message);
       }
@@ -344,6 +396,25 @@ export default function ContractForm() {
     finally { setSaving(false); }
   };
 
+  const planModality = modalities.find(m => m.id === selectedPlan?.modality_id);
+  const pageTitle = replacementContract ? 'Criar contrato substituto' : 'Novo contrato';
+  const replacementBanner = replacementContract && (
+    <div className="flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm">
+      <RotateCcw className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+      <div className="min-w-0">
+        <p className="font-semibold text-blue-900">
+          Substituindo registro descartado{' '}
+          <Link to={`/assessoria/contratos/${replacementContract.id}`} className="font-mono hover:underline">
+            {replacementContract.contract_number}
+          </Link>
+        </p>
+        <p className="text-xs text-blue-700 mt-0.5">
+          O aluno, coach e início foram herdados. O registro anterior fica fora das métricas.
+        </p>
+      </div>
+    </div>
+  );
+
   // ── STEP 1: Selecionar plano ───────────────────────────────────────────────
   if (step === 'plan') {
     return (
@@ -353,10 +424,12 @@ export default function ContractForm() {
             <ArrowLeft className="w-4 h-4" />
           </Button>
           <div>
-            <h2 className="text-xl font-bold">Novo contrato</h2>
+            <h2 className="text-xl font-bold">{pageTitle}</h2>
             <p className="text-sm text-muted-foreground">Passo 1 de 3 — Escolha o plano</p>
           </div>
         </div>
+
+        {replacementBanner}
 
         {plansByModality.length === 0 ? (
           <Card>
@@ -401,8 +474,6 @@ export default function ContractForm() {
   }
 
   // ── STEP 3: Revisão ────────────────────────────────────────────────────────
-  const planModality = modalities.find(m => m.id === selectedPlan?.modality_id);
-
   if (step === 'review') {
     const planName = selectedPlan?.name?.trim()
       || `${planModality?.name || 'Plano'} · ${planPeriodLabel(selectedPlan)}`;
@@ -419,10 +490,12 @@ export default function ContractForm() {
             <ArrowLeft className="w-4 h-4" />
           </Button>
           <div>
-            <h2 className="text-xl font-bold">Novo contrato</h2>
+            <h2 className="text-xl font-bold">{pageTitle}</h2>
             <p className="text-sm text-muted-foreground">Passo 3 de 3 — Revise antes de salvar</p>
           </div>
         </div>
+
+        {replacementBanner}
 
         {/* Alertas */}
         {priorContracts.cancelled > 0 && (
@@ -548,10 +621,12 @@ export default function ContractForm() {
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <div>
-          <h2 className="text-xl font-bold">Novo contrato</h2>
+          <h2 className="text-xl font-bold">{pageTitle}</h2>
           <p className="text-sm text-muted-foreground">Passo 2 de 3 — Detalhes</p>
         </div>
       </div>
+
+      {replacementBanner}
 
       {/* Plano selecionado — resumo */}
       <div className="flex items-center gap-4 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
@@ -572,7 +647,7 @@ export default function ContractForm() {
           onClick={() => setStep('plan')}
           className="text-xs text-blue-600 hover:underline shrink-0"
         >
-          Trocar plano
+          Escolher outro plano
         </button>
       </div>
 
@@ -734,7 +809,7 @@ export default function ContractForm() {
             <div className="flex items-center justify-between mb-2">
               <Label className="flex items-center gap-1.5 mb-0">
                 <BadgeDollarSign className="w-3.5 h-3.5 text-amber-600" />
-                Taxa de matrícula
+                Matrícula
               </Label>
               <div className="flex items-center gap-2 text-xs">
                 {selectedPlan && Number(form.enrollment_fee) !== Number(selectedPlan.enrollment_fee) && (
@@ -768,7 +843,7 @@ export default function ContractForm() {
             <p className="text-xs text-muted-foreground mt-1.5">
               {Number(form.enrollment_fee) > 0
                 ? `Será cobrado ${formatCurrency(Number(form.enrollment_fee))} de matrícula neste contrato.`
-                : 'Sem taxa de matrícula neste contrato.'}
+                : 'Sem matrícula neste contrato.'}
               {selectedPlan && Number(selectedPlan.enrollment_fee) > 0 && (
                 <span className="ml-1 text-amber-700">Padrão do plano: {formatCurrency(selectedPlan.enrollment_fee)}</span>
               )}

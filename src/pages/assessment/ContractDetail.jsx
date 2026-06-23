@@ -42,6 +42,29 @@ function periodLabel(plan) {
   const names = { 1: '1 mês', 2: '2 meses', 3: '3 meses', 6: '6 meses', 12: '12 meses' };
   return names[m] || `${m} meses`;
 }
+
+function getPlanMonths(plan) {
+  return plan?.period_months
+    || { mensal: 1, trimestral: 3, semestral: 6, anual: 12 }[plan?.period]
+    || 1;
+}
+
+function buildPlanSnapshot(plan, source = 'contract_adjustment') {
+  return {
+    plan_id:           plan.id,
+    name:              plan.name || null,
+    modality_id:       plan.modality_id,
+    price_total:       Number(plan.price_total) || 0,
+    price_monthly:     Number(plan.price_monthly) || 0,
+    enrollment_fee:    Number(plan.enrollment_fee) || 0,
+    max_installments:  plan.max_installments,
+    period_months:     plan.period_months || getPlanMonths(plan),
+    period:            plan.period,
+    revenue_center_id: plan.revenue_center_id || null,
+    snapshot_at:       new Date().toISOString(),
+    snapshot_source:   source,
+  };
+}
 import { toast } from 'sonner';
 
 const STATUS = {
@@ -51,15 +74,44 @@ const STATUS = {
   on_leave:  { label: 'Em licença',badge: 'warning' },
   finished:  { label: 'Concluído', badge: 'secondary' },
   cancelled: { label: 'Cancelado', badge: 'destructive' },
+  voided:    { label: 'Descartado', badge: 'warning' },
 };
 
 const PAY = {
   pending:            { label: 'Aguardando',   badge: 'secondary' },
+  awaiting_charge:    { label: 'Pedido recebido', badge: 'secondary' },
+  charge_sent:        { label: 'Cobrança enviada', badge: 'warning' },
   paid:               { label: 'Pago',         badge: 'success' },
   overdue:            { label: 'Vencido',      badge: 'destructive' },
+  partially_paid:     { label: 'Pago parcial', badge: 'warning' },
   refunded:           { label: 'Estornado',    badge: 'outline' },
   partially_refunded: { label: 'Est. parcial', badge: 'warning' },
 };
+
+const EXTERNAL_CHARGE_METHODS = [
+  { value: 'pix', label: 'PIX' },
+  { value: 'boleto', label: 'Boleto' },
+  ...Array.from({ length: 12 }, (_, i) => {
+    const n = i + 1;
+    return { value: `card_${n}x`, label: `Cartão ${n}x` };
+  }),
+];
+
+const EXTERNAL_CHARGE_METHOD_LABELS = Object.fromEntries(
+  EXTERNAL_CHARGE_METHODS.map(method => [method.value, method.label]),
+);
+
+function normalizeExternalChargeMethod(method, installments = 1) {
+  if (method === 'credit_card') return `card_${Math.max(Number(installments) || 1, 1)}x`;
+  if (method === 'pix_asaas') return 'pix';
+  if (method === 'boleto_asaas') return 'boleto';
+  if (EXTERNAL_CHARGE_METHOD_LABELS[method]) return method;
+  return Number(installments) > 1 ? `card_${installments}x` : 'pix';
+}
+
+function externalChargeMethodLabel(method) {
+  return EXTERNAL_CHARGE_METHOD_LABELS[method] || method || '—';
+}
 
 // ─── Timeline de eventos ─────────────────────────────────────────────────────
 const EVENT_META = {
@@ -71,10 +123,13 @@ const EVENT_META = {
   leave_ended:              { icon: RotateCcw,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Licença encerrada' },
   charge_generated:         { icon: Zap,        color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Cobrança gerada' },
   external_charge_registered: { icon: Link2,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Cobrança externa registrada' },
+  external_charge_updated:    { icon: Link2,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Cobrança externa alterada' },
   external_charge_removed:    { icon: Link2,    color: 'text-gray-500',   bg: 'bg-gray-100',  label: 'Cobrança externa removida' },
   payment_message_sent:       { icon: MessageCircle, color: 'text-green-600', bg: 'bg-green-50', label: 'Mensagem de cobrança enviada' },
   manual_payment_recorded:  { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Pagamento manual' },
   renewed:                  { icon: RefreshCcw, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovado' },
+  sale_voided:              { icon: XCircle,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Venda descartada' },
+  sale_replaced:            { icon: RotateCcw,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Venda substituída' },
   cancelled:                { icon: Ban,        color: 'text-red-600',    bg: 'bg-red-50',    label: 'Cancelado' },
   refund_completed:         { icon: HandCoins,  color: 'text-purple-600', bg: 'bg-purple-50', label: 'Estorno realizado' },
   dates_changed:            { icon: Calendar,   color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Datas alteradas' },
@@ -97,6 +152,8 @@ function formatEventSummary(ev) {
       return `Após ${p.days || '?'} dia(s)`;
     case 'charge_generated':
       return `${p.billing_type || ''}${p.installments > 1 ? ` · ${p.installments}x` : ''}`;
+    case 'external_charge_updated':
+      return `${p.from_method_label || '—'} → ${p.to_method_label || '—'}${p.due_date ? ' · venc. ' + formatDate(p.due_date) : ''}`;
     case 'manual_payment_recorded':
       return `${p.method || ''}${p.value ? ' · R$ ' + Number(p.value).toFixed(2) : ''}`;
     case 'external_charge_registered':
@@ -106,6 +163,10 @@ function formatEventSummary(ev) {
     case 'payment_message_sent':
       return p.via === 'whatsapp' ? 'Enviada via WhatsApp' : 'Confirmada como enviada';
     case 'renewed':
+      return `Novo contrato ${p.new_contract_number || ''}`;
+    case 'sale_voided':
+      return 'Cliente não pagou; registro fora das métricas';
+    case 'sale_replaced':
       return `Novo contrato ${p.new_contract_number || ''}`;
     case 'cancelled':
       return `Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`;
@@ -167,6 +228,8 @@ export default function ContractDetail() {
   // Parcelas projetadas (asaas_payments) — detalhamento do pagamento
   const [paymentInstallments, setPaymentInstallments] = useState([]);
   const [coaches, setCoaches]   = useState([]);
+  const [plans, setPlans]       = useState([]);
+  const [modalities, setModalities] = useState([]);
   const [history, setHistory]   = useState([]);
   const [leaves, setLeaves]     = useState([]);
   const [events, setEvents]     = useState([]);
@@ -181,6 +244,16 @@ export default function ContractDetail() {
   const [cancelModal, setCancelModal]   = useState(false);
   const [voidModal, setVoidModal]       = useState(false);
   const [voiding, setVoiding]           = useState(false);
+  const [adjustPlanModal, setAdjustPlanModal] = useState(false);
+  const [adjustPlanSaving, setAdjustPlanSaving] = useState(false);
+  const [adjustPlanForm, setAdjustPlanForm] = useState({
+    plan_id: '',
+    start_date: '',
+    installments: 1,
+    enrollment_fee: 0,
+    manual_discount: 0,
+    discount_reason: '',
+  });
   const [reopenModal, setReopenModal]   = useState(false);
   const [reopenLoading, setReopenLoading] = useState(false);
   const [cancelDate, setCancelDate] = useState(todayLocalStr());  // Data de cancelamento (pode ser retroativa)
@@ -198,7 +271,7 @@ export default function ContractDetail() {
   const [manualPaySaving, setManualPaySaving] = useState(false);
   // Cobrança externa (link gerado fora da plataforma)
   const [externalSaleModal, setExternalSaleModal] = useState(false);
-  const [externalSaleForm, setExternalSaleForm]   = useState({ link: '', due_date: '' });
+  const [externalSaleForm, setExternalSaleForm]   = useState({ link: '', due_date: '', payment_method: 'pix' });
   const [externalSaleSaving, setExternalSaleSaving] = useState(false);
   // WhatsApp — preview e envio
   const [whatsappModal, setWhatsappModal] = useState(false);
@@ -217,7 +290,7 @@ export default function ContractDetail() {
     try {
       const c = await AssessmentContract.get(id);
       setContract(c);
-      const [s, co, p, allC, h, l, ev] = await Promise.all([
+      const [s, co, p, allC, h, l, ev, allPlans, allModalities] = await Promise.all([
         PreSaleCustomer.get(c.customer_id).catch(() => null),
         c.coach_id ? AssessmentCoach.get(c.coach_id).catch(() => null) : Promise.resolve(null),
         AssessmentPlan.get(c.plan_id).catch(() => null),
@@ -225,8 +298,12 @@ export default function ContractDetail() {
         AssessmentContractCoachHist.filter({ contract_id: id }).catch(() => []),
         AssessmentLeave.filter({ contract_id: id }, '-start_date').catch(() => []),
         AssessmentContractEvent.filter({ contract_id: id }, '-created_at').catch(() => []),
+        AssessmentPlan.filter({ active: true }).catch(() => []),
+        AssessmentModality.filter({ active: true }).catch(() => []),
       ]);
       setStudent(s); setCoach(co); setPlan(p); setCoaches(allC);
+      setPlans(allPlans || []);
+      setModalities(allModalities || []);
       setHistory(h.sort((a, b) => (a.started_at || '').localeCompare(b.started_at || '')));
       setLeaves(l);
       setEvents(ev);
@@ -545,11 +622,11 @@ export default function ContractDetail() {
     } catch (e) { toast.error(e.message); }
   };
 
-  // Anular venda — para contratos NÃO pagos (pending/awaiting_charge/charge_sent/overdue).
+  // Descartar venda — para contratos NÃO pagos (pending/awaiting_charge/charge_sent/overdue).
   // Diferente de cancelContract porque:
   //   - Não calcula multa nem refund (nada foi pago)
   //   - Cancela cobrança Asaas via API (se houver) pra não ficar vagando
-  //   - Marca payment_status='cancelled' (trigger SQL limpa asaas_payments)
+  //   - Marca status='voided' e payment_status='cancelled' (trigger SQL limpa asaas_payments)
   //   - Coach já está protegido (edge function exige payment_status='paid')
   const voidContract = async () => {
     setVoiding(true);
@@ -567,16 +644,21 @@ export default function ContractDetail() {
         }
       }
 
-      // 2. Marca contrato como anulado (status + payment_status = cancelled)
+      // 2. Marca contrato como descartado (não é saída/churn)
       // Trigger SQL cuida de zerar asaas_payments associados.
       await AssessmentContract.update(id, {
-        status:              'cancelled',
+        status:              'voided',
         payment_status:      'cancelled',
         cancellation_date:   todayLocalStr(),
         cancellation_fee:    0,
         cancellation_reason: 'Venda não concretizada (cliente nunca pagou)',
         refund_status:       null,
         refund_amount:       null,
+        payment_date:        null,
+        payment_method:      null,
+        due_date:            null,
+        external_payment_link: null,
+        payment_message_sent_at: null,
         // Limpa referências da cobrança Asaas
         asaas_charge_id:     null,
         asaas_payment_link:  null,
@@ -586,22 +668,127 @@ export default function ContractDetail() {
       // 3. Log de evento distinto (sale_voided ≠ cancelled)
       await logEvent('sale_voided', {
         had_asaas_charge:     !!contract.asaas_charge_id,
+        had_external_link:     !!contract.external_payment_link,
+        previous_asaas_charge_id: contract.asaas_charge_id || null,
+        previous_external_payment_link: contract.external_payment_link || null,
         previous_payment_status: contract.payment_status,
         previous_due_date:    contract.due_date,
       }, 'Venda não concretizada');
 
-      toast.success('Venda anulada. Cobrança Asaas cancelada e contrato encerrado sem multa.');
+      toast.success('Venda descartada. Cobrança Asaas cancelada e contrato encerrado sem multa.');
       setVoidModal(false);
       load();
     } catch (e) {
-      toast.error(e.message || 'Erro ao anular venda');
+      toast.error(e.message || 'Erro ao descartar venda');
     } finally {
       setVoiding(false);
     }
   };
 
-  // Detecta se o contrato está em estado "não pago" — permite anular venda
+  // Detecta se o contrato está em estado "não pago" — permite ajuste ou descarte.
   const isUnpaid = contract && !['paid', 'refunded', 'cancelled'].includes(contract.payment_status || '');
+
+  const selectedAdjustPlan = plans.find(p => p.id === adjustPlanForm.plan_id) || null;
+  const selectedAdjustModality = modalities.find(m => m.id === selectedAdjustPlan?.modality_id) || null;
+  const adjustedEndDate = selectedAdjustPlan && adjustPlanForm.start_date
+    ? addPeriod(adjustPlanForm.start_date, selectedAdjustPlan)
+    : '';
+
+  const openAdjustPlanModal = () => {
+    setAdjustPlanForm({
+      plan_id: contract.plan_id || '',
+      start_date: contract.start_date || todayLocalStr(),
+      installments: contract.installments || 1,
+      enrollment_fee: Number(contract.enrollment_fee) || 0,
+      manual_discount: Number(contract.manual_discount) || 0,
+      discount_reason: contract.discount_reason || '',
+    });
+    setAdjustPlanModal(true);
+  };
+
+  const savePlanAdjustment = async () => {
+    if (!isUnpaid) return toast.error('Só é possível ajustar plano antes do pagamento');
+    if (!selectedAdjustPlan) return toast.error('Selecione um plano');
+    if (!adjustPlanForm.start_date) return toast.error('Informe a data de início');
+
+    const installments = Math.min(
+      Math.max(Number(adjustPlanForm.installments) || 1, 1),
+      selectedAdjustPlan.max_installments || 1,
+    );
+    const enrollmentFee = Math.max(Number(adjustPlanForm.enrollment_fee) || 0, 0);
+    const manualDiscount = Math.max(Number(adjustPlanForm.manual_discount) || 0, 0);
+    const planSnapshot = buildPlanSnapshot(selectedAdjustPlan);
+
+    setAdjustPlanSaving(true);
+    try {
+      const hadAsaasCharge = !!contract.asaas_charge_id;
+      if (hadAsaasCharge) {
+        try {
+          const { error } = await supabase.functions.invoke('create-asaas-charge', {
+            body: { action: 'cancel', order_id: id, order_type: 'contract' },
+          });
+          if (error) console.warn('[savePlanAdjustment] Asaas cancel falhou:', error);
+        } catch (e) {
+          console.warn('[savePlanAdjustment] Asaas cancel exception:', e);
+        }
+      }
+
+      await supabase.from('asaas_payments')
+        .delete()
+        .eq('order_id', id)
+        .eq('order_type', 'contract')
+        .eq('source', 'manual');
+
+      await AssessmentContract.update(id, {
+        plan_id: selectedAdjustPlan.id,
+        plan_snapshot: planSnapshot,
+        start_date: adjustPlanForm.start_date,
+        end_date: adjustedEndDate,
+        original_end_date: adjustedEndDate,
+        installments,
+        enrollment_fee: enrollmentFee,
+        manual_discount: manualDiscount,
+        discount_reason: adjustPlanForm.discount_reason || null,
+        payment_status: 'pending',
+        payment_date: null,
+        payment_method: null,
+        manual_payment: false,
+        manual_fee: null,
+        due_date: null,
+        external_payment_link: null,
+        payment_message_sent_at: null,
+        asaas_charge_id: null,
+        asaas_payment_link: null,
+        asaas_pix_copy: null,
+        asaas_pix_qrcode: null,
+      });
+
+      await logEvent('plan_changed', {
+        from_plan_id: contract.plan_id,
+        to_plan_id: selectedAdjustPlan.id,
+        from_plan_snapshot: contract.plan_snapshot || null,
+        to_plan_snapshot: planSnapshot,
+        from_start_date: contract.start_date,
+        to_start_date: adjustPlanForm.start_date,
+        from_end_date: contract.end_date,
+        to_end_date: adjustedEndDate,
+        installments,
+        enrollment_fee: enrollmentFee,
+        manual_discount: manualDiscount,
+        previous_payment_status: contract.payment_status,
+        cleared_payment_link: !!(contract.external_payment_link || contract.asaas_payment_link || contract.asaas_pix_copy),
+        cancelled_asaas_charge: hadAsaasCharge,
+      }, 'Ajuste de plano antes do pagamento');
+
+      toast.success('Contrato ajustado. Gere ou envie a cobrança correta agora.');
+      setAdjustPlanModal(false);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao ajustar plano');
+    } finally {
+      setAdjustPlanSaving(false);
+    }
+  };
 
   // Reabre pagamento manual: desfaz registro e volta a status anterior.
   const reopenPayment = async () => {
@@ -869,8 +1056,9 @@ export default function ContractDetail() {
 
   const openExternalSaleModal = () => {
     setExternalSaleForm({
-      link:     contract?.external_payment_link || '',
-      due_date: contract?.due_date || defaultAsaasDueDate(),
+      link:           contract?.external_payment_link || '',
+      due_date:       contract?.due_date || defaultAsaasDueDate(),
+      payment_method: normalizeExternalChargeMethod(contract?.payment_method, contract?.installments),
     });
     setExternalSaleModal(true);
   };
@@ -878,23 +1066,35 @@ export default function ContractDetail() {
   const saveExternalSale = async () => {
     const link = externalSaleForm.link.trim();
     const dueDate = externalSaleForm.due_date;
+    const paymentMethod = normalizeExternalChargeMethod(externalSaleForm.payment_method, contract.installments);
     if (!link)                  return toast.error('Informe o link de cobrança');
     if (!isSafePaymentUrl(link)) return toast.error('Link inválido — deve começar com https://');
     if (!dueDate)                return toast.error('Informe a data de vencimento');
 
     setExternalSaleSaving(true);
     try {
+      const hadExternalLink = !!contract.external_payment_link;
       const updates = {
         external_payment_link: link,
         due_date:              dueDate,
+        payment_method:        paymentMethod,
       };
       if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
         updates.payment_status = 'charge_sent';
       }
       await AssessmentContract.update(id, updates);
       await activateDraftIfNeeded();
-      await logEvent('external_charge_registered', { link, due_date: dueDate });
-      toast.success('Cobrança externa registrada! Agora envie a mensagem pro aluno.');
+      await logEvent(hadExternalLink ? 'external_charge_updated' : 'external_charge_registered', {
+        link,
+        due_date: dueDate,
+        payment_method: paymentMethod,
+        method_label: externalChargeMethodLabel(paymentMethod),
+        previous_link: contract.external_payment_link || null,
+        previous_due_date: contract.due_date || null,
+        previous_payment_method: contract.payment_method || null,
+        previous_method_label: externalChargeMethodLabel(normalizeExternalChargeMethod(contract.payment_method, contract.installments)),
+      });
+      toast.success(hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa registrada! Agora envie a mensagem pro aluno.');
       setExternalSaleModal(false);
       await load();
     } catch (e) {
@@ -929,7 +1129,7 @@ export default function ContractDetail() {
   const st = STATUS[contract.status] || { label: contract.status, badge: 'secondary' };
   // Quando modal de cancelamento está aberta, usa cancelDate; senão usa hoje
   const calc = cancelModal ? cancellationCalc(cancelDate) : cancellationCalc();
-  const canCancel = !['cancelled', 'finished'].includes(contract.status);
+  const canCancel = !['cancelled', 'finished', 'voided'].includes(contract.status);
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
@@ -1104,9 +1304,6 @@ export default function ContractDetail() {
       {/* Status do pagamento (read-only + detalhamento) — aparece quando PAID ou REFUNDED */}
       {['paid', 'refunded'].includes(contract.payment_status) && (() => {
         const activeInstallments = paymentInstallments.filter(p => !['CANCELLED','REFUNDED'].includes(p.status));
-        const totalGross = activeInstallments.reduce((s,p) => s + (Number(p.value) || 0), 0);
-        const totalNet   = activeInstallments.reduce((s,p) => s + (Number(p.net_value) || 0), 0);
-        const totalFee   = totalGross - totalNet;
         const registeredAt = activeInstallments[0]?.last_synced_at || activeInstallments[0]?.created_at
                           || paymentInstallments[0]?.last_synced_at || paymentInstallments[0]?.created_at;
         const sourceLabel = contract.manual_payment ? 'Registro manual' : 'Cobrança Asaas';
@@ -1161,24 +1358,6 @@ export default function ContractDetail() {
                 )}
               </div>
 
-              {/* Breakdown bruto / taxa / líquido */}
-              {(totalFee > 0 || totalGross > 0) && (
-                <div className="grid grid-cols-3 gap-2 text-center text-sm">
-                  <div className="bg-gray-50 border rounded-lg py-2">
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Bruto</p>
-                    <p className="font-semibold mt-0.5">{formatCurrency(totalGross)}</p>
-                  </div>
-                  <div className="bg-gray-50 border rounded-lg py-2">
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Taxa</p>
-                    <p className="font-semibold mt-0.5 text-red-600">−{formatCurrency(totalFee)}</p>
-                  </div>
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg py-2">
-                    <p className="text-[10px] text-emerald-700 uppercase tracking-wide">Líquido</p>
-                    <p className="font-bold mt-0.5 text-emerald-700">{formatCurrency(totalNet)}</p>
-                  </div>
-                </div>
-              )}
-
               {/* Parcelas projetadas */}
               {activeInstallments.length > 0 && (
                 <div className="border rounded-xl overflow-hidden">
@@ -1205,10 +1384,7 @@ export default function ContractDetail() {
                             </p>
                           </div>
                           <div className="text-right">
-                            <p className="font-semibold text-sm">{formatCurrency(p.net_value || p.value || 0)}</p>
-                            {Number(p.value) !== Number(p.net_value) && (
-                              <p className="text-[10px] text-muted-foreground">bruto {formatCurrency(p.value)}</p>
-                            )}
+                            <p className="font-semibold text-sm">{formatCurrency(p.value || 0)}</p>
                           </div>
                         </div>
                       );
@@ -1252,9 +1428,9 @@ export default function ContractDetail() {
       })()}
 
       {/* Cobrança Asaas — só aparece se ainda há ação a tomar */}
-      {!['paid', 'refunded', 'cancelled'].includes(contract.payment_status) && contract.status !== 'cancelled' && (
+      {!['paid', 'refunded', 'cancelled'].includes(contract.payment_status) && !['cancelled', 'voided'].includes(contract.status) && (
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Zap className="w-4 h-4 text-blue-600" /> Cobrança Asaas</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Zap className="w-4 h-4 text-blue-600" /> Cobrança e pagamento</CardTitle></CardHeader>
         <CardContent>
           {contract.asaas_charge_id ? (
             <div className="space-y-3">
@@ -1305,6 +1481,9 @@ export default function ContractDetail() {
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-semibold text-amber-800">Cobrança externa registrada</p>
                     <p className="text-sm text-amber-700 truncate">{contract.external_payment_link}</p>
+                    <p className="text-[11px] text-amber-700 mt-0.5">
+                      {externalChargeMethodLabel(normalizeExternalChargeMethod(contract.payment_method, contract.installments))}
+                    </p>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(contract.external_payment_link); toast.success('Link copiado!'); }}>
                     <Copy className="w-3.5 h-3.5" />
@@ -1328,13 +1507,13 @@ export default function ContractDetail() {
                   </Button>
                 )}
                 <Button size="sm" variant="outline" onClick={openExternalSaleModal}>
-                  <PenLine className="w-3.5 h-3.5 mr-1.5" /> Editar link
+                  <PenLine className="w-3.5 h-3.5 mr-1.5" /> Editar cobrança
                 </Button>
                 <Button size="sm" variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={removeExternalSale}>
                   <XCircle className="w-3.5 h-3.5 mr-1.5" /> Remover
                 </Button>
                 <Button size="sm" variant="outline" className="text-green-700 border-green-300 hover:bg-green-50" onClick={openManualPay}>
-                  <HandCoins className="w-3.5 h-3.5 mr-1.5" /> Marcar como pago
+                  <HandCoins className="w-3.5 h-3.5 mr-1.5" /> Dar baixa / registrar pagamento
                 </Button>
               </div>
             </div>
@@ -1347,6 +1526,9 @@ export default function ContractDetail() {
                   <Button size="sm" onClick={() => openChargeConfirm('PIX')} disabled={chargeLoading || !student?.cpf}><Zap className="w-3.5 h-3.5 mr-1" /> Gerar via Asaas (PIX)</Button>
                   <Button size="sm" variant="outline" onClick={() => openChargeConfirm('BOLETO')} disabled={chargeLoading || !student?.cpf}>Boleto</Button>
                   <Button size="sm" variant="outline" onClick={() => openChargeConfirm('CREDIT_CARD')} disabled={chargeLoading || !student?.cpf}>Cartão {contract.installments}x</Button>
+                  <Button size="sm" variant="outline" className="text-amber-700 border-amber-300 hover:bg-amber-50" onClick={openExternalSaleModal}>
+                    <Link2 className="w-3.5 h-3.5 mr-1" /> Informar link externo
+                  </Button>
                 </div>
               </div>
               <div className="border-t pt-3 flex gap-2 justify-center flex-wrap">
@@ -1363,8 +1545,21 @@ export default function ContractDetail() {
       </Card>
       )}
 
+      {/* Aviso simples para vendas descartadas */}
+      {contract.status === 'voided' && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="py-3 px-4 flex items-center gap-2 text-sm">
+            <XCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span className="text-amber-900">
+              <strong>Venda descartada.</strong>
+              {contract.cancellation_reason && ` Motivo: ${contract.cancellation_reason}`}
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Aviso simples para contratos cancelados */}
-      {(contract.status === 'cancelled' || contract.payment_status === 'cancelled') && (
+      {(contract.status === 'cancelled' || (contract.payment_status === 'cancelled' && contract.status !== 'voided')) && (
         <Card className="border-red-200 bg-red-50">
           <CardContent className="py-3 px-4 flex items-center gap-2 text-sm">
             <Ban className="w-4 h-4 text-red-600 shrink-0" />
@@ -1458,14 +1653,24 @@ export default function ContractDetail() {
               </Button>
             )}
             {isUnpaid ? (
-              <Button
-                variant="outline"
-                className="text-amber-700 border-amber-300 hover:bg-amber-50"
-                onClick={() => setVoidModal(true)}
-                title="Cliente nunca pagou — anula a venda sem multa nem cobrança ao coach"
-              >
-                <XCircle className="w-4 h-4 mr-1.5" /> Anular venda
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  className="text-blue-700 border-blue-300 hover:bg-blue-50"
+                  onClick={openAdjustPlanModal}
+                  title="Cliente pediu outro plano antes de pagar. Ajusta este contrato e limpa a cobrança antiga."
+                >
+                  <PenLine className="w-4 h-4 mr-1.5" /> Ajustar plano
+                </Button>
+                <Button
+                  variant="outline"
+                  className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                  onClick={() => setVoidModal(true)}
+                  title="Cliente desistiu antes do pagamento — descarta a venda sem multa nem cobrança ao coach"
+                >
+                  <XCircle className="w-4 h-4 mr-1.5" /> Descartar venda
+                </Button>
+              </>
             ) : (
               <Button
                 variant="outline"
@@ -1546,7 +1751,7 @@ export default function ContractDetail() {
                   </div>
                   {enrV > 0 && (
                     <div className="flex justify-between text-amber-700">
-                      <span>+ Taxa de matrícula</span>
+                      <span>+ Matrícula</span>
                       <span>{formatCurrency(enrV)}</span>
                     </div>
                   )}
@@ -1713,7 +1918,8 @@ export default function ContractDetail() {
         <DialogContent className="max-w-md" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-amber-600" /> Cadastrar cobrança externa
+              <Link2 className="w-4 h-4 text-amber-600" />
+              {contract?.external_payment_link ? 'Editar cobrança externa' : 'Cadastrar cobrança externa'}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
@@ -1721,6 +1927,24 @@ export default function ContractDetail() {
               Use quando a cobrança foi gerada fora da plataforma (Asaas no painel, Stone, etc.).
               O contrato entra em "vendas em aberto" e você acompanha pelo painel.
             </p>
+            <div>
+              <Label className="text-xs">Forma da cobrança *</Label>
+              <Select
+                value={externalSaleForm.payment_method}
+                onValueChange={value => setExternalSaleForm(f => ({ ...f, payment_method: value }))}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Selecione a forma" />
+                </SelectTrigger>
+                <SelectContent>
+                  {EXTERNAL_CHARGE_METHODS.map(method => (
+                    <SelectItem key={method.value} value={method.value}>
+                      {method.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div>
               <Label className="text-xs">Link de pagamento *</Label>
               <Input
@@ -1773,12 +1997,163 @@ export default function ContractDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL: anular venda (contrato não pago) */}
+      {/* MODAL: ajustar plano antes do pagamento */}
+      <Dialog open={adjustPlanModal} onOpenChange={open => !open && !adjustPlanSaving && setAdjustPlanModal(false)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-700">
+              <PenLine className="w-5 h-5" /> Ajustar plano
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              Ajuste usado quando o cliente ainda não pagou e pediu outra condição. O contrato continua sendo o mesmo; cobrança/link antigo serão limpos para você gerar ou enviar a cobrança correta.
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <Label>Plano</Label>
+                <Select
+                  value={adjustPlanForm.plan_id}
+                  onValueChange={value => {
+                    const nextPlan = plans.find(p => p.id === value);
+                    const months = getPlanMonths(nextPlan);
+                    setAdjustPlanForm(f => ({
+                      ...f,
+                      plan_id: value,
+                      installments: Math.min(months, nextPlan?.max_installments || months),
+                      enrollment_fee: Number(nextPlan?.enrollment_fee) || 0,
+                    }));
+                  }}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Selecione o plano" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {plans.map(p => {
+                      const mod = modalities.find(m => m.id === p.modality_id);
+                      const name = p.name?.trim() || `${mod?.name || 'Plano'} · ${periodLabel(p)}`;
+                      return (
+                        <SelectItem key={p.id} value={p.id}>
+                          {name} · {formatCurrency(p.price_total)}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label>Data de início</Label>
+                <Input
+                  type="date"
+                  className="mt-1"
+                  value={adjustPlanForm.start_date}
+                  onChange={e => setAdjustPlanForm(f => ({ ...f, start_date: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <Label>Parcelas</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max={selectedAdjustPlan?.max_installments || 1}
+                  className="mt-1"
+                  value={adjustPlanForm.installments}
+                  onChange={e => setAdjustPlanForm(f => ({ ...f, installments: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <Label>Matrícula</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="mt-1"
+                  value={adjustPlanForm.enrollment_fee}
+                  onChange={e => setAdjustPlanForm(f => ({ ...f, enrollment_fee: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <Label>Desconto</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="mt-1"
+                  value={adjustPlanForm.manual_discount}
+                  onChange={e => setAdjustPlanForm(f => ({ ...f, manual_discount: e.target.value }))}
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <Label>Motivo do ajuste</Label>
+                <Input
+                  className="mt-1"
+                  placeholder="Ex: cliente pediu trimestral em vez de semestral"
+                  value={adjustPlanForm.discount_reason}
+                  onChange={e => setAdjustPlanForm(f => ({ ...f, discount_reason: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {selectedAdjustPlan && (
+              <div className="rounded-xl border bg-gray-50 px-4 py-3 text-sm space-y-1">
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Modalidade</span>
+                  <strong className="capitalize">{selectedAdjustModality?.name || '—'}</strong>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Período</span>
+                  <strong>{periodLabel(selectedAdjustPlan)} · até {selectedAdjustPlan.max_installments || 1}x</strong>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Novo término</span>
+                  <strong>{adjustedEndDate ? formatDate(adjustedEndDate) : '—'}</strong>
+                </div>
+                <div className="flex justify-between gap-3 border-t pt-2 mt-2">
+                  <span className="text-muted-foreground">Total a cobrar</span>
+                  <strong className="text-green-700">
+                    {formatCurrency(Math.max(
+                      0,
+                      Number(selectedAdjustPlan.price_total || 0) +
+                        Number(adjustPlanForm.enrollment_fee || 0) -
+                        Number(adjustPlanForm.manual_discount || 0),
+                    ))}
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            {(contract?.asaas_charge_id || contract?.external_payment_link || contract?.asaas_payment_link) && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Ao salvar, a cobrança/link atual será removida para evitar cobrança duplicada.
+              </p>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setAdjustPlanModal(false)} disabled={adjustPlanSaving}>
+                Voltar
+              </Button>
+              <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={savePlanAdjustment} disabled={adjustPlanSaving}>
+                {adjustPlanSaving ? 'Salvando...' : 'Salvar ajuste'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: descartar venda (contrato não pago) */}
       <Dialog open={voidModal} onOpenChange={open => !open && !voiding && setVoidModal(false)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-700">
-              <XCircle className="w-5 h-5" /> Anular venda
+              <XCircle className="w-5 h-5" />
+              Descartar venda
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -1788,14 +2163,15 @@ export default function ContractDetail() {
               </p>
               <p className="text-amber-800">
                 Como o cliente não chegou a pagar (status: <strong>{contract?.payment_status}</strong>),
-                não há multa nem reembolso a calcular. A operação é simples e reversível pelo histórico.
+                não há multa, estorno ou saída real a calcular.
+                A operação fica registrada no histórico como venda não concretizada.
               </p>
             </div>
 
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-green-600 shrink-0" />
-                <span>Contrato é marcado como <strong>cancelado</strong></span>
+                <span>Contrato fica fora das métricas de entrada, saída e MRR</span>
               </div>
               {contract?.asaas_charge_id && (
                 <div className="flex items-center gap-2">
@@ -1811,6 +2187,12 @@ export default function ContractDetail() {
                 <Check className="w-4 h-4 text-green-600 shrink-0" />
                 <span>Registra evento <strong>"Venda não concretizada"</strong> no histórico</span>
               </div>
+              {contract?.external_payment_link && (
+                <div className="flex items-center gap-2">
+                  <Check className="w-4 h-4 text-green-600 shrink-0" />
+                  <span>Remove o link externo salvo para evitar cobrança duplicada</span>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 pt-1">
@@ -1818,11 +2200,11 @@ export default function ContractDetail() {
                 Voltar
               </Button>
               <Button
-                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white"
+                className="flex-1 text-white bg-amber-600 hover:bg-amber-700"
                 onClick={voidContract}
                 disabled={voiding}
               >
-                {voiding ? 'Anulando...' : 'Confirmar anulação'}
+                {voiding ? 'Descartando...' : 'Confirmar descarte'}
               </Button>
             </div>
           </div>
@@ -1945,7 +2327,7 @@ export default function ContractDetail() {
                           </p>
                         )}
                         <p className="text-blue-700 font-medium pt-0.5">
-                          💰 Valor líquido a estornar ao aluno: {formatCurrency(calc.refund)}
+                          💰 Valor a estornar ao aluno: {formatCurrency(calc.refund)}
                         </p>
                       </div>
                     </>
@@ -1995,7 +2377,7 @@ export default function ContractDetail() {
               <ul className="mt-2 ml-4 text-xs text-amber-700 list-disc space-y-0.5">
                 <li>Apaga as parcelas projetadas no fluxo de caixa</li>
                 <li>Status volta para <strong>Pendente</strong></li>
-                <li>Forma, data e taxa são removidos</li>
+                <li>Forma e data são removidas</li>
               </ul>
               <p className="text-xs text-amber-700 mt-2">
                 Use só se foi um registro errado.

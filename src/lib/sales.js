@@ -21,6 +21,7 @@ export function hasChargeEvidence(order) {
 }
 
 export function isEffectiveSale(order) {
+  if (order?.status === 'voided') return false;
   if (!order || TERMINAL_PAYMENT_STATUSES.has(order.payment_status)) return false;
   return PAID_PAYMENT_STATUSES.has(order.payment_status) || hasChargeEvidence(order);
 }

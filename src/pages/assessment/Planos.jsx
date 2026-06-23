@@ -318,7 +318,7 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
 
           {/* Matrícula */}
           <div>
-            <Label>Taxa de matrícula (R$)</Label>
+            <Label>Matrícula (R$)</Label>
             <Input type="number" step="0.01" min="0" className="mt-1" placeholder="0,00"
               value={form.enrollment_fee ?? 0} onChange={e => f('enrollment_fee', e.target.value)} />
             <p className="text-xs text-muted-foreground mt-1">

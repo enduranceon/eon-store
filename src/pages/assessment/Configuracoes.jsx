@@ -43,7 +43,7 @@ function ModalitiesCard({ modalities, plans, refresh }) {
         `Exclua ou troque os planos antes (ou apenas desative a modalidade).`
       );
     }
-    if (!confirm(`Excluir modalidade "${m.name}"?\n\nAs taxas de repasse vinculadas também serão removidas.`)) return;
+    if (!confirm(`Excluir modalidade "${m.name}"?\n\nAs regras de repasse vinculadas também serão removidas.`)) return;
     try {
       await AssessmentModality.delete(m.id);
       toast.success('Modalidade excluída');

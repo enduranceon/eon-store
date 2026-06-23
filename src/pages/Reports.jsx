@@ -26,11 +26,13 @@ import { usePageData } from '@/hooks/usePageData';
 
 const STATUS_LABELS = {
   paid:             { label: 'Pago',        color: 'bg-green-100 text-green-700' },
+  pending:          { label: 'Pedido recebido', color: 'bg-gray-100 text-gray-600' },
   awaiting_charge:  { label: 'Pedido recebido', color: 'bg-gray-100 text-gray-600' },
   charge_sent:      { label: 'Cobrado',     color: 'bg-blue-100 text-blue-700' },
   partially_paid:   { label: 'Parcial',     color: 'bg-amber-100 text-amber-700' },
   overdue:          { label: 'Vencido',     color: 'bg-red-100 text-red-700' },
   cancelled:        { label: 'Cancelado',   color: 'bg-gray-100 text-gray-500 line-through' },
+  voided:           { label: 'Descartado', color: 'bg-amber-100 text-amber-700 line-through' },
   refunded:         { label: 'Estornado',   color: 'bg-purple-100 text-purple-700' },
 };
 
@@ -388,7 +390,7 @@ async function loadReportsSales() {
       .order('created_date', { ascending: false }),
     supabase.from('assessment_contracts')
       .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
-      .neq('status', 'cancelled').neq('status', 'draft')
+      .not('status', 'in', '("cancelled","draft","voided")')
       .order('created_at', { ascending: false }),
     supabase.from('assessment_plans').select('id, price_total, name'),
     supabase.from('presale_customers').select('id, full_name'),
@@ -464,7 +466,10 @@ function SalesTab() {
   const filtered = useMemo(() => {
     return sales.filter(s => {
       if (typeFilter !== 'all' && s.type !== typeFilter) return false;
-      if (statusFilter !== 'all' && s.payment_status !== statusFilter) return false;
+      if (statusFilter !== 'all') {
+        const isReceived = statusFilter === 'awaiting_charge' && ['awaiting_charge', 'pending'].includes(s.payment_status);
+        if (!isReceived && s.payment_status !== statusFilter) return false;
+      }
       if (monthFilter !== 'all') {
         const dateStr = s.payment_date || s.created_at || '';
         if (!dateStr.startsWith(monthFilter)) return false;

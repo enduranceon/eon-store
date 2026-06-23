@@ -129,7 +129,7 @@ async function loadTodayPage() {
       .neq('payment_status', 'refunded'),
     supabase.from('assessment_contracts')
       .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, due_date, end_date, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, refund_status, refund_amount')
-      .not('status', 'in', '("cancelled","finished","draft")')
+      .not('status', 'in', '("cancelled","finished","draft","voided")')
       .neq('payment_status', 'refunded'),
     supabase.from('assessment_plans').select('id, price_total'),
     supabase.from('presale_customers').select('id, full_name'),
@@ -227,7 +227,7 @@ export default function Today() {
 
   // 2. Para cobrar — store (awaiting_charge) + contratos sem cobrança
   const toCharge = allItems
-    .filter(o => o.payment_status === 'awaiting_charge')
+    .filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status))
     .sort((a, b) => (b.created_date || '').localeCompare(a.created_date || ''));
 
   // 3. Cobrança enviada sem pagamento (store + assessoria) — 2+ dias sem retorno

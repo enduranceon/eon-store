@@ -1,20 +1,14 @@
-// Métricas executivas da assessoria — calculadas a partir de contratos + planos.
-// Centraliza a lógica de MRR, churn, ticket médio, LTV e inadimplência pra que
-// o Painel e o dashboard "Hoje" mostrem os mesmos números.
+// Métricas executivas da assessoria — calculadas a partir da camada central
+// de lifecycle dos contratos. Isso evita que cada tela interprete "cancelado",
+// "descartado", "troca de plano" e "estorno" de um jeito diferente.
 
 import { todayLocalStr, toLocalDateStr, utcToLocalDateStr } from '@/lib/utils';
-
-const ACTIVE_STATUSES = ['active', 'overdue', 'on_leave'];
-
-// Valor mensal de um contrato (mensalidade do plano vinculado).
-// Usa o snapshot do plano gravado no contrato quando existir (preserva histórico),
-// caindo pro plano vivo se o snapshot não tiver o preço.
-function monthlyValue(contract, plansMap) {
-  const snap = contract.plan_snapshot;
-  if (snap && snap.price_monthly != null) return Number(snap.price_monthly) || 0;
-  const plan = plansMap[contract.plan_id];
-  return plan ? Number(plan.price_monthly) || 0 : 0;
-}
+import {
+  buildContractLifecycleRows,
+  getContractMonthlyValue,
+  getLifecycleMonthStart,
+  isContractVoidedSale,
+} from '@/lib/assessment-contract-lifecycle';
 
 // Recebe contratos (todos os status) + lista de planos.
 // Retorna o pacote de KPIs do mês corrente.
@@ -22,45 +16,45 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
   const plansMap = Object.fromEntries(plans.map(p => [p.id, p]));
 
   const today = todayLocalStr();
-  const monthStart = (() => {
-    const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0);
-    return toLocalDateStr(d);
-  })();
+  const monthStart = getLifecycleMonthStart();
   const in30days = (() => {
     const d = new Date(); d.setDate(d.getDate() + 30);
     return toLocalDateStr(d);
   })();
+  const lifecycleRows = buildContractLifecycleRows(contracts, { monthStart, plansById: plansMap });
 
   // ── Base ativa ──────────────────────────────────────────────────
-  const active = contracts.filter(c => ACTIVE_STATUSES.includes(c.status));
-  const overdue = contracts.filter(c => c.status === 'overdue');
+  const active = lifecycleRows.filter(c => c.lifecycle.counts.active);
+  const overdue = lifecycleRows.filter(c => c.status === 'overdue' && c.lifecycle.counts.active);
   const activeStudentIds = new Set(active.map(c => c.customer_id));
 
   // ── MRR (receita recorrente mensal) ─────────────────────────────
-  const mrr = active.reduce((acc, c) => acc + monthlyValue(c, plansMap), 0);
+  const mrr = active.reduce((acc, c) => acc + (c.monthly || 0), 0);
 
   // ── Ticket médio (receita mensal ÷ alunos ativos) ───────────────
   const activeStudents = activeStudentIds.size;
   const ticketMedio = activeStudents > 0 ? mrr / activeStudents : 0;
 
   // ── Movimentação do mês ─────────────────────────────────────────
-  const contratosNoMes = contracts.filter(c => utcToLocalDateStr(c.created_at) >= monthStart);
-  const novosContratos = contratosNoMes.filter(c => !c.parent_contract_id);
-  const renovacoesNoMes = contratosNoMes.filter(c => !!c.parent_contract_id);
+  const novosContratos = lifecycleRows.filter(c => c.lifecycle.counts.entry);
+  const renovacoesNoMes = lifecycleRows.filter(c => c.lifecycle.counts.renewal);
 
   const idsAntesDoMes = new Set(
-    contracts.filter(c => utcToLocalDateStr(c.created_at) < monthStart).map(c => c.customer_id)
+    lifecycleRows
+      .filter(c =>
+        (c.lifecycle.createdLocal || utcToLocalDateStr(c.created_at)) < monthStart &&
+        !['pending_sale', 'voided_sale'].includes(c.lifecycle.type)
+      )
+      .map(c => c.customer_id)
   );
   const alunosNovosUnicos = new Set(
     novosContratos.filter(c => !idsAntesDoMes.has(c.customer_id)).map(c => c.customer_id)
   );
 
-  // Saídas: contratos cancelados nesse mês (usa cancellation_date se houver)
-  const saidasNoMes = contracts.filter(c => {
-    if (c.status !== 'cancelled') return false;
-    const cancelDate = c.cancellation_date || utcToLocalDateStr(c.updated_at);
-    return cancelDate >= monthStart;
-  });
+  // Saídas reais: somente encerramento real do aluno, não troca de plano ou ajuste financeiro.
+  const saidasNoMes = lifecycleRows.filter(c =>
+    c.lifecycle.counts.exit && c.lifecycle.cancelDate >= monthStart
+  );
 
   // ── Churn (saídas / base no início do mês) ──────────────────────
   const churnDenom = active.length + saidasNoMes.length;
@@ -73,15 +67,15 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
   const avgMonths = churnRate > 0 ? 100 / churnRate : null;
 
   // ── Inadimplência (contratos vencidos/atrasados) ────────────────
-  const inadimplenciaValor = overdue.reduce((acc, c) => acc + monthlyValue(c, plansMap), 0);
+  const inadimplenciaValor = overdue.reduce((acc, c) => acc + (c.monthly || 0), 0);
 
   // ── Contratos vencendo nos próximos 30 dias ─────────────────────
-  const expiring = contracts.filter(c =>
-    c.status === 'active' && c.end_date >= today && c.end_date <= in30days
+  const expiring = lifecycleRows.filter(c =>
+    c.lifecycle.counts.active && c.status === 'active' && c.end_date >= today && c.end_date <= in30days
   );
 
-  // ── Saldo líquido (novos − saídas) ──────────────────────────────
-  const saldoLiquido = novosContratos.length - saidasNoMes.length;
+  // ── Saldo de alunos (novos − saídas) ────────────────────────────
+  const saldoAlunos = alunosNovosUnicos.size - saidasNoMes.length;
 
   return {
     mrr,
@@ -96,7 +90,7 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
     alunosNovos: alunosNovosUnicos.size,
     renovacoesNoMes: renovacoesNoMes.length,
     saidasNoMes: saidasNoMes.length,
-    saldoLiquido,
+    saldoAlunos,
     inadimplentes: overdue.length,
     inadimplenciaValor,
     expiring: expiring.length,
@@ -123,7 +117,7 @@ export function computeMrrHistory(contracts = [], plans = [], months = 6) {
     let mrr = 0;
     let count = 0;
     for (const c of contracts) {
-      if (c.status === 'draft') continue;
+      if (c.status === 'draft' || isContractVoidedSale(c)) continue;
       const start = c.start_date || utcToLocalDateStr(c.created_at);
       if (!start || start > refStr) continue; // ainda não tinha começado
 
@@ -134,11 +128,7 @@ export function computeMrrHistory(contracts = [], plans = [], months = 6) {
       const endRef = cancel || c.end_date || null;
       if (endRef && endRef < refStr) continue; // já tinha encerrado antes do mês
 
-      const snap = c.plan_snapshot;
-      const monthly = snap && snap.price_monthly != null
-        ? Number(snap.price_monthly) || 0
-        : (plansMap[c.plan_id] ? Number(plansMap[c.plan_id].price_monthly) || 0 : 0);
-      mrr += monthly;
+      mrr += getContractMonthlyValue(c, plansMap);
       count += 1;
     }
 
