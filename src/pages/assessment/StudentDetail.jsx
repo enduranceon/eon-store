@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Phone, Mail, FileText, Plus, ChevronRight, IdCard, MessageCircle } from 'lucide-react';
+import { ArrowLeft, Phone, Mail, FileText, Plus, ChevronRight, IdCard, MessageCircle, Send } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,9 +9,21 @@ import {
   AssessmentPlan, AssessmentModality, AssessmentLeave, AssessmentContractEvent,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { COMMUNICATION_EVENT_TYPES } from '@/lib/communication-tasks';
+import {
+  COMMUNICATION_EVENT_TYPES, TASK_BUCKET, TASK_KIND,
+  buildCommunicationTasks, taskChannelLabel,
+} from '@/lib/communication-tasks';
+import { DEFAULT_COMMUNITY_LINK, loadCommunicationConfig } from '@/lib/communication-config';
 import CommunicationHistory from '@/components/CommunicationHistory';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { formatCurrency, formatDate } from '@/lib/utils';
+
+function taskTone(task) {
+  if (task.kind === TASK_KIND.CHARGE_OVERDUE) return 'destructive';
+  if (task.bucket === TASK_BUCKET.ONBOARDING) return 'success';
+  if (task.bucket === TASK_BUCKET.RENEWAL) return 'purple';
+  return 'info';
+}
 
 const STATUS = {
   active:    'bg-green-100 text-green-700',
@@ -42,38 +54,57 @@ export default function StudentDetail() {
   const [leaves, setLeaves] = useState([]);
   const [commEvents, setCommEvents] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [pendingTasks, setPendingTasks] = useState([]);
+  const [communityLink, setCommunityLink] = useState(DEFAULT_COMMUNITY_LINK);
+  const [selectedTask, setSelectedTask] = useState(null);
+  const [reloadFlag, setReloadFlag] = useState(0);
 
   useEffect(() => {
+    let active = true;
     const load = async () => {
       try {
-        const [s, c, allCoaches, allPlans, allMod, authRes] = await Promise.all([
+        const [s, c, allCoaches, allPlans, allMod, authRes, config] = await Promise.all([
           PreSaleCustomer.get(id),
           AssessmentContract.filter({ customer_id: id }, '-created_at').catch(() => []),
           AssessmentCoach.list().catch(() => []),
           AssessmentPlan.list().catch(() => []),
           AssessmentModality.list().catch(() => []),
           supabase.auth.getUser().catch(() => null),
+          loadCommunicationConfig().catch(() => null),
         ]);
+        if (!active) return;
         setCustomer(s); setContracts(c); setCoaches(allCoaches); setPlans(allPlans); setModalities(allMod);
         setCurrentUserId(authRes?.data?.user?.id || null);
-        if (c.length > 0) {
-          const contractIds = c.map(co => co.id);
-          const [allLeaves, events] = await Promise.all([
-            Promise.all(c.map(co => AssessmentLeave.filter({ contract_id: co.id }).catch(() => []))),
-            AssessmentContractEvent.filter(
-              { contract_id: contractIds, event_type: COMMUNICATION_EVENT_TYPES },
-              '-created_at',
-            ).catch(() => []),
-          ]);
-          setLeaves(allLeaves.flat().sort((a, b) => b.start_date.localeCompare(a.start_date)));
-          setCommEvents(events);
+        setCommunityLink(config?.communityLink || DEFAULT_COMMUNITY_LINK);
+        if (c.length === 0) {
+          setLeaves([]); setCommEvents([]); setPendingTasks([]);
+          return;
         }
+        const contractIds = c.map(co => co.id);
+        const [allLeaves, events] = await Promise.all([
+          Promise.all(c.map(co => AssessmentLeave.filter({ contract_id: co.id }).catch(() => []))),
+          AssessmentContractEvent.filter(
+            { contract_id: contractIds, event_type: COMMUNICATION_EVENT_TYPES },
+            '-created_at',
+          ).catch(() => []),
+        ]);
+        if (!active) return;
+        setLeaves(allLeaves.flat().sort((a, b) => b.start_date.localeCompare(a.start_date)));
+        setCommEvents(events);
+        setPendingTasks(buildCommunicationTasks(
+          {
+            contracts: c, customers: [s], plans: allPlans, modalities: allMod,
+            coaches: allCoaches, contractEvents: events, presaleOrders: [], stockOrders: [],
+          },
+          { rules: config?.rules },
+        ));
       } catch (e) {
         console.error('Erro ao carregar aluno:', e);
       }
     };
     load();
-  }, [id]);
+    return () => { active = false; };
+  }, [id, reloadFlag]);
 
   if (!customer) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
@@ -133,6 +164,38 @@ export default function StudentDetail() {
         </CardContent>
       </Card>
 
+      {/* Ações de comunicação pendentes */}
+      {pendingTasks.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Send className="w-4 h-4" /> Ações de comunicação ({pendingTasks.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <ul className="divide-y">
+              {pendingTasks.map(task => (
+                <li key={task.id} className="py-2.5 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant={taskTone(task)}>{taskChannelLabel(task)}</Badge>
+                      <span className="text-sm font-semibold">{task.title}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      <span className="font-mono">{task.orderNumber}</span>
+                      {task.statusLabel ? ` · ${task.statusLabel}` : ''}
+                    </p>
+                  </div>
+                  <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setSelectedTask(task)}>
+                    <MessageCircle className="w-4 h-4" /> Preparar
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Histórico de contatos */}
       <Card>
         <CardHeader className="pb-2">
@@ -165,6 +228,14 @@ export default function StudentDetail() {
       <div className="flex justify-end">
         <Link to={`/clientes/${customer.id}`} className="text-xs text-blue-600 hover:underline">Ver perfil completo na tela Clientes →</Link>
       </div>
+
+      <CommunicationSendDialog
+        key={selectedTask?.id || 'none'}
+        task={selectedTask}
+        communityLink={communityLink}
+        onClose={() => setSelectedTask(null)}
+        onSent={() => { setSelectedTask(null); setReloadFlag(f => f + 1); }}
+      />
     </div>
   );
 }
