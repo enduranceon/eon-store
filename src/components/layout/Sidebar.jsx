@@ -5,7 +5,8 @@ import {
   Users, BarChart3, TrendingUp, Wallet,
   ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
-  ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus,
+  ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus, ListChecks,
+  MessageCircle,
 } from 'lucide-react';
 import { cn, todayLocalStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
@@ -16,6 +17,7 @@ import { isEffectiveOpenSale } from '@/lib/sales';
 // ─────────────────────────────────────────────────────────────────
 
 const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge: 'today' };
+const COMMUNICATION_ITEM = { label: 'Comunicação', icon: MessageCircle, to: '/comunicacao' };
 // OPERAÇÃO — assessoria esportiva
 const ASSESSORIA_ITEMS = [
   { label: 'Painel',         icon: Activity,      to: '/assessoria',              exact: true },
@@ -23,6 +25,7 @@ const ASSESSORIA_ITEMS = [
   { label: 'Alunos',         icon: Users,         to: '/assessoria/alunos' },
   { label: 'Renovações',     icon: RefreshCcw,    to: '/assessoria/renovacoes',   badge: 'renewals' },
   { label: 'Prospects',      icon: UserPlus,      to: '/assessoria/prospects',    badge: 'prospects' },
+  { label: 'Auditoria',      icon: ListChecks,    to: '/assessoria/auditoria' },
   { label: 'Régua',          icon: CalendarClock, to: '/assessoria/regua' },
   { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
   { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },
@@ -57,6 +60,7 @@ const CONFIG_ITEMS = [
   { label: 'Fornecedores',      icon: Truck,           to: '/fornecedores' },
   { label: 'Cupons',            icon: Ticket,          to: '/cupons' },
   { label: 'Centros receita',   icon: Palette,         to: '/centros-receita' },
+  { label: 'Comunicação',       icon: MessageCircle,   to: '/comunicacao/configuracoes' },
   { label: 'Métodos pagamento', icon: DollarSign,      to: '/configuracoes/pagamento' },
   { label: 'Config. assessoria',icon: Settings,        to: '/assessoria/configuracoes' },
   { label: 'Saúde do sistema',  icon: Activity,        to: '/admin/saude' },
@@ -237,6 +241,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           {/* Hoje */}
           <div className="pt-1 pb-1">
             <NavItem item={TODAY_ITEM} isActive={isActive} badges={badges} onClick={onClose} />
+            <NavItem item={COMMUNICATION_ITEM} isActive={isActive} badges={badges} onClick={onClose} />
           </div>
 
           {/* ── OPERAÇÃO — assessoria esportiva ───────────── */}

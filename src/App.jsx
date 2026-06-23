@@ -37,6 +37,8 @@ import Financial from '@/pages/Financial';
 import CashFlow from '@/pages/CashFlow';
 import Returns from '@/pages/Returns';
 import Today from '@/pages/Today';
+import CommunicationCenter from '@/pages/CommunicationCenter';
+import CommunicationSettings from '@/pages/CommunicationSettings';
 import Coupons from '@/pages/Coupons';
 import CouponForm from '@/pages/CouponForm';
 import RevenueCenters from '@/pages/RevenueCenters';
@@ -64,6 +66,7 @@ import AssRenewals from '@/pages/assessment/Renewals';
 import AssProspects from '@/pages/assessment/Prospects';
 import AssCentralFinanceira from '@/pages/assessment/CentralFinanceira';
 import AssRepasse from '@/pages/assessment/Repasse';
+import AssContractAudit from '@/pages/assessment/ContractAudit';
 
 function AdminLayout({ children }) {
   const { user, loading, signOut } = useAuth();
@@ -116,6 +119,8 @@ export default function App() {
           <Route path="/migrar" element={<AdminLayout><Migrate /></AdminLayout>} />
           <Route path="/admin" element={<AdminLayout><Dashboard /></AdminLayout>} />
           <Route path="/hoje" element={<AdminLayout><Today /></AdminLayout>} />
+          <Route path="/comunicacao" element={<AdminLayout><CommunicationCenter /></AdminLayout>} />
+          <Route path="/comunicacao/configuracoes" element={<AdminLayout><CommunicationSettings /></AdminLayout>} />
           <Route path="/campanhas" element={<AdminLayout><Campaigns /></AdminLayout>} />
           <Route path="/campanhas/:id" element={<AdminLayout><CampaignDetail /></AdminLayout>} />
           <Route path="/campanhas/:id/relatorio" element={<AdminLayout><CampaignReport /></AdminLayout>} />
@@ -155,6 +160,7 @@ export default function App() {
           <Route path="/assessoria/contratos/:id" element={<AdminLayout><AssContractDetail /></AdminLayout>} />
           <Route path="/assessoria/renovacoes"    element={<AdminLayout><AssRenewals /></AdminLayout>} />
           <Route path="/assessoria/prospects"    element={<AdminLayout><AssProspects /></AdminLayout>} />
+          <Route path="/assessoria/auditoria"    element={<AdminLayout><AssContractAudit /></AdminLayout>} />
           <Route path="/assessoria/central-financeira" element={<AdminLayout><AssCentralFinanceira /></AdminLayout>} />
           <Route path="/assessoria/repasse" element={<AdminLayout><AssRepasse /></AdminLayout>} />
           <Route path="/assessoria/fechamento"     element={<AdminLayout><AssMonthlyClosing /></AdminLayout>} />

@@ -1,0 +1,33 @@
+project_id = "bsiljrrodgtmtdilnuxr"
+
+# Public callbacks/endpoints. These are intentionally callable without a user JWT.
+[functions.asaas-webhook]
+verify_jwt = false
+
+[functions.get-public-order]
+verify_jwt = false
+
+[functions.validate-coupon]
+verify_jwt = false
+
+# Admin/internal functions. Keep JWT verification enabled.
+[functions.create-asaas-charge]
+verify_jwt = true
+
+[functions.fetch-asaas-receivables]
+verify_jwt = true
+
+[functions.fetch-contract-installments]
+verify_jwt = true
+
+[functions.generate-assessment-charge]
+verify_jwt = true
+
+[functions.generate-monthly-closing]
+verify_jwt = true
+
+[functions.prepare-renewals]
+verify_jwt = true
+
+[functions.sync-asaas-payments]
+verify_jwt = true
