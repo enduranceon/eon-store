@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Check, CheckCircle2, Copy, ExternalLink, Link2, Loader2, Send, UserRoundCheck,
+  AlertTriangle, Check, CheckCircle2, Copy, ExternalLink, Link2, Loader2, Send, UserRoundCheck, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TASK_BUCKET, TASK_KIND, buildTaskMessage } from '@/lib/communication-tasks';
-import { hasNativePaymentInfo, registerCommunicationSend } from '@/lib/communication-send';
+import { hasNativePaymentInfo, registerCommunicationIgnore, registerCommunicationSend } from '@/lib/communication-send';
 import { DEFAULT_COMMUNITY_LINK } from '@/lib/communication-config';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { isSafePaymentUrl } from '@/lib/sales';
@@ -34,7 +34,8 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
     task ? buildTaskMessage(task, { externalLink: initialLink, dueDate: initialDue, communityLink: initialCommunity }) : ''
   ));
   const [copied, setCopied] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState(null);
+  const saving = Boolean(savingAction);
 
   const rebuildMessage = (patch = {}) => {
     if (!task) return;
@@ -83,7 +84,7 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
       return toast.error('Informe um link válido começando com http:// ou https://');
     }
 
-    setSaving(true);
+    setSavingAction('sent');
     try {
       await registerCommunicationSend(task, { message, externalLink: trimmedLink, dueDate, communityLink });
       toast.success('Envio registrado');
@@ -91,7 +92,21 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
     } catch (e) {
       toast.error(e.message || 'Erro ao registrar envio');
     } finally {
-      setSaving(false);
+      setSavingAction(null);
+    }
+  };
+
+  const ignoreTask = async () => {
+    if (!task) return;
+    setSavingAction('ignored');
+    try {
+      await registerCommunicationIgnore(task);
+      toast.success('Mensagem ignorada');
+      onSent?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao ignorar mensagem');
+    } finally {
+      setSavingAction(null);
     }
   };
 
@@ -202,10 +217,16 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
                 </Button>
               </div>
 
-              <Button className="w-full" onClick={markAsSent} disabled={saving}>
-                {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <UserRoundCheck className="w-4 h-4 mr-1.5" />}
-                {saving ? 'Registrando...' : 'Marcar como enviada'}
-              </Button>
+              <div className="grid gap-2 md:grid-cols-[0.7fr_1fr]">
+                <Button variant="outline" onClick={ignoreTask} disabled={saving} className="border-gray-300">
+                  {savingAction === 'ignored' ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <XCircle className="w-4 h-4 mr-1.5" />}
+                  {savingAction === 'ignored' ? 'Ignorando...' : 'Ignorar'}
+                </Button>
+                <Button onClick={markAsSent} disabled={saving}>
+                  {savingAction === 'sent' ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <UserRoundCheck className="w-4 h-4 mr-1.5" />}
+                  {savingAction === 'sent' ? 'Registrando...' : 'Marcar como enviada'}
+                </Button>
+              </div>
             </div>
           </>
         )}

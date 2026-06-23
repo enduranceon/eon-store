@@ -36,6 +36,7 @@ const EVENT_LABEL = {
   onboarding_welcome_sent: 'Boas-vindas enviadas',
   onboarding_checkin_sent: 'Check-in enviado',
   renewal_message_sent: 'Renovação enviada',
+  communication_task_ignored: 'Mensagem ignorada',
 };
 
 function mapById(rows = []) {

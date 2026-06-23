@@ -87,3 +87,32 @@ export async function registerCommunicationSend(task, options = {}) {
     await insertContractEvent(task.sourceId, eventType, payload, `${task.title} pela Central de Comunicação`);
   }
 }
+
+export async function registerCommunicationIgnore(task) {
+  const payload = {
+    source: 'communication_center',
+    action: 'ignored',
+    task_kind: task.kind,
+    rule_slug: task.ruleSlug || null,
+    rule_name: task.ruleName || null,
+    item_summary: task.itemSummary || null,
+    items: task.items || [],
+  };
+
+  if (task.sourceType === 'contract') {
+    await insertContractEvent(
+      task.sourceId,
+      'communication_task_ignored',
+      payload,
+      `${task.title} ignorada pela Central de Comunicação`,
+    );
+    return;
+  }
+
+  await insertSaleEvent(
+    task,
+    task.paymentStatus || 'pending',
+    payload,
+    `${task.title} ignorada pela Central de Comunicação`,
+  );
+}

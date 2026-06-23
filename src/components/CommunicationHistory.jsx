@@ -10,6 +10,7 @@ function HistoryItem({ event, currentUserId }) {
   const summary = summarizeCommunicationEvent(event);
   const message = event.payload?.message || '';
   const sentByMe = currentUserId && event.created_by === currentUserId;
+  const isIgnored = event.event_type === 'communication_task_ignored';
 
   return (
     <li className="py-3">
@@ -21,7 +22,7 @@ function HistoryItem({ event, currentUserId }) {
         <span className="text-[11px] text-muted-foreground whitespace-nowrap">{formatDateTime(event.created_at)}</span>
       </div>
       <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-        {sentByMe && <span>Enviada por você</span>}
+        {sentByMe && <span>{isIgnored ? 'Ignorada por você' : 'Enviada por você'}</span>}
         {message && (
           <button
             type="button"

@@ -7,6 +7,7 @@ export const COMMUNICATION_EVENT_TYPES = [
   'onboarding_welcome_sent',
   'onboarding_checkin_sent',
   'renewal_message_sent',
+  'communication_task_ignored',
 ];
 
 export const TASK_KIND = {
@@ -331,7 +332,12 @@ function buildChargeTasks(sale, todayStr, { sendRule, overdueRules = [] }, event
     }
   }
 
-  if (sendRule && !sale.paymentMessageSentAt && ['awaiting_charge', 'pending'].includes(sale.paymentStatus)) {
+  if (
+    sendRule
+    && !ruleAlreadySent(events, sendRule)
+    && !sale.paymentMessageSentAt
+    && ['awaiting_charge', 'pending'].includes(sale.paymentStatus)
+  ) {
     const scheduled = sale.dueDate || defaultPaymentDueDate();
     return [baseTask(TASK_KIND.CHARGE_SEND, TASK_BUCKET.CHARGES, sale, withRule(sendRule, {
       title: 'Enviar cobrança',
@@ -583,10 +589,11 @@ export function taskChannelLabel(task) {
 
 // Metadados dos eventos de comunicação para exibição em históricos (perfil do aluno).
 export const COMMUNICATION_EVENT_META = {
-  payment_message_sent:    { label: 'Cobrança enviada', tone: 'info' },
-  onboarding_welcome_sent: { label: 'Boas-vindas',      tone: 'success' },
-  onboarding_checkin_sent: { label: 'Check-in',         tone: 'success' },
-  renewal_message_sent:    { label: 'Renovação',        tone: 'purple' },
+  payment_message_sent:       { label: 'Cobrança enviada', tone: 'info' },
+  onboarding_welcome_sent:    { label: 'Boas-vindas',      tone: 'success' },
+  onboarding_checkin_sent:    { label: 'Check-in',         tone: 'success' },
+  renewal_message_sent:       { label: 'Renovação',        tone: 'purple' },
+  communication_task_ignored: { label: 'Ignorada',         tone: 'secondary' },
 };
 
 const CHANNEL_LABEL = { whatsapp: 'WhatsApp', email: 'E-mail' };
