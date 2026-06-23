@@ -109,7 +109,7 @@ export default function BusinessPulse() {
       <Kpi
         label="Churn do mês"
         value={`${m.churnRate.toFixed(1)}%`}
-        sub={`${m.saidasNoMes} saída${m.saidasNoMes !== 1 ? 's' : ''} · saldo ${m.saldoLiquido >= 0 ? '+' : ''}${m.saldoLiquido}`}
+        sub={`${m.saidasNoMes} saída${m.saidasNoMes !== 1 ? 's' : ''} · saldo ${m.saldoAlunos >= 0 ? '+' : ''}${m.saldoAlunos}`}
         icon={TrendingDown}
         iconBg="bg-rose-50" iconColor="text-rose-600"
         valueColor={m.churnRate < 3 ? 'text-green-700' : m.churnRate < 6 ? 'text-amber-700' : 'text-red-700'}

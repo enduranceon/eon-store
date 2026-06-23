@@ -34,6 +34,7 @@ const TABLES_WITH_UPDATED_AT = new Set([
   'payout_monthly_closings', 'payout_monthly_statement_items',
   'renewal_rules', 'revenue_centers',
   'contract_renewal_actions', 'discount_log', 'payment_methods',
+  'communication_settings', 'communication_rules',
 ]);
 
 function getUpdatedColumn(tableName) {
@@ -156,6 +157,8 @@ const TABLE_MAP = {
   // Régua de renovação
   RenewalRule:             'renewal_rules',
   ContractRenewalAction:   'contract_renewal_actions',
+  CommunicationSetting:     'communication_settings',
+  CommunicationRule:        'communication_rules',
   // Módulo Assessoria
   AssessmentModality:           'assessment_modalities',
   AssessmentPlan:               'assessment_plans',

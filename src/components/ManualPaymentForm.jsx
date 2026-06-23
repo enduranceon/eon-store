@@ -3,7 +3,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { calcFee, projectInstallments } from '@/lib/manual-payment';
+import { projectInstallments } from '@/lib/manual-payment';
 import { Calendar, ChevronRight, Banknote } from 'lucide-react';
 
 // Componente compartilhado entre OrderDetail, StockOrderDetail e ContractDetail.
@@ -18,8 +18,6 @@ export default function ManualPaymentForm({ form, setForm, methodGroups, saving,
   const selected   = useMemo(() => allMethods.find(m => m.id === form.method_id) || null, [allMethods, form.method_id]);
 
   const valor   = Number(form.value) || 0;
-  const fee     = selected ? calcFee(selected, valor) : 0;
-  const liquido = Math.max(0, valor - fee);
   const installments = selected?.installments || 1;
   const parcels = selected && form.date ? projectInstallments(selected, form.date) : [];
 
@@ -42,9 +40,7 @@ export default function ManualPaymentForm({ form, setForm, methodGroups, saving,
               {list.map(m => (
                 <option key={m.id} value={m.id}>
                   {m.name}
-                  {Number(m.fee_percent) > 0 || Number(m.fee_fixed) > 0
-                    ? ` — taxa ${Number(m.fee_percent).toFixed(2)}%${m.fee_fixed > 0 ? ` + R$ ${Number(m.fee_fixed).toFixed(2)}` : ''}`
-                    : ' — sem taxa'}
+                  {Number(m.installments) > 1 ? ` — ${m.installments}x` : ''}
                 </option>
               ))}
             </optgroup>
@@ -72,23 +68,13 @@ export default function ManualPaymentForm({ form, setForm, methodGroups, saving,
       {selected && valor > 0 && (
         <div className="bg-gray-50 border rounded-lg p-3 text-sm space-y-1">
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Bruto</span>
+            <span className="text-muted-foreground">Valor recebido</span>
             <span className="font-medium">{formatCurrency(valor)}</span>
           </div>
-          {fee > 0 && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">− Taxa ({Number(selected.fee_percent).toFixed(2)}%{selected.fee_fixed > 0 ? ` + R$ ${Number(selected.fee_fixed).toFixed(2)}` : ''})</span>
-              <span className="text-red-600">−{formatCurrency(fee)}</span>
-            </div>
-          )}
-          <div className="flex justify-between border-t pt-1 mt-1">
-            <span className="font-semibold">Líquido total</span>
-            <span className="font-bold text-green-700">{formatCurrency(liquido)}</span>
-          </div>
           {installments > 1 && (
-            <div className="flex justify-between text-xs">
+            <div className="flex justify-between border-t pt-1 mt-1 text-xs">
               <span className="text-muted-foreground">Parcelamento</span>
-              <span>{installments}x de {formatCurrency(liquido / installments)}</span>
+              <span>{installments}x de {formatCurrency(valor / installments)}</span>
             </div>
           )}
         </div>
@@ -110,7 +96,7 @@ export default function ManualPaymentForm({ form, setForm, methodGroups, saving,
                 <ChevronRight className="w-3 h-3 text-muted-foreground" />
                 <span className="text-xs text-gray-700 flex-1">{formatDate(p.credit_date)}</span>
                 <span className="font-semibold text-sm">
-                  {formatCurrency(liquido / parcels.length)}
+                  {formatCurrency(valor / parcels.length)}
                 </span>
               </div>
             ))}

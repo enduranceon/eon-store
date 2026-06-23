@@ -482,7 +482,7 @@ export default function ProductForm() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Descrição do custo extra</Label>
-              <Input placeholder="Ex: frete, embalagem, taxa" value={form.extra_cost_description} onChange={e => setField('extra_cost_description', e.target.value)} className="mt-1" />
+              <Input placeholder="Ex: frete, embalagem, custo extra" value={form.extra_cost_description} onChange={e => setField('extra_cost_description', e.target.value)} className="mt-1" />
             </div>
           </div>
 

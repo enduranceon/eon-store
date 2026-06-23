@@ -38,12 +38,6 @@ const DELIVERY_STATUS = {
   cancelled:         { label: 'Cancelado',           badge: 'destructive' },
 };
 
-const PAYMENT_METHOD_LABEL = {
-  pix_boleto: 'PIX ou Boleto', pix: 'PIX', boleto: 'Boleto',
-  card_1x: 'Cartão 1x', card_2x: 'Cartão 2x', card_3x: 'Cartão 3x',
-  card_4x: 'Cartão 4x', card_5x: 'Cartão 5x', card_6x: 'Cartão 6x',
-};
-
 const CANCEL_REASONS = [
   'Desistência do cliente',
   'Produto indisponível',
@@ -1062,9 +1056,6 @@ export default function StockOrderDetail() {
         <CardContent className="space-y-4">
           {(() => {
               const activeInstallments = paymentInstallments.filter(p => !['CANCELLED','REFUNDED'].includes(p.status));
-              const totalGross = activeInstallments.reduce((s,p) => s + (Number(p.value) || 0), 0);
-              const totalNet   = activeInstallments.reduce((s,p) => s + (Number(p.net_value) || 0), 0);
-              const totalFee   = totalGross - totalNet;
               const registeredAt = activeInstallments[0]?.last_synced_at || activeInstallments[0]?.created_at
                                 || paymentInstallments[0]?.last_synced_at || paymentInstallments[0]?.created_at;
               const sourceLabel  = order.manual_payment ? 'Registro manual' : 'Cobrança Asaas';
@@ -1107,23 +1098,6 @@ export default function StockOrderDetail() {
                     )}
                   </div>
 
-                    {(totalFee > 0 || totalGross > 0) && (
-                      <div className="grid grid-cols-3 gap-2 text-center text-sm">
-                        <div className="bg-gray-50 border rounded-lg py-2">
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Bruto</p>
-                          <p className="font-semibold mt-0.5">{formatCurrency(totalGross)}</p>
-                        </div>
-                        <div className="bg-gray-50 border rounded-lg py-2">
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Taxa</p>
-                          <p className="font-semibold mt-0.5 text-red-600">−{formatCurrency(totalFee)}</p>
-                        </div>
-                        <div className="bg-emerald-50 border border-emerald-200 rounded-lg py-2">
-                          <p className="text-[10px] text-emerald-700 uppercase tracking-wide">Líquido</p>
-                          <p className="font-bold mt-0.5 text-emerald-700">{formatCurrency(totalNet)}</p>
-                        </div>
-                      </div>
-                    )}
-
                     {activeInstallments.length > 0 && (
                       <div className="border rounded-xl overflow-hidden">
                         <div className="bg-blue-50 border-b border-blue-200 px-3 py-2 text-xs font-semibold text-blue-900 flex items-center gap-1.5">
@@ -1149,10 +1123,7 @@ export default function StockOrderDetail() {
                                   </p>
                                 </div>
                                 <div className="text-right">
-                                  <p className="font-semibold text-sm">{formatCurrency(p.net_value || p.value || 0)}</p>
-                                  {Number(p.value) !== Number(p.net_value) && (
-                                    <p className="text-[10px] text-muted-foreground">bruto {formatCurrency(p.value)}</p>
-                                  )}
+                                  <p className="font-semibold text-sm">{formatCurrency(p.value || 0)}</p>
                                 </div>
                               </div>
                             );
@@ -1240,7 +1211,7 @@ export default function StockOrderDetail() {
               <ul className="mt-2 ml-4 text-xs text-amber-700 list-disc space-y-0.5">
                 <li>Apaga as parcelas projetadas no fluxo de caixa</li>
                 <li>Status volta para <strong>Pedido recebido</strong></li>
-                <li>Forma, data e taxa são removidos</li>
+                <li>Forma e data são removidas</li>
               </ul>
               <p className="text-xs text-amber-700 mt-2">
                 Use só se foi um registro errado.

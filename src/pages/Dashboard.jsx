@@ -158,7 +158,7 @@ export default function Dashboard() {
         <KPICard title="Total Vendido" value={formatCurrency(totalSold)} icon={DollarSign} color="blue" />
         <KPICard title="Total Pago" value={formatCurrency(totalPaid)} sub={`${orders.filter(o => o.payment_status === 'paid').length} pedidos`} icon={CheckCircle2} color="green" />
         <KPICard title="Total Pendente" value={formatCurrency(totalPending)} sub={`${pendingOrders.length} venda${pendingOrders.length !== 1 ? 's' : ''}`} icon={Clock} color="yellow" />
-        <KPICard title="Lucro Bruto Est." value={formatCurrency(grossProfit)} sub={`Margem: ${margin.toFixed(1)}%`} icon={TrendingUp} color="purple" />
+        <KPICard title="Lucro Est." value={formatCurrency(grossProfit)} sub={`Margem: ${margin.toFixed(1)}%`} icon={TrendingUp} color="purple" />
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

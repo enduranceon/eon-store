@@ -62,15 +62,6 @@ export async function loadActivePaymentMethods() {
   });
 }
 
-// Calcula a taxa total em R$ a partir da configuração do método.
-export function calcFee(methodConfig, value) {
-  if (!methodConfig) return 0;
-  const v = Number(value) || 0;
-  const pct = Number(methodConfig.fee_percent) || 0;
-  const fix = Number(methodConfig.fee_fixed) || 0;
-  return (v * pct / 100) + fix;
-}
-
 // Adiciona N dias a uma string de data YYYY-MM-DD e retorna no mesmo formato.
 function addDaysLocal(yyyymmdd, days) {
   const [y, m, d] = yyyymmdd.split('-').map(Number);
@@ -125,6 +116,35 @@ export async function createManualInstallments(methodConfig, paymentDate, orderR
     p_installments: parcels,
   });
   if (error) throw error;
+
+  // O financeiro trabalha com valor recebido cheio; net_value fica igual ao value por compatibilidade.
+  const { data: rows } = await supabase
+    .from('asaas_payments')
+    .select('id, value')
+    .eq('order_id', orderRef.order_id)
+    .eq('order_type', orderRef.order_type)
+    .eq('source', 'manual')
+    .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH']);
+
+  if (rows?.length) {
+    await Promise.all(rows.map(row =>
+      supabase
+        .from('asaas_payments')
+        .update({ net_value: Number(row.value) || 0 })
+        .eq('id', row.id)
+    ));
+  }
+
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+  };
+  const table = tableByType[orderRef.order_type];
+  if (table) {
+    await supabase.from(table).update({ manual_fee: null }).eq('id', orderRef.order_id);
+  }
+
   return data;
 }
 
@@ -132,10 +152,10 @@ export async function createManualInstallments(methodConfig, paymentDate, orderR
 // quando o total_value muda (ex: cancelamento parcial de item, mudança de desconto).
 // - Só toca em source='manual' (Asaas real é gerenciado pelo gateway/webhook)
 // - Mantém o número de parcelas e as datas de crédito originais
-// - Recalcula value e net_value proporcionalmente, preservando a taxa%
+// - Recalcula value e net_value pelo mesmo valor
 //
 // orderRef = { order_id, order_type }
-// newTotalValue = novo valor bruto total do pedido
+// newTotalValue = novo valor total do pedido
 //
 // Retorna { adjusted: bool, installments: N, new_value_per_inst, new_net_per_inst }
 export async function adjustManualInstallmentsValue(orderRef, newTotalValue) {
@@ -145,7 +165,7 @@ export async function adjustManualInstallmentsValue(orderRef, newTotalValue) {
   // Busca parcelas manuais atuais
   const { data: rows, error: fetchErr } = await supabase
     .from('asaas_payments')
-    .select('id, value, net_value, payment_method_id')
+    .select('id, value, payment_method_id')
     .eq('order_id', orderRef.order_id)
     .eq('order_type', orderRef.order_type)
     .eq('source', 'manual')
@@ -162,13 +182,8 @@ export async function adjustManualInstallmentsValue(orderRef, newTotalValue) {
     return { adjusted: true, installments: n, cancelled: true };
   }
 
-  // Calcula a taxa% proporcional original (mesma para todas as parcelas)
-  const oldGrossTotal = rows.reduce((s, r) => s + (Number(r.value) || 0), 0);
-  const oldNetTotal   = rows.reduce((s, r) => s + (Number(r.net_value) || 0), 0);
-  const feeRate = oldGrossTotal > 0 ? (oldGrossTotal - oldNetTotal) / oldGrossTotal : 0;
-
   const newPerInst    = Math.round((newTotal / n) * 100) / 100;
-  const newNetPerInst = Math.round((newTotal / n) * (1 - feeRate) * 100) / 100;
+  const newNetPerInst = newPerInst;
 
   // Atualiza cada linha (preserva datas, ID, método)
   for (const r of rows) {

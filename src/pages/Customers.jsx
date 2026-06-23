@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Users, Search, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -7,6 +7,7 @@ import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan } fro
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
+import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 
 async function loadCustomersPage() {
   const [customers, orders, contracts, plans] = await Promise.all([
@@ -37,11 +38,17 @@ export default function Customers() {
   const navigate  = useNavigate();
 
   // ── LTV e stats por cliente ───────────────────────────────────────────────
+  const plansById = useMemo(() => Object.fromEntries(plans.map(p => [p.id, p])), [plans]);
+  const lifecycleRows = useMemo(
+    () => buildContractLifecycleRows(contracts, { plansById }),
+    [contracts, plansById]
+  );
 
   // Deriva o status do aluno a partir dos contratos (estilo Tecnofit)
   const getAssessmentStatus = (clientContracts) => {
     if (clientContracts.length === 0) return 'none';
-    const statuses = clientContracts.map(c => c.status);
+    const activeContracts = clientContracts.filter(c => c.lifecycle?.counts?.active);
+    const statuses = activeContracts.map(c => c.status);
     if (statuses.includes('overdue'))   return 'overdue';   // Inadimplente
     if (statuses.includes('on_leave'))  return 'on_leave';  // Em licença
     if (statuses.includes('active'))    return 'active';    // Ativo
@@ -56,30 +63,25 @@ export default function Customers() {
     const storeTotal  = clientOrders.reduce((s, o) => s + (o.total_value || 0), 0);
     const storePaid   = clientOrders.filter(o => o.payment_status === 'paid')
                                     .reduce((s, o) => s + (o.total_value || 0), 0);
-    const lastOrder   = clientOrders.sort((a, b) =>
+    const lastOrder   = [...clientOrders].sort((a, b) =>
       new Date(b.created_date) - new Date(a.created_date)
     )[0];
 
     // Contratos de assessoria
-    const clientContracts = contracts.filter(c => c.customer_id === customerId && c.status !== 'voided');
-    const activeContracts = clientContracts.filter(c =>
-      ['active', 'overdue', 'on_leave'].includes(c.status)
+    const clientContracts = lifecycleRows.filter(c =>
+      c.customer_id === customerId &&
+      !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type)
     );
+    const activeContracts = clientContracts.filter(c => c.lifecycle?.counts?.active);
     // Só conta contratos pagos (LTV real)
     const assessTotal = clientContracts
-      .filter(c => c.payment_status === 'paid' && !['cancelled', 'voided'].includes(c.status))
-      .reduce((s, c) => {
-        const plan = plans.find(p => p.id === c.plan_id);
-        return s + (plan ? Number(plan.price_total) : 0);
-      }, 0);
-    const monthlyRecurring = activeContracts.reduce((s, c) => {
-      const plan = plans.find(p => p.id === c.plan_id);
-      return s + (plan ? Number(plan.price_monthly) : 0);
-    }, 0);
+      .filter(c => c.payment_status === 'paid')
+      .reduce((s, c) => s + (Number(c.value) || 0), 0);
+    const monthlyRecurring = activeContracts.reduce((s, c) => s + (Number(c.monthly) || 0), 0);
 
     // Última atividade
     const lastContractDate = clientContracts.length > 0
-      ? clientContracts.sort((a, b) => b.created_at?.localeCompare(a.created_at))[0]?.created_at?.split('T')[0]
+      ? [...clientContracts].sort((a, b) => b.created_at?.localeCompare(a.created_at))[0]?.created_at?.split('T')[0]
       : null;
     const lastActivity = [lastOrder?.created_date, lastContractDate]
       .filter(Boolean).sort().reverse()[0] || null;
@@ -127,7 +129,12 @@ export default function Customers() {
   });
 
   const noCpfCount       = customers.filter(c => !c.cpf).length;
-  const withAssessment   = customers.filter(c => contracts.some(ct => ct.customer_id === c.id && ct.status !== 'voided')).length;
+  const withAssessment   = customers.filter(c =>
+    lifecycleRows.some(ct =>
+      ct.customer_id === c.id &&
+      !['pending_sale', 'voided_sale'].includes(ct.lifecycle?.type)
+    )
+  ).length;
   const inadimplentes    = enriched.filter(c => c._data.assessmentStatus === 'overdue').length;
   const totalLTV         = enriched.reduce((s, c) => s + c._data.ltv, 0);
   const monthlyRecurring = enriched.reduce((s, c) => s + c._data.monthlyRecurring, 0);

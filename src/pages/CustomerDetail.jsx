@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, User, Phone, Mail, ShoppingCart, Edit2, Save, X, AlertTriangle, GitMerge, FileText, ChevronRight, Plus, Trophy, ShoppingBag } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +12,7 @@ import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan, Asse
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
+import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { toast } from 'sonner';
 
 const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
@@ -34,7 +35,7 @@ export default function CustomerDetail() {
   const [mergeModal, setMergeModal] = useState(null); // { duplicate, duplicateOrders }
   const [merging, setMerging] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [c, allPresaleOrders, stockOrders, ct, pl, mo, co] = await Promise.all([
         PreSaleCustomer.get(id),
@@ -68,9 +69,12 @@ export default function CustomerDetail() {
     } catch (e) {
       console.error('Erro ao carregar cliente:', e);
     }
-  };
+  }, [id]);
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 0);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   // Verifica se o CPF já existe em outro cliente antes de salvar
   const checkCpfConflict = async (cpf) => {
@@ -170,6 +174,12 @@ export default function CustomerDetail() {
     }
   };
 
+  const plansById = useMemo(() => Object.fromEntries(plans.map(p => [p.id, p])), [plans]);
+  const lifecycleRows = useMemo(
+    () => buildContractLifecycleRows(contracts, { plansById }),
+    [contracts, plansById]
+  );
+
   if (!customer) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const activeOrders   = orders.filter(o => o.payment_status !== 'cancelled');
@@ -187,41 +197,33 @@ export default function CustomerDetail() {
     voided:    { label: 'Descartado', cls: 'bg-amber-100 text-amber-700' },
   };
 
-  const activeContracts = contracts.filter(c => ['active', 'overdue', 'on_leave'].includes(c.status));
+  const activeContracts = lifecycleRows.filter(c => c.lifecycle?.counts?.active);
 
   // LTV unificado: loja + assessoria
   // Conta apenas contratos PAGOS (LTV = valor que realmente entrou)
   // Contratos cancelados sem pagamento ou ainda em aberto não contam
-  const assessTotal    = contracts
-    .filter(c => c.payment_status === 'paid' && !['cancelled', 'voided'].includes(c.status))
-    .reduce((acc, c) => {
-      const plan = plans.find(p => p.id === c.plan_id);
-      const base     = plan ? Number(plan.price_total) : 0;
-      const enrol    = Number(c.enrollment_fee) || 0;
-      const discount = Number(c.manual_discount) || 0;
-      return acc + Math.max(0, base + enrol - discount);
-    }, 0);
+  const assessTotal = lifecycleRows
+    .filter(c =>
+      c.payment_status === 'paid' &&
+      !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type)
+    )
+    .reduce((acc, c) => acc + (Number(c.value) || 0), 0);
   const ltv = totalPaid + assessTotal;
 
-  const activeContractMonthly = activeContracts.reduce((acc, c) => {
-    const plan = plans.find(p => p.id === c.plan_id);
-    return acc + (plan ? Number(plan.price_monthly) : 0);
-  }, 0);
+  const activeContractMonthly = activeContracts.reduce((acc, c) => acc + (Number(c.monthly) || 0), 0);
 
   // ── Pagamentos em aberto (contratos + pedidos não pagos) ────────────────────
   const todayStr = new Date().toISOString().slice(0, 10);
-  const openContracts = contracts
-    .filter(c => !['paid', 'refunded', 'cancelled'].includes(c.payment_status) && !['cancelled', 'voided', 'draft'].includes(c.status))
+  const openContracts = lifecycleRows
+    .filter(c =>
+      c.lifecycle?.counts?.active &&
+      !['paid', 'refunded', 'cancelled'].includes(c.payment_status)
+    )
     .map(c => {
-      const plan = plans.find(p => p.id === c.plan_id);
-      const base = plan ? Number(plan.price_total) : 0;
-      const enrol = Number(c.enrollment_fee) || 0;
-      const disc = Number(c.manual_discount) || 0;
-      const value = Math.max(0, base + enrol - disc);
       const daysOverdue = c.due_date && c.due_date < todayStr
         ? Math.round((new Date(todayStr) - new Date(c.due_date)) / 86400000)
         : 0;
-      return { ...c, _value: value, _daysOverdue: daysOverdue };
+      return { ...c, _value: Number(c.value) || 0, _daysOverdue: daysOverdue };
     });
 
   const openOrders = orders
@@ -396,8 +398,8 @@ export default function CustomerDetail() {
             </p>
           ) : (
             <div className="divide-y">
-              {contracts.map(c => {
-                const plan = plans.find(p => p.id === c.plan_id);
+              {lifecycleRows.map(c => {
+                const plan = c.plan || plans.find(p => p.id === c.plan_id);
                 const mod  = plan && modalities.find(m => m.id === plan.modality_id);
                 const coach = coaches.find(co => co.id === c.coach_id);
                 const st   = CONTRACT_STATUS[c.status] || { label: c.status, cls: 'bg-gray-100 text-gray-600' };
@@ -417,7 +419,7 @@ export default function CustomerDetail() {
                       <p className="text-xs text-muted-foreground">{formatDate(c.start_date)} → {formatDate(c.end_date)}</p>
                     </div>
                     <div className="text-right shrink-0">
-                      {plan && <p className="text-sm font-bold">{formatCurrency(plan.price_total)}</p>}
+                      <p className="text-sm font-bold">{formatCurrency(c.value || 0)}</p>
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span>
                     </div>
                     <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />

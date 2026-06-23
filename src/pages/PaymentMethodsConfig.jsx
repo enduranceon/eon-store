@@ -10,7 +10,6 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PaymentMethodConfig } from '@/api/entities';
-import { formatCurrency } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
@@ -36,8 +35,6 @@ const emptyForm = {
   group_name:           'Sem gateway',
   name:                 '',
   kind:                 'pix',
-  fee_percent:          0,
-  fee_fixed:            0,
   credit_days_first:    1,
   credit_days_between:  30,
   installments:         1,
@@ -96,8 +93,8 @@ export default function PaymentMethodsConfig() {
       group_name:          form.group_name.trim(),
       name:                form.name.trim(),
       kind:                form.kind,
-      fee_percent:         Number(form.fee_percent) || 0,
-      fee_fixed:           Number(form.fee_fixed) || 0,
+      fee_percent:         0,
+      fee_fixed:           0,
       credit_days_first:   Math.max(0, Number(form.credit_days_first) || 0),
       credit_days_between: Math.max(0, Number(form.credit_days_between) || 30),
       installments:        Math.max(1, Math.min(12, Number(form.installments) || 1)),
@@ -148,7 +145,7 @@ export default function PaymentMethodsConfig() {
             <CreditCard className="w-5 h-5 text-blue-600" /> Métodos de Pagamento
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Configure taxas, prazos e parcelamento. Usado no registro manual de pagamentos para projetar parcelas no fluxo de caixa.
+            Configure prazos e parcelamento. Usado no registro manual de pagamentos para projetar parcelas no fluxo de caixa.
           </p>
         </div>
         <div className="flex gap-2">
@@ -168,7 +165,7 @@ export default function PaymentMethodsConfig() {
           <div className="text-sm">
             <p className="font-semibold text-blue-900">Como o sistema usa esses métodos</p>
             <p className="text-xs text-blue-700 mt-0.5">
-              Quando você registrar um pagamento manual (ex: "cartão cliente em 4x"), o sistema vai usar a <b>taxa</b> e os <b>prazos</b> aqui para projetar quando cada parcela vai cair na conta. As parcelas aparecem confirmadas no Fluxo de Caixa.
+              Quando você registrar um pagamento manual (ex: "cartão cliente em 4x"), o sistema usa os <b>prazos</b> e o <b>parcelamento</b> aqui para projetar quando cada parcela vai cair na conta. As parcelas aparecem confirmadas no Fluxo de Caixa.
               <br />
               <span className="text-blue-900 font-medium">Métodos do sistema</span> (Asaas, Sem gateway) podem ser editados mas não deletados — desative se preferir não usar.
             </p>
@@ -226,9 +223,6 @@ export default function PaymentMethodsConfig() {
                             )}
                           </div>
                           <p className="text-[11px] text-muted-foreground">
-                            Taxa: <b>{Number(m.fee_percent || 0).toFixed(2)}%</b>
-                            {m.fee_fixed > 0 && <> + R$ {Number(m.fee_fixed).toFixed(2)} fixo</>}
-                            {' · '}
                             1ª parcela em D+{m.credit_days_first}
                             {m.installments > 1 && <>, próximas a cada {m.credit_days_between}d</>}
                           </p>
@@ -290,21 +284,6 @@ export default function PaymentMethodsConfig() {
                 placeholder="Ex: Cartão crédito 4x" />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Taxa (%)</Label>
-                <Input type="number" step="0.01" min="0" className="mt-1"
-                  value={form.fee_percent}
-                  onChange={e => setForm(f => ({ ...f, fee_percent: e.target.value }))} />
-              </div>
-              <div>
-                <Label>Taxa fixa (R$)</Label>
-                <Input type="number" step="0.01" min="0" className="mt-1"
-                  value={form.fee_fixed}
-                  onChange={e => setForm(f => ({ ...f, fee_fixed: e.target.value }))} />
-              </div>
-            </div>
-
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label>Parcelas</Label>
@@ -327,12 +306,7 @@ export default function PaymentMethodsConfig() {
             </div>
 
             <p className="text-xs text-muted-foreground bg-gray-50 border rounded-lg px-3 py-2">
-              {(() => {
-                const v = 1000;
-                const fee = (v * (Number(form.fee_percent) / 100)) + Number(form.fee_fixed || 0);
-                const liq = v - fee;
-                return <>Exemplo em R$ 1.000,00: taxa = <b>{formatCurrency(fee)}</b> · líquido = <b>{formatCurrency(liq)}</b>{Number(form.installments) > 1 && <> · {form.installments}x de {formatCurrency(liq / Number(form.installments))}</>}</>;
-              })()}
+              O valor registrado entra cheio no financeiro. A conciliação bancária será tratada em uma etapa própria, fora desta tela.
             </p>
 
             <label className="flex items-center gap-2 cursor-pointer text-sm">

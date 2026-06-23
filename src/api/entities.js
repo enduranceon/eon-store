@@ -19,6 +19,8 @@ export const DiscountLog      = db.entities.DiscountLog;
 // Régua de renovação
 export const RenewalRule              = db.entities.RenewalRule;
 export const ContractRenewalAction    = db.entities.ContractRenewalAction;
+export const CommunicationSetting      = db.entities.CommunicationSetting;
+export const CommunicationRule         = db.entities.CommunicationRule;
 
 // Módulo Assessoria
 export const AssessmentModality          = db.entities.AssessmentModality;

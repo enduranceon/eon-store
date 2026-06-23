@@ -1,5 +1,4 @@
 // Métodos de pagamento — usados em pedidos da loja e contratos da assessoria
-// Cada método informa se já é considerado "pago" e quanto cobra de taxa de gateway
 
 // Dias de vencimento default para lançamentos/cobranças.
 // Editável pelo usuário no modal de "Gerar cobrança" — esta constante é só o ponto de partida.
@@ -19,15 +18,15 @@ export function defaultPaymentDueDate() {
 export const defaultAsaasDueDate = defaultPaymentDueDate;
 
 export const PAYMENT_METHODS = [
-  // ── Pagamentos manuais (sem taxa de gateway) ──
-  { value: 'pix_manual',    label: 'PIX manual',        description: 'Cliente pagou direto via PIX, sem gateway', group: 'manual', fee: 0 },
-  { value: 'cash',          label: 'Dinheiro',          description: 'Pagamento em espécie',                       group: 'manual', fee: 0 },
-  { value: 'card_machine',  label: 'Máquina de cartão', description: 'Cielo, Stone, etc. (presencial)',            group: 'manual', fee: 0 },
-  { value: 'bank_transfer', label: 'Transferência',     description: 'TED, DOC bancário',                          group: 'manual', fee: 0 },
-  // ── Pagamentos via Asaas (com taxa) ──
-  { value: 'pix',           label: 'PIX (via Asaas)',   description: 'Recebido via gateway Asaas',                 group: 'asaas',  fee: 'pix' },
-  { value: 'boleto',        label: 'Boleto',            description: 'Recebido via boleto bancário',               group: 'asaas',  fee: 'boleto' },
-  { value: 'credit_card',   label: 'Cartão de crédito', description: 'Crédito 1x via gateway',                     group: 'asaas',  fee: 'credit_1x' },
+  // ── Pagamentos manuais ──
+  { value: 'pix_manual',    label: 'PIX manual',        description: 'Cliente pagou direto via PIX', group: 'manual' },
+  { value: 'cash',          label: 'Dinheiro',          description: 'Pagamento em espécie',         group: 'manual' },
+  { value: 'card_machine',  label: 'Máquina de cartão', description: 'Pagamento presencial',          group: 'manual' },
+  { value: 'bank_transfer', label: 'Transferência',     description: 'TED, DOC ou transferência',     group: 'manual' },
+  // ── Pagamentos via Asaas ──
+  { value: 'pix',           label: 'PIX (via Asaas)',   description: 'Recebido via Asaas',            group: 'asaas' },
+  { value: 'boleto',        label: 'Boleto',            description: 'Recebido via boleto bancário',  group: 'asaas' },
+  { value: 'credit_card',   label: 'Cartão de crédito', description: 'Crédito via Asaas',             group: 'asaas' },
 ];
 
 // Lookup rápido — inclui os internal_codes da nova tabela payment_methods
@@ -53,80 +52,3 @@ export const PAYMENT_METHOD_LABELS = {
   card_11x:       'Cartão 11x',
   card_12x:       'Cartão 12x',
 };
-
-// Calcula taxa do gateway Asaas
-// PIX: R$ 1,99 fixo por cobrança recebida
-// Boleto: R$ 1,99 fixo por boleto pago
-// Cartão de crédito online (Asaas): faixas por nº de parcelas + R$ 0,49 fixo (cobrado 1x)
-//   1x:     2,99% + R$ 0,49
-//   2-6x:   3,49% + R$ 0,49
-//   7-12x:  3,99% + R$ 0,49
-//   13-21x: 4,29% + R$ 0,49
-// Maquininha (Asaas Tap / card_machine): mesmas faixas, SEM R$ 0,49
-// Pagamentos manuais (pix_manual, cash, transfer) = taxa zero
-// Se `manualFee` for fornecido (não null/undefined), tem PRIORIDADE sobre o cálculo padrão.
-function asaasCardPercent(installments) {
-  const n = Math.max(1, Math.floor(installments) || 1);
-  if (n === 1)        return 0.0299;
-  if (n <= 6)         return 0.0349;
-  if (n <= 12)        return 0.0399;
-  return 0.0429;  // 13-21x
-}
-
-export function calcGatewayFee(totalValue, paymentMethod, manualFee = null) {
-  // Override manual tem prioridade (pode ser 0 explícito também)
-  if (manualFee !== null && manualFee !== undefined && manualFee !== '') {
-    return Number(manualFee) || 0;
-  }
-  if (!paymentMethod || !totalValue) return 0;
-
-  // Normaliza códigos novos (internal_codes da tabela payment_methods)
-  let pm = paymentMethod;
-  if (pm === 'pix_asaas')    pm = 'pix';
-  if (pm === 'boleto_asaas') pm = 'boleto';
-  const asaasCard = pm.match(/^card_asaas_(\d+)x$/);
-  if (asaasCard) pm = `card_${asaasCard[1]}x`;
-
-  if (pm === 'pix')    return 1.99;   // R$ 1,99 fixo por cobrança
-  if (pm === 'boleto') return 1.99;   // R$ 1,99 fixo por boleto
-
-  // Maquininha Asaas Tap — faixas sem R$ 0,49 fixo
-  if (pm === 'card_machine') {
-    return totalValue * asaasCardPercent(1);
-  }
-
-  // Cartão online via Asaas (card_Nx, credit_card) — faixas + R$ 0,49 por transação
-  if (pm === 'credit_card') {
-    return totalValue * asaasCardPercent(1) + 0.49;
-  }
-  if (pm.startsWith('card_')) {
-    const m = pm.match(/card_(\d+)x/);
-    const n = m ? parseInt(m[1]) : 1;
-    return totalValue * asaasCardPercent(n) + 0.49;
-  }
-  return 0;
-}
-
-// Sugere taxa fixa default em R$ por transação
-export function suggestFeeFixed(paymentMethod) {
-  if (!paymentMethod) return 0;
-  if (paymentMethod === 'pix')         return 1.99;
-  if (paymentMethod === 'boleto')      return 1.99;
-  if (paymentMethod === 'credit_card') return 0.49;
-  if (paymentMethod.startsWith('card_')) return 0.49;
-  return 0;  // maquininha, manuais → sem taxa fixa
-}
-
-// Sugere taxa default em % baseada no método (pra UI sugerir valor no campo)
-export function suggestFeePercent(paymentMethod) {
-  if (!paymentMethod) return 0;
-  if (paymentMethod === 'pix')         return 0.99;
-  if (paymentMethod === 'credit_card') return 2.99;
-  if (paymentMethod === 'card_machine') return 2.99;  // Asaas Tap 1x
-  if (paymentMethod.startsWith('card_')) {
-    const m = paymentMethod.match(/card_(\d+)x/);
-    const n = m ? parseInt(m[1]) : 1;
-    return Number((asaasCardPercent(n) * 100).toFixed(2));
-  }
-  return 0;  // pix_manual, cash, bank_transfer → sem taxa
-}

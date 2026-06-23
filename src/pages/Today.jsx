@@ -9,6 +9,7 @@ import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
 import BusinessPulse from '@/components/BusinessPulse';
+import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -128,10 +129,10 @@ async function loadTodayPage() {
       .neq('payment_status', 'cancelled')
       .neq('payment_status', 'refunded'),
     supabase.from('assessment_contracts')
-      .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, due_date, end_date, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, refund_status, refund_amount')
+      .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, payment_date, manual_payment, due_date, start_date, end_date, status, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, credit_balance, plan_snapshot, refund_status, refund_amount')
       .not('status', 'in', '("cancelled","finished","draft","voided")')
       .neq('payment_status', 'refunded'),
-    supabase.from('assessment_plans').select('id, price_total'),
+    supabase.from('assessment_plans').select('id, price_total, price_monthly, modality_id'),
     supabase.from('presale_customers').select('id, full_name'),
     supabase.from('order_returns').select('*').in('status', ['pending_return', 'received']),
     supabase.from('assessment_contracts')
@@ -143,24 +144,30 @@ async function loadTodayPage() {
   const stock = (stockRes.data || []).map(o => ({ ...o, type: 'stock', customer: o.customer_name }));
   const plansMap = Object.fromEntries((plansRes.data || []).map(p => [p.id, p]));
   const customersMap = Object.fromEntries((customersRes.data || []).map(c => [c.id, c]));
-  const contracts = (contractRes.data || []).map(c => {
-    const plan = plansMap[c.plan_id];
-    const base = Number(plan?.price_total) || 0;
-    const total = Math.max(0, base + (Number(c.enrollment_fee) || 0) - (Number(c.manual_discount) || 0));
-    return {
-      id: c.id,
-      order_number: c.contract_number,
-      customer: customersMap[c.customer_id]?.full_name || '—',
-      total_value: total,
-      payment_status: c.payment_status,
-      payment_method: c.payment_method,
-      due_date: c.due_date,
-      end_date: c.end_date,
-      status: c.status,
-      asaas_charge_id: c.asaas_charge_id,
-      type: 'contract',
-    };
-  });
+  const contracts = buildContractLifecycleRows(contractRes.data || [], { plansById: plansMap })
+    .filter(c => c.lifecycle?.counts?.active)
+    .map(c => {
+      return {
+        id: c.id,
+        order_number: c.contract_number,
+        customer: customersMap[c.customer_id]?.full_name || '—',
+        total_value: Number(c.value) || 0,
+        payment_status: c.payment_status,
+        payment_method: c.payment_method,
+        due_date: c.due_date,
+        end_date: c.end_date,
+        created_date: c.lifecycle?.createdLocal || c.created_at,
+        created_at: c.created_at,
+        status_changed_at: c.updated_at,
+        status: c.status,
+        asaas_charge_id: c.asaas_charge_id,
+        asaas_payment_link: c.asaas_payment_link,
+        asaas_pix_copy: c.asaas_pix_copy,
+        external_payment_link: c.external_payment_link,
+        payment_message_sent_at: c.payment_message_sent_at,
+        type: 'contract',
+      };
+    });
 
   let pendingRefunds = [];
   if (refundsRes.data?.length) {

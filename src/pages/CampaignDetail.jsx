@@ -177,7 +177,7 @@ export default function CampaignDetail() {
           { label: 'Total vendido', value: formatCurrency(totalSold), icon: DollarSign, color: 'blue' },
           { label: 'Total pago', value: formatCurrency(totalPaid), icon: DollarSign, color: 'green' },
           { label: 'Pendente', value: formatCurrency(totalPending), icon: DollarSign, color: 'yellow' },
-          { label: 'Lucro bruto', value: formatCurrency(grossProfit), sub: `Margem: ${margin.toFixed(1)}%`, icon: TrendingUp, color: 'purple' },
+          { label: 'Lucro estimado', value: formatCurrency(grossProfit), sub: `Margem: ${margin.toFixed(1)}%`, icon: TrendingUp, color: 'purple' },
         ].map(k => (
           <Card key={k.label}>
             <CardContent className="p-4">

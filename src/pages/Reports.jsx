@@ -285,16 +285,9 @@ function SaleDetailModal({ sale, onClose }) {
                               <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${st.color}`}>
                                 {st.label}
                               </span>
-                              {/* Valor líquido */}
                               <span className="flex-1 text-right font-semibold">
-                                {formatCurrency(inst.netValue || inst.value)}
+                                {formatCurrency(inst.value || 0)}
                               </span>
-                              {/* Bruto se diferente */}
-                              {inst.netValue && inst.value && inst.netValue !== inst.value && (
-                                <span className="text-[10px] text-muted-foreground shrink-0">
-                                  bruto {formatCurrency(inst.value)}
-                                </span>
-                              )}
                             </div>
                           );
                         })}
@@ -313,8 +306,8 @@ function SaleDetailModal({ sale, onClose }) {
                             )}
                           </span>
                           <span>
-                            Total líq.: {formatCurrency(
-                              installments.installments.reduce((s, i) => s + (i.netValue || i.value || 0), 0)
+                            Total: {formatCurrency(
+                              installments.installments.reduce((s, i) => s + (i.value || 0), 0)
                             )}
                           </span>
                         </div>
@@ -383,13 +376,13 @@ function SaleDetailModal({ sale, onClose }) {
 async function loadReportsSales() {
   const [presaleRes, stockRes, contractRes, plansRes, customersRes] = await Promise.all([
     supabase.from('presale_orders')
-      .select('id, order_number, checkout_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items, created_date')
+      .select('id, order_number, checkout_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items, created_date')
       .order('created_date', { ascending: false }),
     supabase.from('stock_orders')
-      .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, items, created_date')
+      .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items, created_date')
       .order('created_date', { ascending: false }),
     supabase.from('assessment_contracts')
-      .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, manual_fee, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
+      .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
       .not('status', 'in', '("cancelled","draft","voided")')
       .order('created_at', { ascending: false }),
     supabase.from('assessment_plans').select('id, price_total, name'),
@@ -426,7 +419,6 @@ async function loadReportsSales() {
       payment_date: c.payment_date,
       due_date: c.due_date,
       asaas_charge_id: c.asaas_charge_id,
-      manual_fee: c.manual_fee,
       installments: c.installments || 1,
       type: 'contract',
       created_at: c.created_at,

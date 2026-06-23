@@ -16,8 +16,8 @@ function billingIcon(type) {
   return <Wallet className="w-3.5 h-3.5" />;
 }
 
-function netOf(p) {
-  return Number(p.net_value) || Number(p.value) || 0;
+function amountOf(p) {
+  return Number(p.value) || 0;
 }
 
 // Calendário de recebimentos: bolinha verde nos dias com recebimento,
@@ -31,27 +31,26 @@ export default function CashFlowCalendar({ payments }) {
   const [rangeStart, setRangeStart] = useState(null);
   const [rangeEnd, setRangeEnd] = useState(null);
 
-  // Mapa dateStr -> { count, gross, net, items }
+  // Mapa dateStr -> { count, amount, items }
   const byDate = useMemo(() => {
     const map = {};
     for (const p of payments) {
       const d = p.credit_date;
       if (!d) continue;
-      if (!map[d]) map[d] = { count: 0, gross: 0, net: 0, items: [] };
+      if (!map[d]) map[d] = { count: 0, amount: 0, items: [] };
       map[d].count++;
-      map[d].gross += Number(p.value) || 0;
-      map[d].net   += netOf(p);
+      map[d].amount += amountOf(p);
       map[d].items.push(p);
     }
     return map;
   }, [payments]);
 
   // Intensidade da bolinha por faixa de valor (relativo ao maior dia do mês exibido)
-  const monthMaxNet = useMemo(() => {
+  const monthMaxAmount = useMemo(() => {
     const ym = toLocalDateStr(viewMonth).slice(0, 7);
     let max = 0;
     for (const [d, info] of Object.entries(byDate)) {
-      if (d.slice(0, 7) === ym) max = Math.max(max, info.net);
+      if (d.slice(0, 7) === ym) max = Math.max(max, info.amount);
     }
     return max;
   }, [byDate, viewMonth]);
@@ -112,17 +111,16 @@ export default function CashFlowCalendar({ payments }) {
       if (d >= rangeStart && d <= end) items.push(...info.items);
     }
     items.sort((a, b) => (a.credit_date || '').localeCompare(b.credit_date || ''));
-    const gross = items.reduce((s, p) => s + (Number(p.value) || 0), 0);
-    const net   = items.reduce((s, p) => s + netOf(p), 0);
+    const amount = items.reduce((s, p) => s + amountOf(p), 0);
     return {
       start: rangeStart, end, isSingle: rangeStart === end,
-      items, gross, net, taxas: gross - net, count: items.length,
+      items, amount, count: items.length,
     };
   }, [rangeStart, rangeEnd, byDate]);
 
-  const dotColor = (net) => {
-    if (monthMaxNet <= 0) return 'bg-emerald-400';
-    const ratio = net / monthMaxNet;
+  const dotColor = (amount) => {
+    if (monthMaxAmount <= 0) return 'bg-emerald-400';
+    const ratio = amount / monthMaxAmount;
     if (ratio >= 0.66) return 'bg-emerald-600';
     if (ratio >= 0.33) return 'bg-emerald-500';
     return 'bg-emerald-400';
@@ -192,9 +190,9 @@ export default function CashFlowCalendar({ payments }) {
                     </span>
                     {has && (
                       <>
-                        <span className={`w-1.5 h-1.5 rounded-full mt-0.5 ${dotColor(info.net)}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full mt-0.5 ${dotColor(info.amount)}`} />
                         <span className="hidden sm:block text-[8px] text-emerald-700 font-semibold leading-none mt-0.5">
-                          {info.net >= 1000 ? `${(info.net / 1000).toFixed(1)}k` : Math.round(info.net)}
+                          {info.amount >= 1000 ? `${(info.amount / 1000).toFixed(1)}k` : Math.round(info.amount)}
                         </span>
                       </>
                     )}
@@ -231,18 +229,10 @@ export default function CashFlowCalendar({ payments }) {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-lg bg-gray-50 p-2">
-                    <p className="text-[10px] text-muted-foreground uppercase">Bruto</p>
-                    <p className="font-bold text-sm">{formatCurrency(selection.gross)}</p>
-                  </div>
-                  <div className="rounded-lg bg-orange-50 p-2">
-                    <p className="text-[10px] text-orange-600 uppercase">Taxas</p>
-                    <p className="font-bold text-sm text-orange-600">{formatCurrency(selection.taxas)}</p>
-                  </div>
+                <div className="grid grid-cols-1 gap-2 text-center">
                   <div className="rounded-lg bg-emerald-50 p-2">
-                    <p className="text-[10px] text-emerald-700 uppercase">Líquido</p>
-                    <p className="font-bold text-sm text-emerald-700">{formatCurrency(selection.net)}</p>
+                    <p className="text-[10px] text-emerald-700 uppercase">Recebimento</p>
+                    <p className="font-bold text-sm text-emerald-700">{formatCurrency(selection.amount)}</p>
                   </div>
                 </div>
 
@@ -269,10 +259,7 @@ export default function CashFlowCalendar({ payments }) {
                         </p>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="font-semibold text-sm">{formatCurrency(netOf(item))}</p>
-                        {Number(item.value) !== netOf(item) && (
-                          <p className="text-[10px] text-muted-foreground">bruto {formatCurrency(item.value)}</p>
-                        )}
+                        <p className="font-semibold text-sm">{formatCurrency(amountOf(item))}</p>
                       </div>
                     </div>
                   ))}

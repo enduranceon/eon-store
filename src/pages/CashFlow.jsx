@@ -97,16 +97,8 @@ function MonthlyChartTooltip({ active, payload }) {
     <div className="bg-white border rounded-lg shadow-lg p-3 text-xs space-y-1">
       <p className="font-semibold text-gray-900 capitalize">{fullMonthLabel(data.ym)}</p>
       <div className="flex items-center justify-between gap-4">
-        <span className="text-muted-foreground">Bruto</span>
-        <span className="font-semibold">{formatCurrency(data.bruto)}</span>
-      </div>
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-orange-600">Taxas</span>
-        <span className="font-semibold text-orange-600">− {formatCurrency(data.taxas)}</span>
-      </div>
-      <div className="flex items-center justify-between gap-4 border-t pt-1">
-        <span className="text-green-700 font-semibold">Líquido</span>
-        <span className="font-bold text-green-700">{formatCurrency(data.liquido)}</span>
+        <span className="text-muted-foreground">Recebimento</span>
+        <span className="font-semibold">{formatCurrency(data.total)}</span>
       </div>
       <p className="text-[10px] text-muted-foreground pt-0.5">
         {data.count} parcela{data.count !== 1 ? 's' : ''}
@@ -124,7 +116,7 @@ async function loadCashFlowPayments() {
 
   const { data, error } = await supabase
     .from('asaas_payments')
-    .select('id, asaas_payment_id, order_id, order_type, status, source, value, net_value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments, description, external_reference, payment_method_id')
+    .select('id, asaas_payment_id, order_id, order_type, status, source, value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments, description, external_reference, payment_method_id')
     .gte('credit_date', toLocalDateStr(start))
     .lte('credit_date', toLocalDateStr(end))
     .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
@@ -228,14 +220,11 @@ export default function CashFlow() {
   const next6Data = useMemo(() => {
     return next6Months.map(ym => {
       const monthPayments = payments.filter(p => monthKey(p.credit_date) === ym);
-      const bruto = monthPayments.reduce((s, p) => s + (Number(p.value) || 0), 0);
-      const liquido = monthPayments.reduce((s, p) => s + (Number(p.net_value) || Number(p.value) || 0), 0);
+      const total = monthPayments.reduce((s, p) => s + (Number(p.value) || 0), 0);
       return {
         ym,
         month: monthLabel(ym),
-        bruto,
-        liquido,
-        taxas: bruto - liquido,
+        total,
         count: monthPayments.length,
         items: monthPayments,
       };
@@ -247,33 +236,29 @@ export default function CashFlow() {
   const last6Data = useMemo(() => {
     return last6Months.map(ym => {
       const monthPayments = payments.filter(p => monthKey(p.credit_date) === ym);
-      const bruto = monthPayments.reduce((s, p) => s + (Number(p.value) || 0), 0);
-      const liquido = monthPayments.reduce((s, p) => s + (Number(p.net_value) || Number(p.value) || 0), 0);
+      const total = monthPayments.reduce((s, p) => s + (Number(p.value) || 0), 0);
       return {
         ym,
         month: monthLabel(ym),
-        bruto,
-        liquido,
-        taxas: bruto - liquido,
+        total,
         count: monthPayments.length,
       };
     });
   }, [payments, last6Months]);
 
   // KPIs principais
-  const totalFutureGross = futurePayments.reduce((s, p) => s + (Number(p.value) || 0), 0);
-  const totalFutureNet   = futurePayments.reduce((s, p) => s + (Number(p.net_value) || Number(p.value) || 0), 0);
+  const totalFutureAmount = futurePayments.reduce((s, p) => s + (Number(p.value) || 0), 0);
 
   const nextMonth = next6Data[1]; // [0] = mês atual, [1] = próximo
   const currentMonth = next6Data[0];
 
   // Média mensal projetada
-  const avgMonthlyProjection = totalFutureNet / Math.max(1, next6Data.filter(d => d.bruto > 0).length);
+  const avgMonthlyProjection = totalFutureAmount / Math.max(1, next6Data.filter(d => d.total > 0).length);
 
   // Recebido este mês
   const receivedThisMonth = payments
     .filter(p => monthKey(p.credit_date) === currentYM && p.credit_date <= todayStr)
-    .reduce((s, p) => s + (Number(p.net_value) || Number(p.value) || 0), 0);
+    .reduce((s, p) => s + (Number(p.value) || 0), 0);
 
   // Mês anterior
   const lastMonthYM = (() => {
@@ -282,7 +267,7 @@ export default function CashFlow() {
   })();
   const receivedLastMonth = payments
     .filter(p => monthKey(p.credit_date) === lastMonthYM)
-    .reduce((s, p) => s + (Number(p.net_value) || Number(p.value) || 0), 0);
+    .reduce((s, p) => s + (Number(p.value) || 0), 0);
 
   // Por origem (cartão Asaas vs Manual)
   const bySource = useMemo(() => {
@@ -290,7 +275,7 @@ export default function CashFlow() {
     for (const p of futurePayments) {
       const key = p.source || 'desconhecido';
       if (!map[key]) map[key] = { source: key, value: 0, count: 0 };
-      map[key].value += Number(p.net_value) || Number(p.value) || 0;
+      map[key].value += Number(p.value) || 0;
       map[key].count++;
     }
     return Object.values(map).sort((a, b) => b.value - a.value);
@@ -311,7 +296,7 @@ export default function CashFlow() {
     for (const p of futurePayments) {
       const key = normalizeBillingType(p.billing_type);
       if (!map[key]) map[key] = { type: key, value: 0, count: 0 };
-      map[key].value += Number(p.net_value) || Number(p.value) || 0;
+      map[key].value += Number(p.value) || 0;
       map[key].count++;
     }
     return Object.values(map).sort((a, b) => b.value - a.value);
@@ -365,8 +350,8 @@ export default function CashFlow() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
           label="A receber (próximos 6 meses)"
-          value={formatCurrency(totalFutureNet)}
-          sub={`${futurePayments.length} parcelas · bruto ${formatCurrency(totalFutureGross)}`}
+          value={formatCurrency(totalFutureAmount)}
+          sub={`${futurePayments.length} parcela${futurePayments.length !== 1 ? 's' : ''}`}
           icon={Wallet}
           iconBg="bg-emerald-50" iconColor="text-emerald-600" valueColor="text-emerald-700"
           accent="border-emerald-200"
@@ -381,7 +366,7 @@ export default function CashFlow() {
         />
         <KpiCard
           label="Próximo mês"
-          value={formatCurrency(nextMonth?.liquido || 0)}
+          value={formatCurrency(nextMonth?.total || 0)}
           sub={nextMonth ? `${nextMonth.count} parcela${nextMonth.count !== 1 ? 's' : ''} · ${fullMonthLabel(nextMonth.ym)}` : ''}
           icon={Calendar}
           iconBg="bg-amber-50" iconColor="text-amber-600" valueColor="text-amber-700"
@@ -407,7 +392,7 @@ export default function CashFlow() {
           </p>
         </CardHeader>
         <CardContent>
-          {next6Data.every(d => d.bruto === 0) ? (
+          {next6Data.every(d => d.total === 0) ? (
             <div className="text-center py-12">
               <Calendar className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
               <p className="text-sm text-muted-foreground">Sem recebimentos projetados nos próximos 6 meses.</p>
@@ -425,18 +410,16 @@ export default function CashFlow() {
                     width={42}
                   />
                   <Tooltip content={<MonthlyChartTooltip />} cursor={{ fill: '#f9fafb' }} />
-                  <Bar dataKey="liquido" stackId="a" radius={[0, 0, 0, 0]} maxBarSize={64}>
+                  <Bar dataKey="total" radius={[6, 6, 0, 0]} maxBarSize={64}>
                     {next6Data.map(d => (
                       <Cell key={d.ym} fill={d.ym === currentYM ? '#059669' : '#6ee7b7'} />
                     ))}
                   </Bar>
-                  <Bar dataKey="taxas" stackId="a" radius={[6, 6, 0, 0]} maxBarSize={64} fill="#fb923c" />
                 </BarChart>
               </ResponsiveContainer>
               <div className="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs text-muted-foreground border-t pt-3">
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Líquido (mês atual)</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-300" /> Líquido (futuro)</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-orange-400" /> Taxas de gateway</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Mês atual</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-300" /> Próximos meses</span>
               </div>
             </>
           )}
@@ -474,11 +457,11 @@ export default function CashFlow() {
                           {isCurrent && <span className="ml-2 text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium uppercase">Mês atual</span>}
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {m.count} parcela{m.count !== 1 ? 's' : ''} · bruto {formatCurrency(m.bruto)} · taxas {formatCurrency(m.taxas)}
+                          {m.count} parcela{m.count !== 1 ? 's' : ''}
                         </p>
                       </div>
                     </div>
-                    <p className="font-bold text-emerald-700 shrink-0 ml-3">{formatCurrency(m.liquido)}</p>
+                    <p className="font-bold text-emerald-700 shrink-0 ml-3">{formatCurrency(m.total)}</p>
                   </button>
                   {isOpen && (
                     <div className="border-t divide-y">
@@ -501,10 +484,7 @@ export default function CashFlow() {
                               </p>
                             </div>
                             <div className="text-right shrink-0">
-                              <p className="font-semibold text-sm">{formatCurrency(item.net_value || item.value)}</p>
-                              {item.value !== item.net_value && (
-                                <p className="text-[10px] text-muted-foreground">bruto {formatCurrency(item.value)}</p>
-                              )}
+                              <p className="font-semibold text-sm">{formatCurrency(item.value || 0)}</p>
                             </div>
                           </div>
                         ))}
@@ -537,7 +517,7 @@ export default function CashFlow() {
             ) : (
               <div className="space-y-3">
                 {bySource.map(s => {
-                  const pct = totalFutureNet > 0 ? (s.value / totalFutureNet) * 100 : 0;
+                  const pct = totalFutureAmount > 0 ? (s.value / totalFutureAmount) * 100 : 0;
                   const color = s.source === 'asaas' ? 'bg-purple-500' : 'bg-blue-500';
                   const label = s.source === 'asaas' ? '⚡ Cobrança Asaas' :
                                 s.source === 'manual' ? '✋ Registro manual' : s.source;
@@ -576,7 +556,7 @@ export default function CashFlow() {
             ) : (
               <div className="space-y-3">
                 {byBillingType.map(b => {
-                  const pct = totalFutureNet > 0 ? (b.value / totalFutureNet) * 100 : 0;
+                  const pct = totalFutureAmount > 0 ? (b.value / totalFutureAmount) * 100 : 0;
                   return (
                     <div key={b.type}>
                       <div className="flex items-center justify-between text-sm mb-1.5">
@@ -611,7 +591,7 @@ export default function CashFlow() {
           <p className="text-xs text-muted-foreground">Recebimentos realizados</p>
         </CardHeader>
         <CardContent>
-          {last6Data.every(d => d.bruto === 0) ? (
+          {last6Data.every(d => d.total === 0) ? (
             <p className="text-sm text-muted-foreground text-center py-6">Sem histórico de recebimentos.</p>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
@@ -625,7 +605,7 @@ export default function CashFlow() {
                   width={36}
                 />
                 <Tooltip content={<MonthlyChartTooltip />} />
-                <Line type="monotone" dataKey="liquido" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 4, fill: '#3b82f6' }} />
+                <Line type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 4, fill: '#3b82f6' }} />
               </LineChart>
             </ResponsiveContainer>
           )}
