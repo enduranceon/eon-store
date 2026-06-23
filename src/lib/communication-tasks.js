@@ -108,7 +108,7 @@ function mapById(rows = []) {
   return new Map(rows.map(row => [row.id, row]));
 }
 
-function groupEvents(events = []) {
+function groupContractEvents(events = []) {
   return events.reduce((acc, ev) => {
     if (!ev.contract_id) return acc;
     if (!acc.has(ev.contract_id)) acc.set(ev.contract_id, []);
@@ -117,12 +117,23 @@ function groupEvents(events = []) {
   }, new Map());
 }
 
-// Uma regra já foi enviada para este contrato quando existe um evento cujo
-// payload referencia o mesmo slug. Permite múltiplas regras do mesmo tipo
-// (ex.: renovação 30 e 7 dias antes) conviverem sem se cancelar.
+function groupSaleEvents(events = []) {
+  return events.reduce((acc, ev) => {
+    if (!ev.order_type || !ev.order_id) return acc;
+    const sourceType = ev.order_type === 'stock' ? 'stock' : 'presale';
+    const key = `${sourceType}:${ev.order_id}`;
+    if (!acc.has(key)) acc.set(key, []);
+    acc.get(key).push(ev);
+    return acc;
+  }, new Map());
+}
+
+// Uma regra já foi enviada quando existe histórico cujo payload/metadata
+// referencia o mesmo slug. Permite múltiplas regras do mesmo tipo conviverem
+// sem se cancelar.
 function ruleAlreadySent(events = [], rule) {
   if (!rule?.slug) return false;
-  return events.some(ev => (ev.payload?.rule_slug || null) === rule.slug);
+  return events.some(ev => (ev.payload?.rule_slug || ev.metadata?.rule_slug || null) === rule.slug);
 }
 
 function latestEvent(events = [], eventType) {
@@ -292,37 +303,47 @@ function baseTask(kind, bucket, sale, extra = {}) {
   };
 }
 
-function buildChargeTask(sale, todayStr, { sendRule, overdueRule }) {
-  if (TERMINAL_PAYMENT_STATUSES.has(sale.paymentStatus)) return null;
-  if (!OPEN_PAYMENT_STATUSES.has(sale.paymentStatus)) return null;
+function buildChargeTasks(sale, todayStr, { sendRule, overdueRules = [] }, events = []) {
+  if (TERMINAL_PAYMENT_STATUSES.has(sale.paymentStatus)) return [];
+  if (!OPEN_PAYMENT_STATUSES.has(sale.paymentStatus)) return [];
 
   const dueDelta = daysBetween(sale.dueDate, todayStr);
   const chargeEvidence = hasChargeInfo(sale) || Boolean(sale.paymentMessageSentAt);
 
-  if (overdueRule && sale.dueDate && dueDelta <= -Math.max(0, Number(overdueRule.days_offset) || 0) && chargeEvidence) {
-    return baseTask(TASK_KIND.CHARGE_OVERDUE, TASK_BUCKET.CHARGES, sale, withRule(overdueRule, {
-      title: 'Reenviar cobrança vencida',
-      statusLabel: `${Math.abs(dueDelta)} dia${Math.abs(dueDelta) === 1 ? '' : 's'} em atraso`,
-      scheduledDate: sale.dueDate,
-      sortDate: sale.dueDate,
-      priority: 10,
-      needsPaymentLink: !sale.asaasPaymentLink && !sale.asaasPixCopy,
-    }));
+  if (sale.dueDate && chargeEvidence) {
+    const dueOverdueRules = overdueRules
+      .filter(rule => {
+        const offset = Math.max(0, Number(rule.days_offset) || 0);
+        return dueDelta <= -offset && !ruleAlreadySent(events, rule);
+      })
+      .sort((a, b) => (Number(a.days_offset) || 0) - (Number(b.days_offset) || 0));
+
+    const overdueRule = dueOverdueRules[0];
+    if (overdueRule) {
+      return [baseTask(TASK_KIND.CHARGE_OVERDUE, TASK_BUCKET.CHARGES, sale, withRule(overdueRule, {
+        title: overdueRule.name || 'Reenviar cobrança vencida',
+        statusLabel: `${Math.abs(dueDelta)} dia${Math.abs(dueDelta) === 1 ? '' : 's'} em atraso`,
+        scheduledDate: sale.dueDate,
+        sortDate: addDays(sale.dueDate, overdueRule.days_offset),
+        priority: 10,
+        needsPaymentLink: !sale.asaasPaymentLink && !sale.asaasPixCopy,
+      }))];
+    }
   }
 
   if (sendRule && !sale.paymentMessageSentAt && ['awaiting_charge', 'pending'].includes(sale.paymentStatus)) {
     const scheduled = sale.dueDate || defaultPaymentDueDate();
-    return baseTask(TASK_KIND.CHARGE_SEND, TASK_BUCKET.CHARGES, sale, withRule(sendRule, {
+    return [baseTask(TASK_KIND.CHARGE_SEND, TASK_BUCKET.CHARGES, sale, withRule(sendRule, {
       title: 'Enviar cobrança',
       statusLabel: sale.dueDate ? `vence em ${formatDate(sale.dueDate)}` : 'definir vencimento',
       scheduledDate: scheduled,
       sortDate: scheduled,
       priority: 20,
       needsPaymentLink: !sale.asaasPaymentLink && !sale.asaasPixCopy,
-    }));
+    }))];
   }
 
-  return null;
+  return [];
 }
 
 function buildWelcomeTask(contractSale, events, todayStr, rule) {
@@ -401,7 +422,7 @@ export function buildCommunicationTasks(data, options = {}) {
   // onboarding e renovação suportam múltiplas regras convivendo.
   const chargeRules = {
     sendRule: (rulesByKind[TASK_KIND.CHARGE_SEND] || [])[0],
-    overdueRule: (rulesByKind[TASK_KIND.CHARGE_OVERDUE] || [])[0],
+    overdueRules: rulesByKind[TASK_KIND.CHARGE_OVERDUE] || [],
   };
   const welcomeRules = rulesByKind[TASK_KIND.ONBOARDING_WELCOME] || [];
   const checkinRules = rulesByKind[TASK_KIND.ONBOARDING_CHECKIN] || [];
@@ -412,15 +433,18 @@ export function buildCommunicationTasks(data, options = {}) {
     modalities: mapById(data.modalities || []),
     coaches: mapById(data.coaches || []),
   };
-  const eventsByContract = groupEvents(data.contractEvents || []);
+  const eventsByContract = groupContractEvents(data.contractEvents || []);
+  const eventsBySale = groupSaleEvents(data.saleEvents || []);
   const presaleSales = (data.presaleOrders || []).map(normalizePresale);
   const stockSales = (data.stockOrders || []).map(normalizeStock);
   const contractSales = (data.contracts || []).map(contract => normalizeContract(contract, maps));
   const tasks = [];
 
   [...presaleSales, ...stockSales, ...contractSales].forEach(sale => {
-    const task = buildChargeTask(sale, todayStr, chargeRules);
-    if (task) tasks.push(task);
+    const events = sale.sourceType === 'contract'
+      ? eventsByContract.get(sale.sourceId) || []
+      : eventsBySale.get(`${sale.sourceType}:${sale.sourceId}`) || [];
+    buildChargeTasks(sale, todayStr, chargeRules, events).forEach(task => tasks.push(task));
   });
 
   contractSales.forEach(contractSale => {

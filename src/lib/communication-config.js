@@ -21,11 +21,11 @@ Segue a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*{vencimento_text
   },
   {
     slug: 'billing-charge-overdue',
-    name: 'Reenviar cobranca vencida',
+    name: 'Cobranca vencida - 3 dias',
     journey: 'billing',
     trigger_event: 'charge_due_date',
     task_kind: 'charge_overdue',
-    days_offset: 1,
+    days_offset: 3,
     channel: 'whatsapp',
     active: true,
     order_index: 20,
@@ -34,6 +34,54 @@ Segue a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*{vencimento_text
 Estou passando porque a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*, venceu{vencimento_atraso}.
 
 {itens_bloco}{pix_bloco}{link_bloco}Se o pagamento ja foi realizado, pode desconsiderar esta mensagem. Qualquer duvida, estou por aqui.`,
+  },
+  {
+    slug: 'billing-charge-overdue-7d',
+    name: 'Cobranca vencida - 7 dias',
+    journey: 'billing',
+    trigger_event: 'charge_due_date',
+    task_kind: 'charge_overdue',
+    days_offset: 7,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 21,
+    message_template: `Ola, {nome}! Tudo bem?
+
+Passando novamente sobre a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*, que venceu{vencimento_atraso}.
+
+{itens_bloco}{pix_bloco}{link_bloco}Se voce precisar de algum ajuste ou quiser combinar outra forma de pagamento, me responde por aqui.`,
+  },
+  {
+    slug: 'billing-charge-overdue-10d',
+    name: 'Cobranca vencida - 10 dias',
+    journey: 'billing',
+    trigger_event: 'charge_due_date',
+    task_kind: 'charge_overdue',
+    days_offset: 10,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 22,
+    message_template: `Ola, {nome}! Tudo bem?
+
+A cobranca do seu {tipo} *{numero}*, no valor de *{valor}*, segue em aberto desde {vencimento_atraso}.
+
+{itens_bloco}{pix_bloco}{link_bloco}Consegue me dar um retorno sobre a previsao de pagamento? Assim eu mantenho tudo organizado por aqui.`,
+  },
+  {
+    slug: 'billing-charge-overdue-return-11d',
+    name: 'Retorno sobre cobranca vencida',
+    journey: 'billing',
+    trigger_event: 'charge_due_date',
+    task_kind: 'charge_overdue',
+    days_offset: 11,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 23,
+    message_template: `Ola, {nome}! Tudo bem?
+
+Estou te chamando para entender como podemos resolver a cobranca em aberto do seu {tipo} *{numero}*.
+
+{itens_bloco}Voce consegue me dar um retorno hoje? Pode ser para confirmar o pagamento, pedir um novo link ou combinar a melhor forma de regularizar.`,
   },
   {
     slug: 'onboarding-welcome',
