@@ -17,7 +17,7 @@ export const DEFAULT_COMMUNICATION_RULES = [
 
 Segue a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*{vencimento_texto}.
 
-{pix_bloco}{link_bloco}Se o pagamento ja foi realizado, pode desconsiderar esta mensagem. Qualquer duvida, estou por aqui.`,
+{itens_bloco}{pix_bloco}{link_bloco}Se o pagamento ja foi realizado, pode desconsiderar esta mensagem. Qualquer duvida, estou por aqui.`,
   },
   {
     slug: 'billing-charge-overdue',
@@ -33,7 +33,7 @@ Segue a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*{vencimento_text
 
 Estou passando porque a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*, venceu{vencimento_atraso}.
 
-{pix_bloco}{link_bloco}Se o pagamento ja foi realizado, pode desconsiderar esta mensagem. Qualquer duvida, estou por aqui.`,
+{itens_bloco}{pix_bloco}{link_bloco}Se o pagamento ja foi realizado, pode desconsiderar esta mensagem. Qualquer duvida, estou por aqui.`,
   },
   {
     slug: 'onboarding-welcome',

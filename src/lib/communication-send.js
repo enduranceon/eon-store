@@ -49,6 +49,8 @@ export async function registerCommunicationSend(task, options = {}) {
     rule_name: task.ruleName || null,
     channel: 'whatsapp',
     message,
+    item_summary: task.itemSummary || null,
+    items: task.items || [],
     due_date: dueDate || null,
     external_payment_link: trimmedLink || null,
     has_asaas_link: Boolean(task.asaasPaymentLink || task.asaasPixCopy),

@@ -63,6 +63,47 @@ function periodLabel(plan) {
   return map[plan.period] || `${plan.period_months || 1} meses`;
 }
 
+function variationLabel(variation) {
+  if (!variation) return '';
+  if (typeof variation === 'string') return variation.trim();
+  return String(variation.name || variation.label || variation.size || variation.gender || '').trim();
+}
+
+function normalizeSaleItems(items = []) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter(item => item && !item.cancelled)
+    .map((item, index) => {
+      const quantity = Math.max(1, Number(item.quantity) || 1);
+      const name = String(item.product_name || item.name || item.description || `Item ${index + 1}`).trim();
+      const variation = variationLabel(item.variation || item.variation_name);
+      const label = variation && !name.toLowerCase().includes(variation.toLowerCase())
+        ? `${name} - ${variation}`
+        : name;
+      const unitPrice = Number(item.sale_price ?? item.unit_price ?? item.price ?? 0) || 0;
+      const extrasTotal = Number(item.extras_total) || 0;
+      const lineTotal = Math.max(0, (unitPrice + extrasTotal) * quantity);
+      return { label, quantity, unitPrice, extrasTotal, lineTotal };
+    })
+    .filter(item => item.label);
+}
+
+function itemLines(items = []) {
+  return items
+    .map(item => {
+      const total = item.lineTotal > 0 ? ` - ${formatCurrency(item.lineTotal)}` : '';
+      return `- ${item.label} x${item.quantity || 1}${total}`;
+    })
+    .join('\n');
+}
+
+function itemSummary(items = []) {
+  if (!items.length) return '';
+  const first = items[0];
+  const suffix = items.length > 1 ? ` +${items.length - 1}` : '';
+  return `${first.label}${suffix}`;
+}
+
 function mapById(rows = []) {
   return new Map(rows.map(row => [row.id, row]));
 }
@@ -123,6 +164,7 @@ function isDueByOffset(baseDate, offset, todayStr) {
 }
 
 function normalizePresale(order) {
+  const items = normalizeSaleItems(order.items);
   return {
     sourceType: 'presale',
     tableName: 'presale_orders',
@@ -140,12 +182,15 @@ function normalizePresale(order) {
     asaasPixCopy: order.asaas_pix_copy,
     externalPaymentLink: order.external_payment_link,
     paymentMessageSentAt: order.payment_message_sent_at,
+    items,
+    itemSummary: itemSummary(items),
     href: `/pedidos/${order.id}`,
     createdAt: order.created_date,
   };
 }
 
 function normalizeStock(order) {
+  const items = normalizeSaleItems(order.items);
   return {
     sourceType: 'stock',
     tableName: 'stock_orders',
@@ -163,6 +208,8 @@ function normalizeStock(order) {
     asaasPixCopy: order.asaas_pix_copy,
     externalPaymentLink: order.external_payment_link,
     paymentMessageSentAt: order.payment_message_sent_at,
+    items,
+    itemSummary: itemSummary(items),
     href: `/estoque/pedidos/${order.id}`,
     createdAt: order.created_date,
   };
@@ -179,6 +226,9 @@ function normalizeContract(contract, maps) {
   const discount = Number(contract.manual_discount) || 0;
   const credit = Number(contract.credit_balance) || 0;
   const totalValue = Math.max(0, baseValue + enrollment - discount - credit);
+  const planLabel = periodLabel(planSnapshot.name ? planSnapshot : plan);
+  const contractItemLabel = [planLabel, modality.name || planSnapshot.modality_name].filter(Boolean).join(' - ');
+  const items = normalizeSaleItems([{ product_name: contractItemLabel || 'Contrato', quantity: 1, sale_price: totalValue }]);
 
   return {
     sourceType: 'contract',
@@ -204,9 +254,11 @@ function normalizeContract(contract, maps) {
     parentContractId: contract.parent_contract_id,
     plan,
     planSnapshot,
-    planLabel: periodLabel(planSnapshot.name ? planSnapshot : plan),
+    planLabel,
     modalityName: modality.name || planSnapshot.modality_name || '',
     coachName: coach.name || '',
+    items,
+    itemSummary: itemSummary(items),
     href: `/assessoria/contratos/${contract.id}`,
     createdAt: contract.created_at,
   };
@@ -232,6 +284,8 @@ function baseTask(kind, bucket, sale, extra = {}) {
     asaasPaymentLink: sale.asaasPaymentLink,
     asaasPixCopy: sale.asaasPixCopy,
     externalPaymentLink: sale.externalPaymentLink,
+    items: sale.items || [],
+    itemSummary: sale.itemSummary || '',
     href: sale.href,
     createdAt: sale.createdAt,
     ...extra,
@@ -396,12 +450,17 @@ function renderCommunicationTemplate(template, task, options = {}) {
   const saleType = task.sourceType === 'contract' ? 'contrato' : 'pedido';
   const due = dueDate ? formatDate(dueDate) : '';
   const daysToEnd = task.endDate ? daysBetween(task.endDate, todayLocalStr()) : null;
+  const items = task.items || [];
+  const itemsText = itemLines(items);
   const values = {
     '{nome}': firstName(task.customerName),
     '{nome_completo}': task.customerName || '',
     '{tipo}': saleType,
     '{numero}': task.orderNumber || '',
     '{valor}': formatCurrency(task.totalValue || 0),
+    '{item}': task.itemSummary || items[0]?.label || '',
+    '{itens}': itemsText,
+    '{itens_bloco}': itemsText ? `Itens:\n${itemsText}\n\n` : '',
     '{vencimento}': due,
     '{vencimento_texto}': due ? `, com vencimento em *${due}*` : '',
     '{vencimento_atraso}': due ? ` em *${due}*` : '',
@@ -434,6 +493,7 @@ export function buildTaskMessage(task, options = {}) {
   const paymentLink = paymentLinkFor(task, externalLink);
   const pixCopy = task.asaasPixCopy;
   const name = firstName(task.customerName);
+  const itemsText = itemLines(task.items || []);
 
   if (task.kind === TASK_KIND.CHARGE_SEND || task.kind === TASK_KIND.CHARGE_OVERDUE) {
     const saleType = task.sourceType === 'contract' ? 'contrato' : 'pedido';
@@ -444,6 +504,7 @@ export function buildTaskMessage(task, options = {}) {
     } else {
       msg += `Segue a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
     }
+    if (itemsText) msg += `Itens:\n${itemsText}\n\n`;
     if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
     if (paymentLink) msg += `Link de pagamento:\n${paymentLink}\n\n`;
     msg += 'Se o pagamento já foi realizado, pode desconsiderar esta mensagem. Qualquer dúvida, estou por aqui.';
