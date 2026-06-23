@@ -171,3 +171,50 @@ export async function saveCommunicationRule(rule) {
     .upsert(payload, { onConflict: 'slug' });
   if (error) throw error;
 }
+
+// trigger_event + task_kind são fixados pelo banco (CHECK), então ao criar uma
+// regra nova derivamos esses campos da jornada escolhida.
+const NEW_RULE_DEFAULTS = {
+  billing:      { task_kind: 'charge_send',        trigger_event: 'charge_created' },
+  onboarding:   { task_kind: 'onboarding_welcome', trigger_event: 'payment_confirmed' },
+  renewal:      { task_kind: 'renewal_reminder',   trigger_event: 'contract_end_date' },
+  reactivation: { task_kind: 'reactivation',       trigger_event: 'manual' },
+};
+
+function newRuleSlug(taskKind) {
+  return `${taskKind}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Regras novas/duplicadas começam inativas para não disparar tarefas antes de
+// serem revisadas.
+export async function createCommunicationRule(journey) {
+  const base = NEW_RULE_DEFAULTS[journey] || NEW_RULE_DEFAULTS.billing;
+  await saveCommunicationRule({
+    slug: newRuleSlug(base.task_kind),
+    name: 'Nova mensagem',
+    journey,
+    trigger_event: base.trigger_event,
+    task_kind: base.task_kind,
+    days_offset: 0,
+    channel: 'whatsapp',
+    message_template: 'Olá, {nome}! Tudo bem?\n\n',
+    active: false,
+    order_index: 99,
+  });
+}
+
+export async function duplicateCommunicationRule(rule) {
+  await saveCommunicationRule({
+    ...rule,
+    slug: newRuleSlug(rule.task_kind),
+    name: `Cópia de ${rule.name || 'mensagem'}`,
+    active: false,
+    order_index: (Number(rule.order_index) || 0) + 1,
+  });
+}
+
+export async function deleteCommunicationRule(id) {
+  if (!id) throw new Error('Regra sem id');
+  const { error } = await supabase.from('communication_rules').delete().eq('id', id);
+  if (error) throw error;
+}

@@ -76,8 +76,12 @@ function groupEvents(events = []) {
   }, new Map());
 }
 
-function hasEvent(events = [], eventType) {
-  return events.some(ev => ev.event_type === eventType);
+// Uma regra já foi enviada para este contrato quando existe um evento cujo
+// payload referencia o mesmo slug. Permite múltiplas regras do mesmo tipo
+// (ex.: renovação 30 e 7 dias antes) conviverem sem se cancelar.
+function ruleAlreadySent(events = [], rule) {
+  if (!rule?.slug) return false;
+  return events.some(ev => (ev.payload?.rule_slug || null) === rule.slug);
 }
 
 function latestEvent(events = [], eventType) {
@@ -95,7 +99,8 @@ function activeRulesByKind(rules = DEFAULT_COMMUNICATION_RULES) {
     .filter(rule => rule.active !== false)
     .sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0))
     .reduce((acc, rule) => {
-      if (!acc[rule.task_kind]) acc[rule.task_kind] = rule;
+      if (!acc[rule.task_kind]) acc[rule.task_kind] = [];
+      acc[rule.task_kind].push(rule);
       return acc;
     }, {});
 }
@@ -209,7 +214,7 @@ function normalizeContract(contract, maps) {
 
 function baseTask(kind, bucket, sale, extra = {}) {
   return {
-    id: `${kind}:${sale.sourceType}:${sale.sourceId}`,
+    id: `${extra.ruleSlug || kind}:${sale.sourceType}:${sale.sourceId}`,
     kind,
     bucket,
     sourceType: sale.sourceType,
@@ -233,14 +238,12 @@ function baseTask(kind, bucket, sale, extra = {}) {
   };
 }
 
-function buildChargeTask(sale, todayStr, rules) {
+function buildChargeTask(sale, todayStr, { sendRule, overdueRule }) {
   if (TERMINAL_PAYMENT_STATUSES.has(sale.paymentStatus)) return null;
   if (!OPEN_PAYMENT_STATUSES.has(sale.paymentStatus)) return null;
 
   const dueDelta = daysBetween(sale.dueDate, todayStr);
   const chargeEvidence = hasChargeInfo(sale) || Boolean(sale.paymentMessageSentAt);
-  const overdueRule = rules[TASK_KIND.CHARGE_OVERDUE];
-  const sendRule = rules[TASK_KIND.CHARGE_SEND];
 
   if (overdueRule && sale.dueDate && dueDelta <= -Math.max(0, Number(overdueRule.days_offset) || 0) && chargeEvidence) {
     return baseTask(TASK_KIND.CHARGE_OVERDUE, TASK_BUCKET.CHARGES, sale, withRule(overdueRule, {
@@ -268,20 +271,19 @@ function buildChargeTask(sale, todayStr, rules) {
   return null;
 }
 
-function buildWelcomeTask(contractSale, events, todayStr, rules) {
-  const rule = rules[TASK_KIND.ONBOARDING_WELCOME];
+function buildWelcomeTask(contractSale, events, todayStr, rule) {
   if (!rule) return null;
   if (contractSale.sourceType !== 'contract') return null;
   if (contractSale.paymentStatus !== 'paid') return null;
   if (contractSale.parentContractId) return null;
   if (!CONTRACT_OPERATIONAL_STATUSES.has(contractSale.contractStatus)) return null;
-  if (hasEvent(events, 'onboarding_welcome_sent')) return null;
+  if (ruleAlreadySent(events, rule)) return null;
   const baseDate = contractSale.paymentDate || toLocalDateStr(contractSale.createdAt) || todayLocalStr();
   if (!isDueByOffset(baseDate, rule.days_offset, todayStr)) return null;
 
   const scheduled = addDays(baseDate, rule.days_offset);
   return baseTask(TASK_KIND.ONBOARDING_WELCOME, TASK_BUCKET.ONBOARDING, contractSale, withRule(rule, {
-    title: 'Enviar boas-vindas',
+    title: rule.name || 'Enviar boas-vindas',
     statusLabel: contractSale.paymentDate ? `pagou em ${formatDate(contractSale.paymentDate)}` : 'pagamento confirmado',
     scheduledDate: scheduled,
     sortDate: scheduled,
@@ -293,19 +295,18 @@ function buildWelcomeTask(contractSale, events, todayStr, rules) {
   }));
 }
 
-function buildCheckinTask(contractSale, events, todayStr, rules) {
-  const rule = rules[TASK_KIND.ONBOARDING_CHECKIN];
+function buildCheckinTask(contractSale, events, todayStr, rule) {
   if (!rule) return null;
   if (contractSale.sourceType !== 'contract') return null;
   if (!CONTRACT_OPERATIONAL_STATUSES.has(contractSale.contractStatus)) return null;
-  if (hasEvent(events, 'onboarding_checkin_sent')) return null;
+  if (ruleAlreadySent(events, rule)) return null;
   const welcome = latestEvent(events, 'onboarding_welcome_sent');
   if (!welcome?.created_at) return null;
   const dueDate = addDays(toLocalDateStr(welcome.created_at), rule.days_offset);
   if (!dueDate || dueDate > todayStr) return null;
 
   return baseTask(TASK_KIND.ONBOARDING_CHECKIN, TASK_BUCKET.ONBOARDING, contractSale, withRule(rule, {
-    title: 'Check-in inicial',
+    title: rule.name || 'Check-in inicial',
     statusLabel: `boas-vindas em ${formatDate(welcome.created_at)}`,
     scheduledDate: dueDate,
     sortDate: dueDate,
@@ -316,19 +317,18 @@ function buildCheckinTask(contractSale, events, todayStr, rules) {
   }));
 }
 
-function buildRenewalTask(contractSale, events, todayStr, rules) {
-  const rule = rules[TASK_KIND.RENEWAL_REMINDER];
+function buildRenewalTask(contractSale, events, todayStr, rule) {
   if (!rule) return null;
   if (contractSale.sourceType !== 'contract') return null;
   if (contractSale.paymentStatus !== 'paid') return null;
   if (!CONTRACT_OPERATIONAL_STATUSES.has(contractSale.contractStatus)) return null;
-  if (hasEvent(events, 'renewal_message_sent')) return null;
+  if (ruleAlreadySent(events, rule)) return null;
   const daysToEnd = daysBetween(contractSale.endDate, todayStr);
   const windowDays = Math.abs(Number(rule.days_offset) || 0);
   if (daysToEnd === null || daysToEnd < 0 || daysToEnd > windowDays) return null;
 
   return baseTask(TASK_KIND.RENEWAL_REMINDER, TASK_BUCKET.RENEWAL, contractSale, withRule(rule, {
-    title: 'Renovação próxima',
+    title: rule.name || 'Renovação próxima',
     statusLabel: daysToEnd === 0 ? 'vence hoje' : `vence em ${daysToEnd} dia${daysToEnd === 1 ? '' : 's'}`,
     scheduledDate: contractSale.endDate,
     sortDate: contractSale.endDate,
@@ -342,7 +342,16 @@ function buildRenewalTask(contractSale, events, todayStr, rules) {
 
 export function buildCommunicationTasks(data, options = {}) {
   const todayStr = options.todayStr || todayLocalStr();
-  const rules = activeRulesByKind(options.rules || data.communicationRules || DEFAULT_COMMUNICATION_RULES);
+  const rulesByKind = activeRulesByKind(options.rules || data.communicationRules || DEFAULT_COMMUNICATION_RULES);
+  // Cobrança usa a regra primária (um pedido tem um único estado de pagamento);
+  // onboarding e renovação suportam múltiplas regras convivendo.
+  const chargeRules = {
+    sendRule: (rulesByKind[TASK_KIND.CHARGE_SEND] || [])[0],
+    overdueRule: (rulesByKind[TASK_KIND.CHARGE_OVERDUE] || [])[0],
+  };
+  const welcomeRules = rulesByKind[TASK_KIND.ONBOARDING_WELCOME] || [];
+  const checkinRules = rulesByKind[TASK_KIND.ONBOARDING_CHECKIN] || [];
+  const renewalRules = rulesByKind[TASK_KIND.RENEWAL_REMINDER] || [];
   const maps = {
     customers: mapById(data.customers || []),
     plans: mapById(data.plans || []),
@@ -356,18 +365,15 @@ export function buildCommunicationTasks(data, options = {}) {
   const tasks = [];
 
   [...presaleSales, ...stockSales, ...contractSales].forEach(sale => {
-    const task = buildChargeTask(sale, todayStr, rules);
+    const task = buildChargeTask(sale, todayStr, chargeRules);
     if (task) tasks.push(task);
   });
 
   contractSales.forEach(contractSale => {
     const events = eventsByContract.get(contractSale.sourceId) || [];
-    const welcome = buildWelcomeTask(contractSale, events, todayStr, rules);
-    const checkin = buildCheckinTask(contractSale, events, todayStr, rules);
-    const renewal = buildRenewalTask(contractSale, events, todayStr, rules);
-    if (welcome) tasks.push(welcome);
-    if (checkin) tasks.push(checkin);
-    if (renewal) tasks.push(renewal);
+    welcomeRules.forEach(rule => { const t = buildWelcomeTask(contractSale, events, todayStr, rule); if (t) tasks.push(t); });
+    checkinRules.forEach(rule => { const t = buildCheckinTask(contractSale, events, todayStr, rule); if (t) tasks.push(t); });
+    renewalRules.forEach(rule => { const t = buildRenewalTask(contractSale, events, todayStr, rule); if (t) tasks.push(t); });
   });
 
   return tasks.sort((a, b) => {

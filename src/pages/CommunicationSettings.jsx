@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, CalendarClock, Check, Info, Loader2, MessageCircle, Save, Settings } from 'lucide-react';
+import { ArrowLeft, CalendarClock, Check, Copy, Info, Loader2, MessageCircle, Plus, Save, Settings, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,9 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   DEFAULT_COMMUNICATION_RULES,
   DEFAULT_COMMUNITY_LINK,
+  createCommunicationRule,
+  deleteCommunicationRule,
+  duplicateCommunicationRule,
   loadCommunicationConfig,
   saveCommunicationRule,
   saveCommunityLink,
@@ -22,6 +25,8 @@ const JOURNEY_LABEL = {
   renewal: 'Renovação',
   reactivation: 'Reativação',
 };
+
+const JOURNEY_ORDER = ['billing', 'onboarding', 'renewal', 'reactivation'];
 
 const TRIGGER_LABEL = {
   charge_created: 'cobrança criada / venda aguardando cobrança',
@@ -63,7 +68,7 @@ function timingLabel(rule) {
   return `${Math.abs(days)} dia${Math.abs(days) === 1 ? '' : 's'} antes`;
 }
 
-function RuleEditor({ rule, disabled, onSaved }) {
+function RuleEditor({ rule, disabled, onSaved, onDeleted }) {
   const [draft, setDraft] = useState(rule);
   const [saving, setSaving] = useState(false);
 
@@ -75,6 +80,34 @@ function RuleEditor({ rule, disabled, onSaved }) {
       onSaved?.();
     } catch (e) {
       toast.error(e.message || 'Erro ao salvar regra');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const duplicate = async () => {
+    setSaving(true);
+    try {
+      await duplicateCommunicationRule(draft);
+      toast.success('Regra duplicada (inativa)');
+      onSaved?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao duplicar regra');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!draft.id) return;
+    if (!window.confirm(`Excluir a regra "${draft.name}"? Esta ação não pode ser desfeita.`)) return;
+    setSaving(true);
+    try {
+      await deleteCommunicationRule(draft.id);
+      toast.success('Regra excluída');
+      onDeleted?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao excluir regra');
     } finally {
       setSaving(false);
     }
@@ -156,7 +189,17 @@ function RuleEditor({ rule, disabled, onSaved }) {
           />
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={duplicate} disabled={disabled || saving} className="gap-1.5">
+              <Copy className="w-3.5 h-3.5" /> Duplicar
+            </Button>
+            {draft.id && (
+              <Button variant="ghost" size="sm" onClick={remove} disabled={disabled || saving} className="gap-1.5 text-red-600 hover:text-red-700">
+                <Trash2 className="w-3.5 h-3.5" /> Excluir
+              </Button>
+            )}
+          </div>
           <Button onClick={save} disabled={disabled || saving} className="gap-1.5">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             Salvar regra
@@ -170,6 +213,7 @@ function RuleEditor({ rule, disabled, onSaved }) {
 export default function CommunicationSettings() {
   const [loading, setLoading] = useState(true);
   const [savingLink, setSavingLink] = useState(false);
+  const [creatingJourney, setCreatingJourney] = useState(null);
   const [config, setConfig] = useState({
     available: true,
     communityLink: DEFAULT_COMMUNITY_LINK,
@@ -187,6 +231,19 @@ export default function CommunicationSettings() {
       toast.error(e.message || 'Erro ao carregar configurações');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCreate = async (journey) => {
+    setCreatingJourney(journey);
+    try {
+      await createCommunicationRule(journey);
+      toast.success('Regra criada (inativa). Edite e ative quando estiver pronta.');
+      await load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao criar regra');
+    } finally {
+      setCreatingJourney(null);
     }
   };
 
@@ -325,21 +382,39 @@ export default function CommunicationSettings() {
         </CardContent>
       </Card>
 
-      {Object.entries(groupedRules).map(([journey, rules]) => (
-        <div key={journey} className="space-y-3">
-          <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
-            {JOURNEY_LABEL[journey] || journey}
-          </h3>
-          {rules.map(rule => (
-            <RuleEditor
-              key={`${rule.slug}:${rule.updated_at || ''}:${rule.active}`}
-              rule={rule}
-              disabled={!config.available}
-              onSaved={load}
-            />
-          ))}
-        </div>
-      ))}
+      {JOURNEY_ORDER.map(journey => {
+        const rules = groupedRules[journey] || [];
+        return (
+          <div key={journey} className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
+                {JOURNEY_LABEL[journey] || journey}
+              </h3>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                disabled={!config.available || creatingJourney === journey}
+                onClick={() => handleCreate(journey)}
+              >
+                {creatingJourney === journey ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                Nova regra
+              </Button>
+            </div>
+            {rules.length === 0 ? (
+              <p className="text-sm text-muted-foreground px-1 py-2">Nenhuma regra nesta jornada ainda.</p>
+            ) : rules.map(rule => (
+              <RuleEditor
+                key={`${rule.slug}:${rule.updated_at || ''}:${rule.active}`}
+                rule={rule}
+                disabled={!config.available}
+                onSaved={load}
+                onDeleted={load}
+              />
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
