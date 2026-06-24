@@ -133,6 +133,30 @@ function ConfirmModal({ data, onClose, onDone }) {
 
       <div className="space-y-4 mt-2">
         {/* Resumo */}
+        {/* Dados para cobrança */}
+        <div className="border rounded-xl p-3 space-y-1.5">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Dados para cobrança</p>
+          {[
+            { label: 'Nome',      value: customer?.full_name },
+            { label: 'WhatsApp',  value: customer?.whatsapp },
+            { label: 'E-mail',    value: customer?.email },
+            { label: 'CPF',       value: customer?.cpf },
+          ].map(({ label, value }) => value ? (
+            <div key={label} className="flex items-center justify-between gap-2 text-sm">
+              <span className="text-muted-foreground text-xs w-16 shrink-0">{label}</span>
+              <span className="flex-1 font-medium truncate">{value}</span>
+              <button
+                type="button"
+                onClick={() => { navigator.clipboard.writeText(value); toast.success(`${label} copiado!`); }}
+                className="text-blue-500 hover:text-blue-700 shrink-0 p-1 rounded hover:bg-blue-50"
+                title={`Copiar ${label}`}
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : null)}
+        </div>
+
         <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
           <p className="font-semibold text-gray-900 text-base">{customer?.full_name}</p>
           {customer?.whatsapp && (
@@ -411,7 +435,7 @@ export default function Prospects() {
       const modalityIds = [...new Set(list.map(d => d.plan_snapshot?.modality_id).filter(Boolean))];
 
       const [custRes, coachRes, modRes] = await Promise.all([
-        customerIds.length ? supabase.from('presale_customers').select('id, full_name, whatsapp, cpf').in('id', customerIds) : Promise.resolve({ data: [] }),
+        customerIds.length ? supabase.from('presale_customers').select('id, full_name, whatsapp, email, cpf').in('id', customerIds) : Promise.resolve({ data: [] }),
         coachIds.length    ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds)                        : Promise.resolve({ data: [] }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds)                  : Promise.resolve({ data: [] }),
       ]);
