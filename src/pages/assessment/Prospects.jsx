@@ -78,12 +78,17 @@ function ConfirmModal({ data, onClose, onDone }) {
   const doConfirm = async (goToMessage) => {
     setConfirming(true);
     try {
+      const hasLink = !!paymentLink.trim();
       const updates = {
-        status: 'active',
+        status:          'active',
         enrollment_fee:  localEnrollment,
         manual_discount: localDiscount,
+        payment_status:  hasLink ? 'charge_sent' : 'awaiting_charge',
       };
-      if (paymentLink.trim()) updates.external_payment_link = paymentLink.trim();
+      if (hasLink) {
+        updates.external_payment_link    = paymentLink.trim();
+        updates.payment_message_sent_at  = new Date().toISOString();
+      }
 
       await AssessmentContract.update(draft.id, updates);
       await AssessmentContractEvent.create({
