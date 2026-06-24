@@ -62,12 +62,14 @@ function buildMessage(draft, customer, coach, modality, paymentLink) {
 
 function ConfirmModal({ data, onClose, onDone }) {
   const { draft, customer, coach, modality } = data;
-  const [step,         setStep]         = useState('confirm'); // 'confirm' | 'message'
-  const [paymentLink,  setPaymentLink]  = useState('');
-  const [confirming,   setConfirming]   = useState(false);
-  const [copied,       setCopied]       = useState(false);
+  const [step,              setStep]              = useState('confirm'); // 'confirm' | 'message'
+  const [paymentLink,       setPaymentLink]       = useState('');
+  const [confirming,        setConfirming]        = useState(false);
+  const [copied,            setCopied]            = useState(false);
+  const [localEnrollment,   setLocalEnrollment]   = useState(Number(draft.enrollment_fee || 0));
+  const [localDiscount,     setLocalDiscount]     = useState(Number(draft.manual_discount || 0));
 
-  const total        = contractTotal(draft);
+  const total        = Math.max(0, Number(draft.plan_snapshot?.price_total ?? 0) + localEnrollment - localDiscount);
   const installments = draft.installments || 1;
   const months       = draft.plan_snapshot?.period_months || 1;
   const planName     = draft.plan_snapshot?.name
@@ -76,7 +78,11 @@ function ConfirmModal({ data, onClose, onDone }) {
   const doConfirm = async (goToMessage) => {
     setConfirming(true);
     try {
-      const updates = { status: 'active' };
+      const updates = {
+        status: 'active',
+        enrollment_fee:  localEnrollment,
+        manual_discount: localDiscount,
+      };
       if (paymentLink.trim()) updates.external_payment_link = paymentLink.trim();
 
       await AssessmentContract.update(draft.id, updates);
@@ -100,7 +106,8 @@ function ConfirmModal({ data, onClose, onDone }) {
     }
   };
 
-  const message = buildMessage(draft, customer, coach, modality, paymentLink);
+  const effectiveDraft = { ...draft, enrollment_fee: localEnrollment, manual_discount: localDiscount };
+  const message = buildMessage(effectiveDraft, customer, coach, modality, paymentLink);
 
   const copyMessage = () => {
     navigator.clipboard.writeText(message);
@@ -155,9 +162,49 @@ function ConfirmModal({ data, onClose, onDone }) {
               }
             </span>
           </div>
-          {Number(draft.enrollment_fee) > 0 && (
-            <p className="text-xs text-amber-700 mt-1 pt-2 border-t">
-              Matrícula: {formatCurrency(draft.enrollment_fee)} · cobrada na 1ª mensalidade
+        </div>
+
+        {/* Ajustes antes de confirmar */}
+        <div className="space-y-3 border rounded-xl p-3 bg-gray-50">
+          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Ajustes (opcional)</p>
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <Label className="text-xs text-amber-700 mb-1 block">Taxa de matrícula</Label>
+              <input
+                type="number" min="0" step="0.01"
+                value={localEnrollment}
+                onChange={e => setLocalEnrollment(Math.max(0, Number(e.target.value)))}
+                className="w-full border rounded-lg px-2.5 py-1.5 text-sm"
+              />
+            </div>
+            {localEnrollment > 0 && (
+              <button type="button" onClick={() => setLocalEnrollment(0)}
+                className="text-xs text-red-500 hover:underline mt-5 shrink-0">
+                Zerar
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <Label className="text-xs text-blue-700 mb-1 block">Desconto manual (R$)</Label>
+              <input
+                type="number" min="0" step="0.01"
+                value={localDiscount}
+                onChange={e => setLocalDiscount(Math.max(0, Number(e.target.value)))}
+                className="w-full border rounded-lg px-2.5 py-1.5 text-sm"
+              />
+            </div>
+            {localDiscount > 0 && (
+              <button type="button" onClick={() => setLocalDiscount(0)}
+                className="text-xs text-red-500 hover:underline mt-5 shrink-0">
+                Remover
+              </button>
+            )}
+          </div>
+          {(localEnrollment !== Number(draft.enrollment_fee || 0) || localDiscount !== Number(draft.manual_discount || 0)) && (
+            <p className="text-xs text-green-700 font-semibold">
+              Total ajustado: {formatCurrency(total)}
+              {installments > 1 && <span className="font-normal text-muted-foreground ml-1">({installments}x de {formatCurrency(total / installments)})</span>}
             </p>
           )}
         </div>

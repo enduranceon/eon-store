@@ -128,7 +128,7 @@ export default function StudentDetail() {
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Contratos ({contracts.length})</CardTitle>
-            <Button size="sm" onClick={() => navigate('/assessoria/contratos/novo')}><Plus className="w-3.5 h-3.5 mr-1" /> Novo contrato</Button>
+            <Button size="sm" onClick={() => navigate(`/assessoria/contratos/novo?customer_id=${id}`)}><Plus className="w-3.5 h-3.5 mr-1" /> Novo contrato</Button>
           </div>
         </CardHeader>
         <CardContent className="pt-0">
