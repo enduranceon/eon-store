@@ -158,11 +158,7 @@ function ConfirmModal({ data, onClose, onDone }) {
         </div>
 
         <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
-          <p className="font-semibold text-gray-900 text-base">{customer?.full_name}</p>
-          {customer?.whatsapp && (
-            <p className="text-muted-foreground text-xs">{customer.whatsapp}</p>
-          )}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
             <span className="text-muted-foreground">Plano</span>
             <span className="font-medium">{planName}</span>
             <span className="text-muted-foreground">Modalidade</span>
@@ -548,7 +544,7 @@ export default function Prospects() {
 
       {/* Modal de confirmação + mensagem */}
       <Dialog open={!!modal} onOpenChange={open => { if (!open) { setModal(null); load(); } }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           {modal && (
             <ConfirmModal
               data={modal}
