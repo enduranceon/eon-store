@@ -19,25 +19,60 @@ function daysInMonth(yyyymm) {
   return new Date(y, m, 0).getDate();
 }
 
-function clamp(date, start, end) {
-  // retorna quantos dias do contrato estão dentro do mês
-  const s = date.monthStart > start ? date.monthStart : start;
-  const e = date.monthEnd   < end   ? date.monthEnd   : end;
-  if (s > e) return 0;
-  return Math.round((e - s) / 86400000) + 1;
+const DAY_MS = 86400000;
+
+function parseDateUTC(value, fallback = null) {
+  if (!value) return fallback;
+  const [y, m, d] = String(value).slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return fallback;
+  return new Date(Date.UTC(y, m - 1, d));
 }
 
-function activeDaysInMonth(startDate, endDate, yyyymm) {
+function monthRangeUTC(yyyymm) {
   const [y, m] = yyyymm.split('-').map(Number);
-  const monthStart = new Date(y, m - 1, 1);
-  const monthEnd   = new Date(y, m, 0);
-  const cs = new Date(startDate);
-  const ce = endDate ? new Date(endDate) : new Date('2099-12-31');
+  return {
+    monthStart: new Date(Date.UTC(y, m - 1, 1)),
+    monthEnd: new Date(Date.UTC(y, m, 0)),
+    monthEndExclusive: new Date(Date.UTC(y, m, 1)),
+  };
+}
 
-  const s = cs > monthStart ? cs : monthStart;
-  const e = ce < monthEnd   ? ce : monthEnd;
-  if (s > e) return 0;
-  return Math.round((e - s) / 86400000) + 1;
+function monthBoundsStr(yyyymm) {
+  const { monthStart, monthEnd } = monthRangeUTC(yyyymm);
+  return {
+    monthStartStr: monthStart.toISOString().slice(0, 10),
+    monthEndStr: monthEnd.toISOString().slice(0, 10),
+  };
+}
+
+function activeDayKeysInMonth(startDate, endDate, yyyymm) {
+  const { monthStart, monthEndExclusive } = monthRangeUTC(yyyymm);
+  const contractStart = parseDateUTC(startDate, monthStart);
+  let rawEnd = endDate ? parseDateUTC(endDate, monthEndExclusive) : monthEndExclusive;
+  if (endDate && rawEnd.getTime() === contractStart.getTime()) {
+    rawEnd = new Date(rawEnd.getTime() + DAY_MS);
+  }
+  const endExclusive = rawEnd < monthEndExclusive ? rawEnd : monthEndExclusive;
+  const current = contractStart > monthStart ? new Date(contractStart) : new Date(monthStart);
+  const keys = [];
+
+  while (current < endExclusive) {
+    keys.push(current.toISOString().slice(0, 10));
+    current.setTime(current.getTime() + DAY_MS);
+  }
+
+  return keys;
+}
+
+function platformStudentCount(contracts) {
+  return new Set(contracts.map(c => c.customer_id).filter(Boolean)).size;
+}
+
+function summarizeLabels(labels, fallback = '—') {
+  const unique = [...new Set(labels.filter(Boolean))];
+  if (unique.length === 0) return fallback;
+  if (unique.length === 1) return unique[0];
+  return `${unique[0]} +${unique.length - 1}`;
 }
 
 function getTier(tiers, totalStudents) {
@@ -121,7 +156,7 @@ function CoachRepasseCard({ entry, expanded, onToggle }) {
             {/* Linha de faixa atual */}
             {entry.tier && (
               <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600">
-                <span className="font-medium">Faixa atual:</span> {entry.tier.tier_name} ({entry.totalPlatformStudents} alunos na plataforma) ·
+                <span className="font-medium">Faixa atual:</span> {entry.tier.tier_name} ({entry.totalPlatformStudents} alunos pagos no mês) ·
                 Incremento +{formatCurrency(entry.tier.incremento)}/aluno ·
                 Bônus líder +{formatCurrency(entry.tier.bonus_lider)}/aluno ·
                 Bônus co-líder +{formatCurrency(entry.tier.bonus_co_lider)}/aluno
@@ -141,7 +176,9 @@ function CoachRepasseCard({ entry, expanded, onToggle }) {
                         'bg-amber-400'
                       )} />
                       <span className="flex-1 text-gray-700 truncate">{row.studentName}</span>
-                      <span className="text-gray-400 shrink-0">{row.modality} · {row.daysActive}d/{row.daysInMonth}d</span>
+                      <span className="text-gray-400 shrink-0" title={row.contracts?.join(', ')}>
+                        {row.modality} · {row.daysActive}d/{row.daysInMonth}d{row.contractCount > 1 ? ` · ${row.contractCount} contratos` : ''}
+                      </span>
                       <span className={cn('font-semibold shrink-0',
                         row.type === 'own'     ? 'text-blue-700' :
                         row.type === 'led'     ? 'text-green-700' :
@@ -193,12 +230,16 @@ export default function Repasse() {
   const load = useCallback(async () => {
     const todayStr = todayLocalStr();
     const curMonth = todayStr.slice(0, 7);
+    const { monthStartStr, monthEndStr } = monthBoundsStr(curMonth);
 
     const [coachesRes, contractsRes, plansRes, modalitiesRes, customersRes, repasseRes, tiersRes] = await Promise.all([
       supabase.from('assessment_coaches').select('id, name, role, leader_id, co_leader_ids'),
       supabase.from('assessment_contracts')
-        .select('id, coach_id, plan_id, customer_id, status, start_date, end_date')
-        .in('status', ['active', 'overdue']),
+        .select('id, contract_number, coach_id, plan_id, customer_id, status, payment_status, start_date, end_date')
+        .not('status', 'in', '("cancelled","draft","voided")')
+        .eq('payment_status', 'paid')
+        .lte('start_date', monthEndStr)
+        .or(`end_date.is.null,end_date.gte.${monthStartStr}`),
       supabase.from('assessment_plans').select('id, modality_id, price_monthly'),
       supabase.from('assessment_modalities').select('id, name'),
       supabase.from('presale_customers').select('id, full_name'),
@@ -219,8 +260,17 @@ export default function Repasse() {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
-    load().catch(console.error).finally(() => setLoading(false));
+    let active = true;
+    const timer = setTimeout(() => {
+      setLoading(true);
+      load().catch(console.error).finally(() => {
+        if (active) setLoading(false);
+      });
+    }, 0);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [load]);
 
   const handleRefresh = async () => {
@@ -251,7 +301,7 @@ export default function Repasse() {
   const coachEntries = useMemo(() => {
     const curMonth = data.todayStr.slice(0, 7);
     const totalDays = daysInMonth(curMonth);
-    const totalPlatformStudents = data.contracts.length;
+    const totalPlatformStudents = platformStudentCount(data.contracts);
     const tier = getTier(data.tiers, totalPlatformStudents);
 
     return data.coaches.map(coach => {
@@ -276,40 +326,67 @@ export default function Repasse() {
         secondLevelReports.some(r => r.id === c.coach_id)
       );
 
-      // Função que calcula o valor de um contrato pra um tipo de relação
-      const calcContract = (contract, type) => {
-        const plan     = planMap[contract.plan_id];
-        if (!plan) return null;
-        const modality = modalityMap[plan.modality_id];
-        const customer = customerMap[contract.customer_id];
-        const days     = activeDaysInMonth(contract.start_date, contract.end_date, curMonth);
-        if (days <= 0) return null;
+      const calcContracts = (contracts, type) => {
+        const groups = new Map();
 
-        const proportion = days / totalDays;
+        for (const contract of contracts) {
+          const plan = planMap[contract.plan_id];
+          if (!plan) continue;
 
-        let value = 0;
-        if (type === 'own') {
-          const base = repasseMap[`${coach.role}:${plan.modality_id}`] || 0;
-          value = proportion * (base + (tier?.incremento || 0));
-        } else if (type === 'led') {
-          value = proportion * (tier?.bonus_lider || 0);
-        } else {
-          value = proportion * (tier?.bonus_co_lider || 0);
+          const dayKeys = activeDayKeysInMonth(contract.start_date, contract.end_date, curMonth);
+          if (dayKeys.length === 0) continue;
+
+          const modality = modalityMap[plan.modality_id];
+          const customer = customerMap[contract.customer_id];
+          const groupKey = `${type}:${contract.customer_id || contract.id}`;
+
+          let dailyAmount;
+          if (type === 'own') {
+            const base = repasseMap[`${coach.role}:${plan.modality_id}`] || 0;
+            dailyAmount = (base + (tier?.incremento || 0)) / totalDays;
+          } else if (type === 'led') {
+            dailyAmount = (tier?.bonus_lider || 0) / totalDays;
+          } else {
+            dailyAmount = (tier?.bonus_co_lider || 0) / totalDays;
+          }
+
+          if (!groups.has(groupKey)) {
+            groups.set(groupKey, {
+              type,
+              studentName: customer?.full_name || '—',
+              modalities: new Set(),
+              contracts: new Set(),
+              dailyValues: new Map(),
+            });
+          }
+
+          const group = groups.get(groupKey);
+          group.modalities.add(modality?.name);
+          group.contracts.add(contract.contract_number || contract.id);
+          for (const key of dayKeys) {
+            group.dailyValues.set(key, Math.max(group.dailyValues.get(key) || 0, dailyAmount));
+          }
         }
 
-        return {
-          type,
-          studentName:  customer?.full_name || '—',
-          modality:     modality?.name || '—',
-          daysActive:   days,
-          daysInMonth:  totalDays,
-          value,
-        };
+        return [...groups.values()].map(group => {
+          const value = [...group.dailyValues.values()].reduce((s, v) => s + v, 0);
+          const contractsList = [...group.contracts];
+          return {
+            type: group.type,
+            studentName: group.studentName,
+            modality: summarizeLabels([...group.modalities]),
+            daysActive: group.dailyValues.size,
+            daysInMonth: totalDays,
+            contractCount: contractsList.length,
+            contracts: contractsList,
+            value,
+          };
+        });
       };
 
-      const ownBreakdown    = ownContracts.map(c => calcContract(c, 'own')).filter(Boolean);
-      const ledBreakdown    = ledContracts.map(c => calcContract(c, 'led')).filter(Boolean);
-      const coLedBreakdown  = coLedContracts.map(c => calcContract(c, 'co_led')).filter(Boolean);
+      const ownBreakdown    = calcContracts(ownContracts, 'own');
+      const ledBreakdown    = calcContracts(ledContracts, 'led');
+      const coLedBreakdown  = calcContracts(coLedContracts, 'co_led');
 
       const breakdown = [...ownBreakdown, ...ledBreakdown, ...coLedBreakdown];
 
@@ -322,9 +399,9 @@ export default function Repasse() {
         coach,
         tier,
         totalPlatformStudents,
-        ownStudents:    ownContracts.length,
-        ledStudents:    ledContracts.length,
-        coLedStudents:  coLedContracts.length,
+        ownStudents:    ownBreakdown.length,
+        ledStudents:    ledBreakdown.length,
+        coLedStudents:  coLedBreakdown.length,
         breakdown,
         ownTotal,
         ledTotal,
@@ -335,6 +412,7 @@ export default function Repasse() {
   }, [data, planMap, modalityMap, customerMap, repasseMap]);
 
   const totalRepasse = useMemo(() => coachEntries.reduce((s, e) => s + e.total, 0), [coachEntries]);
+  const totalPlatformStudents = useMemo(() => platformStudentCount(data.contracts), [data.contracts]);
 
   const curMonth = data.todayStr.slice(0, 7);
   const [y, m] = curMonth.split('-');
@@ -349,7 +427,7 @@ export default function Repasse() {
     );
   }
 
-  const currentTier = getTier(data.tiers, data.contracts.length);
+  const currentTier = getTier(data.tiers, totalPlatformStudents);
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
@@ -372,7 +450,7 @@ export default function Repasse() {
         <div className="flex-1 min-w-0">
           <p className="text-sm text-blue-900 font-medium">Esta página é uma previsão em tempo real</p>
           <p className="text-xs text-blue-700 mt-0.5">
-            Os valores são calculados com base nos contratos ativos agora e não estão salvos em lugar nenhum.
+            Os valores são calculados com base nos contratos pagos com dias válidos neste mês e não estão salvos em lugar nenhum.
             No fim do mês, gere o <strong>Fechamento Mensal</strong> para congelar os valores, adicionar ajustes e registrar o pagamento dos coaches.
           </p>
         </div>
@@ -396,8 +474,8 @@ export default function Repasse() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs text-gray-500">Alunos na plataforma</p>
-            <p className="text-2xl font-bold text-gray-900 mt-0.5">{data.contracts.length}</p>
+            <p className="text-xs text-gray-500">Alunos pagos no mês</p>
+            <p className="text-2xl font-bold text-gray-900 mt-0.5">{totalPlatformStudents}</p>
           </CardContent>
         </Card>
         <Card>

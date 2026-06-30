@@ -398,7 +398,7 @@ export default function Financial() {
         const contracts = buildContractLifecycleRows(contractRes.data || [], { plansById: plansMap })
           .filter(c =>
             !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type) &&
-            (c.lifecycle?.counts?.active || c.payment_status === 'paid')
+            (c.lifecycle?.counts?.active || c.payment_status === 'paid' || isEffectiveOpenSale(c))
           )
           .map(c => {
             const plan = plansMap[c.plan_id];

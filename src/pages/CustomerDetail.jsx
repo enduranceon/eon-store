@@ -215,10 +215,7 @@ export default function CustomerDetail() {
   // ── Pagamentos em aberto (contratos + pedidos não pagos) ────────────────────
   const todayStr = new Date().toISOString().slice(0, 10);
   const openContracts = lifecycleRows
-    .filter(c =>
-      c.lifecycle?.counts?.active &&
-      !['paid', 'refunded', 'cancelled'].includes(c.payment_status)
-    )
+    .filter(isEffectiveOpenSale)
     .map(c => {
       const daysOverdue = c.due_date && c.due_date < todayStr
         ? Math.round((new Date(todayStr) - new Date(c.due_date)) / 86400000)
