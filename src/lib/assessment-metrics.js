@@ -7,6 +7,7 @@ import {
   buildContractLifecycleRows,
   getContractMonthlyValue,
   getLifecycleMonthStart,
+  isContractPaymentOverdue,
   isContractVoidedSale,
 } from '@/lib/assessment-contract-lifecycle';
 
@@ -25,7 +26,8 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
 
   // ── Base ativa ──────────────────────────────────────────────────
   const active = lifecycleRows.filter(c => c.lifecycle.counts.active);
-  const overdue = lifecycleRows.filter(c => c.status === 'overdue' && c.lifecycle.counts.active);
+  const overdue = active.filter(c => isContractPaymentOverdue(c, today));
+  const overdueStudentIds = new Set(overdue.map(c => c.customer_id).filter(Boolean));
   const activeStudentIds = new Set(active.map(c => c.customer_id));
 
   // ── MRR (receita recorrente mensal) ─────────────────────────────
@@ -66,8 +68,8 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
   // Permanência média estimada em meses (1 / churn mensal)
   const avgMonths = churnRate > 0 ? 100 / churnRate : null;
 
-  // ── Inadimplência (contratos vencidos/atrasados) ────────────────
-  const inadimplenciaValor = overdue.reduce((acc, c) => acc + (c.monthly || 0), 0);
+  // ── Inadimplência financeira: cobrança vencida em contrato ativo ─
+  const inadimplenciaValor = overdue.reduce((acc, c) => acc + (c.value || c.monthly || 0), 0);
 
   // ── Contratos vencendo nos próximos 30 dias ─────────────────────
   const expiring = lifecycleRows.filter(c =>
@@ -91,7 +93,7 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
     renovacoesNoMes: renovacoesNoMes.length,
     saidasNoMes: saidasNoMes.length,
     saldoAlunos,
-    inadimplentes: overdue.length,
+    inadimplentes: overdueStudentIds.size,
     inadimplenciaValor,
     expiring: expiring.length,
   };

@@ -4,10 +4,10 @@ import { Users, Search, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan } from '@/api/entities';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
-import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
+import { buildContractLifecycleRows, isContractPaymentOverdue } from '@/lib/assessment-contract-lifecycle';
 
 async function loadCustomersPage() {
   const [customers, orders, contracts, plans] = await Promise.all([
@@ -43,15 +43,17 @@ export default function Customers() {
     () => buildContractLifecycleRows(contracts, { plansById }),
     [contracts, plansById]
   );
+  const today = todayLocalStr();
 
-  // Deriva o status do aluno a partir dos contratos (estilo Tecnofit)
+  // Deriva o status do aluno a partir dos contratos.
+  // Inadimplente é cobrança vencida; contrato vencido sem cobrança atrasada segue como ativo operacional.
   const getAssessmentStatus = (clientContracts) => {
     if (clientContracts.length === 0) return 'none';
     const activeContracts = clientContracts.filter(c => c.lifecycle?.counts?.active);
+    if (activeContracts.some(c => isContractPaymentOverdue(c, today))) return 'overdue';
     const statuses = activeContracts.map(c => c.status);
-    if (statuses.includes('overdue'))   return 'overdue';   // Inadimplente
     if (statuses.includes('on_leave'))  return 'on_leave';  // Em licença
-    if (statuses.includes('active'))    return 'active';    // Ativo
+    if (activeContracts.length > 0)     return 'active';    // Ativo operacional
     return 'inactive';                                      // Todos encerrados
   };
 

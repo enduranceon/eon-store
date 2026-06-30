@@ -129,6 +129,14 @@ export function isContractVoidedSale(contract) {
   return reasonMarksVoided || noMoneyMoved;
 }
 
+export function isContractPaymentOverdue(contract, today = todayLocalStr()) {
+  if (!contract?.due_date) return false;
+  if (!OPEN_PAYMENT_STATUSES.has(contract.payment_status)) return false;
+
+  const dueDate = getContractLocalDate(contract.due_date);
+  return !!dueDate && dueDate < today;
+}
+
 function getReplacementContract(contract, allContracts = []) {
   if (!contract?.customer_id) return null;
   const cancelDate =

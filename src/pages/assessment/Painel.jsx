@@ -4,37 +4,25 @@ import {
   Users, FileText, AlertTriangle, TrendingUp, RefreshCw,
   ChevronRight, CheckCircle2, Clock, XCircle, RotateCcw,
   UserPlus, UserMinus, Activity, Award, TrendingDown,
-  MessageCircle, Check, CalendarClock, Zap,
+  Cake,
 } from 'lucide-react';
-import { supabase } from '@/api/db';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
   AssessmentContract, AssessmentPlan, AssessmentModality,
-  AssessmentCoach, PreSaleCustomer, RenewalRule, ContractRenewalAction,
+  AssessmentCoach, PreSaleCustomer,
 } from '@/api/entities';
-import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr, renderMessageTemplate } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { computeMrrHistory } from '@/lib/assessment-metrics';
 import {
   buildContractLifecycleRows,
   getLifecycleMonthStart,
+  isContractPaymentOverdue,
 } from '@/lib/assessment-contract-lifecycle';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts';
-import { defaultPaymentDueDate } from '@/lib/payment-methods';
-import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { toast } from 'sonner';
-
-// Calcula end_date a partir de start_date + duração do plano
-function addPeriod(startStr, plan) {
-  const d = new Date(startStr + 'T12:00:00');
-  const months = plan?.period_months
-    || { mensal: 1, trimestral: 3, semestral: 6, anual: 12 }[plan?.period]
-    || 1;
-  d.setMonth(d.getMonth() + months);
-  return toLocalDateStr(d);
-}
 
 function periodLabel(plan) {
   const m = plan?.period_months
@@ -44,9 +32,20 @@ function periodLabel(plan) {
   return names[m] || `${m} meses`;
 }
 
-// Wrapper local que adiciona periodLabel ao contexto pro template util
-function renderTemplate(template, ctx) {
-  return renderMessageTemplate(template, { ...ctx, periodLabel: periodLabel(ctx.plan) });
+function calculateAge(birthDate) {
+  if (!birthDate) return null;
+  const birth = new Date(`${String(birthDate).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(birth.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) age -= 1;
+  return age >= 0 && age <= 120 ? age : null;
+}
+
+function average(values) {
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 const STATUS_CLS = {
@@ -58,7 +57,7 @@ const STATUS_CLS = {
   voided:    'bg-amber-100 text-amber-700',
 };
 const STATUS_LABEL = {
-  active: 'Ativo', overdue: 'Atrasado', on_leave: 'Licença',
+  active: 'Ativo', overdue: 'Vencido', on_leave: 'Licença',
   finished: 'Concluído', cancelled: 'Cancelado',
   voided: 'Descartado',
 };
@@ -70,11 +69,7 @@ export default function Painel() {
   const [modalities,  setModalities]  = useState([]);
   const [coaches,     setCoaches]     = useState([]);
   const [customers,   setCustomers]   = useState([]);
-  const [rules,       setRules]       = useState([]);
-  const [actionsLog,  setActionsLog]  = useState([]);
   const [loading,     setLoading]     = useState(true);
-  const [renewing,    setRenewing]    = useState(false);
-  const [actingId,    setActingId]    = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,14 +79,12 @@ export default function Painel() {
       setLoading(false);
     }, 10000);
     try {
-      const [c, p, m, co, cu, rl, al] = await Promise.all([
+      const [c, p, m, co, cu] = await Promise.all([
         AssessmentContract.list('-created_at').catch(e => { console.error('contracts:', e); return []; }),
         AssessmentPlan.list().catch(e => { console.error('plans:', e); return []; }),
         AssessmentModality.list().catch(e => { console.error('modalities:', e); return []; }),
         AssessmentCoach.list().catch(e => { console.error('coaches:', e); return []; }),
         PreSaleCustomer.list('full_name').catch(e => { console.error('customers:', e); return []; }),
-        RenewalRule.filter({ active: true }, 'order_index').catch(e => { console.error('rules:', e); return []; }),
-        ContractRenewalAction.list().catch(e => { console.error('actions:', e); return []; }),
       ]);
 
       // Auto-transição: contratos active com end_date < hoje → overdue
@@ -108,7 +101,6 @@ export default function Painel() {
 
       setContracts(c); setPlans(p); setModalities(m);
       setCoaches(co);  setCustomers(cu);
-      setRules(rl);    setActionsLog(al);
     } catch (e) {
       console.error('Erro ao carregar Painel:', e);
       toast.error('Erro ao carregar painel: ' + (e.message || 'desconhecido'));
@@ -132,7 +124,6 @@ export default function Painel() {
   const lifecycleRows = buildContractLifecycleRows(contracts, { monthStart, plansById });
 
   const active     = lifecycleRows.filter(c => c.lifecycle.counts.active);
-  const overdue    = lifecycleRows.filter(c => c.status === 'overdue' && c.lifecycle.counts.active);
   const expiring   = lifecycleRows.filter(c => c.lifecycle.counts.active && c.status === 'active' && c.end_date >= today && c.end_date <= in30days);
 
   const monthlyRevenue = active.reduce((acc, c) => acc + (c.monthly || 0), 0);
@@ -149,53 +140,6 @@ export default function Painel() {
     c.end_date < today
   );
 
-  // ── Processar renovações automáticas ────────────────────────────────────────
-  const processRenewals = async () => {
-    if (pendingRenewal.length === 0) return;
-    // Avisa se algum contrato tem pagamento em aberto
-    const withOpenPayment = pendingRenewal.filter(c =>
-      c.payment_status && !['paid', 'refunded', 'cancelled'].includes(c.payment_status)
-    );
-    if (withOpenPayment.length > 0) {
-      const confirmed = confirm(
-        `⚠️ Atenção:\n\n` +
-        `${withOpenPayment.length} de ${pendingRenewal.length} contrato(s) ainda têm pagamento em aberto.\n\n` +
-        `Renovar mesmo assim?\n\n` +
-        `(Os contratos antigos ficarão pendentes em "Pagamentos em aberto" no perfil de cada aluno)`
-      );
-      if (!confirmed) return;
-    }
-    setRenewing(true);
-    let ok = 0; let fail = 0;
-    for (const c of pendingRenewal) {
-      try {
-        const plan = plans.find(p => p.id === c.plan_id);
-        if (!plan) { fail++; continue; }
-        const newStart = c.end_date; // começa no dia seguinte ao vencimento
-        const newEnd   = addPeriod(newStart, plan);
-        await AssessmentContract.create({
-          customer_id:       c.customer_id,
-          coach_id:          c.coach_id,
-          plan_id:           c.plan_id,
-          start_date:        newStart,
-          end_date:          newEnd,
-          original_end_date: newEnd,
-          due_date:          defaultPaymentDueDate(),
-          installments:      c.installments,
-          enrollment_fee:    0,
-          auto_renewal:      true,
-          parent_contract_id: c.id,
-          notes:             `Renovação automática de ${c.contract_number}`,
-        });
-        await AssessmentContract.update(c.id, { renewal_generated: true, status: 'finished' });
-        ok++;
-      } catch { fail++; }
-    }
-    toast.success(`${ok} contrato${ok !== 1 ? 's' : ''} renovado${ok !== 1 ? 's' : ''}${fail ? ` · ${fail} com erro` : ''}!`);
-    load();
-    setRenewing(false);
-  };
-
   // ── Enrich helper ────────────────────────────────────────────────────────────
   const enrich = (c) => {
     const plan     = plans.find(p => p.id === c.plan_id);
@@ -205,223 +149,34 @@ export default function Painel() {
     return { ...c, plan, modality, coach, customer };
   };
 
-  // Dias entre hoje e o vencimento (negativo = já passou)
-  const daysToDate = (dateStr) => {
-    if (!dateStr) return null;
-    const d = new Date(dateStr + 'T00:00:00');
-    const t = new Date(); t.setHours(0, 0, 0, 0);
-    return Math.round((d - t) / 86400000);
-  };
-
-  // ── Régua: calcula ações pendentes ─────────────────────────────────────────
-  // Renewal: triggera no contract.end_date (só contratos vigentes)
-  // Payment: triggera no contract.due_date (inclui cancelados com saldo aberto)
-  const computeActions = (ruleType) => {
-    const tipoRules = rules.filter(r => (r.rule_type || 'renewal') === ruleType);
-    if (!tipoRules.length) return [];
-
-    // Universo de contratos pra avaliar
-    let pool;
-    if (ruleType === 'payment') {
-      // Pagamento só entra na régua se o contrato continua operacionalmente ativo.
-      pool = lifecycleRows.filter(c => {
-        if (!c.lifecycle?.counts?.active) return false;
-        if (c.payment_status === 'paid') return false;
-        if (c.payment_status === 'refunded') return false;
-        return true;
-      });
-    } else {
-      // Renewal só age em contratos vigentes
-      pool = active;
-    }
-
-    if (!pool.length) return [];
-    const results = [];
-    for (const c of pool) {
-      const refDate = ruleType === 'payment' ? c.due_date : c.end_date;
-      const daysUntil = daysToDate(refDate);
-      if (daysUntil === null) continue;
-      for (const r of tipoRules) {
-        const triggerThreshold = -r.days_offset;
-        if (daysUntil > triggerThreshold) continue;
-        const alreadyDone = actionsLog.some(a =>
-          a.contract_id === c.id && a.rule_id === r.id
-        );
-        if (alreadyDone) continue;
-        results.push({
-          contract: c,
-          rule: r,
-          daysUntilEnd: daysUntil,
-          ruleType,
-          ...enrich(c),
-        });
-      }
-    }
-    return results.sort((a, b) => {
-      if (a.rule.order_index !== b.rule.order_index) return a.rule.order_index - b.rule.order_index;
-      return a.daysUntilEnd - b.daysUntilEnd;
-    });
-  };
-
-  const renewalActions = computeActions('renewal');
-  const paymentActions = computeActions('payment');
-
-  // Agrupa por regra dentro de cada tipo
-  const groupByRule = (actions) =>
-    rules
-      .filter(r => actions.some(a => a.rule.id === r.id))
-      .map(r => ({ rule: r, items: actions.filter(a => a.rule.id === r.id) }))
-      .filter(g => g.items.length > 0);
-
-  const renewalByRule = groupByRule(renewalActions);
-  const paymentByRule = groupByRule(paymentActions);
-
-  // Renderiza um grupo de ações da régua (mesmo layout pros dois tipos)
-  const renderReguaGroup = ({ rule, items }, ruleType) => {
-    const isCharge = rule.action_type === 'generate_charge_and_whatsapp';
-    return (
-      <div key={rule.id}>
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-lg">{rule.icon}</span>
-          <p className="text-sm font-semibold" style={{ color: rule.color }}>{rule.name}</p>
-          <span className="text-[10px] font-bold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-            {rule.days_offset < 0 ? `${Math.abs(rule.days_offset)}d antes` :
-             rule.days_offset === 0 ? 'no dia' :
-             `${rule.days_offset}d depois`}
-          </span>
-          <span className="text-xs text-muted-foreground">· {items.length} contrato{items.length !== 1 ? 's' : ''}</span>
-        </div>
-        <div className="space-y-2">
-          {items.map(item => {
-            const isActing = actingId === `${item.contract.id}:${item.rule.id}`;
-            const refLabel = ruleType === 'payment' ? 'cobrança' : 'vencimento';
-            const daysLabel = item.daysUntilEnd === 0 ? `${refLabel} hoje`
-                            : item.daysUntilEnd > 0 ? `${refLabel} em ${item.daysUntilEnd}d`
-                            : `${Math.abs(item.daysUntilEnd)}d em atraso`;
-            return (
-              <div key={`${item.contract.id}-${item.rule.id}`}
-                className="flex items-center gap-3 p-3 rounded-lg border bg-gray-50/40 hover:bg-white hover:shadow-sm transition-all"
-                style={{ borderLeftWidth: 4, borderLeftColor: rule.color }}>
-                <div className="flex-1 min-w-0">
-                  <Link to={`/assessoria/contratos/${item.contract.id}`}
-                    className="font-medium text-sm hover:text-blue-600 truncate block">
-                    {item.customer?.full_name || '—'}
-                  </Link>
-                  <p className="text-xs text-muted-foreground capitalize">
-                    {item.modality?.name} · {item.plan?.name?.trim() || periodLabel(item.plan)}
-                    {' · '}
-                    <span className={item.daysUntilEnd < 0 ? 'text-red-600 font-semibold' : ''}>
-                      {daysLabel}
-                    </span>
-                  </p>
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  {isCharge ? (
-                    <Button size="sm" variant="default"
-                      onClick={() => generateChargeAndWhatsApp(item)} disabled={isActing}>
-                      <Zap className="w-3.5 h-3.5 mr-1" />
-                      {isActing ? '...' : 'Gerar PIX + WhatsApp'}
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="default"
-                      className="bg-green-600 hover:bg-green-700"
-                      onClick={() => sendWhatsApp(item)}>
-                      <MessageCircle className="w-3.5 h-3.5 mr-1" />
-                      WhatsApp
-                    </Button>
-                  )}
-                  <Button size="sm" variant="outline"
-                    onClick={() => markAsDone(item)} disabled={isActing}
-                    title="Marcar como feito (sem enviar)">
-                    <Check className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
-  // ── Handlers da régua ───────────────────────────────────────────────────────
-  const sendWhatsApp = (item) => {
-    const phone = phoneDigitsForWhatsApp(item.customer?.whatsapp);
-    if (!phone || phone.length < 12) return toast.error('Aluno sem WhatsApp cadastrado');
-    const msg = renderTemplate(item.rule.message_template, {
-      customer: item.customer,
-      plan:     item.plan,
-      modality: item.modality,
-      contract: item.contract,
-      daysUntilEnd: item.daysUntilEnd,
-    });
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-  };
-
-  const generateChargeAndWhatsApp = async (item) => {
-    if (!item.customer?.cpf) return toast.error('Cadastre o CPF do aluno antes de gerar cobrança');
-    setActingId(item.contract.id + ':' + item.rule.id);
-    try {
-      // Gera cobrança no Asaas (mesma edge function usada no detalhe)
-      const { data, error } = await supabase.functions.invoke('generate-assessment-charge', {
-        body: {
-          contract_id:  item.contract.id,
-          installments: item.contract.installments,
-          cpf:          item.customer.cpf,
-          billing_type: 'PIX',
-        },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      toast.success('Cobrança PIX gerada! Abrindo WhatsApp...');
-      // Recarrega contratos para pegar o link novo
-      await load();
-      // Pega o contrato atualizado e envia
-      const fresh = (await AssessmentContract.list('-created_at')).find(c => c.id === item.contract.id);
-      const phone = phoneDigitsForWhatsApp(item.customer?.whatsapp);
-      const msg = renderTemplate(item.rule.message_template, {
-        customer: item.customer,
-        plan:     item.plan,
-        modality: item.modality,
-        contract: fresh || item.contract,
-        daysUntilEnd: item.daysUntilEnd,
-      });
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-    } catch (e) {
-      toast.error('Erro ao gerar cobrança: ' + (e.message || 'desconhecido'));
-    } finally { setActingId(null); }
-  };
-
-  const markAsDone = async (item) => {
-    setActingId(item.contract.id + ':' + item.rule.id);
-    try {
-      await ContractRenewalAction.create({
-        contract_id: item.contract.id,
-        rule_id:     item.rule.id,
-        rule_type:   item.rule.rule_type || 'renewal',
-        status:      'done',
-      });
-      toast.success('Marcado como feito');
-      await load();
-    } catch (e) { toast.error(e.message); }
-    finally { setActingId(null); }
-  };
-
   // Alunos únicos ativos
-  const activeStudentIds = new Set(active.map(c => c.customer_id));
+  const activeStudentIds = new Set(active.map(c => c.customer_id).filter(Boolean));
+  const customersById = Object.fromEntries(customers.map(c => [c.id, c]));
+  const activeCustomers = [...activeStudentIds].map(id => customersById[id]).filter(Boolean);
+  const activeAges = activeCustomers.map(c => calculateAge(c.birth_date)).filter(age => age != null);
+  const avgActiveAge = average(activeAges);
+  const overduePayments = active.filter(c => isContractPaymentOverdue(c, today));
+  const overdueStudentIds = new Set(overduePayments.map(c => c.customer_id).filter(Boolean));
+  const overdueAmount = overduePayments.reduce((acc, c) => acc + (c.value || c.monthly || 0), 0);
 
-  // Receita por modalidade
-  const revenueByModality = modalities.map(m => {
+  // Perfil por modalidade: alunos únicos, contratos e MRR.
+  const modalityStats = modalities.map(m => {
     const mContracts = active.filter(c => {
       const p = plans.find(pl => pl.id === c.plan_id);
       return p?.modality_id === m.id;
     });
+    const studentIds = new Set(mContracts.map(c => c.customer_id).filter(Boolean));
+    const ages = [...studentIds]
+      .map(id => calculateAge(customersById[id]?.birth_date))
+      .filter(age => age != null);
     return {
-      name:    m.name,
-      count:   mContracts.length,
-      revenue: mContracts.reduce((acc, c) => acc + (c.monthly || 0), 0),
+      name:         m.name,
+      studentCount: studentIds.size,
+      contractCount: mContracts.length,
+      revenue:      mContracts.reduce((acc, c) => acc + (c.monthly || 0), 0),
+      averageAge:   average(ages),
     };
-  }).filter(m => m.count > 0).sort((a, b) => b.revenue - a.revenue);
+  }).filter(m => m.studentCount > 0).sort((a, b) => b.studentCount - a.studentCount || b.revenue - a.revenue);
 
   // ── Movimentação do mês ───────────────────────────────────────────────────
   const novosContratos  = lifecycleRows.filter(c => c.lifecycle.counts.entry);
@@ -503,61 +258,14 @@ export default function Painel() {
               {pendingRenewal.length} contrato{pendingRenewal.length !== 1 ? 's' : ''} com renovação automática pendente
             </p>
           </div>
-          <Button
-            size="sm"
-            className="bg-amber-600 hover:bg-amber-700 text-white shrink-0"
-            onClick={processRenewals}
-            disabled={renewing}
-          >
-            {renewing ? 'Renovando...' : 'Processar renovações'}
-          </Button>
+          <Link to="/assessoria/renovacoes" className="text-sm font-semibold text-amber-800 hover:text-amber-900 shrink-0">
+            Ver renovações
+          </Link>
         </div>
       )}
 
-      {/* ── Régua de Renovação ──────────────────────────────────────────────── */}
-      {renewalByRule.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2">
-                <RotateCcw className="w-4 h-4 text-purple-600" />
-                Régua de Renovação ({renewalActions.length})
-              </CardTitle>
-              <Link to="/assessoria/regua" className="text-xs text-blue-600 hover:underline">
-                Editar régua →
-              </Link>
-            </div>
-            <p className="text-xs text-muted-foreground">Baseado no vencimento do contrato</p>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {renewalByRule.map(group => renderReguaGroup(group, 'renewal'))}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Régua de Pagamento ──────────────────────────────────────────────── */}
-      {paymentByRule.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2">
-                <CalendarClock className="w-4 h-4 text-blue-600" />
-                Régua de Pagamento ({paymentActions.length})
-              </CardTitle>
-              <Link to="/assessoria/regua" className="text-xs text-blue-600 hover:underline">
-                Editar régua →
-              </Link>
-            </div>
-            <p className="text-xs text-muted-foreground">Baseado na data de cobrança das parcelas</p>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {paymentByRule.map(group => renderReguaGroup(group, 'payment'))}
-          </CardContent>
-        </Card>
-      )}
-
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <Card>
           <CardContent className="p-5">
             <div className="flex items-center gap-3">
@@ -586,17 +294,18 @@ export default function Painel() {
           </CardContent>
         </Card>
 
-        <Card className={overdue.length > 0 ? 'border-red-200' : ''}>
+        <Card className={overduePayments.length > 0 ? 'border-red-200' : ''}>
           <CardContent className="p-5">
             <div className="flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${overdue.length > 0 ? 'bg-red-100' : 'bg-gray-100'}`}>
-                <AlertTriangle className={`w-4.5 h-4.5 ${overdue.length > 0 ? 'text-red-500' : 'text-gray-400'}`} />
+              <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${overduePayments.length > 0 ? 'bg-red-100' : 'bg-gray-100'}`}>
+                <AlertTriangle className={`w-4.5 h-4.5 ${overduePayments.length > 0 ? 'text-red-500' : 'text-gray-400'}`} />
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Inadimplentes</p>
-                <p className={`text-2xl font-bold ${overdue.length > 0 ? 'text-red-600' : 'text-gray-900'}`}>{overdue.length}</p>
+                <p className={`text-2xl font-bold ${overduePayments.length > 0 ? 'text-red-600' : 'text-gray-900'}`}>{overdueStudentIds.size}</p>
               </div>
             </div>
+            {overdueAmount > 0 && <p className="text-xs text-red-600 mt-2">{formatCurrency(overdueAmount)} vencido</p>}
           </CardContent>
         </Card>
 
@@ -611,6 +320,25 @@ export default function Painel() {
                 <p className={`text-2xl font-bold ${expiring.length > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{expiring.length}</p>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-5">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-violet-100 rounded-lg flex items-center justify-center">
+                <Cake className="w-4.5 h-4.5 text-violet-600" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Idade média</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {avgActiveAge == null ? '—' : `${avgActiveAge.toFixed(0)}a`}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              {activeAges.length}/{activeStudentIds.size} com nascimento
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -669,22 +397,22 @@ export default function Painel() {
       {/* Dois alertas lado a lado */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-        {/* Contratos em atraso */}
-        <Card className={overdue.length > 0 ? 'border-red-200' : ''}>
+        {/* Cobranças vencidas */}
+        <Card className={overduePayments.length > 0 ? 'border-red-200' : ''}>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <XCircle className="w-4 h-4 text-red-500" />
-              Inadimplentes ({overdue.length})
+              Cobranças vencidas ({overduePayments.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {overdue.length === 0 ? (
+            {overduePayments.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4 flex items-center justify-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-green-500" /> Nenhum contrato em atraso
+                <CheckCircle2 className="w-4 h-4 text-green-500" /> Nenhuma cobrança vencida em contrato ativo
               </p>
             ) : (
               <div className="divide-y max-h-64 overflow-y-auto">
-                {overdue.map(c => { const e = enrich(c); return (
+                {overduePayments.map(c => { const e = enrich(c); return (
                   <Link key={c.id} to={`/assessoria/contratos/${c.id}`} className="flex items-center gap-3 py-2 hover:bg-red-50 rounded px-1 -mx-1">
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-sm truncate">{e.customer?.full_name || '—'}</p>
@@ -692,7 +420,8 @@ export default function Painel() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-xs font-mono text-blue-700">{c.contract_number}</p>
-                      <p className="text-xs text-red-600">vence {formatDate(c.end_date)}</p>
+                      <p className="text-xs text-red-600">venceu {formatDate(c.due_date)}</p>
+                      <p className="text-xs font-semibold text-red-700">{formatCurrency(c.value || c.monthly || 0)}</p>
                     </div>
                     <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
                   </Link>
@@ -874,36 +603,44 @@ export default function Painel() {
         </Card>
       )}
 
-      {/* Receita por modalidade */}
-      {revenueByModality.length > 0 && (
+      {/* Alunos por modalidade */}
+      {modalityStats.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-blue-600" />
-              Receita por modalidade
+              <Users className="w-4 h-4 text-blue-600" />
+              Alunos por modalidade
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {revenueByModality.map(m => (
+              {modalityStats.map(m => {
+                const pct = activeStudentIds.size > 0 ? Math.round((m.studentCount / activeStudentIds.size) * 100) : 0;
+                return (
                 <div key={m.name}>
                   <div className="flex items-center justify-between text-sm mb-1">
                     <span className="font-medium capitalize">{m.name}</span>
                     <div className="flex items-center gap-3">
-                      <span className="text-muted-foreground text-xs">{m.count} aluno{m.count !== 1 ? 's' : ''}</span>
+                      <span className="text-muted-foreground text-xs">
+                        {m.studentCount} aluno{m.studentCount !== 1 ? 's' : ''}
+                        {m.contractCount !== m.studentCount && ` · ${m.contractCount} contratos`}
+                      </span>
+                      {m.averageAge != null && (
+                        <span className="text-muted-foreground text-xs">{m.averageAge.toFixed(0)}a média</span>
+                      )}
                       <span className="font-bold text-green-700">{formatCurrency(m.revenue)}/mês</span>
                     </div>
                   </div>
                   <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-blue-500 rounded-full transition-all"
-                      style={{ width: `${Math.round((m.revenue / monthlyRevenue) * 100)}%` }}
+                      style={{ width: `${pct}%` }}
                     />
                   </div>
                 </div>
-              ))}
+              ); })}
               <div className="pt-2 border-t flex justify-between text-sm font-semibold">
-                <span>Total</span>
+                <span>{activeStudentIds.size} aluno{activeStudentIds.size !== 1 ? 's' : ''} ativo{activeStudentIds.size !== 1 ? 's' : ''}</span>
                 <span className="text-green-700">{formatCurrency(monthlyRevenue)}/mês</span>
               </div>
             </div>
