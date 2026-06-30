@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Calendar, CheckCircle2, Loader2, MessageCircle, RefreshCw, Search, Settings,
+  AlertTriangle, Calendar, CheckCircle2, Clock3, Link2, Loader2, MessageCircle,
+  PhoneOff, RefreshCw, Search, SendHorizontal, Settings, WalletCards,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +32,14 @@ const TAB_INFO = [
   { value: 'history', label: 'Histórico' },
 ];
 
+const QUICK_FILTERS = [
+  { value: 'all', label: 'Todas' },
+  { value: 'overdue', label: 'Vencidas' },
+  { value: 'blocked', label: 'Bloqueios' },
+  { value: 'missing_link', label: 'Sem link' },
+  { value: 'ready', label: 'Prontas' },
+];
+
 const EVENT_LABEL = {
   payment_message_sent: 'Cobrança enviada',
   onboarding_welcome_sent: 'Boas-vindas enviadas',
@@ -38,6 +47,13 @@ const EVENT_LABEL = {
   renewal_message_sent: 'Renovação enviada',
   communication_task_ignored: 'Mensagem ignorada',
 };
+
+function communicationEventLabel(event) {
+  if (event?.event_type === 'communication_task_ignored' && event.payload?.action === 'snoozed') {
+    return 'Mensagem adiada';
+  }
+  return EVENT_LABEL[event?.event_type] || event?.event_type || 'Comunicação';
+}
 
 function mapById(rows = []) {
   return new Map(rows.map(row => [row.id, row]));
@@ -49,6 +65,70 @@ function communicationTone(task) {
   if (task.bucket === TASK_BUCKET.ONBOARDING) return 'success';
   if (task.bucket === TASK_BUCKET.RENEWAL) return 'purple';
   return 'secondary';
+}
+
+function taskHasWhatsapp(task) {
+  return Boolean(String(task?.customerWhatsapp || '').replace(/\D/g, ''));
+}
+
+function taskHasPaymentLink(task) {
+  return Boolean(task?.asaasPaymentLink || task?.asaasPixCopy || task?.externalPaymentLink);
+}
+
+function taskMissingPaymentLink(task) {
+  return task?.bucket === TASK_BUCKET.CHARGES && !taskHasPaymentLink(task);
+}
+
+function taskIsBlocked(task) {
+  return !taskHasWhatsapp(task) || taskMissingPaymentLink(task);
+}
+
+function taskIsReady(task) {
+  if (!taskHasWhatsapp(task)) return false;
+  if (task.bucket === TASK_BUCKET.CHARGES) return taskHasPaymentLink(task);
+  return true;
+}
+
+function taskMatchesQuickFilter(task, filter) {
+  if (filter === 'overdue') return task.kind === TASK_KIND.CHARGE_OVERDUE;
+  if (filter === 'blocked') return taskIsBlocked(task);
+  if (filter === 'missing_link') return taskMissingPaymentLink(task);
+  if (filter === 'ready') return taskIsReady(task);
+  return true;
+}
+
+function taskAccentClass(task) {
+  if (task.kind === TASK_KIND.CHARGE_OVERDUE) return 'bg-red-500';
+  if (taskIsBlocked(task)) return 'bg-amber-400';
+  if (task.bucket === TASK_BUCKET.ONBOARDING) return 'bg-green-500';
+  if (task.bucket === TASK_BUCKET.RENEWAL) return 'bg-purple-500';
+  return 'bg-blue-500';
+}
+
+function SummaryCard({ icon: Icon, label, value, tone = 'blue', detail }) {
+  const tones = {
+    gray: 'text-gray-700 bg-gray-50 border-gray-200',
+    red: 'text-red-700 bg-red-50 border-red-200',
+    amber: 'text-amber-700 bg-amber-50 border-amber-200',
+    green: 'text-green-700 bg-green-50 border-green-200',
+    blue: 'text-blue-700 bg-blue-50 border-blue-200',
+  };
+  return (
+    <Card className="border-gray-200 shadow-sm">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground">{label}</p>
+            <p className="text-2xl font-bold text-gray-950 mt-1">{value}</p>
+            {detail && <p className="text-xs text-muted-foreground mt-1">{detail}</p>}
+          </div>
+          <div className={`rounded-lg border p-2 ${tones[tone] || tones.blue}`}>
+            <Icon className="w-4 h-4" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function normalizeSaleHistory(ev, presaleMap, stockMap) {
@@ -80,7 +160,7 @@ function buildHistory(data) {
     return {
       id: `contract:${ev.id}`,
       type: taskChannelLabel({ bucket: ev.event_type === 'renewal_message_sent' ? TASK_BUCKET.RENEWAL : ev.event_type.startsWith('onboarding') ? TASK_BUCKET.ONBOARDING : TASK_BUCKET.CHARGES }),
-      title: EVENT_LABEL[ev.event_type] || ev.event_type,
+      title: communicationEventLabel(ev),
       customerName: customer.full_name || 'Aluno',
       customerWhatsapp: customer.whatsapp,
       orderNumber: contract.contract_number,
@@ -155,52 +235,87 @@ async function fetchCommunicationData() {
 }
 
 function TaskCard({ task, onOpen }) {
+  const hasWhatsapp = taskHasWhatsapp(task);
+  const missingLink = taskMissingPaymentLink(task);
+  const hasExternalLink = Boolean(task.externalPaymentLink);
+  const nativePaymentInfo = hasNativePaymentInfo(task);
+  const isOverdue = task.kind === TASK_KIND.CHARGE_OVERDUE;
+  const isReady = taskIsReady(task);
+
   return (
-    <div className="rounded-lg border bg-white px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <div className="min-w-0 space-y-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={communicationTone(task)}>{taskChannelLabel(task)}</Badge>
-          <span className="text-sm font-semibold text-gray-900">{task.title}</span>
-          {task.statusLabel && <span className="text-xs text-muted-foreground">{task.statusLabel}</span>}
-          {task.needsPaymentLink && (
-            <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
-              link externo necessário
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap text-sm">
-          <Link to={task.href} className="font-medium text-blue-700 hover:underline truncate">
-            {task.customerName}
-          </Link>
-          <span className="text-muted-foreground">·</span>
-          <span className="font-mono text-xs text-gray-700">{task.orderNumber}</span>
-          {task.totalValue > 0 && (
-            <>
+    <div className="relative overflow-hidden rounded-lg border bg-white shadow-sm transition-shadow hover:shadow-md">
+      <div className={`absolute left-0 top-0 h-full w-1 ${taskAccentClass(task)}`} />
+      <div className="grid gap-3 px-4 py-3 pl-5 lg:grid-cols-[minmax(0,1fr)_250px_132px] lg:items-center">
+        <div className="min-w-0 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant={communicationTone(task)}>{taskChannelLabel(task)}</Badge>
+            {isOverdue && task.statusLabel && (
+              <Badge variant="destructive" className="gap-1">
+                <Clock3 className="w-3 h-3" />
+                {task.statusLabel}
+              </Badge>
+            )}
+            {missingLink && (
+              <Badge variant="warning" className="gap-1">
+                <Link2 className="w-3 h-3" />
+                Sem link
+              </Badge>
+            )}
+            {!hasWhatsapp && (
+              <Badge variant="warning" className="gap-1">
+                <PhoneOff className="w-3 h-3" />
+                Sem WhatsApp
+              </Badge>
+            )}
+            {nativePaymentInfo && <Badge variant="info">Asaas</Badge>}
+            {!nativePaymentInfo && hasExternalLink && <Badge variant="outline">Link externo</Badge>}
+            {isReady && <Badge variant="success">Pronta</Badge>}
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Link to={task.href} className="font-semibold text-blue-700 hover:underline truncate">
+                {task.customerName}
+              </Link>
               <span className="text-muted-foreground">·</span>
-              <span className="font-semibold">{formatCurrency(task.totalValue)}</span>
-            </>
+              <span className="font-mono text-xs text-gray-700">{task.orderNumber}</span>
+              {task.totalValue > 0 && (
+                <>
+                  <span className="text-muted-foreground">·</span>
+                  <span className="font-semibold text-gray-950">{formatCurrency(task.totalValue)}</span>
+                </>
+              )}
+            </div>
+            {task.itemSummary && (
+              <p className="text-xs text-muted-foreground truncate mt-0.5">{task.itemSummary}</p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+            {task.scheduledDate && (
+              <span className="flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                {formatDate(task.scheduledDate)}
+              </span>
+            )}
+            {hasWhatsapp && <span>{formatPhoneDisplay(task.customerWhatsapp)}</span>}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+          <p className="text-[11px] font-medium text-muted-foreground">Etapa</p>
+          <p className="text-sm font-semibold text-gray-950 mt-0.5">{task.title}</p>
+          {!isOverdue && task.statusLabel && (
+            <p className="text-xs text-muted-foreground mt-0.5">{task.statusLabel}</p>
           )}
         </div>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-          {task.scheduledDate && (
-            <span className="flex items-center gap-1">
-              <Calendar className="w-3 h-3" />
-              {formatDate(task.scheduledDate)}
-            </span>
-          )}
-          {task.customerWhatsapp && (
-            <span>{formatPhoneDisplay(task.customerWhatsapp)}</span>
-          )}
-          {hasNativePaymentInfo(task) && (
-            <span className="text-blue-700">Asaas/link salvo</span>
-          )}
+
+        <div className="flex lg:justify-end">
+          <Button size="sm" onClick={() => onOpen(task)} className="gap-1.5 w-full lg:w-auto">
+            <MessageCircle className="w-4 h-4" />
+            Preparar
+          </Button>
         </div>
-      </div>
-      <div className="flex gap-2 shrink-0">
-        <Button size="sm" onClick={() => onOpen(task)} className="gap-1.5">
-          <MessageCircle className="w-4 h-4" />
-          Preparar
-        </Button>
       </div>
     </div>
   );
@@ -229,6 +344,7 @@ export default function CommunicationCenter() {
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
   const [activeTab, setActiveTab] = useState('pending');
+  const [quickFilter, setQuickFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedTask, setSelectedTask] = useState(null);
   const [communityLink, setCommunityLink] = useState(DEFAULT_COMMUNITY_LINK);
@@ -276,10 +392,29 @@ export default function CommunicationCenter() {
     history: history.length,
   }), [tasks, history]);
 
+  const operationCounts = useMemo(() => ({
+    overdue: tasks.filter(t => t.kind === TASK_KIND.CHARGE_OVERDUE).length,
+    blocked: tasks.filter(taskIsBlocked).length,
+    missing_link: tasks.filter(taskMissingPaymentLink).length,
+    ready: tasks.filter(taskIsReady).length,
+  }), [tasks]);
+
+  const tabTasks = useMemo(() => (
+    activeTab === 'pending' ? tasks : tasks.filter(task => task.bucket === activeTab)
+  ), [tasks, activeTab]);
+
+  const quickCounts = useMemo(() => ({
+    all: tabTasks.length,
+    overdue: tabTasks.filter(t => t.kind === TASK_KIND.CHARGE_OVERDUE).length,
+    blocked: tabTasks.filter(taskIsBlocked).length,
+    missing_link: tabTasks.filter(taskMissingPaymentLink).length,
+    ready: tabTasks.filter(taskIsReady).length,
+  }), [tabTasks]);
+
   const visibleTasks = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return tasks.filter(task => {
-      if (activeTab !== 'pending' && task.bucket !== activeTab) return false;
+    return tabTasks.filter(task => {
+      if (!taskMatchesQuickFilter(task, quickFilter)) return false;
       if (!q) return true;
       return [
         task.title,
@@ -287,9 +422,10 @@ export default function CommunicationCenter() {
         task.customerWhatsapp,
         task.orderNumber,
         task.statusLabel,
+        task.itemSummary,
       ].some(value => String(value || '').toLowerCase().includes(q));
     });
-  }, [tasks, activeTab, search]);
+  }, [tabTasks, quickFilter, search]);
 
   const visibleHistory = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -345,35 +481,88 @@ export default function CommunicationCenter() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Pendentes</p><p className="text-2xl font-bold">{counts.pending}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Cobranças</p><p className="text-2xl font-bold text-blue-700">{counts[TASK_BUCKET.CHARGES]}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Onboarding</p><p className="text-2xl font-bold text-green-700">{counts[TASK_BUCKET.ONBOARDING]}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Renovação</p><p className="text-2xl font-bold text-purple-700">{counts[TASK_BUCKET.RENEWAL]}</p></CardContent></Card>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <SummaryCard
+          icon={WalletCards}
+          label="Pendentes"
+          value={counts.pending}
+          tone="blue"
+          detail={`${counts[TASK_BUCKET.CHARGES]} cobrança${counts[TASK_BUCKET.CHARGES] === 1 ? '' : 's'}`}
+        />
+        <SummaryCard
+          icon={Clock3}
+          label="Vencidas"
+          value={operationCounts.overdue}
+          tone={operationCounts.overdue ? 'red' : 'gray'}
+          detail="com lembrete ativo"
+        />
+        <SummaryCard
+          icon={AlertTriangle}
+          label="Bloqueios"
+          value={operationCounts.blocked}
+          tone={operationCounts.blocked ? 'amber' : 'gray'}
+          detail={`${operationCounts.missing_link} sem link`}
+        />
+        <SummaryCard
+          icon={SendHorizontal}
+          label="Prontas"
+          value={operationCounts.ready}
+          tone="green"
+          detail="com contato e link"
+        />
       </div>
 
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="h-auto flex-wrap justify-start">
-            {TAB_INFO.map(tab => (
-              <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5">
-                {tab.label}
-                <span className="text-[10px] rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-600">
-                  {counts[tab.value] || 0}
-                </span>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-        <div className="relative w-full md:w-72">
-          <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-          <Input
-            className="pl-9"
-            placeholder="Buscar cliente, pedido..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+      <div className="rounded-lg border bg-white p-3 shadow-sm space-y-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="h-auto flex-wrap justify-start">
+              {TAB_INFO.map(tab => (
+                <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5">
+                  {tab.label}
+                  <span className="text-[10px] rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-600">
+                    {counts[tab.value] || 0}
+                  </span>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <div className="relative w-full xl:w-80">
+            <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+            <Input
+              className="pl-9"
+              placeholder="Buscar cliente, pedido, item..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
         </div>
+
+        {activeTab !== 'history' && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+            {QUICK_FILTERS.map(filter => {
+              const active = quickFilter === filter.value;
+              return (
+                <button
+                  key={filter.value}
+                  type="button"
+                  onClick={() => setQuickFilter(filter.value)}
+                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    active
+                      ? 'border-blue-600 bg-blue-600 text-white'
+                      : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-blue-200 hover:bg-blue-50'
+                  }`}
+                >
+                  {filter.label}
+                  <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] ${
+                    active ? 'bg-white/20 text-white' : 'bg-white text-gray-600'
+                  }`}>
+                    {quickCounts[filter.value] || 0}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {activeTab === 'history' ? (
@@ -390,7 +579,6 @@ export default function CommunicationCenter() {
             <div className="rounded-lg border bg-white p-10 text-center">
               <CheckCircle2 className="w-8 h-8 text-green-600 mx-auto mb-2" />
               <p className="font-semibold text-gray-900">Nada pendente nessa fila</p>
-              <p className="text-sm text-muted-foreground mt-1">As próximas mensagens aparecerão aqui conforme os dados mudarem.</p>
             </div>
           ) : visibleTasks.map(task => <TaskCard key={task.id} task={task} onOpen={setSelectedTask} />)}
         </div>

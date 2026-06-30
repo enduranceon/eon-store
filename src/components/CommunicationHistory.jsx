@@ -6,7 +6,10 @@ import { COMMUNICATION_EVENT_META, summarizeCommunicationEvent } from '@/lib/com
 
 function HistoryItem({ event, currentUserId }) {
   const [open, setOpen] = useState(false);
-  const meta = COMMUNICATION_EVENT_META[event.event_type] || { label: event.event_type, tone: 'secondary' };
+  const isSnoozed = event.event_type === 'communication_task_ignored' && event.payload?.action === 'snoozed';
+  const meta = isSnoozed
+    ? { label: 'Adiada', tone: 'info' }
+    : COMMUNICATION_EVENT_META[event.event_type] || { label: event.event_type, tone: 'secondary' };
   const summary = summarizeCommunicationEvent(event);
   const message = event.payload?.message || '';
   const sentByMe = currentUserId && event.created_by === currentUserId;
@@ -22,7 +25,7 @@ function HistoryItem({ event, currentUserId }) {
         <span className="text-[11px] text-muted-foreground whitespace-nowrap">{formatDateTime(event.created_at)}</span>
       </div>
       <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-        {sentByMe && <span>{isIgnored ? 'Ignorada por você' : 'Enviada por você'}</span>}
+        {sentByMe && <span>{isSnoozed ? 'Adiada por você' : isIgnored ? 'Ignorada por você' : 'Enviada por você'}</span>}
         {message && (
           <button
             type="button"

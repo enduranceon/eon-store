@@ -129,12 +129,25 @@ function groupSaleEvents(events = []) {
   }, new Map());
 }
 
-// Uma regra já foi enviada quando existe histórico cujo payload/metadata
-// referencia o mesmo slug. Permite múltiplas regras do mesmo tipo conviverem
-// sem se cancelar.
-function ruleAlreadySent(events = [], rule) {
+function eventPayload(event = {}) {
+  return { ...(event.metadata || {}), ...(event.payload || {}) };
+}
+
+function isFutureDate(dateStr, todayStr) {
+  return Boolean(dateStr && String(dateStr) > todayStr);
+}
+
+// Uma regra fica resolvida quando existe histórico cujo payload/metadata
+// referencia o mesmo slug. "Adiada" só resolve temporariamente antes da data
+// escolhida; no dia agendado a etapa volta para a fila.
+function ruleAlreadyHandled(events = [], rule, todayStr = todayLocalStr()) {
   if (!rule?.slug) return false;
-  return events.some(ev => (ev.payload?.rule_slug || ev.metadata?.rule_slug || null) === rule.slug);
+  return events.some(ev => {
+    const payload = eventPayload(ev);
+    if ((payload.rule_slug || null) !== rule.slug) return false;
+    if (payload.action === 'snoozed') return isFutureDate(payload.snooze_until, todayStr);
+    return true;
+  });
 }
 
 function latestEvent(events = [], eventType) {
@@ -315,7 +328,7 @@ function buildChargeTasks(sale, todayStr, { sendRule, overdueRules = [] }, event
     const dueOverdueRules = overdueRules
       .filter(rule => {
         const offset = Math.max(0, Number(rule.days_offset) || 0);
-        return dueDelta <= -offset && !ruleAlreadySent(events, rule);
+        return dueDelta <= -offset && !ruleAlreadyHandled(events, rule, todayStr);
       })
       .sort((a, b) => (Number(a.days_offset) || 0) - (Number(b.days_offset) || 0));
 
@@ -334,7 +347,7 @@ function buildChargeTasks(sale, todayStr, { sendRule, overdueRules = [] }, event
 
   if (
     sendRule
-    && !ruleAlreadySent(events, sendRule)
+    && !ruleAlreadyHandled(events, sendRule, todayStr)
     && !sale.paymentMessageSentAt
     && ['awaiting_charge', 'pending'].includes(sale.paymentStatus)
   ) {
@@ -358,7 +371,7 @@ function buildWelcomeTask(contractSale, events, todayStr, rule) {
   if (contractSale.paymentStatus !== 'paid') return null;
   if (contractSale.parentContractId) return null;
   if (!CONTRACT_OPERATIONAL_STATUSES.has(contractSale.contractStatus)) return null;
-  if (ruleAlreadySent(events, rule)) return null;
+  if (ruleAlreadyHandled(events, rule, todayStr)) return null;
   const baseDate = contractSale.paymentDate || toLocalDateStr(contractSale.createdAt) || todayLocalStr();
   if (!isDueByOffset(baseDate, rule.days_offset, todayStr)) return null;
 
@@ -380,7 +393,7 @@ function buildCheckinTask(contractSale, events, todayStr, rule) {
   if (!rule) return null;
   if (contractSale.sourceType !== 'contract') return null;
   if (!CONTRACT_OPERATIONAL_STATUSES.has(contractSale.contractStatus)) return null;
-  if (ruleAlreadySent(events, rule)) return null;
+  if (ruleAlreadyHandled(events, rule, todayStr)) return null;
   const welcome = latestEvent(events, 'onboarding_welcome_sent');
   if (!welcome?.created_at) return null;
   const dueDate = addDays(toLocalDateStr(welcome.created_at), rule.days_offset);
@@ -403,7 +416,7 @@ function buildRenewalTask(contractSale, events, todayStr, rule) {
   if (contractSale.sourceType !== 'contract') return null;
   if (contractSale.paymentStatus !== 'paid') return null;
   if (!CONTRACT_OPERATIONAL_STATUSES.has(contractSale.contractStatus)) return null;
-  if (ruleAlreadySent(events, rule)) return null;
+  if (ruleAlreadyHandled(events, rule, todayStr)) return null;
   const daysToEnd = daysBetween(contractSale.endDate, todayStr);
   const windowDays = Math.abs(Number(rule.days_offset) || 0);
   if (daysToEnd === null || daysToEnd < 0 || daysToEnd > windowDays) return null;
@@ -601,10 +614,12 @@ const CHANNEL_LABEL = { whatsapp: 'WhatsApp', email: 'E-mail' };
 // Resumo curto de um evento de comunicação a partir do payload, tolerante a
 // eventos antigos (gerados na tela do contrato) e novos (Central de Comunicação).
 export function summarizeCommunicationEvent(event) {
-  const p = event?.payload || {};
+  const p = eventPayload(event);
   const channel = CHANNEL_LABEL[p.channel || p.via] || '';
   const parts = [];
   if (channel) parts.push(`via ${channel}`);
   if (p.rule_name) parts.push(p.rule_name);
+  if (p.action === 'snoozed' && p.snooze_until) parts.push(`adiada para ${formatDate(p.snooze_until)}`);
+  if (p.reason) parts.push(p.reason);
   return parts.join(' · ');
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Check, CheckCircle2, Copy, ExternalLink, Link2, Loader2, Send, UserRoundCheck, XCircle,
+  AlertTriangle, Check, CheckCircle2, Clock, Copy, ExternalLink, Link2, Loader2, Send, UserRoundCheck, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -10,14 +10,22 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TASK_BUCKET, TASK_KIND, buildTaskMessage } from '@/lib/communication-tasks';
-import { hasNativePaymentInfo, registerCommunicationIgnore, registerCommunicationSend } from '@/lib/communication-send';
+import { hasNativePaymentInfo, registerCommunicationIgnore, registerCommunicationSend, registerCommunicationSnooze } from '@/lib/communication-send';
 import { DEFAULT_COMMUNITY_LINK } from '@/lib/communication-config';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { isSafePaymentUrl } from '@/lib/sales';
 import { formatPhoneDisplay, phoneDigitsForWhatsApp } from '@/lib/phone';
+import { todayLocalStr, toLocalDateStr } from '@/lib/utils';
 
 function hasAnyPaymentLink(task, externalLink) {
   return Boolean(task?.asaasPaymentLink || task?.asaasPixCopy || String(externalLink || '').trim());
+}
+
+function datePlusDays(days) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  return toLocalDateStr(d);
 }
 
 // O componente é remontado por `key={task.id}` no pai, então o estado é
@@ -33,6 +41,8 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
   const [messageText, setMessageText] = useState(() => (
     task ? buildTaskMessage(task, { externalLink: initialLink, dueDate: initialDue, communityLink: initialCommunity }) : ''
   ));
+  const [actionReason, setActionReason] = useState('');
+  const [snoozeUntil, setSnoozeUntil] = useState(() => datePlusDays(1));
   const [copied, setCopied] = useState(false);
   const [savingAction, setSavingAction] = useState(null);
   const saving = Boolean(savingAction);
@@ -98,13 +108,32 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
 
   const ignoreTask = async () => {
     if (!task) return;
+    const reason = actionReason.trim();
+    if (!reason) return toast.error('Informe o motivo para ignorar esta etapa');
     setSavingAction('ignored');
     try {
-      await registerCommunicationIgnore(task);
-      toast.success('Mensagem ignorada');
+      await registerCommunicationIgnore(task, { reason });
+      toast.success('Etapa ignorada');
       onSent?.();
     } catch (e) {
       toast.error(e.message || 'Erro ao ignorar mensagem');
+    } finally {
+      setSavingAction(null);
+    }
+  };
+
+  const snoozeTask = async () => {
+    if (!task) return;
+    if (!snoozeUntil) return toast.error('Informe a data para adiar');
+    if (snoozeUntil < todayLocalStr()) return toast.error('Escolha hoje ou uma data futura');
+
+    setSavingAction('snoozed');
+    try {
+      await registerCommunicationSnooze(task, { reason: actionReason.trim(), snoozeUntil });
+      toast.success('Etapa adiada');
+      onSent?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao adiar mensagem');
     } finally {
       setSavingAction(null);
     }
@@ -217,12 +246,46 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
                 </Button>
               </div>
 
-              <div className="grid gap-2 md:grid-cols-[0.7fr_1fr]">
-                <Button variant="outline" onClick={ignoreTask} disabled={saving} className="border-gray-300">
-                  {savingAction === 'ignored' ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <XCircle className="w-4 h-4 mr-1.5" />}
-                  {savingAction === 'ignored' ? 'Ignorando...' : 'Ignorar'}
-                </Button>
-                <Button onClick={markAsSent} disabled={saving}>
+              <div className="rounded-lg border bg-gray-50 p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">Organizar fila</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-[1fr_180px]">
+                  <div>
+                    <Label className="text-xs">Motivo / observação</Label>
+                    <Textarea
+                      rows={3}
+                      className="mt-1 text-xs leading-relaxed"
+                      placeholder="Cliente pediu retorno amanhã, falei por outro canal, cobrança incorreta..."
+                      value={actionReason}
+                      onChange={e => setActionReason(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Relembrar em</Label>
+                    <Input
+                      type="date"
+                      className="mt-1"
+                      value={snoozeUntil}
+                      min={todayLocalStr()}
+                      onChange={e => setSnoozeUntil(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <Button variant="outline" onClick={snoozeTask} disabled={saving} className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                    {savingAction === 'snoozed' ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Clock className="w-4 h-4 mr-1.5" />}
+                    {savingAction === 'snoozed' ? 'Adiando...' : 'Adiar etapa'}
+                  </Button>
+                  <Button variant="outline" onClick={ignoreTask} disabled={saving} className="border-gray-300">
+                    {savingAction === 'ignored' ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <XCircle className="w-4 h-4 mr-1.5" />}
+                    {savingAction === 'ignored' ? 'Ignorando...' : 'Ignorar etapa'}
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <Button onClick={markAsSent} disabled={saving} className="w-full">
                   {savingAction === 'sent' ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <UserRoundCheck className="w-4 h-4 mr-1.5" />}
                   {savingAction === 'sent' ? 'Registrando...' : 'Marcar como enviada'}
                 </Button>

@@ -88,23 +88,35 @@ export async function registerCommunicationSend(task, options = {}) {
   }
 }
 
-export async function registerCommunicationIgnore(task) {
+function actionEventReason(task, action) {
+  if (action === 'snoozed') return `${task.title} adiada pela Central de Comunicação`;
+  return `${task.title} ignorada pela Central de Comunicação`;
+}
+
+async function registerCommunicationTaskAction(task, action, options = {}) {
+  const reason = String(options.reason || '').trim();
+  const snoozeUntil = options.snoozeUntil || null;
   const payload = {
     source: 'communication_center',
-    action: 'ignored',
+    action,
     task_kind: task.kind,
     rule_slug: task.ruleSlug || null,
     rule_name: task.ruleName || null,
     item_summary: task.itemSummary || null,
     items: task.items || [],
+    reason: reason || null,
+    snooze_until: action === 'snoozed' ? snoozeUntil : null,
   };
+  const notes = reason
+    ? `${actionEventReason(task, action)}: ${reason}`
+    : actionEventReason(task, action);
 
   if (task.sourceType === 'contract') {
     await insertContractEvent(
       task.sourceId,
       'communication_task_ignored',
       payload,
-      `${task.title} ignorada pela Central de Comunicação`,
+      notes,
     );
     return;
   }
@@ -113,6 +125,15 @@ export async function registerCommunicationIgnore(task) {
     task,
     task.paymentStatus || 'pending',
     payload,
-    `${task.title} ignorada pela Central de Comunicação`,
+    notes,
   );
+}
+
+export async function registerCommunicationIgnore(task, options = {}) {
+  await registerCommunicationTaskAction(task, 'ignored', options);
+}
+
+export async function registerCommunicationSnooze(task, options = {}) {
+  if (!options.snoozeUntil) throw new Error('Informe a data para adiar');
+  await registerCommunicationTaskAction(task, 'snoozed', options);
 }
