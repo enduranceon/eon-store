@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Pencil, Check, BadgeDollarSign, Clock, Palette, Link2 } from 'lucide-react';
+import { Plus, Pencil, Check, BadgeDollarSign, Clock, Palette, Link2, Globe2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,8 +48,9 @@ async function loadPlansPage() {
 }
 
 // ─── Card visual de plano ─────────────────────────────────────────────────────
-function PlanCard({ plan, modality, center, modalities, onEdit, onToggle }) {
+function PlanCard({ plan, modality, center, modalities, onEdit, onToggle, onToggleOnline }) {
   const months = getPlanMonths(plan);
+  const canSellOnline = plan.active && plan.available_online;
   return (
     <div className={`relative rounded-2xl border-2 p-4 transition-all ${
       plan.active
@@ -110,6 +111,20 @@ function PlanCard({ plan, modality, center, modalities, onEdit, onToggle }) {
         )}
       </div>
 
+      <button
+        type="button"
+        onClick={() => onToggleOnline(plan)}
+        disabled={!plan.active}
+        className={`mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+          canSellOnline
+            ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+            : 'border-gray-200 bg-gray-50 text-gray-500 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700'
+        }`}
+      >
+        <Globe2 className="w-3.5 h-3.5" />
+        {canSellOnline ? 'Disponível online' : 'Fora da venda online'}
+      </button>
+
       <div className="mt-3 flex gap-2">
         <button
           onClick={() => onEdit(plan)}
@@ -119,12 +134,14 @@ function PlanCard({ plan, modality, center, modalities, onEdit, onToggle }) {
         </button>
         <button
           onClick={() => {
+            if (!canSellOnline) return toast.error('Ative a venda online para copiar este link');
             const url = `${window.location.origin}/assinar/${plan.id}`;
             navigator.clipboard.writeText(url).then(() => toast.success('Link copiado!')).catch(() => {
               prompt('Copie o link:', url);
             });
           }}
-          className="flex-1 flex items-center justify-center gap-1.5 text-xs text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-lg py-1.5 transition-colors border border-transparent hover:border-green-100"
+          disabled={!canSellOnline}
+          className="flex-1 flex items-center justify-center gap-1.5 text-xs text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-lg py-1.5 transition-colors border border-transparent hover:border-green-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-500"
         >
           <Link2 className="w-3 h-3" /> Copiar link
         </button>
@@ -139,7 +156,7 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
     name: '', modality_id: '', period_months: 1, price_monthly: '',
     price_total: '', max_installments: 1, enrollment_fee: 0,
     revenue_center_id: centers.find(c => c.name?.includes('Mensalidades'))?.id || '',
-    active: true,
+    active: true, available_online: false,
   };
   const [form, setForm] = useState(() => {
     if (editing?.id) return { ...editing, period_months: getPlanMonths(editing) };
@@ -197,6 +214,7 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
       enrollment_fee:    Number(form.enrollment_fee) || 0,
       revenue_center_id: form.revenue_center_id || null,
       active:            !!form.active,
+      available_online:  !!form.active && !!form.available_online,
     };
     if (!payload.modality_id)                                   return toast.error('Selecione a modalidade');
     if (payload.price_monthly <= 0 || payload.price_total <= 0) return toast.error('Preencha mensalidade e total');
@@ -352,12 +370,41 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
           </div>
 
           {/* Ativo */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={!!form.active}
-              onChange={e => f('active', e.target.checked)}
-              className="w-4 h-4 accent-blue-600" />
-            <span className="text-sm">Plano ativo (disponível para venda)</span>
-          </label>
+          <div className="space-y-2 rounded-lg border bg-gray-50 p-3">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!form.active}
+                onChange={e => {
+                  const active = e.target.checked;
+                  setForm(prev => ({ ...prev, active, available_online: active ? prev.available_online : false }));
+                }}
+                className="mt-0.5 w-4 h-4 accent-blue-600"
+              />
+              <span>
+                <span className="block text-sm font-medium">Plano ativo</span>
+                <span className="block text-xs text-muted-foreground">
+                  Permite vender/atribuir este plano manualmente dentro do sistema.
+                </span>
+              </span>
+            </label>
+
+            <label className={`flex items-start gap-2 ${form.active ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
+              <input
+                type="checkbox"
+                checked={!!form.available_online && !!form.active}
+                disabled={!form.active}
+                onChange={e => f('available_online', e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-green-600"
+              />
+              <span>
+                <span className="block text-sm font-medium">Disponível para venda online</span>
+                <span className="block text-xs text-muted-foreground">
+                  Aparece no link público da modalidade e no link direto de adesão.
+                </span>
+              </span>
+            </label>
+          </div>
 
           {/* Ações */}
           <div className="flex gap-2 pt-1">
@@ -397,7 +444,20 @@ export default function Planos() {
 
   const toggle = async (plan) => {
     try {
-      await AssessmentPlan.update(plan.id, { active: !plan.active });
+      const nextActive = !plan.active;
+      await AssessmentPlan.update(plan.id, {
+        active: nextActive,
+        ...(nextActive ? {} : { available_online: false }),
+      });
+      await refresh({ force: true });
+    }
+    catch (e) { toast.error(e.message); }
+  };
+
+  const toggleOnline = async (plan) => {
+    if (!plan.active) return toast.error('Ative o plano antes de liberar venda online');
+    try {
+      await AssessmentPlan.update(plan.id, { available_online: !plan.available_online });
       await refresh({ force: true });
     }
     catch (e) { toast.error(e.message); }
@@ -412,6 +472,7 @@ export default function Planos() {
 
   const totalActive   = plans.filter(p => p.active).length;
   const totalInactive = plans.filter(p => !p.active).length;
+  const totalOnline   = plans.filter(p => p.active && p.available_online).length;
 
   if (loading) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
@@ -422,6 +483,7 @@ export default function Planos() {
           <h2 className="text-xl font-bold text-gray-900">Planos</h2>
           <p className="text-sm text-muted-foreground">
             {totalActive} plano{totalActive !== 1 ? 's' : ''} ativo{totalActive !== 1 ? 's' : ''}
+            {` · ${totalOnline} online`}
             {totalInactive > 0 && ` · ${totalInactive} inativo${totalInactive !== 1 ? 's' : ''}`}
           </p>
         </div>
@@ -480,7 +542,7 @@ export default function Planos() {
                   <PlanCard key={p.id} plan={p} modality={modality}
                     center={centers.find(c => c.id === p.revenue_center_id)}
                     modalities={modalities}
-                    onEdit={openEdit} onToggle={toggle} />
+                    onEdit={openEdit} onToggle={toggle} onToggleOnline={toggleOnline} />
                 ))}
             </div>
           )}

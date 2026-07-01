@@ -111,7 +111,7 @@ export default function PublicPlanEnrollment() {
     (async () => {
       try {
         const { data: planData, error } = await supabase
-          .from('assessment_plans').select('*').eq('id', planId).eq('active', true).maybeSingle();
+          .from('assessment_plans').select('*').eq('id', planId).eq('active', true).eq('available_online', true).maybeSingle();
         if (error || !planData) { setNotFound(true); setLoading(false); return; }
         setPlan(planData);
 
