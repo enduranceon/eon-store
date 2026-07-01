@@ -249,11 +249,14 @@ function normalizeContract(contract, maps) {
   const baseValue = Number(planSnapshot.price_total ?? plan.price_total ?? 0);
   const enrollment = Number(contract.enrollment_fee) || 0;
   const discount = Number(contract.manual_discount) || 0;
+  const renewalDiscount = contract.discount_recurring ? discount : 0;
   const credit = Number(contract.credit_balance) || 0;
   const totalValue = Math.max(0, baseValue + enrollment - discount - credit);
+  const renewalTotalValue = Math.max(0, baseValue - renewalDiscount);
   const planLabel = periodLabel(planSnapshot.name ? planSnapshot : plan);
   const contractItemLabel = [planLabel, modality.name || planSnapshot.modality_name].filter(Boolean).join(' - ');
   const items = normalizeSaleItems([{ product_name: contractItemLabel || 'Contrato', quantity: 1, sale_price: totalValue }]);
+  const renewalItems = normalizeSaleItems([{ product_name: contractItemLabel || 'Contrato', quantity: 1, sale_price: renewalTotalValue }]);
 
   return {
     sourceType: 'contract',
@@ -284,6 +287,9 @@ function normalizeContract(contract, maps) {
     coachName: coach.name || '',
     items,
     itemSummary: itemSummary(items),
+    renewalTotalValue,
+    renewalItems,
+    renewalItemSummary: itemSummary(renewalItems),
     href: `/assessoria/contratos/${contract.id}`,
     createdAt: contract.created_at,
   };
@@ -427,6 +433,9 @@ function buildRenewalTask(contractSale, events, todayStr, rule) {
     scheduledDate: contractSale.endDate,
     sortDate: contractSale.endDate,
     priority: 50,
+    totalValue: contractSale.renewalTotalValue,
+    items: contractSale.renewalItems,
+    itemSummary: contractSale.renewalItemSummary,
     planLabel: contractSale.planLabel,
     modalityName: contractSale.modalityName,
     coachName: contractSale.coachName,

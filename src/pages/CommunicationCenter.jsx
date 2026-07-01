@@ -366,7 +366,7 @@ async function fetchCommunicationData() {
       .neq('payment_status', 'cancelled')
       .neq('payment_status', 'refunded'),
     supabase.from('assessment_contracts')
-      .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, credit_balance, installments, plan_snapshot')
+      .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, discount_recurring, credit_balance, installments, plan_snapshot')
       .not('status', 'in', '("cancelled","draft","voided")')
       .neq('payment_status', 'refunded'),
     supabase.from('presale_customers').select('id, full_name, whatsapp, email'),
