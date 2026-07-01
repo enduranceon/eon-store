@@ -1,4 +1,5 @@
 import { supabase } from '@/api/db';
+import { RENEWAL_ATTENTION_WINDOW_OFFSET } from '@/lib/assessment-renewal-window';
 
 export const DEFAULT_COMMUNITY_LINK = 'https://chat.whatsapp.com/Eow2KTzNHwr0Q5n5XrTow3';
 
@@ -128,7 +129,7 @@ Se ficou alguma duvida para comecar ou se precisar de qualquer ajuste, me chama 
     journey: 'renewal',
     trigger_event: 'contract_end_date',
     task_kind: 'renewal_reminder',
-    days_offset: -14,
+    days_offset: RENEWAL_ATTENTION_WINDOW_OFFSET,
     channel: 'whatsapp',
     active: true,
     order_index: 50,

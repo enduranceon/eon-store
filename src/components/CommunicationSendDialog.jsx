@@ -28,6 +28,10 @@ function datePlusDays(days) {
   return toLocalDateStr(d);
 }
 
+function isValidWhatsappNumber(phone) {
+  return Boolean(phone && phone !== '55' && phone.length >= 12);
+}
+
 // O componente é remontado por `key={task.id}` no pai, então o estado é
 // inicializado de forma lazy a partir da task — sem efeito de sincronização.
 export default function CommunicationSendDialog({ task, communityLink: initialCommunityLink = '', onClose, onSent }) {
@@ -46,6 +50,8 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
   const [copied, setCopied] = useState(false);
   const [savingAction, setSavingAction] = useState(null);
   const saving = Boolean(savingAction);
+  const whatsappNumber = task ? phoneDigitsForWhatsApp(task.customerWhatsapp) : '';
+  const hasValidWhatsapp = isValidWhatsappNumber(whatsappNumber);
 
   const rebuildMessage = (patch = {}) => {
     if (!task) return;
@@ -73,15 +79,15 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
 
   const openWhatsApp = () => {
     if (!task) return;
-    const phone = phoneDigitsForWhatsApp(task.customerWhatsapp);
-    if (!phone || phone === '55') return toast.error('Cliente sem WhatsApp cadastrado');
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(messageText)}`, '_blank');
+    if (!hasValidWhatsapp) return toast.error('Cliente sem WhatsApp válido cadastrado');
+    window.open(`https://wa.me/${whatsappNumber}?text=${encodeURIComponent(messageText)}`, '_blank');
   };
 
   const markAsSent = async () => {
     if (!task) return;
     const message = messageText.trim();
     if (!message) return toast.error('Mensagem vazia');
+    if (!hasValidWhatsapp) return toast.error('Cadastre um WhatsApp válido antes de registrar envio por WhatsApp');
 
     const trimmedLink = externalLink.trim();
     const isChargeTask = task.bucket === TASK_BUCKET.CHARGES;
@@ -167,6 +173,15 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
                   </Link>
                 </div>
               </div>
+
+              {!hasValidWhatsapp && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    Esta etapa está sem WhatsApp válido. Resolva o contato no cadastro antes de abrir o WhatsApp ou registrar envio.
+                  </span>
+                </div>
+              )}
 
               {task.bucket === TASK_BUCKET.CHARGES && (
                 <div className="grid gap-3 md:grid-cols-2">

@@ -23,6 +23,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts';
 import { toast } from 'sonner';
+import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 function periodLabel(plan) {
   const m = plan?.period_months
@@ -117,14 +118,17 @@ export default function Painel() {
 
   // ── KPIs ────────────────────────────────────────────────────────────────────
   const today      = todayLocalStr();
-  const in30days   = (() => { const d = new Date(); d.setDate(d.getDate() + 30); return toLocalDateStr(d); })();
+  const inRenewalWindow = (() => {
+    const d = new Date(); d.setDate(d.getDate() + RENEWAL_ATTENTION_WINDOW_DAYS);
+    return toLocalDateStr(d);
+  })();
   const monthStart = getLifecycleMonthStart();
   const monthLabel = new Date().toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
   const plansById = Object.fromEntries(plans.map(p => [p.id, p]));
   const lifecycleRows = buildContractLifecycleRows(contracts, { monthStart, plansById });
 
   const active     = lifecycleRows.filter(c => c.lifecycle.counts.active);
-  const expiring   = lifecycleRows.filter(c => c.lifecycle.counts.active && c.status === 'active' && c.end_date >= today && c.end_date <= in30days);
+  const expiring   = lifecycleRows.filter(c => c.lifecycle.counts.active && c.status === 'active' && c.end_date >= today && c.end_date <= inRenewalWindow);
 
   const monthlyRevenue = active.reduce((acc, c) => acc + (c.monthly || 0), 0);
 
@@ -316,7 +320,7 @@ export default function Painel() {
                 <Clock className={`w-4.5 h-4.5 ${expiring.length > 0 ? 'text-amber-600' : 'text-gray-400'}`} />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Vencendo em 30d</p>
+                <p className="text-xs text-muted-foreground">Vencendo em {RENEWAL_ATTENTION_WINDOW_DAYS}d</p>
                 <p className={`text-2xl font-bold ${expiring.length > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{expiring.length}</p>
               </div>
             </div>
@@ -431,12 +435,12 @@ export default function Painel() {
           </CardContent>
         </Card>
 
-        {/* Contratos vencendo em 30 dias */}
+        {/* Contratos dentro da janela de renovação */}
         <Card className={expiring.length > 0 ? 'border-amber-200' : ''}>
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Clock className="w-4 h-4 text-amber-500" />
-              Vencendo em 30 dias ({expiring.length})
+              Vencendo em {RENEWAL_ATTENTION_WINDOW_DAYS} dias ({expiring.length})
             </CardTitle>
           </CardHeader>
           <CardContent>

@@ -5,7 +5,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 // Idempotente: usa renewal_generated=true como flag para nunca gerar 2x.
 //
 // Body (opcional):
-//   { horizon_days: 30 }  // janela em dias antes do end_date (default 30)
+//   { horizon_days: 15 }  // janela em dias antes do end_date (default 15)
 //   { contract_ids: ["uuid", ...] }  // força renovação só desses (ignora horizon)
 //
 // Retorna: { ok, processed, drafts_created, errors }
@@ -31,7 +31,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const horizonDays = Math.max(1, Math.min(90, Number(body?.horizon_days) || 30));
+    const horizonDays = Math.max(1, Math.min(90, Number(body?.horizon_days) || 15));
     const forcedIds: string[] | null = Array.isArray(body?.contract_ids) ? body.contract_ids : null;
 
     // Janela: hoje até hoje+horizonte

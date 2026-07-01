@@ -1,21 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   RefreshCcw, RotateCcw, ChevronRight, Check, Trash2,
   Calendar, Loader2, CheckCheck, Activity,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  AssessmentContract, AssessmentContractEvent, AssessmentCoach, AssessmentPlan,
-  AssessmentModality, PreSaleCustomer,
-} from '@/api/entities';
+import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, toLocalDateStr } from '@/lib/utils';
+import { formatCurrency, formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
+import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -116,11 +114,11 @@ export default function Renewals() {
   const [loading,    setLoading]    = useState(true);
   const [busy,       setBusy]       = useState(null);
   const [scanModal,  setScanModal]  = useState(false);
-  const [scanForm,   setScanForm]   = useState({ horizon_days: 30 });
+  const [scanForm,   setScanForm]   = useState({ horizon_days: RENEWAL_ATTENTION_WINDOW_DAYS });
   const [scanning,   setScanning]   = useState(false);
   const [scanResult, setScanResult] = useState(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data: draftsData } = await supabase
@@ -160,9 +158,12 @@ export default function Renewals() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 0);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   // ── Ações: renovação ─────────────────────────────────────────────────────
 
@@ -230,7 +231,7 @@ export default function Renewals() {
     setScanResult(null);
     try {
       const { data, error } = await supabase.functions.invoke('prepare-renewals', {
-        body: { horizon_days: Number(scanForm.horizon_days) || 30 },
+        body: { horizon_days: Number(scanForm.horizon_days) || RENEWAL_ATTENTION_WINDOW_DAYS },
       });
       if (error) {
         let msg = error.message;
@@ -359,7 +360,7 @@ export default function Renewals() {
                 onChange={e => setScanForm(f => ({ ...f, horizon_days: e.target.value }))}
               />
               <p className="text-[11px] text-muted-foreground mt-1">
-                Padrão: 30 dias. Contratos com vencimento dentro desta janela serão considerados.
+                Padrão: {RENEWAL_ATTENTION_WINDOW_DAYS} dias. Contratos com vencimento dentro desta janela serão considerados.
               </p>
             </div>
 

@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, Calendar, CheckCircle2, Clock3, Link2, Loader2, MessageCircle,
-  PhoneOff, RefreshCw, Search, SendHorizontal, Settings, WalletCards,
+  PhoneOff, RefreshCw, Search, SendHorizontal, Settings, WalletCards, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/api/db';
@@ -19,9 +20,9 @@ import {
   buildCommunicationTasks,
   taskChannelLabel,
 } from '@/lib/communication-tasks';
-import { hasNativePaymentInfo } from '@/lib/communication-send';
+import { hasNativePaymentInfo, registerCommunicationIgnore } from '@/lib/communication-send';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
 import { formatPhoneDisplay } from '@/lib/phone';
 
 const TAB_INFO = [
@@ -34,29 +35,57 @@ const TAB_INFO = [
 
 const QUICK_FILTERS = [
   { value: 'all', label: 'Todas' },
-  { value: 'overdue', label: 'Vencidas' },
+  { value: 'overdue', label: 'Vencidas', tabs: ['pending', TASK_BUCKET.CHARGES] },
   { value: 'blocked', label: 'Bloqueios' },
-  { value: 'missing_link', label: 'Sem link' },
+  { value: 'missing_link', label: 'Sem link', tabs: ['pending', TASK_BUCKET.CHARGES] },
   { value: 'ready', label: 'Prontas' },
 ];
 
-const EVENT_LABEL = {
-  payment_message_sent: 'Cobrança enviada',
-  onboarding_welcome_sent: 'Boas-vindas enviadas',
-  onboarding_checkin_sent: 'Check-in enviado',
-  renewal_message_sent: 'Renovação enviada',
-  communication_task_ignored: 'Mensagem ignorada',
-};
-
-function communicationEventLabel(event) {
-  if (event?.event_type === 'communication_task_ignored' && event.payload?.action === 'snoozed') {
-    return 'Mensagem adiada';
-  }
-  return EVENT_LABEL[event?.event_type] || event?.event_type || 'Comunicação';
-}
-
 function mapById(rows = []) {
   return new Map(rows.map(row => [row.id, row]));
+}
+
+function historyPayload(event = {}) {
+  return { ...(event.metadata || {}), ...(event.payload || {}) };
+}
+
+function bucketFromTaskKind(kind, eventType = '') {
+  if ([TASK_KIND.ONBOARDING_WELCOME, TASK_KIND.ONBOARDING_CHECKIN].includes(kind)) return TASK_BUCKET.ONBOARDING;
+  if (kind === TASK_KIND.RENEWAL_REMINDER) return TASK_BUCKET.RENEWAL;
+  if ([TASK_KIND.CHARGE_SEND, TASK_KIND.CHARGE_OVERDUE].includes(kind)) return TASK_BUCKET.CHARGES;
+  if (eventType === 'renewal_message_sent') return TASK_BUCKET.RENEWAL;
+  if (String(eventType).startsWith('onboarding')) return TASK_BUCKET.ONBOARDING;
+  if (eventType === 'payment_message_sent') return TASK_BUCKET.CHARGES;
+  return TASK_BUCKET.CHARGES;
+}
+
+function historyStatus(event = {}) {
+  const payload = historyPayload(event);
+  if (payload.action === 'snoozed') return { label: 'Adiada', tone: 'warning' };
+  if (payload.action === 'ignored' || event.event_type === 'communication_task_ignored') {
+    return { label: 'Descartada', tone: 'destructive' };
+  }
+  return { label: 'Enviada', tone: 'success' };
+}
+
+function historyTitle(event = {}) {
+  const payload = historyPayload(event);
+  if (payload.rule_name) return payload.rule_name;
+  if (payload.task_kind === TASK_KIND.CHARGE_OVERDUE) return 'Cobrança vencida';
+  if (payload.task_kind === TASK_KIND.CHARGE_SEND) return 'Enviar cobrança';
+  if (payload.task_kind === TASK_KIND.ONBOARDING_WELCOME) return 'Boas-vindas pós-pagamento';
+  if (payload.task_kind === TASK_KIND.ONBOARDING_CHECKIN) return 'Check-in inicial';
+  if (payload.task_kind === TASK_KIND.RENEWAL_REMINDER) return 'Renovação';
+  if (event.event_type === 'payment_message_sent') return 'Cobrança';
+  if (event.event_type === 'onboarding_welcome_sent') return 'Boas-vindas pós-pagamento';
+  if (event.event_type === 'onboarding_checkin_sent') return 'Check-in inicial';
+  if (event.event_type === 'renewal_message_sent') return 'Renovação';
+  return 'Comunicação';
+}
+
+function historyType(event = {}) {
+  const payload = historyPayload(event);
+  return taskChannelLabel({ bucket: bucketFromTaskKind(payload.task_kind, event.event_type) });
 }
 
 function communicationTone(task) {
@@ -89,6 +118,10 @@ function taskIsReady(task) {
   return true;
 }
 
+function filtersForTab(tab) {
+  return QUICK_FILTERS.filter(filter => !filter.tabs || filter.tabs.includes(tab));
+}
+
 function taskMatchesQuickFilter(task, filter) {
   if (filter === 'overdue') return task.kind === TASK_KIND.CHARGE_OVERDUE;
   if (filter === 'blocked') return taskIsBlocked(task);
@@ -103,6 +136,132 @@ function taskAccentClass(task) {
   if (task.bucket === TASK_BUCKET.ONBOARDING) return 'bg-green-500';
   if (task.bucket === TASK_BUCKET.RENEWAL) return 'bg-purple-500';
   return 'bg-blue-500';
+}
+
+function taskActionMeta(task) {
+  if (!taskHasWhatsapp(task)) return { label: 'Resolver contato', icon: PhoneOff, variant: 'outline' };
+  if (taskMissingPaymentLink(task)) return { label: 'Resolver link', icon: Link2, variant: 'outline' };
+  if (task.kind === TASK_KIND.CHARGE_OVERDUE) return { label: 'Reenviar', icon: SendHorizontal, variant: 'default' };
+  if (task.kind === TASK_KIND.CHARGE_SEND) return { label: 'Enviar cobrança', icon: MessageCircle, variant: 'default' };
+  if (task.bucket === TASK_BUCKET.ONBOARDING) return { label: 'Enviar onboarding', icon: MessageCircle, variant: 'default' };
+  if (task.bucket === TASK_BUCKET.RENEWAL) return { label: 'Enviar renovação', icon: MessageCircle, variant: 'default' };
+  return { label: 'Preparar', icon: MessageCircle, variant: 'default' };
+}
+
+function taskDiscardDetails(task) {
+  const context = [
+    task.customerName,
+    task.orderNumber,
+    task.title,
+  ].filter(Boolean).join(' · ');
+  const timelineNote = task.ruleSlug
+    ? 'Apenas esta etapa da régua será marcada como descartada. Se houver uma próxima mensagem, ela aparecerá quando chegar a data.'
+    : 'Esta tarefa será removida da fila manual.';
+
+  return { context, timelineNote };
+}
+
+function buildWorkSections(tasks = [], activeTab = 'pending') {
+  const blocked = tasks.filter(taskIsBlocked);
+  const available = tasks.filter(task => !taskIsBlocked(task));
+
+  const sectionDefs = activeTab === TASK_BUCKET.CHARGES
+    ? [
+        {
+          id: 'blocked',
+          title: 'Resolver bloqueios',
+          detail: 'Falta WhatsApp ou link antes de enviar.',
+          tone: 'amber',
+          tasks: blocked,
+        },
+        {
+          id: 'overdue',
+          title: 'Cobranças vencidas',
+          detail: 'Prioridade de cobrança e reenvio.',
+          tone: 'red',
+          tasks: available.filter(task => task.kind === TASK_KIND.CHARGE_OVERDUE),
+        },
+        {
+          id: 'ready',
+          title: 'Cobranças prontas',
+          detail: 'Já têm contato e link para envio.',
+          tone: 'blue',
+          tasks: available.filter(task => task.kind !== TASK_KIND.CHARGE_OVERDUE),
+        },
+      ]
+    : activeTab === TASK_BUCKET.ONBOARDING
+      ? [
+          {
+            id: 'blocked',
+            title: 'Onboarding bloqueado',
+            detail: 'Falta contato para iniciar a jornada.',
+            tone: 'amber',
+            tasks: blocked,
+          },
+          {
+            id: 'ready',
+            title: 'Onboarding pronto',
+            detail: 'Boas-vindas e check-ins para enviar.',
+            tone: 'green',
+            tasks: available,
+          },
+        ]
+      : activeTab === TASK_BUCKET.RENEWAL
+        ? [
+            {
+              id: 'blocked',
+              title: 'Renovações bloqueadas',
+              detail: 'Falta contato para seguir.',
+              tone: 'amber',
+              tasks: blocked,
+            },
+            {
+              id: 'ready',
+              title: 'Renovações prontas',
+              detail: 'Alunos próximos do fim do contrato.',
+              tone: 'purple',
+              tasks: available,
+            },
+          ]
+        : [
+            {
+              id: 'blocked',
+              title: '1. Resolver bloqueios',
+              detail: 'Sem WhatsApp, sem link ou cobrança incompleta.',
+              tone: 'amber',
+              tasks: blocked,
+            },
+            {
+              id: 'overdue',
+              title: '2. Cobranças vencidas',
+              detail: 'Comece pelas cobranças já atrasadas.',
+              tone: 'red',
+              tasks: available.filter(task => task.kind === TASK_KIND.CHARGE_OVERDUE),
+            },
+            {
+              id: 'ready_charges',
+              title: '3. Cobranças prontas',
+              detail: 'Cobranças com contato e link disponíveis.',
+              tone: 'blue',
+              tasks: available.filter(task => task.bucket === TASK_BUCKET.CHARGES && task.kind !== TASK_KIND.CHARGE_OVERDUE),
+            },
+            {
+              id: 'onboarding',
+              title: '4. Onboarding',
+              detail: 'Boas-vindas e check-ins iniciais.',
+              tone: 'green',
+              tasks: available.filter(task => task.bucket === TASK_BUCKET.ONBOARDING),
+            },
+            {
+              id: 'renewal',
+              title: '5. Renovações',
+              detail: 'Continuidade de contrato e retenção.',
+              tone: 'purple',
+              tasks: available.filter(task => task.bucket === TASK_BUCKET.RENEWAL),
+            },
+          ];
+
+  return sectionDefs.filter(section => section.tasks.length > 0);
 }
 
 function SummaryCard({ icon: Icon, label, value, tone = 'blue', detail }) {
@@ -136,10 +295,13 @@ function normalizeSaleHistory(ev, presaleMap, stockMap) {
   if (!row) return null;
   const customerName = ev.order_type === 'stock' ? row.customer_name : row.checkout_name;
   const customerWhatsapp = ev.order_type === 'stock' ? row.customer_whatsapp : row.checkout_whatsapp;
+  const status = historyStatus(ev);
   return {
     id: `sale:${ev.id}`,
-    type: 'Cobrança',
-    title: ev.reason || 'Cobrança enviada',
+    type: historyType(ev),
+    title: historyTitle(ev),
+    statusLabel: status.label,
+    statusTone: status.tone,
     customerName: customerName || 'Cliente',
     customerWhatsapp,
     orderNumber: row.order_number,
@@ -157,10 +319,13 @@ function buildHistory(data) {
     const contract = contracts.get(ev.contract_id);
     if (!contract) return null;
     const customer = customers.get(contract.customer_id) || {};
+    const status = historyStatus(ev);
     return {
       id: `contract:${ev.id}`,
-      type: taskChannelLabel({ bucket: ev.event_type === 'renewal_message_sent' ? TASK_BUCKET.RENEWAL : ev.event_type.startsWith('onboarding') ? TASK_BUCKET.ONBOARDING : TASK_BUCKET.CHARGES }),
-      title: communicationEventLabel(ev),
+      type: historyType(ev),
+      title: historyTitle(ev),
+      statusLabel: status.label,
+      statusTone: status.tone,
       customerName: customer.full_name || 'Aluno',
       customerWhatsapp: customer.whatsapp,
       orderNumber: contract.contract_number,
@@ -234,20 +399,22 @@ async function fetchCommunicationData() {
   };
 }
 
-function TaskCard({ task, onOpen }) {
+function TaskCard({ task, onOpen, onDiscard, discarding }) {
   const hasWhatsapp = taskHasWhatsapp(task);
   const missingLink = taskMissingPaymentLink(task);
   const hasExternalLink = Boolean(task.externalPaymentLink);
   const nativePaymentInfo = hasNativePaymentInfo(task);
   const isOverdue = task.kind === TASK_KIND.CHARGE_OVERDUE;
   const isReady = taskIsReady(task);
+  const action = taskActionMeta(task);
+  const ActionIcon = action.icon;
 
   return (
     <div className="relative overflow-hidden rounded-lg border bg-white shadow-sm transition-shadow hover:shadow-md">
       <div className={`absolute left-0 top-0 h-full w-1 ${taskAccentClass(task)}`} />
-      <div className="grid gap-3 px-4 py-3 pl-5 lg:grid-cols-[minmax(0,1fr)_250px_132px] lg:items-center">
+      <div className="grid gap-4 px-4 py-4 pl-5 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
         <div className="min-w-0 space-y-2">
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant={communicationTone(task)}>{taskChannelLabel(task)}</Badge>
             {isOverdue && task.statusLabel && (
               <Badge variant="destructive" className="gap-1">
@@ -273,8 +440,8 @@ function TaskCard({ task, onOpen }) {
           </div>
 
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Link to={task.href} className="font-semibold text-blue-700 hover:underline truncate">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <Link to={task.href} className="min-w-0 break-words text-base font-semibold leading-tight text-blue-700 hover:underline">
                 {task.customerName}
               </Link>
               <span className="text-muted-foreground">·</span>
@@ -302,22 +469,131 @@ function TaskCard({ task, onOpen }) {
           </div>
         </div>
 
-        <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-          <p className="text-[11px] font-medium text-muted-foreground">Etapa</p>
-          <p className="text-sm font-semibold text-gray-950 mt-0.5">{task.title}</p>
-          {!isOverdue && task.statusLabel && (
-            <p className="text-xs text-muted-foreground mt-0.5">{task.statusLabel}</p>
-          )}
-        </div>
+        <div className="min-w-0 rounded-lg border border-gray-100 bg-gray-50 p-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground">Etapa</p>
+            <p className="mt-0.5 text-sm font-semibold leading-snug text-gray-950">{task.title}</p>
+            {!isOverdue && task.statusLabel && (
+              <p className="mt-0.5 text-xs text-muted-foreground">{task.statusLabel}</p>
+            )}
+          </div>
 
-        <div className="flex lg:justify-end">
-          <Button size="sm" onClick={() => onOpen(task)} className="gap-1.5 w-full lg:w-auto">
-            <MessageCircle className="w-4 h-4" />
-            Preparar
-          </Button>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+            <Button
+              size="sm"
+              variant={action.variant}
+              onClick={() => onOpen(task)}
+              disabled={discarding}
+              className="w-full gap-1.5"
+            >
+              <ActionIcon className="w-4 h-4" />
+              {action.label}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onDiscard(task)}
+              disabled={discarding}
+              className="w-full gap-1.5 border-gray-200 text-gray-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+            >
+              {discarding ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+              Descartar
+            </Button>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function TaskSection({ section, onOpen, onDiscard, discardingTaskId }) {
+  const toneClass = {
+    amber: 'border-amber-200 bg-amber-50 text-amber-800',
+    red: 'border-red-200 bg-red-50 text-red-800',
+    blue: 'border-blue-200 bg-blue-50 text-blue-800',
+    green: 'border-green-200 bg-green-50 text-green-800',
+    purple: 'border-purple-200 bg-purple-50 text-purple-800',
+  }[section.tone] || 'border-gray-200 bg-gray-50 text-gray-800';
+  const dotClass = {
+    amber: 'bg-amber-400',
+    red: 'bg-red-500',
+    blue: 'bg-blue-500',
+    green: 'bg-green-500',
+    purple: 'bg-purple-500',
+  }[section.tone] || 'bg-gray-400';
+
+  return (
+    <section className="space-y-2">
+      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2">
+            <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold">{section.title}</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">{section.detail}</p>
+            </div>
+          </div>
+          <span className={`rounded-full border px-2 py-0.5 text-xs font-bold ${toneClass}`}>
+            {section.tasks.length}
+          </span>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {section.tasks.map(task => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            onOpen={onOpen}
+            onDiscard={onDiscard}
+            discarding={discardingTaskId === task.id}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DiscardTaskDialog({ task, saving, onClose, onConfirm }) {
+  if (!task) return null;
+  const { context, timelineNote } = taskDiscardDetails(task);
+
+  return (
+    <Dialog open={!!task} onOpenChange={open => !open && !saving && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-700">
+            <XCircle className="h-5 w-5" />
+            Descartar etapa
+          </DialogTitle>
+          <DialogDescription>
+            Essa ação remove esta tarefa da fila manual, sem cancelar cliente, contrato ou cobrança.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3">
+            <p className="text-sm font-semibold text-red-900">
+              Tem certeza que quer descartar esse contato?
+            </p>
+            <p className="mt-2 text-sm text-red-800">{context}</p>
+          </div>
+
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+            {timelineNote}
+          </div>
+        </div>
+
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancelar
+          </Button>
+          <Button variant="destructive" onClick={onConfirm} disabled={saving} className="gap-1.5">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+            Descartar etapa
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -327,6 +603,7 @@ function HistoryRow({ row }) {
       <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="secondary">{row.type}</Badge>
+          {row.statusLabel && <Badge variant={row.statusTone || 'outline'}>{row.statusLabel}</Badge>}
           <span className="font-semibold text-sm">{row.title}</span>
           <span className="font-mono text-xs text-muted-foreground">{row.orderNumber}</span>
         </div>
@@ -347,7 +624,14 @@ export default function CommunicationCenter() {
   const [quickFilter, setQuickFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedTask, setSelectedTask] = useState(null);
+  const [discardTask, setDiscardTask] = useState(null);
+  const [discardingTaskId, setDiscardingTaskId] = useState(null);
   const [communityLink, setCommunityLink] = useState(DEFAULT_COMMUNITY_LINK);
+
+  const handleTabChange = useCallback((value) => {
+    setActiveTab(value);
+    setQuickFilter('all');
+  }, []);
 
   const load = useCallback(async ({ quiet = false } = {}) => {
     if (quiet) setRefreshing(true);
@@ -392,6 +676,10 @@ export default function CommunicationCenter() {
     history: history.length,
   }), [tasks, history]);
 
+  const historyTodayCount = useMemo(() => (
+    history.filter(row => String(row.createdAt || '').slice(0, 10) === todayLocalStr()).length
+  ), [history]);
+
   const operationCounts = useMemo(() => ({
     overdue: tasks.filter(t => t.kind === TASK_KIND.CHARGE_OVERDUE).length,
     blocked: tasks.filter(taskIsBlocked).length,
@@ -410,6 +698,8 @@ export default function CommunicationCenter() {
     missing_link: tabTasks.filter(taskMissingPaymentLink).length,
     ready: tabTasks.filter(taskIsReady).length,
   }), [tabTasks]);
+
+  const availableQuickFilters = useMemo(() => filtersForTab(activeTab), [activeTab]);
 
   const visibleTasks = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -436,13 +726,40 @@ export default function CommunicationCenter() {
       row.customerWhatsapp,
       row.orderNumber,
       row.type,
+      row.statusLabel,
     ].some(value => String(value || '').toLowerCase().includes(q)));
   }, [history, search]);
+
+  const workSections = useMemo(() => (
+    activeTab === 'history' ? [] : buildWorkSections(visibleTasks, activeTab)
+  ), [activeTab, visibleTasks]);
 
   const handleSent = useCallback(() => {
     setSelectedTask(null);
     load({ quiet: true });
   }, [load]);
+
+  const handleRequestDiscard = useCallback((task) => {
+    setDiscardTask(task);
+  }, []);
+
+  const handleConfirmDiscard = useCallback(async () => {
+    const task = discardTask;
+    if (!task) return;
+    setDiscardingTaskId(task.id);
+    try {
+      await registerCommunicationIgnore(task, {
+        reason: 'Descartado pela fila da Central de Comunicação',
+      });
+      toast.success('Etapa descartada');
+      setDiscardTask(null);
+      await load({ quiet: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao descartar contato');
+    } finally {
+      setDiscardingTaskId(null);
+    }
+  }, [discardTask, load]);
 
   if (loading) {
     return (
@@ -487,7 +804,7 @@ export default function CommunicationCenter() {
           label="Pendentes"
           value={counts.pending}
           tone="blue"
-          detail={`${counts[TASK_BUCKET.CHARGES]} cobrança${counts[TASK_BUCKET.CHARGES] === 1 ? '' : 's'}`}
+          detail={`${counts[TASK_BUCKET.CHARGES]} cobrança${counts[TASK_BUCKET.CHARGES] === 1 ? '' : 's'} · ${historyTodayCount} hoje`}
         />
         <SummaryCard
           icon={Clock3}
@@ -514,7 +831,7 @@ export default function CommunicationCenter() {
 
       <div className="rounded-lg border bg-white p-3 shadow-sm space-y-3">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="h-auto flex-wrap justify-start">
               {TAB_INFO.map(tab => (
                 <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5">
@@ -539,7 +856,7 @@ export default function CommunicationCenter() {
 
         {activeTab !== 'history' && (
           <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
-            {QUICK_FILTERS.map(filter => {
+            {availableQuickFilters.map(filter => {
               const active = quickFilter === filter.value;
               return (
                 <button
@@ -574,13 +891,21 @@ export default function CommunicationCenter() {
           ) : visibleHistory.map(row => <HistoryRow key={row.id} row={row} />)}
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-5">
           {visibleTasks.length === 0 ? (
             <div className="rounded-lg border bg-white p-10 text-center">
               <CheckCircle2 className="w-8 h-8 text-green-600 mx-auto mb-2" />
               <p className="font-semibold text-gray-900">Nada pendente nessa fila</p>
             </div>
-          ) : visibleTasks.map(task => <TaskCard key={task.id} task={task} onOpen={setSelectedTask} />)}
+          ) : workSections.map(section => (
+            <TaskSection
+              key={section.id}
+              section={section}
+              onOpen={setSelectedTask}
+              onDiscard={handleRequestDiscard}
+              discardingTaskId={discardingTaskId}
+            />
+          ))}
         </div>
       )}
 
@@ -590,6 +915,12 @@ export default function CommunicationCenter() {
         communityLink={communityLink}
         onClose={() => setSelectedTask(null)}
         onSent={handleSent}
+      />
+      <DiscardTaskDialog
+        task={discardTask}
+        saving={Boolean(discardingTaskId)}
+        onClose={() => setDiscardTask(null)}
+        onConfirm={handleConfirmDiscard}
       />
     </div>
   );

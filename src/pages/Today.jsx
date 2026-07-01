@@ -10,6 +10,7 @@ import { isEffectiveOpenSale } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
 import BusinessPulse from '@/components/BusinessPulse';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
+import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -242,13 +243,13 @@ export default function Today() {
     .filter(o => o.payment_status === 'charge_sent' && daysSince(o.status_changed_at || o.created_date) >= 2)
     .sort((a, b) => daysSince(b.status_changed_at) - daysSince(a.status_changed_at));
 
-  // 5. Contratos vencendo em até 14 dias (renovação)
-  const in14Days = (() => {
-    const d14 = new Date(); d14.setDate(d14.getDate() + 14);
-    return toLocalDateStr(d14);
+  // 5. Contratos dentro da janela de renovação
+  const inRenewalWindow = (() => {
+    const d = new Date(); d.setDate(d.getDate() + RENEWAL_ATTENTION_WINDOW_DAYS);
+    return toLocalDateStr(d);
   })();
   const expiringContracts = contracts
-    .filter(c => c.status === 'active' && c.end_date && c.end_date <= in14Days && c.end_date >= todayStr)
+    .filter(c => c.status === 'active' && c.end_date && c.end_date <= inRenewalWindow && c.end_date >= todayStr)
     .sort((a, b) => a.end_date.localeCompare(b.end_date));
 
   // 6. Pagos aguardando entrega (store only)
@@ -376,7 +377,7 @@ export default function Today() {
           {/* ── 4. Contratos vencendo em breve ─────────────────────── */}
           <Section
             title="Contratos vencendo em breve"
-            subtitle="Assessoria — renovar ou encerrar nos próximos 14 dias"
+            subtitle={`Assessoria — renovar ou encerrar nos próximos ${RENEWAL_ATTENTION_WINDOW_DAYS} dias`}
             icon={CalendarX} iconColor="text-violet-600"
             count={expiringContracts.length} total={0}
             borderColor="border-violet-100"
