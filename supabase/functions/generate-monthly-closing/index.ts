@@ -86,18 +86,26 @@ Deno.serve(async (req: Request) => {
       competence = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
     }
 
-    // Já existe?
+    const regenerate = body?.regenerate === true;
+
+    // Já existe fechamento pra essa competência?
     const { data: existing } = await supabase.from("payout_monthly_closings")
       .select("id, status").eq("competence", competence).maybeSingle();
-    if (existing) {
+
+    // Aprovado/pago nunca recalcula — protege valores já congelados.
+    if (existing && existing.status !== "pending_approval") {
       return new Response(JSON.stringify({
-        error: existing.status === "pending_approval"
-          ? "Fechamento já existe para essa competência (em revisão)."
-          : "Fechamento já existe e foi aprovado/pago para essa competência.",
+        error: "Fechamento já existe e foi aprovado/pago para essa competência.",
         closing_id: existing.id,
-      }), {
-        status: 409, headers: { "Content-Type": "application/json" },
-      });
+      }), { status: 409, headers: { "Content-Type": "application/json" } });
+    }
+
+    // Existe em revisão, mas o recálculo não foi pedido explicitamente.
+    if (existing && !regenerate) {
+      return new Response(JSON.stringify({
+        error: "Fechamento já existe para essa competência (em revisão).",
+        closing_id: existing.id,
+      }), { status: 409, headers: { "Content-Type": "application/json" } });
     }
 
     const monthStart = new Date(competence + "T00:00:00Z");
@@ -154,11 +162,28 @@ Deno.serve(async (req: Request) => {
       snapshot_at:           new Date().toISOString(),
     } : null;
 
-    // Cria fechamento
-    const { data: closing, error: closingError } = await supabase.from("payout_monthly_closings").insert({
-      competence, status: "pending_approval",
-    }).select().single();
-    if (closingError) throw closingError;
+    // Cria (ou reusa, em recálculo) o fechamento da competência.
+    let closing;
+    if (existing) {
+      // Recálculo: remove só os itens calculados automaticamente,
+      // preservando os ajustes manuais lançados durante a revisão.
+      const { error: delErr } = await supabase
+        .from("payout_monthly_statement_items")
+        .delete()
+        .eq("closing_id", existing.id)
+        .neq("source_type", "manual_adjustment");
+      if (delErr) throw delErr;
+      await supabase.from("payout_monthly_closings")
+        .update({ generated_at: new Date().toISOString() })
+        .eq("id", existing.id);
+      closing = existing;
+    } else {
+      const { data: newClosing, error: closingError } = await supabase.from("payout_monthly_closings").insert({
+        competence, status: "pending_approval",
+      }).select().single();
+      if (closingError) throw closingError;
+      closing = newClosing;
+    }
 
     const groups = new Map<string, any>();
     const customersById = new Map(customers.map((c: any) => [c.id, c]));
@@ -277,6 +302,7 @@ Deno.serve(async (req: Request) => {
 
     return new Response(JSON.stringify({
       ok: true, closing_id: closing.id,
+      regenerated: !!existing,
       tier_name: tier?.name, total_athletes: totalActive,
       items_count: items.length, total_amount: total,
       tier_snapshot: tierSnapshot,

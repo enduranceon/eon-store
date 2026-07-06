@@ -45,6 +45,7 @@ export default function ClosingDetail() {
   const [approving, setApproving] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
   const [reopening, setReopening] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
 
   const load = async () => {
     try {
@@ -116,6 +117,21 @@ export default function ClosingDetail() {
     finally { setReopening(false); }
   };
 
+  const recalculate = async () => {
+    if (!confirm('Recalcular este fechamento?\n\nOs itens automáticos são regerados a partir dos contratos pagos de agora. Seus ajustes manuais são preservados.')) return;
+    setRecalculating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-monthly-closing', {
+        body: { competence: closing.competence, regenerate: true },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      toast.success(`Fechamento recalculado! ${data.items_count} itens · total ${formatCurrency(data.total_amount)}`);
+      load();
+    } catch (e) { toast.error(e.message || 'Erro ao recalcular'); }
+    finally { setRecalculating(false); }
+  };
+
   const addAdjust = async () => {
     if (!adjustForm.coach_id) return toast.error('Selecione o coach');
     if (!adjustForm.amount || isNaN(Number(adjustForm.amount))) return toast.error('Valor inválido');
@@ -177,9 +193,14 @@ export default function ClosingDetail() {
             </span>
           )}
           {isDraft && (
-            <Button onClick={approve} disabled={approving} className="bg-green-600 hover:bg-green-700">
-              <CheckCircle2 className="w-4 h-4 mr-1.5" /> {approving ? 'Aprovando...' : 'Aprovar'}
-            </Button>
+            <>
+              <Button onClick={recalculate} disabled={recalculating || approving} variant="outline" size="sm">
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> {recalculating ? 'Recalculando...' : 'Recalcular'}
+              </Button>
+              <Button onClick={approve} disabled={approving || recalculating} className="bg-green-600 hover:bg-green-700">
+                <CheckCircle2 className="w-4 h-4 mr-1.5" /> {approving ? 'Aprovando...' : 'Aprovar'}
+              </Button>
+            </>
           )}
           {closing.status === 'approved' && (
             <>
