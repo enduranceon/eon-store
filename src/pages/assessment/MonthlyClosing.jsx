@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PayoutMonthlyClosing, PayoutMonthlyStatementItem } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocalStr, formatCompetence } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const STATUS = {
@@ -55,12 +55,6 @@ export default function MonthlyClosing() {
       navigate(`/assessoria/fechamento/${data.closing_id}`);
     } catch (e) { toast.error(e.message || 'Erro ao gerar'); }
     finally { setGenerating(false); }
-  };
-
-  const formatCompetence = (d) => {
-    if (!d) return '';
-    const [y, m] = d.split('-');
-    return `${m}/${y}`;
   };
 
   const totalByClosing = (id) => items.filter(i => i.closing_id === id).reduce((s, i) => s + Number(i.amount), 0);

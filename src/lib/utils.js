@@ -106,6 +106,17 @@ export function maskCpf(value) {
   return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
 }
 
+const MESES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+// Formata uma competência "YYYY-MM-01" como "Junho 2026" (padrão) ou "jun/2026" (short).
+export function formatCompetence(competence, { short = false } = {}) {
+  if (!competence) return '';
+  const [y, m] = String(competence).slice(0, 10).split('-');
+  const nome = MESES_PT[Number(m) - 1];
+  if (!nome) return `${m}/${y}`;
+  return short ? `${nome.slice(0, 3).toLowerCase()}/${y}` : `${nome} ${y}`;
+}
+
 export function validateCpf(value) {
   const d = value.replace(/\D/g, '');
   if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false;

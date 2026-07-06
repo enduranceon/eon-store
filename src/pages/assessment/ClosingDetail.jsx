@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
-  ArrowLeft, CheckCircle2, User, Plus, ChevronDown, ChevronRight,
+  ArrowLeft, CheckCircle2, User, Plus, ChevronDown, ChevronRight, Printer,
   Lock, Banknote, Info, AlertTriangle, RotateCcw, Trash2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -15,7 +15,7 @@ import {
   PayoutMonthlyClosing, PayoutMonthlyStatementItem, AssessmentCoach,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, formatCompetence } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const SOURCE = {
@@ -94,7 +94,7 @@ export default function ClosingDetail() {
   // Carry-forward: itens resgatados de meses anteriores (reference != competência atual)
   const competence = closing?.competence;
   const isCarried = (it) => !!it.reference_competence && !!competence && it.reference_competence !== competence;
-  const refLabel = (ref) => (ref ? `${String(ref).slice(5, 7)}/${String(ref).slice(0, 4)}` : '');
+  const refLabel = (ref) => formatCompetence(ref, { short: true });
   const carriedTotal = items.filter(isCarried).reduce((s, i) => s + Number(i.amount), 0);
 
   // Pendências (aguardando pagamento) — não somam ao total a pagar
@@ -202,7 +202,7 @@ export default function ClosingDetail() {
   if (!closing) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const st = STATUS[closing.status] || {};
-  const competenceLabel = closing.competence ? `${closing.competence.split('-')[1]}/${closing.competence.split('-')[0]}` : '';
+  const competenceLabel = formatCompetence(closing.competence);
   const isLocked = closing.status === 'approved' || closing.status === 'paid';
   const isDraft  = closing.status === 'pending_approval';
   const isPaid   = closing.status === 'paid';
@@ -327,20 +327,23 @@ export default function ClosingDetail() {
             const isOpen = expanded[coach.id];
             return (
               <Card key={coach.id}>
-                <button onClick={() => setExpanded(e => ({ ...e, [coach.id]: !e[coach.id] }))} className="w-full text-left">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                        <User className="w-4 h-4 text-blue-600" />
-                        <span className="font-bold">{coach.name}</span>
-                        <span className="text-xs text-muted-foreground capitalize">({coach.role})</span>
-                        <span className="text-xs text-muted-foreground">· {list.length} {list.length === 1 ? 'item' : 'itens'}</span>
-                      </div>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <button onClick={() => setExpanded(e => ({ ...e, [coach.id]: !e[coach.id] }))} className="flex items-center gap-2 text-left flex-1 min-w-0">
+                      {isOpen ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
+                      <User className="w-4 h-4 text-blue-600 shrink-0" />
+                      <span className="font-bold truncate">{coach.name}</span>
+                      <span className="text-xs text-muted-foreground capitalize shrink-0">({coach.role})</span>
+                      <span className="text-xs text-muted-foreground shrink-0">· {list.length} {list.length === 1 ? 'item' : 'itens'}</span>
+                    </button>
+                    <div className="flex items-center gap-3 shrink-0">
                       <span className="text-lg font-bold text-green-600">{formatCurrency(subtotal)}</span>
+                      <Link to={`/assessoria/fechamento/${id}/extrato/${coach.id}`} className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline" title="Extrato para enviar ao treinador">
+                        <Printer className="w-3.5 h-3.5" /> Extrato
+                      </Link>
                     </div>
-                  </CardHeader>
-                </button>
+                  </div>
+                </CardHeader>
                 {isOpen && (
                   <CardContent className="pt-0">
                     <div className="divide-y border-t">

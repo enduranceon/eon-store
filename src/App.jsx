@@ -60,6 +60,7 @@ import AssContractForm from '@/pages/assessment/ContractForm';
 import AssContractDetail from '@/pages/assessment/ContractDetail';
 import AssMonthlyClosing from '@/pages/assessment/MonthlyClosing';
 import AssClosingDetail from '@/pages/assessment/ClosingDetail';
+import AssCoachStatement from '@/pages/assessment/CoachStatement';
 import AssPainel from '@/pages/assessment/Painel';
 import AssRegua from '@/pages/assessment/Regua';
 import AssRenewals from '@/pages/assessment/Renewals';
@@ -165,6 +166,7 @@ export default function App() {
           <Route path="/assessoria/repasse" element={<AdminLayout><AssRepasse /></AdminLayout>} />
           <Route path="/assessoria/fechamento"     element={<AdminLayout><AssMonthlyClosing /></AdminLayout>} />
           <Route path="/assessoria/fechamento/:id" element={<AdminLayout><AssClosingDetail /></AdminLayout>} />
+          <Route path="/assessoria/fechamento/:id/extrato/:coachId" element={<AssCoachStatement />} />
           <Route path="/estoque" element={<AdminLayout><StockProducts /></AdminLayout>} />
           <Route path="/estoque/novo" element={<AdminLayout><StockProductForm /></AdminLayout>} />
           <Route path="/estoque/pedidos" element={<AdminLayout><StockOrders /></AdminLayout>} />
