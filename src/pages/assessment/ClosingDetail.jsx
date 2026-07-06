@@ -46,6 +46,8 @@ export default function ClosingDetail() {
   const [markingPaid, setMarkingPaid] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
+  const [pendings, setPendings] = useState([]);
+  const [pendingContracts, setPendingContracts] = useState([]);
 
   const load = async () => {
     try {
@@ -55,6 +57,22 @@ export default function ClosingDetail() {
         AssessmentCoach.list('name').catch(() => []),
       ]);
       setClosing(c); setItems(i); setCoaches(co);
+
+      // Pendências (repasse aguardando pagamento do aluno) detectadas neste fechamento
+      const { data: pend } = await supabase
+        .from('payout_pending_repasse')
+        .select('*')
+        .eq('detected_in_closing_id', id)
+        .eq('status', 'open');
+      setPendings(pend || []);
+      const cids = [...new Set((pend || []).map(p => p.contract_id))];
+      if (cids.length) {
+        const { data: cts } = await supabase
+          .from('assessment_contracts').select('id, due_date').in('id', cids);
+        setPendingContracts(cts || []);
+      } else {
+        setPendingContracts([]);
+      }
     } catch (e) {
       console.error('Erro ao carregar fechamento:', e);
     }
@@ -72,6 +90,22 @@ export default function ClosingDetail() {
   const adjustmentsTotal = items
     .filter(i => i.source_type === 'manual_adjustment')
     .reduce((s, i) => s + Number(i.amount), 0);
+
+  // Carry-forward: itens resgatados de meses anteriores (reference != competência atual)
+  const competence = closing?.competence;
+  const isCarried = (it) => !!it.reference_competence && !!competence && it.reference_competence !== competence;
+  const refLabel = (ref) => (ref ? `${String(ref).slice(5, 7)}/${String(ref).slice(0, 4)}` : '');
+  const carriedTotal = items.filter(isCarried).reduce((s, i) => s + Number(i.amount), 0);
+
+  // Pendências (aguardando pagamento) — não somam ao total a pagar
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dueByContract = Object.fromEntries(pendingContracts.map(c => [c.id, c.due_date]));
+  const pendingTotal = pendings.reduce((s, p) => s + Number(p.amount), 0);
+  const pendingByCoach = coaches.map(coach => {
+    const list = pendings.filter(p => p.coach_id === coach.id);
+    const subtotal = list.reduce((s, p) => s + Number(p.amount), 0);
+    return { coach, list, subtotal };
+  }).filter(g => g.list.length > 0).sort((a, b) => b.subtotal - a.subtotal);
 
   const approve = async () => {
     if (!confirm('Aprovar fechamento?\n\nOs valores ficam congelados e coaches passam a visualizar o extrato. Você ainda pode reabrir se precisar ajustar.')) return;
@@ -319,6 +353,11 @@ export default function ClosingDetail() {
                           <div key={it.id} className="py-2.5">
                             <div className="flex items-center gap-2">
                               <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${so.cls}`}>{so.label}</span>
+                              {isCarried(it) && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 bg-orange-100 text-orange-700" title="Resgatado de mês anterior">
+                                  ref. {refLabel(it.reference_competence)}
+                                </span>
+                              )}
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm truncate">{it.description}</p>
                                 {it.valid_days != null && (
@@ -420,6 +459,59 @@ export default function ClosingDetail() {
             );
           })}
         </div>
+      )}
+
+      {/* Aguardando pagamento (pendências) */}
+      {pendings.length > 0 && (
+        <Card className="border-amber-200">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600" />
+                <span className="font-semibold text-amber-900">Aguardando pagamento</span>
+                <span className="text-xs text-muted-foreground">
+                  {pendings.length} {pendings.length === 1 ? 'pendência' : 'pendências'} · não entram no total
+                </span>
+              </div>
+              <span className="text-sm font-bold text-amber-700">{formatCurrency(pendingTotal)}</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Alunos que ainda não pagaram este mês. Quando pagarem, o repasse entra automaticamente no fechamento do mês do pagamento, carimbado com a referência deste mês.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-3">
+            {pendingByCoach.map(({ coach, list, subtotal }) => (
+              <div key={coach.id} className="border-t pt-2">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <User className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="font-semibold text-sm">{coach.name}</span>
+                    <span className="text-xs text-muted-foreground capitalize">({coach.role})</span>
+                  </div>
+                  <span className="text-sm font-semibold text-amber-700">{formatCurrency(subtotal)}</span>
+                </div>
+                <div className="divide-y">
+                  {list.map(p => {
+                    const due = dueByContract[p.contract_id];
+                    const overdue = due && due < todayStr;
+                    return (
+                      <div key={p.id} className="flex items-center gap-2 py-1.5">
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${(SOURCE[p.source_type] || {}).cls || 'bg-gray-100 text-gray-600'}`}>
+                          {(SOURCE[p.source_type] || {}).label || p.source_type}
+                        </span>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${overdue ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {overdue ? 'vencido' : 'a vencer'}
+                        </span>
+                        <p className="text-sm truncate flex-1 min-w-0">{p.description}</p>
+                        <span className="text-sm font-medium text-muted-foreground shrink-0">{formatCurrency(p.amount)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
 
       {/* Modal ajuste */}
