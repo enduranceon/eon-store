@@ -92,12 +92,23 @@ export default function CoachStatement() {
     });
     const total = items.reduce((a, i) => a + Number(i.amount), 0);
 
+    // Resumo por modalidade (soma alunos + liderança + resgatados; conta alunos próprios)
+    const byMod = {};
+    for (const it of [...alunos, ...liderancas, ...resgatados]) {
+      const mod = it.modalidade || 'Outros';
+      if (!byMod[mod]) byMod[mod] = { modalidade: mod, total: 0, alunos: 0 };
+      byMod[mod].total += Number(it.amount);
+      if (it.source_type === 'athlete_repasse') byMod[mod].alunos += 1;
+    }
+    const porModalidade = Object.values(byMod).sort((a, b) => b.total - a.total);
+
     return (
       <StatementDocument
         coach={coach}
         mesLabel={formatCompetence(competence)}
         generatedAt={formatDate(closing.generated_at?.split('T')[0])}
         statusLabel={closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão'}
+        porModalidade={porModalidade}
         alunos={alunos} liderancas={liderancas} resgatados={resgatados} pendings={pends} total={total}
       />
     );

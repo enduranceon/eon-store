@@ -5,6 +5,9 @@ import {
 const ROLE_LABEL = { junior: 'Junior', pleno: 'Pleno', senior: 'Senior' };
 const money = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v) || 0);
 
+const MOD_COLOR = { corrida: '#2563eb', triathlon: '#ea580c', 'natação': '#0891b2', natacao: '#0891b2', ciclismo: '#16a34a' };
+const modColor = (m) => MOD_COLOR[(m || '').toLowerCase()] || '#64748b';
+
 const s = StyleSheet.create({
   page: { paddingTop: 32, paddingBottom: 46, paddingHorizontal: 34, fontSize: 9.5, color: '#1e293b', fontFamily: 'Helvetica' },
 
@@ -15,10 +18,17 @@ const s = StyleSheet.create({
   headTotalLabel: { fontSize: 7.5, color: '#94a3b8', textAlign: 'right', textTransform: 'uppercase', letterSpacing: 0.5 },
   headTotalValue: { fontSize: 19, fontFamily: 'Helvetica-Bold', color: '#16a34a', textAlign: 'right' },
 
-  coachBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', border: '1 solid #e2e8f0', borderRadius: 6, padding: 11, marginBottom: 18 },
+  coachBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', border: '1 solid #e2e8f0', borderRadius: 6, padding: 11, marginBottom: 14 },
   coachName: { fontSize: 13, fontFamily: 'Helvetica-Bold', color: '#0f172a' },
   coachRole: { fontSize: 8.5, color: '#64748b', marginTop: 1 },
   meta: { fontSize: 8, color: '#94a3b8', textAlign: 'right', lineHeight: 1.4 },
+
+  modRow: { flexDirection: 'row', marginBottom: 18 },
+  modCard: { flex: 1, backgroundColor: '#fbfcfe', border: '1 solid #e6ebf2', borderRadius: 7, padding: 10 },
+  modAccent: { width: 22, height: 3, borderRadius: 2, marginBottom: 6 },
+  modName: { fontSize: 7.5, color: '#64748b', textTransform: 'capitalize', letterSpacing: 0.3, fontFamily: 'Helvetica-Bold' },
+  modValue: { fontSize: 15, fontFamily: 'Helvetica-Bold', color: '#0f172a', marginTop: 3 },
+  modSub: { fontSize: 7.5, color: '#94a3b8', marginTop: 2 },
 
   sectionTitle: { fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: '#0f172a', marginBottom: 6, marginTop: 6 },
   sectionAccent: { width: 3, height: 11, borderRadius: 2, marginRight: 6 },
@@ -44,7 +54,8 @@ const s = StyleSheet.create({
   pendHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
   pendTitle: { fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: '#92400e' },
   pendTotal: { fontSize: 11, fontFamily: 'Helvetica-Bold', color: '#b45309' },
-  pendNote: { fontSize: 8, color: '#a16207', marginBottom: 8, lineHeight: 1.4 },
+  pendNote: { fontSize: 8, color: '#a16207', marginBottom: 4, lineHeight: 1.4 },
+  pendSubhead: { fontSize: 7.5, fontFamily: 'Helvetica-Bold', color: '#b45309', textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 8, marginBottom: 1 },
   pendRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 3.5, borderBottom: '0.5 solid #fef3c7' },
   chip: { fontSize: 6.5, fontFamily: 'Helvetica-Bold', textTransform: 'uppercase', letterSpacing: 0.4, paddingVertical: 2, paddingHorizontal: 5, borderRadius: 8, overflow: 'hidden', textAlign: 'center' },
 
@@ -82,6 +93,21 @@ function LeadershipRow({ it }) {
   );
 }
 
+function PendRow({ p }) {
+  return (
+    <View style={s.pendRow} wrap={false}>
+      <Text style={[s.chip, { width: 46, backgroundColor: p.overdue ? '#fee2e2' : '#f1f5f9', color: p.overdue ? '#b91c1c' : '#64748b' }]}>
+        {p.overdue ? 'vencido' : 'a vencer'}
+      </Text>
+      <View style={{ flex: 1, paddingLeft: 8 }}>
+        <Text style={s.cellPrimary}>{p.aluno}</Text>
+        <Text style={s.cellSub}>{p.tipoLabel}{p.sobre ? ` · sobre ${p.sobre}` : ''}{p.modalidade ? ` · ${p.modalidade}` : ''}</Text>
+      </View>
+      <Text style={[s.cellMuted, { width: 66, textAlign: 'right' }]}>{money(p.amount)}</Text>
+    </View>
+  );
+}
+
 function Section({ accent, title, children }) {
   return (
     <View style={{ marginBottom: 10 }} wrap={false}>
@@ -94,11 +120,13 @@ function Section({ accent, title, children }) {
   );
 }
 
-export default function StatementDocument({ coach, mesLabel, generatedAt, statusLabel, alunos, liderancas, resgatados, pendings, total }) {
+export default function StatementDocument({ coach, mesLabel, generatedAt, statusLabel, porModalidade = [], alunos, liderancas, resgatados, pendings, total }) {
   const subAlunos = alunos.reduce((a, i) => a + Number(i.amount), 0);
   const subLideranca = liderancas.reduce((a, i) => a + Number(i.amount), 0);
   const subResgatado = resgatados.reduce((a, i) => a + Number(i.amount), 0);
   const pendTotal = pendings.reduce((a, p) => a + Number(p.amount), 0);
+  const pendAlunos = pendings.filter((p) => p.source_type === 'athlete_repasse');
+  const pendLideranca = pendings.filter((p) => p.source_type !== 'athlete_repasse');
 
   return (
     <Document title={`Extrato ${coach?.name || ''} ${mesLabel}`} author="Endurance ON">
@@ -122,6 +150,20 @@ export default function StatementDocument({ coach, mesLabel, generatedAt, status
           </View>
           <Text style={s.meta}>Gerado em {generatedAt}{'\n'}Situação: {statusLabel}</Text>
         </View>
+
+        {/* Resumo por modalidade */}
+        {porModalidade.length > 0 && (
+          <View style={s.modRow}>
+            {porModalidade.map((m, idx) => (
+              <View key={m.modalidade} style={[s.modCard, { marginRight: idx < porModalidade.length - 1 ? 8 : 0 }]}>
+                <View style={[s.modAccent, { backgroundColor: modColor(m.modalidade) }]} />
+                <Text style={s.modName}>{m.modalidade}</Text>
+                <Text style={s.modValue}>{money(m.total)}</Text>
+                <Text style={s.modSub}>{m.alunos} {m.alunos === 1 ? 'aluno' : 'alunos'}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         {alunos.length > 0 && (
           <Section accent="#2563eb" title={`Alunos (${alunos.length})`}>
@@ -173,7 +215,7 @@ export default function StatementDocument({ coach, mesLabel, generatedAt, status
         </View>
 
         {pendings.length > 0 && (
-          <View style={s.pendBox} wrap={false}>
+          <View style={s.pendBox}>
             <View style={s.pendHead}>
               <Text style={s.pendTitle}>Aguardando pagamento ({pendings.length})</Text>
               <Text style={s.pendTotal}>{money(pendTotal)}</Text>
@@ -182,18 +224,18 @@ export default function StatementDocument({ coach, mesLabel, generatedAt, status
               Alunos que ainda não pagaram — não entram neste total. Quando pagarem, o repasse entra
               no fechamento do mês do pagamento, com a referência de {mesLabel}.
             </Text>
-            {pendings.map((p) => (
-              <View key={p.id} style={s.pendRow} wrap={false}>
-                <Text style={[s.chip, { width: 46, backgroundColor: p.overdue ? '#fee2e2' : '#f1f5f9', color: p.overdue ? '#b91c1c' : '#64748b' }]}>
-                  {p.overdue ? 'vencido' : 'a vencer'}
-                </Text>
-                <View style={{ flex: 1, paddingLeft: 8 }}>
-                  <Text style={s.cellPrimary}>{p.aluno}</Text>
-                  <Text style={s.cellSub}>{p.tipoLabel}{p.sobre ? ` · sobre ${p.sobre}` : ''}{p.modalidade ? ` · ${p.modalidade}` : ''}</Text>
-                </View>
-                <Text style={[s.cellMuted, { width: 66, textAlign: 'right' }]}>{money(p.amount)}</Text>
+            {pendAlunos.length > 0 && (
+              <View>
+                <Text style={s.pendSubhead}>Alunos ({pendAlunos.length})</Text>
+                {pendAlunos.map((p) => <PendRow key={p.id} p={p} />)}
               </View>
-            ))}
+            )}
+            {pendLideranca.length > 0 && (
+              <View>
+                <Text style={s.pendSubhead}>Liderança ({pendLideranca.length})</Text>
+                {pendLideranca.map((p) => <PendRow key={p.id} p={p} />)}
+              </View>
+            )}
           </View>
         )}
 
