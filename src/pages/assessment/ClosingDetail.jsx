@@ -16,13 +16,14 @@ import {
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, formatCompetence } from '@/lib/utils';
+import { EXPENSE_CATEGORIES, expenseCategoryLabel } from '@/lib/payout-expenses';
 import { toast } from 'sonner';
 
 const SOURCE = {
   athlete_repasse:    { label: 'Repasse atleta',    cls: 'bg-blue-100 text-blue-700' },
   direct_leadership:  { label: 'Liderança',         cls: 'bg-purple-100 text-purple-700' },
   co_leadership:      { label: 'Co-liderança',      cls: 'bg-indigo-100 text-indigo-700' },
-  manual_adjustment:  { label: 'Ajuste manual',     cls: 'bg-amber-100 text-amber-700' },
+  manual_adjustment:  { label: 'Ajuste / reembolso', cls: 'bg-amber-100 text-amber-700' },
 };
 
 const STATUS = {
@@ -40,7 +41,7 @@ export default function ClosingDetail() {
   const [expanded, setExpanded] = useState({}); // coach_id → bool
   const [expandedItem, setExpandedItem] = useState({}); // item_id → bool
   const [adjustModal, setAdjustModal] = useState(false);
-  const [adjustForm, setAdjustForm] = useState({ coach_id: '', amount: '', description: '', adjustment_reason: '' });
+  const [adjustForm, setAdjustForm] = useState({ coach_id: '', category: 'reembolso_combustivel', amount: '', description: '', adjustment_reason: '' });
   const [savingAdjust, setSavingAdjust] = useState(false);
   const [approving, setApproving] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
@@ -176,13 +177,14 @@ export default function ClosingDetail() {
         closing_id:  id,
         coach_id:    adjustForm.coach_id,
         source_type: 'manual_adjustment',
-        description: adjustForm.description?.trim() || 'Ajuste manual',
+        expense_category: adjustForm.category || 'outros',
+        description: adjustForm.description?.trim() || expenseCategoryLabel(adjustForm.category),
         amount:      Number(adjustForm.amount),
         adjustment_reason: adjustForm.adjustment_reason.trim(),
       });
-      toast.success('Ajuste adicionado!');
+      toast.success('Lançamento adicionado!');
       setAdjustModal(false);
-      setAdjustForm({ coach_id: '', amount: '', description: '', adjustment_reason: '' });
+      setAdjustForm({ coach_id: '', category: 'reembolso_combustivel', amount: '', description: '', adjustment_reason: '' });
       load();
     } catch (e) { toast.error(e.message); }
     finally { setSavingAdjust(false); }
@@ -313,7 +315,7 @@ export default function ClosingDetail() {
       {isDraft && (
         <div className="flex justify-end">
           <Button size="sm" variant="outline" onClick={() => setAdjustModal(true)}>
-            <Plus className="w-3.5 h-3.5 mr-1" /> Ajuste manual
+            <Plus className="w-3.5 h-3.5 mr-1" /> Gasto / reembolso
           </Button>
         </div>
       )}
@@ -359,6 +361,11 @@ export default function ClosingDetail() {
                               {isCarried(it) && (
                                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 bg-orange-100 text-orange-700" title="Resgatado de mês anterior">
                                   ref. {refLabel(it.reference_competence)}
+                                </span>
+                              )}
+                              {isManual && it.expense_category && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 bg-amber-50 text-amber-700 border border-amber-200" title="Categoria do gasto/reembolso">
+                                  {expenseCategoryLabel(it.expense_category)}
                                 </span>
                               )}
                               <div className="flex-1 min-w-0">
@@ -522,13 +529,13 @@ export default function ClosingDetail() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Plus className="w-5 h-5 text-amber-600" /> Ajuste manual
+              <Plus className="w-5 h-5 text-amber-600" /> Gasto / reembolso
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-900">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>Ajustes manuais entram como item separado no extrato e mantêm o cálculo automático intacto.</span>
+              <span>Reembolsos, escalas e ajustes entram como item separado no extrato do treinador e mantêm o cálculo automático intacto.</span>
             </div>
             <div>
               <Label>Coach *</Label>
@@ -536,6 +543,15 @@ export default function ClosingDetail() {
                 <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                 <SelectContent>
                   {coaches.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Categoria *</Label>
+              <Select value={adjustForm.category} onValueChange={v => setAdjustForm(f => ({ ...f, category: v }))}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectContent>
+                  {EXPENSE_CATEGORIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

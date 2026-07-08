@@ -9,6 +9,7 @@ import {
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCompetence, formatDate } from '@/lib/utils';
+import { expenseCategoryLabel } from '@/lib/payout-expenses';
 
 const SOURCE_LABEL = { direct_leadership: 'Liderança', co_leadership: 'Co-liderança', manual_adjustment: 'Ajuste' };
 
@@ -81,10 +82,19 @@ export default function CoachStatement() {
     };
 
     const enriched = items.map(enrich);
-    const isCarried = (it) => it.reference_competence && it.reference_competence !== competence;
+    const isCarried = (it) => it.reference_competence && it.reference_competence !== competence && it.source_type !== 'manual_adjustment';
     const alunos = enriched.filter((i) => i.source_type === 'athlete_repasse' && !isCarried(i));
     const liderancas = enriched.filter((i) => ['direct_leadership', 'co_leadership'].includes(i.source_type) && !isCarried(i));
     const resgatados = enriched.filter(isCarried);
+    const ajustes = items
+      .filter((i) => i.source_type === 'manual_adjustment')
+      .map((i) => ({
+        id: i.id,
+        categoria: expenseCategoryLabel(i.expense_category),
+        descricao: (i.description || '').trim(),
+        reason: (i.adjustment_reason || '').trim(),
+        amount: Number(i.amount),
+      }));
     const pends = pendings.map((p) => {
       const e = enrich(p);
       const due = dueByContract[p.contract_id];
@@ -109,7 +119,7 @@ export default function CoachStatement() {
         generatedAt={formatDate(closing.generated_at?.split('T')[0])}
         statusLabel={closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão'}
         porModalidade={porModalidade}
-        alunos={alunos} liderancas={liderancas} resgatados={resgatados} pendings={pends} total={total}
+        alunos={alunos} liderancas={liderancas} resgatados={resgatados} ajustes={ajustes} pendings={pends} total={total}
       />
     );
   }, [data]);

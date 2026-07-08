@@ -93,6 +93,21 @@ function LeadershipRow({ it }) {
   );
 }
 
+function AdjustRow({ it }) {
+  const negative = Number(it.amount) < 0;
+  return (
+    <View style={s.tr} wrap={false}>
+      <View style={{ flex: 1, paddingRight: 6 }}>
+        <Text style={s.cellPrimary}>{it.categoria}</Text>
+        {(it.descricao || it.reason) && (
+          <Text style={s.cellSub}>{[it.descricao, it.reason].filter(Boolean).join(' · ')}</Text>
+        )}
+      </View>
+      <Text style={[s.cellValue, { width: 66, color: negative ? '#b91c1c' : '#0f172a' }]}>{money(it.amount)}</Text>
+    </View>
+  );
+}
+
 function PendRow({ p }) {
   return (
     <View style={s.pendRow} wrap={false}>
@@ -120,10 +135,11 @@ function Section({ accent, title, children }) {
   );
 }
 
-export default function StatementDocument({ coach, mesLabel, generatedAt, statusLabel, porModalidade = [], alunos, liderancas, resgatados, pendings, total }) {
+export default function StatementDocument({ coach, mesLabel, generatedAt, statusLabel, porModalidade = [], alunos, liderancas, resgatados, ajustes = [], pendings, total }) {
   const subAlunos = alunos.reduce((a, i) => a + Number(i.amount), 0);
   const subLideranca = liderancas.reduce((a, i) => a + Number(i.amount), 0);
   const subResgatado = resgatados.reduce((a, i) => a + Number(i.amount), 0);
+  const subAjustes = ajustes.reduce((a, i) => a + Number(i.amount), 0);
   const pendTotal = pendings.reduce((a, p) => a + Number(p.amount), 0);
   const pendAlunos = pendings.filter((p) => p.source_type === 'athlete_repasse');
   const pendLideranca = pendings.filter((p) => p.source_type !== 'athlete_repasse');
@@ -205,6 +221,20 @@ export default function StatementDocument({ coach, mesLabel, generatedAt, status
             <View style={s.subtotalRow}>
               <Text style={s.subtotalLabel}>Subtotal resgatado</Text>
               <Text style={s.subtotalValue}>{money(subResgatado)}</Text>
+            </View>
+          </Section>
+        )}
+
+        {ajustes.length > 0 && (
+          <Section accent="#d97706" title={`Ajustes e reembolsos (${ajustes.length})`}>
+            <View style={s.th}>
+              <Text style={[s.thText, { flex: 1 }]}>Categoria / descrição</Text>
+              <Text style={[s.thText, { width: 66, textAlign: 'right' }]}>Valor</Text>
+            </View>
+            {ajustes.map((it) => <AdjustRow key={it.id} it={it} />)}
+            <View style={s.subtotalRow}>
+              <Text style={s.subtotalLabel}>Subtotal ajustes</Text>
+              <Text style={s.subtotalValue}>{money(subAjustes)}</Text>
             </View>
           </Section>
         )}
