@@ -271,7 +271,7 @@ export default function ContractDetail() {
   const [manualPaySaving, setManualPaySaving] = useState(false);
   // Cobrança externa (link gerado fora da plataforma)
   const [externalSaleModal, setExternalSaleModal] = useState(false);
-  const [externalSaleForm, setExternalSaleForm]   = useState({ link: '', due_date: '', payment_method: 'pix' });
+  const [externalSaleForm, setExternalSaleForm]   = useState({ link: '', due_date: '', payment_method: 'pix', invoice_number: '' });
   const [externalSaleSaving, setExternalSaleSaving] = useState(false);
   // WhatsApp — preview e envio
   const [whatsappModal, setWhatsappModal] = useState(false);
@@ -1001,7 +1001,10 @@ export default function ContractDetail() {
     m += `Sua adesão na *Assessoria Esportiva Endurance On* está confirmada! 💙🧡\n\n`;
     m += `🏃 Modalidade: *${modality.name.charAt(0).toUpperCase() + modality.name.slice(1)}*\n`;
     const periodName = { mensal: 'Mensal', trimestral: 'Trimestral', semestral: 'Semestral', anual: 'Anual' }[plan?.period] || periodLabel(plan);
-    m += `📅 Plano: *${periodName}*\n`;
+    const planVigencia = contract.start_date && contract.end_date
+      ? `${periodName} - ${formatDate(contract.start_date)} → ${formatDate(contract.end_date)}`
+      : periodName;
+    m += `📅 Plano: *${planVigencia}*\n`;
     if (coach?.name) m += `👤 Coach: *${coach.name}*\n`;
     m += `💰 Total: *${formatCurrency(total)}*`;
     if (instValue) m += ` em *${installments}x de ${formatCurrency(instValue)}*`;
@@ -1059,6 +1062,7 @@ export default function ContractDetail() {
       link:           contract?.external_payment_link || '',
       due_date:       contract?.due_date || defaultAsaasDueDate(),
       payment_method: normalizeExternalChargeMethod(contract?.payment_method, contract?.installments),
+      invoice_number: contract?.external_invoice_number || '',
     });
     setExternalSaleModal(true);
   };
@@ -1066,6 +1070,7 @@ export default function ContractDetail() {
   const saveExternalSale = async () => {
     const link = externalSaleForm.link.trim();
     const dueDate = externalSaleForm.due_date;
+    const invoiceNumber = externalSaleForm.invoice_number.trim();
     const paymentMethod = normalizeExternalChargeMethod(externalSaleForm.payment_method, contract.installments);
     if (!link)                  return toast.error('Informe o link de cobrança');
     if (!isSafePaymentUrl(link)) return toast.error('Link inválido — deve começar com https://');
@@ -1075,9 +1080,10 @@ export default function ContractDetail() {
     try {
       const hadExternalLink = !!contract.external_payment_link;
       const updates = {
-        external_payment_link: link,
-        due_date:              dueDate,
-        payment_method:        paymentMethod,
+        external_payment_link:   link,
+        due_date:                dueDate,
+        payment_method:          paymentMethod,
+        external_invoice_number: invoiceNumber || null,
       };
       if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
         updates.payment_status = 'charge_sent';
@@ -1089,6 +1095,8 @@ export default function ContractDetail() {
         due_date: dueDate,
         payment_method: paymentMethod,
         method_label: externalChargeMethodLabel(paymentMethod),
+        invoice_number: invoiceNumber || null,
+        previous_invoice_number: contract.external_invoice_number || null,
         previous_link: contract.external_payment_link || null,
         previous_due_date: contract.due_date || null,
         previous_payment_method: contract.payment_method || null,
@@ -1108,8 +1116,9 @@ export default function ContractDetail() {
     if (!window.confirm('Remover o link de cobrança externa? Isso volta o contrato para aguardando cobrança.')) return;
     try {
       const updates = {
-        external_payment_link:   null,
-        payment_message_sent_at: null,
+        external_payment_link:    null,
+        external_invoice_number:  null,
+        payment_message_sent_at:  null,
       };
       if (contract.payment_status === 'charge_sent') {
         updates.payment_status = 'pending';
@@ -1483,6 +1492,9 @@ export default function ContractDetail() {
                     <p className="text-sm text-amber-700 truncate">{contract.external_payment_link}</p>
                     <p className="text-[11px] text-amber-700 mt-0.5">
                       {externalChargeMethodLabel(normalizeExternalChargeMethod(contract.payment_method, contract.installments))}
+                      {contract.external_invoice_number && (
+                        <> · Fatura <span className="font-mono font-semibold">{contract.external_invoice_number}</span></>
+                      )}
                     </p>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(contract.external_payment_link); toast.success('Link copiado!'); }}>
@@ -1955,6 +1967,16 @@ export default function ContractDetail() {
                 autoFocus
               />
               <p className="text-[11px] text-muted-foreground mt-1">Cole aqui o link da cobrança gerada externamente.</p>
+            </div>
+            <div>
+              <Label className="text-xs">Número da fatura</Label>
+              <Input
+                className="mt-1 font-mono text-xs"
+                placeholder="Ex: 12345678 (opcional)"
+                value={externalSaleForm.invoice_number}
+                onChange={e => setExternalSaleForm(f => ({ ...f, invoice_number: e.target.value }))}
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">Identificador da fatura no sistema externo, para conferência.</p>
             </div>
             <div>
               <Label className="text-xs">Data de vencimento *</Label>
