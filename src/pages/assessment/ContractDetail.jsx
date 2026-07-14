@@ -21,9 +21,13 @@ import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
-import { isSafePaymentUrl } from '@/lib/sales';
 import { EXTERNAL_CHARGE_METHODS, externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
+import {
+  generateAssessmentContractCharge,
+  markAssessmentContractNonRenewal,
+  registerExternalAssessmentContractCharge,
+} from '@/lib/assessment-contract-operations';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
 import {
@@ -445,33 +449,14 @@ export default function ContractDetail() {
     if (!student?.cpf) return toast.error('Cadastre o CPF do aluno antes de gerar cobrança');
     setChargeLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('generate-assessment-charge', {
-        body: { contract_id: id, installments: contract.installments, cpf: student.cpf, billing_type, due_date: chargeDueDate },
+      await generateAssessmentContractCharge({
+        contract,
+        customer: student,
+        billingType: billing_type,
+        dueDate: chargeDueDate,
+        source: 'contract_detail',
       });
-      // Quando edge function retorna não-2xx, supabase-js cria erro genérico.
-      // Extraímos o body da resposta pra mostrar mensagem real.
-      if (error) {
-        let realMessage = error.message;
-        try {
-          if (error.context && typeof error.context.json === 'function') {
-            const body = await error.context.json();
-            if (body?.error) realMessage = body.error;
-            if (body?.asaas_details?.errors?.[0]?.description) {
-              realMessage = body.asaas_details.errors[0].description;
-            }
-            console.error('[generate-charge details]', body);
-          }
-        } catch { /* ignora parse error */ }
-        throw new Error(realMessage);
-      }
-      if (data?.error) throw new Error(data.error);
       await activateDraftIfNeeded();
-      await logEvent('charge_generated', {
-        billing_type,
-        installments: contract.installments,
-        due_date: chargeDueDate,
-        asaas_charge_id: data?.asaas_charge_id || null,
-      });
       toast.success('Cobrança gerada!');
       setChargeConfirmModal(null);
       load();
@@ -646,25 +631,10 @@ export default function ContractDetail() {
     )) return;
 
     try {
-      await AssessmentContract.update(id, {
-        renewal_generated: true,
-        cancellation_date: contract.end_date,
-        cancellation_fee: 0,
-        cancellation_reason: 'Não renovou',
-        refund_status: null,
-        refund_amount: null,
-        ...(shouldFinishNow ? { status: 'finished' } : {}),
+      await markAssessmentContractNonRenewal({
+        contract,
+        deleteDrafts: true,
       });
-      await supabase
-        .from('assessment_contracts')
-        .delete()
-        .eq('status', 'draft')
-        .eq('parent_contract_id', id);
-      await logEvent('renewal_declined', {
-        effective_end_date: contract.end_date,
-        status_after: shouldFinishNow ? 'finished' : contract.status,
-        no_financial_penalty: true,
-      }, 'Aluno não vai renovar. Encerramento sem multa, estorno ou nova cobrança.');
 
       toast.success(shouldFinishNow
         ? 'Contrato concluído por não renovação.'
@@ -1139,36 +1109,19 @@ export default function ContractDetail() {
     const dueDate = externalSaleForm.due_date;
     const invoiceNumber = externalSaleForm.invoice_number.trim();
     const paymentMethod = normalizeExternalChargeMethod(externalSaleForm.payment_method, contract.installments);
-    if (!link)                  return toast.error('Informe o link de cobrança');
-    if (!isSafePaymentUrl(link)) return toast.error('Link inválido — deve começar com https://');
-    if (!dueDate)                return toast.error('Informe a data de vencimento');
 
     setExternalSaleSaving(true);
     try {
       const hadExternalLink = !!contract.external_payment_link;
-      const updates = {
-        external_payment_link:   link,
-        due_date:                dueDate,
-        payment_method:          paymentMethod,
-        external_invoice_number: invoiceNumber || null,
-      };
-      if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
-        updates.payment_status = 'charge_sent';
-      }
-      await AssessmentContract.update(id, updates);
-      await activateDraftIfNeeded();
-      await logEvent(hadExternalLink ? 'external_charge_updated' : 'external_charge_registered', {
+      await registerExternalAssessmentContractCharge({
+        contract,
         link,
-        due_date: dueDate,
-        payment_method: paymentMethod,
-        method_label: externalChargeMethodLabel(paymentMethod),
-        invoice_number: invoiceNumber || null,
-        previous_invoice_number: contract.external_invoice_number || null,
-        previous_link: contract.external_payment_link || null,
-        previous_due_date: contract.due_date || null,
-        previous_payment_method: contract.payment_method || null,
-        previous_method_label: externalChargeMethodLabel(normalizeExternalChargeMethod(contract.payment_method, contract.installments)),
+        dueDate,
+        paymentMethod,
+        invoiceNumber,
+        source: 'contract_detail',
       });
+      await activateDraftIfNeeded();
       toast.success(hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa registrada! Agora envie a mensagem pro aluno.');
       setExternalSaleModal(false);
       await load();

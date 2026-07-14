@@ -8,9 +8,10 @@ import {
   ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus, ListChecks,
   MessageCircle,
 } from 'lucide-react';
-import { cn, todayLocalStr } from '@/lib/utils';
+import { cn, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
 import { isEffectiveOpenSale } from '@/lib/sales';
+import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 // ─────────────────────────────────────────────────────────────────
 // ITENS DE NAVEGAÇÃO
@@ -156,8 +157,9 @@ export default function Sidebar({ open, onClose, onSignOut }) {
     const fetchAlerts = async () => {
       try {
         const todayStr = todayLocalStr();
-        const in14 = new Date(); in14.setDate(in14.getDate() + 14);
-        const in14Str = in14.toISOString().split('T')[0];
+        const renewalWindowEnd = new Date();
+        renewalWindowEnd.setDate(renewalWindowEnd.getDate() + RENEWAL_ATTENTION_WINDOW_DAYS);
+        const renewalWindowEndStr = toLocalDateStr(renewalWindowEnd);
 
         const [presaleOrders, stockOrders, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts, prospectDrafts, contractsOpenPayments] = await Promise.all([
           supabase.from('presale_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
@@ -171,7 +173,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('status', 'overdue'),
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
-            .eq('status', 'active').lte('end_date', in14Str).gte('end_date', todayStr),
+            .eq('status', 'active').lte('end_date', renewalWindowEndStr).gte('end_date', todayStr),
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('refund_status', 'pending'),
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
