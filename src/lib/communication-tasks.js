@@ -398,6 +398,7 @@ function buildWelcomeTask(contractSale, events, todayStr, rule) {
 function buildCheckinTask(contractSale, events, todayStr, rule) {
   if (!rule) return null;
   if (contractSale.sourceType !== 'contract') return null;
+  if (contractSale.parentContractId) return null;
   if (!CONTRACT_OPERATIONAL_STATUSES.has(contractSale.contractStatus)) return null;
   if (ruleAlreadyHandled(events, rule, todayStr)) return null;
   const welcome = latestEvent(events, 'onboarding_welcome_sent');
