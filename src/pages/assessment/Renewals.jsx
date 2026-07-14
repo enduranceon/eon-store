@@ -151,6 +151,13 @@ function chargeTaskForRenewal(contract, { customer, coach, modality } = {}) {
     totalValue: total,
     paymentStatus: contract.payment_status || 'pending',
     dueDate: suggestedAssessmentChargeDueDate(contract),
+    startDate: contract.start_date || '',
+    endDate: contract.end_date || '',
+    parentContractId: contract.parent_contract_id || null,
+    installments: contract.installments || 1,
+    enrollmentFee: Number(contract.enrollment_fee) || 0,
+    manualDiscount: Number(contract.manual_discount) || 0,
+    creditBalance: Number(contract.credit_balance) || 0,
     asaasChargeId: contract.asaas_charge_id,
     asaasPaymentLink: contract.asaas_payment_link,
     asaasPixCopy: contract.asaas_pix_copy,
@@ -162,8 +169,11 @@ function chargeTaskForRenewal(contract, { customer, coach, modality } = {}) {
     title: 'Enviar cobrança da renovação',
     statusLabel: contract.due_date ? `vence em ${formatDate(contract.due_date)}` : 'definir vencimento',
     planLabel: planName,
+    planPeriod: contract.plan_snapshot?.period || '',
+    periodMonths: contract.plan_snapshot?.period_months || null,
     modalityName: modality?.name || contract.plan_snapshot?.modality_name || '',
     coachName: coach?.name || '',
+    messageVariant: 'assessment_contract_confirmation',
   };
 }
 

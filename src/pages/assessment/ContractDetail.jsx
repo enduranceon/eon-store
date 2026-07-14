@@ -23,6 +23,7 @@ import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-metho
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import { isSafePaymentUrl } from '@/lib/sales';
 import { EXTERNAL_CHARGE_METHODS, externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
+import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
 import {
@@ -1074,35 +1075,14 @@ export default function ContractDetail() {
   };
 
   const buildMessage = () => {
-    if (!contract || !student || !plan || !modality) return '';
-    const total       = Number(planVal('price_total') || 0) - (contract.credit_balance || 0);
-    const enrollment  = Number(contract.enrollment_fee || 0);
-    const installments = contract.installments || 1;
-    const instValue   = installments > 1 ? total / installments : null;
-    const pix         = contract.asaas_pix_copy;
-    const link        = contract.asaas_payment_link || contract.external_payment_link;
-    const firstName   = (student.full_name || '').split(' ')[0] || 'aluno(a)';
-    const confirmationLabel = isRenewalContract(contract) ? 'renovação' : 'adesão';
-
-    let m = `Olá, ${firstName}!\n\n`;
-    m += `Sua ${confirmationLabel} na *Assessoria Esportiva Endurance On* está confirmada! 💙🧡\n\n`;
-    m += `🏃 Modalidade: *${modality.name.charAt(0).toUpperCase() + modality.name.slice(1)}*\n`;
-    const periodName = { mensal: 'Mensal', trimestral: 'Trimestral', semestral: 'Semestral', anual: 'Anual' }[plan?.period] || periodLabel(plan);
-    const planVigencia = contract.start_date && contract.end_date
-      ? `${periodName} - ${formatDate(contract.start_date)} → ${formatDate(contract.end_date)}`
-      : periodName;
-    m += `📅 Plano: *${planVigencia}*\n`;
-    if (coach?.name) m += `👤 Coach: *${coach.name}*\n`;
-    m += `💰 Total: *${formatCurrency(total)}*`;
-    if (instValue) m += ` em *${installments}x de ${formatCurrency(instValue)}*`;
-    m += '\n';
-    if (enrollment > 0) m += `📌 Matrícula: ${formatCurrency(enrollment)} _(cobrada na 1ª mensalidade)_\n`;
-    if (contract.due_date) m += `📆 Vencimento: *${formatDate(contract.due_date)}*\n`;
-    m += '\n';
-    if (pix)  m += `📲 PIX Copia e Cola:\n\`${pix}\`\n\n`;
-    if (link) m += `🔗 Link de pagamento:\n${link}\n\n`;
-    m += `Qualquer dúvida, estou à disposição!`;
-    return m;
+    if (!contract || !student) return '';
+    return buildAssessmentContractMessage({
+      contract,
+      customer: student,
+      plan,
+      modality,
+      coach,
+    });
   };
 
   const openWhatsApp = () => {

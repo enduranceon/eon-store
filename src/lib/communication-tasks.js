@@ -1,6 +1,7 @@
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_COMMUNICATION_RULES } from '@/lib/communication-config';
+import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
 
 export const COMMUNICATION_EVENT_TYPES = [
   'payment_message_sent',
@@ -537,12 +538,44 @@ function renderCommunicationTemplate(template, task, options = {}) {
 
 export function buildTaskMessage(task, options = {}) {
   if (!task) return '';
-  const configuredMessage = renderCommunicationTemplate(task.messageTemplate, task, options);
-  if (configuredMessage) return configuredMessage;
-
   const externalLink = options.externalLink ?? task.externalPaymentLink;
   const dueDate = options.dueDate ?? task.dueDate;
   const communityLink = String(options.communityLink || '').trim();
+
+  if (task.messageVariant === 'assessment_contract_confirmation') {
+    return buildAssessmentContractMessage({
+      contract: {
+        parent_contract_id: task.parentContractId,
+        start_date: task.startDate,
+        end_date: task.endDate,
+        due_date: dueDate,
+        installments: task.installments,
+        enrollment_fee: task.enrollmentFee,
+        manual_discount: task.manualDiscount,
+        credit_balance: task.creditBalance,
+        asaas_pix_copy: task.asaasPixCopy,
+        asaas_payment_link: task.asaasPaymentLink,
+        external_payment_link: task.externalPaymentLink,
+        plan_snapshot: {
+          name: task.planLabel,
+          period: task.planPeriod,
+          period_months: task.periodMonths,
+          price_total: task.totalValue,
+          modality_name: task.modalityName,
+        },
+      },
+      customer: { full_name: task.customerName },
+      modality: { name: task.modalityName },
+      coach: { name: task.coachName },
+      totalValue: task.totalValue,
+      externalLink,
+      dueDate,
+    });
+  }
+
+  const configuredMessage = renderCommunicationTemplate(task.messageTemplate, task, options);
+  if (configuredMessage) return configuredMessage;
+
   const paymentLink = paymentLinkFor(task, externalLink);
   const pixCopy = task.asaasPixCopy;
   const name = firstName(task.customerName);
