@@ -1084,9 +1084,10 @@ export default function ContractDetail() {
     const pix         = contract.asaas_pix_copy;
     const link        = contract.asaas_payment_link || contract.external_payment_link;
     const firstName   = (student.full_name || '').split(' ')[0] || 'aluno(a)';
+    const confirmationLabel = isRenewalContract(contract) ? 'renovação' : 'adesão';
 
     let m = `Olá, ${firstName}!\n\n`;
-    m += `Sua adesão na *Assessoria Esportiva Endurance On* está confirmada! 💙🧡\n\n`;
+    m += `Sua ${confirmationLabel} na *Assessoria Esportiva Endurance On* está confirmada! 💙🧡\n\n`;
     m += `🏃 Modalidade: *${modality.name.charAt(0).toUpperCase() + modality.name.slice(1)}*\n`;
     const periodName = { mensal: 'Mensal', trimestral: 'Trimestral', semestral: 'Semestral', anual: 'Anual' }[plan?.period] || periodLabel(plan);
     const planVigencia = contract.start_date && contract.end_date
