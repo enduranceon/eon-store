@@ -10,6 +10,19 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 //
 // Retorna: { ok, processed, drafts_created, errors }
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 function addMonthsToDate(dateStr: string, months: number): string {
   const d = new Date(dateStr + "T12:00:00Z");
   d.setUTCMonth(d.getUTCMonth() + months);
@@ -24,6 +37,14 @@ function getPlanMonths(plan: any, snapshot: any): number {
 }
 
 Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -59,10 +80,10 @@ Deno.serve(async (req: Request) => {
     if (candErr) throw candErr;
 
     if (!candidates || candidates.length === 0) {
-      return new Response(JSON.stringify({
+      return jsonResponse({
         ok: true, processed: 0, drafts_created: 0,
         message: "Nenhum contrato dentro da janela de renovação.",
-      }), { headers: { "Content-Type": "application/json" } });
+      });
     }
 
     // Busca planos para fallback de snapshot (caso contrato antigo sem snapshot)
@@ -181,17 +202,14 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return new Response(JSON.stringify({
+    return jsonResponse({
       ok: true,
       processed:      candidates.length,
       drafts_created: draftsCreated,
       results,
       errors,
-    }), { headers: { "Content-Type": "application/json" } });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
     });
+  } catch (e: any) {
+    return jsonResponse({ error: String(e?.message || e) }, 500);
   }
 });
