@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   RefreshCcw, RotateCcw, ChevronRight, Check, Trash2,
-  Calendar, Loader2, CheckCheck, Activity, Ban, Clock,
+  Calendar, Loader2, CheckCheck, Activity, Ban, Clock, Zap, MessageCircle,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,10 @@ import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib
 import { toast } from 'sonner';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 import { getActivationStatusForContract } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
+import { defaultAsaasDueDate } from '@/lib/payment-methods';
+import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -35,6 +39,27 @@ function contractTotal(contract) {
   return Math.max(0, base + enrollment - discount);
 }
 
+function hasChargeInfo(contract) {
+  return Boolean(
+    contract?.asaas_charge_id ||
+    contract?.asaas_payment_link ||
+    contract?.asaas_pix_copy ||
+    contract?.external_payment_link
+  );
+}
+
+const PAY_STATUS = {
+  pending:         { label: 'Aguardando cobrança', cls: 'bg-gray-100 text-gray-600' },
+  awaiting_charge: { label: 'A cobrar',            cls: 'bg-amber-100 text-amber-700' },
+  charge_sent:     { label: 'Cobrança enviada',    cls: 'bg-blue-100 text-blue-700' },
+  overdue:         { label: 'Vencido',             cls: 'bg-red-100 text-red-700' },
+  partially_paid:  { label: 'Pago parcial',        cls: 'bg-amber-100 text-amber-700' },
+  paid:            { label: 'Pago',                cls: 'bg-green-100 text-green-700' },
+  cancelled:       { label: 'Cancelado',           cls: 'bg-gray-100 text-gray-600' },
+  refunded:        { label: 'Reembolsado',         cls: 'bg-gray-100 text-gray-600' },
+};
+
+const TERMINAL_PAYMENT_STATUSES = new Set(['paid', 'cancelled', 'refunded']);
 const DAY_MS = 86400000;
 
 function localDate(dateStr) {
@@ -100,6 +125,42 @@ function normalizeScanDays(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return RENEWAL_ATTENTION_WINDOW_DAYS;
   return Math.max(1, Math.min(90, Math.round(n)));
+}
+
+function chargeTaskForRenewal(contract, { customer, coach, modality } = {}) {
+  const total = contractTotal(contract);
+  const planName = contract.plan_snapshot?.name || 'Renovação';
+  const itemLabel = [planName, modality?.name].filter(Boolean).join(' - ');
+  const items = [{ label: itemLabel || 'Renovação', quantity: 1, unitPrice: total, total }];
+
+  return {
+    id: `renewal-charge:${contract.id}:${contract.payment_message_sent_at || contract.updated_at || contract.created_at || ''}`,
+    kind: TASK_KIND.CHARGE_SEND,
+    bucket: TASK_BUCKET.CHARGES,
+    sourceType: 'contract',
+    tableName: 'assessment_contracts',
+    sourceId: contract.id,
+    sourceLabel: 'Contrato',
+    orderNumber: contract.contract_number,
+    customerName: customer?.full_name || 'Aluno',
+    customerWhatsapp: customer?.whatsapp || '',
+    totalValue: total,
+    paymentStatus: contract.payment_status || 'pending',
+    dueDate: contract.due_date || defaultAsaasDueDate(),
+    asaasChargeId: contract.asaas_charge_id,
+    asaasPaymentLink: contract.asaas_payment_link,
+    asaasPixCopy: contract.asaas_pix_copy,
+    externalPaymentLink: contract.external_payment_link,
+    paymentMessageSentAt: contract.payment_message_sent_at,
+    items,
+    itemSummary: itemLabel || 'Renovação',
+    href: `/assessoria/contratos/${contract.id}`,
+    title: 'Enviar cobrança da renovação',
+    statusLabel: contract.due_date ? `vence em ${formatDate(contract.due_date)}` : 'definir vencimento',
+    planLabel: planName,
+    modalityName: modality?.name || contract.plan_snapshot?.modality_name || '',
+    coachName: coach?.name || '',
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -188,12 +249,92 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDe
   );
 }
 
+function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGenerateCharge, onSendMessage, busy }) {
+  const total = contractTotal(contract);
+  const installments = contract.installments || 1;
+  const valuePerInst = installments > 0 ? total / installments : total;
+  const planName = contract.plan_snapshot?.name
+    || (modality ? `${modality.name} · ${contract.plan_snapshot?.period_months || ''}m` : 'Plano');
+  const charged = hasChargeInfo(contract);
+  const sent = Boolean(contract.payment_message_sent_at);
+  const pay = PAY_STATUS[contract.payment_status] || { label: contract.payment_status || 'Aguardando', cls: 'bg-gray-100 text-gray-600' };
+  const isTerminalPayment = TERMINAL_PAYMENT_STATUSES.has(contract.payment_status);
+  const canSendCharge = charged && !isTerminalPayment;
+
+  return (
+    <Card className="border-blue-200 bg-blue-50/30">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono text-sm font-semibold text-blue-700">{contract.contract_number}</span>
+              <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Agendada</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${pay.cls}`}>{pay.label}</span>
+              {charged && (
+                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">Cobrança pronta</span>
+              )}
+              {sent && (
+                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">Mensagem enviada</span>
+              )}
+              {parent && (
+                <span className="text-[11px] text-muted-foreground">
+                  renova <Link to={`/assessoria/contratos/${parent.id}`} className="text-blue-600 hover:underline font-mono">{parent.contract_number}</Link>
+                </span>
+              )}
+            </div>
+            <p className="text-sm font-semibold text-gray-900 mt-1">{customer?.full_name || '—'}</p>
+            <p className="text-xs text-muted-foreground capitalize">
+              {modality?.name || '—'} · {planName}
+            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                Vigência agendada {formatDate(contract.start_date)} → {formatDate(contract.end_date)}
+              </span>
+              {contract.due_date && <span>Vencimento: <b className="text-gray-700">{formatDate(contract.due_date)}</b></span>}
+              {coach && <span>Coach: <b className="text-gray-700">{coach.name}</b></span>}
+              <span>
+                {installments}x de <b className="text-gray-700">{formatCurrency(valuePerInst)}</b>
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <span className="font-bold text-blue-700 text-base">{formatCurrency(total)}</span>
+            <div className="flex gap-1.5 flex-wrap justify-end">
+              {!charged && !isTerminalPayment && (
+                <Button size="sm" disabled={busy} onClick={() => onGenerateCharge(contract)}
+                  className="bg-blue-600 hover:bg-blue-700">
+                  {busy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1" />}
+                  Gerar cobrança
+                </Button>
+              )}
+              <Button size="sm" variant="outline" disabled={busy || !canSendCharge}
+                className="border-green-200 text-green-700 hover:bg-green-50 disabled:opacity-50"
+                title={!charged ? 'Gere a cobrança antes de enviar' : isTerminalPayment ? 'Pagamento finalizado' : 'Preparar mensagem de cobrança'}
+                onClick={() => onSendMessage(contract)}>
+                <MessageCircle className="w-3.5 h-3.5 mr-1" /> {sent ? 'Reenviar' : 'Enviar'}
+              </Button>
+              <Link to={`/assessoria/contratos/${contract.id}`}>
+                <Button size="sm" variant="outline" disabled={busy}>
+                  Revisar <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────
 // PÁGINA
 // ─────────────────────────────────────────────────────────────────
 
 export default function Renewals() {
   const [drafts,     setDrafts]     = useState([]);
+  const [scheduled,  setScheduled]  = useState([]);
   const [parents,    setParents]    = useState({});
   const [customers,  setCustomers]  = useState({});
   const [coaches,    setCoaches]    = useState({});
@@ -205,38 +346,46 @@ export default function Renewals() {
   const [scanning,   setScanning]   = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [activationModal, setActivationModal] = useState(null);
+  const [chargeModal, setChargeModal] = useState(null);
+  const [chargeForm, setChargeForm] = useState({ billing_type: 'PIX', due_date: defaultAsaasDueDate() });
+  const [charging, setCharging] = useState(false);
+  const [messageTask, setMessageTask] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: draftsData } = await supabase
+      const { data: renewalData } = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, parent_contract_id, notes, created_at')
-        .eq('status', 'draft')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+        .in('status', ['draft', 'scheduled'])
         .not('parent_contract_id', 'is', null)
         .order('start_date', { ascending: true })
         .order('created_at', { ascending: true });
 
-      const draftsList = [...(draftsData || [])].sort(compareRenewalDrafts);
-      setDrafts(draftsList);
+      const renewalList = [...(renewalData || [])].sort(compareRenewalDrafts);
 
-      if (draftsList.length === 0) {
+      if (renewalList.length === 0) {
+        setDrafts([]); setScheduled([]);
         setParents({}); setCustomers({}); setCoaches({}); setModalities({});
         setLoading(false); return;
       }
 
-      const parentIds   = [...new Set(draftsList.map(d => d.parent_contract_id).filter(Boolean))];
-      const customerIds = [...new Set(draftsList.map(d => d.customer_id).filter(Boolean))];
-      const coachIds    = [...new Set(draftsList.map(d => d.coach_id).filter(Boolean))];
-      const modalityIds = [...new Set(draftsList.map(d => d.plan_snapshot?.modality_id).filter(Boolean))];
+      const parentIds   = [...new Set(renewalList.map(d => d.parent_contract_id).filter(Boolean))];
+      const customerIds = [...new Set(renewalList.map(d => d.customer_id).filter(Boolean))];
+      const coachIds    = [...new Set(renewalList.map(d => d.coach_id).filter(Boolean))];
+      const modalityIds = [...new Set(renewalList.map(d => d.plan_snapshot?.modality_id).filter(Boolean))];
 
       const [parentRes, custRes, coachRes, modRes] = await Promise.all([
         parentIds.length   ? supabase.from('assessment_contracts').select('id, contract_number, status, end_date, payment_status').in('id', parentIds) : Promise.resolve({ data: [] }),
-        customerIds.length ? supabase.from('presale_customers').select('id, full_name').in('id', customerIds)                                    : Promise.resolve({ data: [] }),
+        customerIds.length ? supabase.from('presale_customers').select('id, full_name, whatsapp, email, cpf').in('id', customerIds)                : Promise.resolve({ data: [] }),
         coachIds.length    ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds)                                           : Promise.resolve({ data: [] }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds)                                     : Promise.resolve({ data: [] }),
       ]);
 
+      await applyAssessmentContractTransitions([...(renewalList || []), ...(parentRes.data || [])]);
+
+      setDrafts(renewalList.filter(contract => contract.status === 'draft'));
+      setScheduled(renewalList.filter(contract => contract.status === 'scheduled'));
       setParents(Object.fromEntries((parentRes.data || []).map(p => [p.id, p])));
       setCustomers(Object.fromEntries((custRes.data  || []).map(c => [c.id, c])));
       setCoaches(Object.fromEntries((coachRes.data   || []).map(c => [c.id, c])));
@@ -295,6 +444,103 @@ export default function Renewals() {
       toast.error('Erro ao ativar: ' + (e.message || ''));
     } finally {
       setBusy(null);
+    }
+  };
+
+  const openChargeModal = (contract) => {
+    const customer = customers[contract.customer_id];
+    if (!customer?.cpf) {
+      toast.error('Cadastre o CPF do aluno antes de gerar cobrança');
+      return;
+    }
+    setChargeForm({
+      billing_type: 'PIX',
+      due_date: contract.due_date || defaultAsaasDueDate(),
+    });
+    setChargeModal(contract);
+  };
+
+  const openMessageForRenewal = (contract) => {
+    if (!hasChargeInfo(contract)) {
+      toast.error('Gere a cobrança antes de preparar o envio');
+      return;
+    }
+    setMessageTask(chargeTaskForRenewal(contract, {
+      customer: customers[contract.customer_id],
+      coach: coaches[contract.coach_id],
+      modality: modalities[contract.plan_snapshot?.modality_id],
+    }));
+  };
+
+  const generateScheduledCharge = async () => {
+    if (!chargeModal) return;
+    const contract = chargeModal;
+    const customer = customers[contract.customer_id];
+    if (!customer?.cpf) return toast.error('Cadastre o CPF do aluno antes de gerar cobrança');
+    setCharging(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-assessment-charge', {
+        body: {
+          contract_id: contract.id,
+          installments: contract.installments,
+          cpf: customer.cpf,
+          billing_type: chargeForm.billing_type,
+          due_date: chargeForm.due_date,
+        },
+      });
+      if (error) {
+        let realMessage = error.message;
+        try {
+          if (error.context && typeof error.context.json === 'function') {
+            const body = await error.context.json();
+            if (body?.error) realMessage = body.error;
+            if (body?.asaas_details?.errors?.[0]?.description) {
+              realMessage = body.asaas_details.errors[0].description;
+            }
+            console.error('[generate-renewal-charge details]', body);
+          }
+        } catch { /* ignora parse error */ }
+        throw new Error(realMessage);
+      }
+      if (data?.error) throw new Error(data.error);
+
+      await AssessmentContractEvent.create({
+        contract_id: contract.id,
+        event_type:  'charge_generated',
+        payload: {
+          billing_type: chargeForm.billing_type,
+          installments: contract.installments,
+          due_date: chargeForm.due_date,
+          asaas_charge_id: data?.asaas_charge_id || null,
+          source: 'renewals_page',
+        },
+        notes: 'Cobrança da renovação gerada pela aba de Renovações',
+      }).catch(() => {});
+
+      const { data: updated } = await supabase
+        .from('assessment_contracts')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+        .eq('id', contract.id)
+        .single();
+
+      const nextContract = updated || {
+        ...contract,
+        due_date: chargeForm.due_date,
+        payment_status: 'charge_sent',
+        asaas_charge_id: data?.asaas_charge_id || contract.asaas_charge_id,
+      };
+      toast.success('Cobrança gerada. Mensagem pronta para envio.');
+      setChargeModal(null);
+      setMessageTask(chargeTaskForRenewal(nextContract, {
+        customer,
+        coach: coaches[nextContract.coach_id],
+        modality: modalities[nextContract.plan_snapshot?.modality_id],
+      }));
+      await load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao gerar cobrança');
+    } finally {
+      setCharging(false);
     }
   };
 
@@ -407,7 +653,14 @@ export default function Renewals() {
     () => [...drafts].sort((a, b) => compareRenewalDrafts(a, b, parents)),
     [drafts, parents]
   );
-  const totalValue = orderedDrafts.reduce((s, d) => s + contractTotal(d), 0);
+  const orderedScheduled = useMemo(
+    () => [...scheduled].sort((a, b) => compareRenewalDrafts(a, b, parents)),
+    [scheduled, parents]
+  );
+  const totalValue = [...orderedDrafts, ...orderedScheduled].reduce((s, d) => s + contractTotal(d), 0);
+  const scheduledOpenPayments = orderedScheduled.filter(contract =>
+    !['paid', 'refunded', 'cancelled'].includes(contract.payment_status)
+  );
   const todayStr = todayLocalStr();
   const scanWindowDays = normalizeScanDays(scanForm.horizon_days);
   const scanWindowEnd = addDays(todayStr, scanWindowDays);
@@ -422,6 +675,7 @@ export default function Renewals() {
   const activationBusy = !!activationDraft && busy === activationDraft.id;
   const activationCustomer = activationDraft ? customers[activationDraft.customer_id] : null;
   const activationTotal = activationDraft ? contractTotal(activationDraft) : 0;
+  const hasRenewalWork = orderedDrafts.length > 0 || orderedScheduled.length > 0;
 
   // ─────────────────────────────────────────────────────────────────
   // RENDER
@@ -437,7 +691,7 @@ export default function Renewals() {
             Renovações
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Rascunhos gerados automaticamente aguardando aprovação
+            Rascunhos, renovações agendadas e cobranças de continuidade
           </p>
         </div>
         <Button onClick={() => setScanModal(true)} variant="outline">
@@ -447,7 +701,7 @@ export default function Renewals() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
             <div className="p-2 rounded-full bg-blue-50 shrink-0"><RefreshCcw className="w-5 h-5 text-blue-600" /></div>
@@ -457,6 +711,20 @@ export default function Renewals() {
               {firstDraft && (
                 <p className="text-[11px] text-muted-foreground mt-0.5">
                   Próxima: {renewalTimingLabel(firstDraftDaysLeft).toLowerCase()}
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-blue-50 shrink-0"><Clock className="w-5 h-5 text-blue-600" /></div>
+            <div>
+              <p className="text-xs text-muted-foreground">Agendadas</p>
+              <p className="text-xl font-bold text-blue-700">{orderedScheduled.length}</p>
+              {scheduledOpenPayments.length > 0 && (
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {scheduledOpenPayments.length} com pagamento aberto
                 </p>
               )}
             </div>
@@ -478,7 +746,7 @@ export default function Renewals() {
           <Loader2 className="w-5 h-5 animate-spin" />
           <span className="text-sm">Carregando...</span>
         </div>
-      ) : orderedDrafts.length === 0 ? (
+      ) : !hasRenewalWork ? (
         <Card>
           <CardContent className="flex flex-col items-center py-16 text-center">
             <CheckCheck className="w-10 h-10 text-green-500 mb-3" />
@@ -492,22 +760,141 @@ export default function Renewals() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
-          {orderedDrafts.map(draft => (
-            <RenewalRow
-              key={draft.id}
-              draft={draft}
-              parent={parents[draft.parent_contract_id]}
-              customer={customers[draft.customer_id]}
-              coach={coaches[draft.coach_id]}
-              modality={modalities[draft.plan_snapshot?.modality_id]}
-              onActivate={openActivationModal}
-              onDecline={declineRenewal}
-              onDiscard={discardRenewal}
-              busy={busy === draft.id}
-            />
-          ))}
+        <div className="space-y-6">
+          {orderedDrafts.length > 0 && (
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Aguardando aprovação</h3>
+                <p className="text-xs text-muted-foreground">Aprove a renovação para agendar a continuidade do aluno.</p>
+              </div>
+              {orderedDrafts.map(draft => (
+                <RenewalRow
+                  key={draft.id}
+                  draft={draft}
+                  parent={parents[draft.parent_contract_id]}
+                  customer={customers[draft.customer_id]}
+                  coach={coaches[draft.coach_id]}
+                  modality={modalities[draft.plan_snapshot?.modality_id]}
+                  onActivate={openActivationModal}
+                  onDecline={declineRenewal}
+                  onDiscard={discardRenewal}
+                  busy={busy === draft.id}
+                />
+              ))}
+            </section>
+          )}
+
+          {orderedScheduled.length > 0 && (
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Agendadas para cobrança</h3>
+                <p className="text-xs text-muted-foreground">Renovações aprovadas que ainda precisam de cobrança, envio ou acompanhamento.</p>
+              </div>
+              {orderedScheduled.map(contract => (
+                <ScheduledRenewalRow
+                  key={contract.id}
+                  contract={contract}
+                  parent={parents[contract.parent_contract_id]}
+                  customer={customers[contract.customer_id]}
+                  coach={coaches[contract.coach_id]}
+                  modality={modalities[contract.plan_snapshot?.modality_id]}
+                  onGenerateCharge={openChargeModal}
+                  onSendMessage={openMessageForRenewal}
+                  busy={busy === contract.id || (chargeModal?.id === contract.id && charging)}
+                />
+              ))}
+            </section>
+          )}
         </div>
+      )}
+
+      {/* Modal: gerar cobrança da renovação agendada */}
+      <Dialog open={!!chargeModal} onOpenChange={open => !open && !charging && setChargeModal(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-blue-600" /> Gerar cobrança da renovação
+            </DialogTitle>
+          </DialogHeader>
+
+          {chargeModal && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-gray-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm font-semibold text-blue-700">{chargeModal.contract_number}</p>
+                    <p className="text-sm font-semibold text-gray-900 truncate">
+                      {customers[chargeModal.customer_id]?.full_name || 'Aluno'}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {formatDate(chargeModal.start_date)} → {formatDate(chargeModal.end_date)}
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold text-gray-900 shrink-0">{formatCurrency(contractTotal(chargeModal))}</p>
+                </div>
+              </div>
+
+              <div>
+                <Label>Forma de cobrança</Label>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  {[
+                    { value: 'PIX', label: 'PIX' },
+                    { value: 'BOLETO', label: 'Boleto' },
+                    { value: 'CREDIT_CARD', label: `Cartão ${chargeModal.installments || 1}x` },
+                  ].map(method => (
+                    <Button
+                      key={method.value}
+                      type="button"
+                      variant={chargeForm.billing_type === method.value ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setChargeForm(form => ({ ...form, billing_type: method.value }))}
+                      disabled={charging}
+                    >
+                      {method.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <Label>Vencimento</Label>
+                <Input
+                  type="date"
+                  className="mt-1"
+                  value={chargeForm.due_date}
+                  onChange={e => setChargeForm(form => ({ ...form, due_date: e.target.value }))}
+                  disabled={charging}
+                />
+              </div>
+
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                Depois de gerar, a mensagem de WhatsApp será aberta já com o link/PIX da cobrança.
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button type="button" variant="outline" disabled={charging} onClick={() => setChargeModal(null)}>
+                  Cancelar
+                </Button>
+                <Button type="button" disabled={charging || !chargeForm.due_date} onClick={generateScheduledCharge}>
+                  {charging ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Zap className="w-4 h-4 mr-1.5" />}
+                  {charging ? 'Gerando...' : 'Gerar e preparar envio'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {messageTask && (
+        <CommunicationSendDialog
+          key={messageTask.id}
+          task={messageTask}
+          onClose={() => setMessageTask(null)}
+          onSent={() => {
+            setMessageTask(null);
+            load();
+          }}
+        />
       )}
 
       {/* Modal: agendar/ativar renovação */}
