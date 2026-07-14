@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   UserPlus, ChevronRight, Check, Trash2, Calendar,
@@ -13,6 +13,7 @@ import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
+import { getActivationStatusForContract } from '@/lib/assessment-contract-lifecycle';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
@@ -79,8 +80,9 @@ function ConfirmModal({ data, onClose, onDone }) {
     setConfirming(true);
     try {
       const hasLink = !!paymentLink.trim();
+      const nextStatus = getActivationStatusForContract(draft);
       const updates = {
-        status:          'active',
+        status:          nextStatus,
         enrollment_fee:  localEnrollment,
         manual_discount: localDiscount,
         payment_status:  hasLink ? 'charge_sent' : 'awaiting_charge',
@@ -94,7 +96,12 @@ function ConfirmModal({ data, onClose, onDone }) {
       await AssessmentContractEvent.create({
         contract_id: draft.id,
         event_type:  'enrollment_activated',
-        payload:     { source: 'public_enrollment', payment_link_provided: !!paymentLink.trim() },
+        payload:     {
+          source: 'public_enrollment',
+          payment_link_provided: !!paymentLink.trim(),
+          status_after: nextStatus,
+          start_date: draft.start_date || null,
+        },
         notes:       'Adesão via formulário público confirmada',
       }).catch(() => {});
 
@@ -413,7 +420,7 @@ export default function Prospects() {
   const [busy,       setBusy]       = useState(null);
   const [modal,      setModal]      = useState(null); // { draft, customer, coach, modality }
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data: draftsData } = await supabase
@@ -450,9 +457,12 @@ export default function Prospects() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 0);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   const openConfirm = (draft, customer, coach, modality) => {
     setModal({ draft, customer, coach, modality });

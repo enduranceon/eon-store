@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   RefreshCcw, RotateCcw, ChevronRight, Check, Trash2,
-  Calendar, Loader2, CheckCheck, Activity, Ban,
+  Calendar, Loader2, CheckCheck, Activity, Ban, Clock,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
+import { getActivationStatusForContract } from '@/lib/assessment-contract-lifecycle';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -114,6 +115,8 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDe
   const daysLeft     = renewalDaysLeft(draft, parent);
   const timingLabel  = renewalTimingLabel(daysLeft);
   const renewAt      = renewalDate(draft, parent);
+  const activationStatus = getActivationStatusForContract(draft);
+  const isScheduledActivation = activationStatus === 'scheduled';
 
   return (
     <Card className="border-blue-200">
@@ -170,7 +173,12 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDe
               <Button size="sm" disabled={busy}
                 className="bg-green-600 hover:bg-green-700"
                 onClick={() => onActivate(draft, parent)}>
-                <Check className="w-3.5 h-3.5 mr-1" /> Ativar
+                {isScheduledActivation ? (
+                  <Clock className="w-3.5 h-3.5 mr-1" />
+                ) : (
+                  <Check className="w-3.5 h-3.5 mr-1" />
+                )}
+                {isScheduledActivation ? 'Agendar' : 'Ativar'}
               </Button>
             </div>
           </div>
@@ -248,26 +256,37 @@ export default function Renewals() {
   // ── Ações: renovação ─────────────────────────────────────────────────────
 
   const activateRenewal = async (draft, parent) => {
-    if (!confirm(`Ativar renovação ${draft.contract_number}?\n\nO contrato anterior será marcado como finalizado.`)) return;
+    const nextStatus = getActivationStatusForContract(draft);
+    const startsLater = nextStatus === 'scheduled';
+    const message = startsLater
+      ? `Agendar renovação ${draft.contract_number}?\n\nA cobrança/venda da renovação ficará aberta, mas ela só entra como contrato ativo em ${formatDate(draft.start_date)}.\n\nO contrato anterior permanece ativo até a virada da vigência.`
+      : `Ativar renovação ${draft.contract_number}?\n\nA renovação entra em vigor agora e o contrato anterior será marcado como concluído.`;
+    if (!confirm(message)) return;
     setBusy(draft.id);
     try {
-      await AssessmentContract.update(draft.id, { status: 'active' });
+      await AssessmentContract.update(draft.id, { status: nextStatus });
 
-      if (parent) {
+      if (parent && nextStatus === 'active') {
         await AssessmentContract.update(parent.id, { status: 'finished' });
       }
 
       await AssessmentContractEvent.create({
         contract_id: draft.id,
-        event_type:  'renewal_activated',
+        event_type:  nextStatus === 'scheduled' ? 'renewal_scheduled' : 'renewal_activated',
         payload: {
           parent_contract_id:     parent?.id || null,
           parent_contract_number: parent?.contract_number || null,
+          status_after:           nextStatus,
+          start_date:             draft.start_date || null,
         },
-        notes: 'Rascunho de renovação aprovado e ativado',
+        notes: nextStatus === 'scheduled'
+          ? 'Rascunho de renovação aprovado e agendado'
+          : 'Rascunho de renovação aprovado e ativado',
       }).catch(() => {});
 
-      toast.success(`Renovação ${draft.contract_number} ativada!`);
+      toast.success(nextStatus === 'scheduled'
+        ? `Renovação ${draft.contract_number} agendada!`
+        : `Renovação ${draft.contract_number} ativada!`);
       load();
     } catch (e) {
       toast.error('Erro ao ativar: ' + (e.message || ''));

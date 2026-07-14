@@ -11,8 +11,11 @@ import {
 } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
+import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 
 const STATUS = {
+  scheduled: { label: 'Agendado',  cls: 'bg-blue-100 text-blue-700' },
   active:    { label: 'Ativo',     cls: 'bg-green-100 text-green-700' },
   overdue:   { label: 'Atrasado',  cls: 'bg-red-100 text-red-700' },
   on_leave:  { label: 'Licença',   cls: 'bg-amber-100 text-amber-700' },
@@ -37,6 +40,7 @@ async function loadContractsPage() {
     AssessmentPlan.list().catch(() => []),
     AssessmentModality.list().catch(() => []),
   ]);
+  await applyAssessmentContractTransitions(contracts);
   return { contracts, students, coaches, plans, modalities };
 }
 
@@ -197,7 +201,14 @@ export default function Contracts() {
                 const pa = PAY[c.payment_status] || { label: c.payment_status, cls: '' };
                 return (
                   <tr key={c.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/assessoria/contratos/${c.id}`)}>
-                    <td className="px-4 py-3 font-mono text-xs font-semibold text-blue-700">{c.contract_number}</td>
+                    <td className="px-4 py-3">
+                      <p className="font-mono text-xs font-semibold text-blue-700">{c.contract_number}</p>
+                      <span className={`mt-1 inline-flex text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                        isRenewalContract(c) ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {getContractKindLabel(c)}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">{c.student?.full_name || '—'}</td>
                     <td className="px-4 py-3 text-muted-foreground">{c.coach?.name || '—'}</td>
                     <td className="px-4 py-3 text-xs">

@@ -10,6 +10,7 @@ import { isEffectiveOpenSale } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
 import BusinessPulse from '@/components/BusinessPulse';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 // ─────────────────────────────────────────────────────────────────
@@ -145,8 +146,13 @@ async function loadTodayPage() {
   const stock = (stockRes.data || []).map(o => ({ ...o, type: 'stock', customer: o.customer_name }));
   const plansMap = Object.fromEntries((plansRes.data || []).map(p => [p.id, p]));
   const customersMap = Object.fromEntries((customersRes.data || []).map(c => [c.id, c]));
-  const contracts = buildContractLifecycleRows(contractRes.data || [], { plansById: plansMap })
-    .filter(c => c.lifecycle?.counts?.active)
+  const contractRows = contractRes.data || [];
+  await applyAssessmentContractTransitions(contractRows);
+  const contracts = buildContractLifecycleRows(contractRows, { plansById: plansMap })
+    .filter(c =>
+      c.lifecycle?.counts?.active ||
+      (c.status === 'scheduled' && !['paid', 'refunded', 'cancelled'].includes(c.payment_status))
+    )
     .map(c => {
       return {
         id: c.id,

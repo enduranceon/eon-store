@@ -24,6 +24,7 @@ import { hasNativePaymentInfo, registerCommunicationIgnore } from '@/lib/communi
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
 import { formatPhoneDisplay } from '@/lib/phone';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 
 const TAB_INFO = [
   { value: 'pending', label: 'Pendentes' },
@@ -388,6 +389,7 @@ async function fetchCommunicationData() {
   for (const [name, res] of Object.entries(responses)) {
     if (res.error) throw new Error(`${name}: ${res.error.message}`);
   }
+  await applyAssessmentContractTransitions(contracts.data || []);
 
   return {
     ...Object.fromEntries(

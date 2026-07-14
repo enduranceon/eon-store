@@ -189,6 +189,7 @@ export default function CustomerDetail() {
   const totalPending   = effectiveOrders.filter(o => o.payment_status !== 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
 
   const CONTRACT_STATUS = {
+    scheduled: { label: 'Agendado',   cls: 'bg-blue-100 text-blue-700' },
     active:    { label: 'Ativo',      cls: 'bg-green-100 text-green-700' },
     overdue:   { label: 'Atrasado',   cls: 'bg-red-100 text-red-700' },
     on_leave:  { label: 'Licença',    cls: 'bg-amber-100 text-amber-700' },

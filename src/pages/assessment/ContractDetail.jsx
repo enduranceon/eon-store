@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   Link2, QrCode, RefreshCw, History, Pause, XCircle, RotateCcw,
-  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, AlertCircle,
+  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, AlertCircle, Clock,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -23,6 +23,11 @@ import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-metho
 import { isSafePaymentUrl } from '@/lib/sales';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
+import {
+  getActivationStatusForContract,
+  getContractKindLabel,
+  isRenewalContract,
+} from '@/lib/assessment-contract-lifecycle';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 
@@ -69,6 +74,7 @@ import { toast } from 'sonner';
 
 const STATUS = {
   draft:     { label: 'Prospect',  badge: 'secondary' },
+  scheduled: { label: 'Agendado',  badge: 'info' },
   active:    { label: 'Ativo',     badge: 'success' },
   overdue:   { label: 'Atrasado',  badge: 'destructive' },
   on_leave:  { label: 'Em licença',badge: 'warning' },
@@ -140,6 +146,9 @@ const EVENT_META = {
   refund_completed:         { icon: HandCoins,  color: 'text-purple-600', bg: 'bg-purple-50', label: 'Estorno realizado' },
   dates_changed:            { icon: Calendar,   color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Datas alteradas' },
   enrollment_activated:     { icon: Check,      color: 'text-green-600',  bg: 'bg-green-50',  label: 'Adesão confirmada' },
+  renewal_activated:        { icon: Check,      color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovação ativada' },
+  renewal_scheduled:        { icon: Clock,      color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Renovação agendada' },
+  renewal_declined:         { icon: Ban,        color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Não renovou' },
   charge_cancelled:         { icon: XCircle,    color: 'text-red-500',    bg: 'bg-red-50',    label: 'Cobrança cancelada' },
 };
 
@@ -291,7 +300,7 @@ export default function ContractDetail() {
   const [cancelChargeModal, setCancelChargeModal] = useState(false);
   const [cancelChargeLoading, setCancelChargeLoading] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const c = await AssessmentContract.get(id);
@@ -338,9 +347,12 @@ export default function ContractDetail() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 0);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   // Lê valor do plano: prefere o snapshot gravado no contrato (histórico preservado),
   // cai pro plano vivo se snapshot ausente (contratos legados pré-backfill).
@@ -362,8 +374,14 @@ export default function ContractDetail() {
   // Ativa contrato se ainda estiver como draft (prospect)
   const activateDraftIfNeeded = async () => {
     if (contract?.status !== 'draft') return;
-    await AssessmentContract.update(id, { status: 'active' });
-    await logEvent('enrollment_activated', { source: 'admin_action' });
+    const nextStatus = getActivationStatusForContract(contract);
+    await AssessmentContract.update(id, { status: nextStatus });
+    await logEvent(
+      isRenewalContract(contract) && nextStatus === 'scheduled'
+        ? 'renewal_scheduled'
+        : 'enrollment_activated',
+      { source: 'admin_action', status_after: nextStatus, start_date: contract.start_date || null },
+    );
   };
 
   // Edição de datas
@@ -915,10 +933,12 @@ export default function ContractDetail() {
     try {
       const newStart = contract.end_date;
       const newEnd   = addPeriod(newStart, plan);
+      const newStatus = getActivationStatusForContract({ start_date: newStart });
       const created  = await AssessmentContract.create({
         customer_id:        contract.customer_id,
         coach_id:           contract.coach_id,
         plan_id:            contract.plan_id,
+        status:             newStatus,
         start_date:         newStart,
         end_date:           newEnd,
         original_end_date:  newEnd,
@@ -935,12 +955,16 @@ export default function ContractDetail() {
           discount_recurring: true,
         } : {}),
       });
-      await AssessmentContract.update(id, { renewal_generated: true, status: 'finished' });
+      await AssessmentContract.update(id, {
+        renewal_generated: true,
+        ...(newStatus === 'active' ? { status: 'finished' } : {}),
+      });
       await logEvent('renewed', {
         new_contract_id:     created.id,
         new_contract_number: created.contract_number,
         new_start: newStart,
         new_end:   newEnd,
+        new_status: newStatus,
         plan_id:   contract.plan_id,
         installments: contract.installments,
         had_open_payment: hasOpenPayment,
@@ -956,11 +980,16 @@ export default function ContractDetail() {
             parent_contract_num:  contract.contract_number,
             plan_id:              contract.plan_id,
             installments:         contract.installments,
+            status_after:         newStatus,
           },
-          notes: `Renovação de ${contract.contract_number}`,
+          notes: newStatus === 'scheduled'
+            ? `Renovação agendada de ${contract.contract_number}`
+            : `Renovação de ${contract.contract_number}`,
         });
       } catch { /* best-effort */ }
-      toast.success(`Contrato ${created.contract_number} criado!`);
+      toast.success(newStatus === 'scheduled'
+        ? `Renovação ${created.contract_number} agendada!`
+        : `Contrato ${created.contract_number} criado!`);
       setRenewModal(false);
       navigate(`/assessoria/contratos/${created.id}`);
     } catch (e) { toast.error(e.message || 'Erro ao renovar'); }
@@ -1192,6 +1221,9 @@ export default function ContractDetail() {
   // Quando modal de cancelamento está aberta, usa cancelDate; senão usa hoje
   const calc = cancelModal ? cancellationCalc(cancelDate) : cancellationCalc();
   const canCancel = !['cancelled', 'finished', 'voided'].includes(contract.status);
+  const canCreateRenewal = canCancel
+    && !contract.renewal_generated
+    && ['active', 'overdue', 'on_leave'].includes(contract.status);
   const canMarkNoRenewal = canCancel
     && !isUnpaid
     && !contract.parent_contract_id
@@ -1209,11 +1241,27 @@ export default function ContractDetail() {
           <p className="text-sm text-muted-foreground">criado em {formatDate(contract.created_at?.split('T')[0])}</p>
         </div>
         <div className="ml-auto flex gap-2">
+          <Badge variant={isRenewalContract(contract) ? 'purple' : 'info'}>
+            {getContractKindLabel(contract)}
+          </Badge>
           <Badge variant={st.badge}>{st.label}</Badge>
           <Badge variant={ps.badge}>{ps.label}</Badge>
           {student?.whatsapp && <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp}><MessageCircle className="w-4 h-4 mr-1" /> WhatsApp</Button>}
         </div>
       </div>
+
+      {contract.status === 'scheduled' && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="py-3 px-4 flex items-center gap-2 text-sm">
+            <Clock className="w-4 h-4 text-blue-600 shrink-0" />
+            <span className="text-blue-900">
+              <strong>{isRenewalContract(contract) ? 'Renovação agendada.' : 'Contrato agendado.'}</strong>{' '}
+              A cobrança pode ser tratada agora, mas a vigência só conta como ativa a partir de {formatDate(contract.start_date)}.
+              {isRenewalContract(contract) && ' O contrato anterior permanece operacional até essa virada.'}
+            </span>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Banner: contrato pai (se este for uma renovação) */}
       {parentContract && (() => {
@@ -1714,7 +1762,7 @@ export default function ContractDetail() {
       {canCancel && (
         <Card className="border-gray-100">
           <CardContent className="pt-4 flex flex-wrap gap-2">
-            {!contract.renewal_generated && (
+            {canCreateRenewal && (
               <Button
                 variant="outline"
                 className="text-blue-600 hover:bg-blue-50 border-blue-200"

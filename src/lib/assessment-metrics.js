@@ -119,7 +119,7 @@ export function computeMrrHistory(contracts = [], plans = [], months = 6) {
     let mrr = 0;
     let count = 0;
     for (const c of contracts) {
-      if (c.status === 'draft' || isContractVoidedSale(c)) continue;
+      if (c.status === 'draft' || c.status === 'scheduled' || isContractVoidedSale(c)) continue;
       const start = c.start_date || utcToLocalDateStr(c.created_at);
       if (!start || start > refStr) continue; // ainda não tinha começado
 

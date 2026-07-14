@@ -17,6 +17,8 @@ import { DEFAULT_COMMUNITY_LINK, loadCommunicationConfig } from '@/lib/communica
 import CommunicationHistory from '@/components/CommunicationHistory';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 
 function taskTone(task) {
   if (task.kind === TASK_KIND.CHARGE_OVERDUE) return 'destructive';
@@ -26,6 +28,7 @@ function taskTone(task) {
 }
 
 const STATUS = {
+  scheduled: 'bg-blue-100 text-blue-700',
   active:    'bg-green-100 text-green-700',
   overdue:   'bg-red-100 text-red-700',
   on_leave:  'bg-amber-100 text-amber-700',
@@ -35,6 +38,7 @@ const STATUS = {
 };
 
 const STATUS_LABEL = {
+  scheduled: 'Agendado',
   active: 'Ativo',
   overdue: 'Atrasado',
   on_leave: 'Licença',
@@ -72,6 +76,8 @@ export default function StudentDetail() {
           supabase.auth.getUser().catch(() => null),
           loadCommunicationConfig().catch(() => null),
         ]);
+        if (!active) return;
+        await applyAssessmentContractTransitions(c);
         if (!active) return;
         setCustomer(s); setContracts(c); setCoaches(allCoaches); setPlans(allPlans); setModalities(allMod);
         setCurrentUserId(authRes?.data?.user?.id || null);
@@ -143,7 +149,14 @@ export default function StudentDetail() {
                 return (
                   <Link key={c.id} to={`/assessoria/contratos/${c.id}`} className="flex items-center gap-3 py-2.5 hover:bg-gray-50 px-2 rounded -mx-2">
                     <div className="flex-1">
-                      <p className="font-mono text-xs font-semibold text-blue-700">{c.contract_number}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-mono text-xs font-semibold text-blue-700">{c.contract_number}</p>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                          isRenewalContract(c) ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {getContractKindLabel(c)}
+                        </span>
+                      </div>
                       <p className="text-sm">
                         <span className="capitalize">{mod?.name}</span> · <span className="capitalize">{plan?.period}</span> · com {coach?.name || '—'}
                       </p>

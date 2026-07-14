@@ -7,16 +7,19 @@ import { supabase } from '@/api/db';
 import { formatCurrency } from '@/lib/utils';
 import { computeAssessmentMetrics } from '@/lib/assessment-metrics';
 import { usePageData } from '@/hooks/usePageData';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 
 // Carrega contratos (todos os status) + planos pra calcular os KPIs.
 async function loadPulseData() {
   const [contractsRes, plansRes] = await Promise.all([
     supabase.from('assessment_contracts')
-      .select('id, customer_id, plan_id, plan_snapshot, status, end_date, created_at, updated_at, cancellation_date, parent_contract_id'),
+      .select('id, customer_id, plan_id, plan_snapshot, status, start_date, end_date, created_at, updated_at, cancellation_date, cancellation_reason, parent_contract_id, payment_status'),
     supabase.from('assessment_plans').select('id, price_monthly'),
   ]);
+  const contracts = contractsRes.data || [];
+  await applyAssessmentContractTransitions(contracts);
   return {
-    contracts: contractsRes.data || [],
+    contracts,
     plans: plansRes.data || [],
   };
 }

@@ -8,6 +8,7 @@ import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { buildContractLifecycleRows, isContractPaymentOverdue } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 
 async function loadCustomersPage() {
   const [customers, orders, contracts, plans] = await Promise.all([
@@ -16,6 +17,7 @@ async function loadCustomersPage() {
     AssessmentContract.list('-created_at').catch(() => []),
     AssessmentPlan.list().catch(() => []),
   ]);
+  await applyAssessmentContractTransitions(contracts);
   return { customers, orders, contracts, plans };
 }
 
@@ -54,6 +56,7 @@ export default function Customers() {
     const statuses = activeContracts.map(c => c.status);
     if (statuses.includes('on_leave'))  return 'on_leave';  // Em licença
     if (activeContracts.length > 0)     return 'active';    // Ativo operacional
+    if (clientContracts.some(c => c.status === 'scheduled')) return 'scheduled';
     return 'inactive';                                      // Todos encerrados
   };
 
@@ -75,6 +78,7 @@ export default function Customers() {
       !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type)
     );
     const activeContracts = clientContracts.filter(c => c.lifecycle?.counts?.active);
+    const scheduledContracts = clientContracts.filter(c => c.status === 'scheduled');
     // Só conta contratos pagos (LTV real)
     const assessTotal = clientContracts
       .filter(c => c.payment_status === 'paid')
@@ -95,6 +99,7 @@ export default function Customers() {
       lastOrder,
       contractsTotal:   clientContracts.length,
       contractsActive:  activeContracts.length,
+      contractsScheduled: scheduledContracts.length,
       assessTotal,
       monthlyRecurring,
       ltv:              storeTotal + assessTotal,
@@ -306,9 +311,11 @@ export default function Customers() {
                       {d.contractsTotal > 0
                         ? <>
                             <p className="font-medium">{formatCurrency(d.assessTotal)}</p>
-                            <p className={cn(d.contractsActive > 0 ? 'text-blue-600 font-semibold' : 'text-muted-foreground')}>
+                            <p className={cn((d.contractsActive > 0 || d.contractsScheduled > 0) ? 'text-blue-600 font-semibold' : 'text-muted-foreground')}>
                               {d.contractsActive > 0
                                 ? `${d.contractsActive} ativo${d.contractsActive !== 1 ? 's' : ''}`
+                                : d.contractsScheduled > 0
+                                  ? `${d.contractsScheduled} agendado${d.contractsScheduled !== 1 ? 's' : ''}`
                                 : `${d.contractsTotal} encerrado${d.contractsTotal !== 1 ? 's' : ''}`
                               }
                             </p>
@@ -322,6 +329,7 @@ export default function Customers() {
                       {d.assessmentStatus === 'active'   && <span className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">✅ Ativo</span>}
                       {d.assessmentStatus === 'overdue'  && <span className="text-xs font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">⚠️ Inadimplente</span>}
                       {d.assessmentStatus === 'on_leave' && <span className="text-xs font-semibold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">🏖️ Em licença</span>}
+                      {d.assessmentStatus === 'scheduled' && <span className="text-xs font-semibold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agendado</span>}
                       {d.assessmentStatus === 'inactive' && <span className="text-xs font-semibold bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">Inativo</span>}
                       {d.assessmentStatus === 'none' && d.storeOrders > 0 && <span className="text-xs bg-gray-50 text-gray-400 px-2 py-0.5 rounded-full border">Só loja</span>}
                       {d.assessmentStatus === 'none' && d.storeOrders === 0 && <span className="text-xs text-gray-300">—</span>}

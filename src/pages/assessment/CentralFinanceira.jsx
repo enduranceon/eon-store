@@ -18,6 +18,7 @@ import {
   buildContractLifecycleRows,
   getLifecycleMonthStart,
 } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -233,8 +234,11 @@ export default function CentralFinanceira() {
         .neq('status', 'CANCELLED'),
     ]);
 
+    const contracts = contractsRes.data || [];
+    await applyAssessmentContractTransitions(contracts);
+
     setData({
-      contracts: contractsRes.data || [],
+      contracts,
       plans:     plansRes.data || [],
       modalities: modalitiesRes.data || [],
       coaches:   coachesRes.data || [],

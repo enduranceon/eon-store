@@ -1,6 +1,7 @@
 import { todayLocalStr, toLocalDateStr, utcToLocalDateStr } from '@/lib/utils';
 
 export const ACTIVE_CONTRACT_STATUSES = new Set(['active', 'overdue', 'on_leave']);
+export const SCHEDULED_CONTRACT_STATUSES = new Set(['scheduled']);
 export const OPEN_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid']);
 export const TERMINAL_PAYMENT_STATUSES = new Set(['cancelled', 'refunded']);
 
@@ -14,6 +15,11 @@ export const CONTRACT_LIFECYCLE_TYPES = {
     label: 'Renovação',
     tone: 'blue',
     metric: 'Conta como renovação',
+  },
+  scheduled: {
+    label: 'Contrato agendado',
+    tone: 'blue',
+    metric: 'Cobrança pode existir; fora de ativo/MRR até iniciar',
   },
   pending_sale: {
     label: 'Venda ainda não efetivada',
@@ -62,6 +68,19 @@ export function getContractLocalDate(value) {
   const str = String(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
   return utcToLocalDateStr(str);
+}
+
+export function isRenewalContract(contract) {
+  return !!contract?.parent_contract_id;
+}
+
+export function getContractKindLabel(contract) {
+  return isRenewalContract(contract) ? 'Renovação' : 'Contrato novo';
+}
+
+export function getActivationStatusForContract(contract, today = todayLocalStr()) {
+  const start = getContractLocalDate(contract?.start_date);
+  return start && start > today ? 'scheduled' : 'active';
 }
 
 function addDays(dateStr, days) {
@@ -176,7 +195,7 @@ function hasFutureOrActiveContract(contract, allContracts = []) {
   return allContracts.some(other =>
     other.id !== contract.id &&
     other.customer_id === contract.customer_id &&
-    ACTIVE_CONTRACT_STATUSES.has(other.status)
+    (ACTIVE_CONTRACT_STATUSES.has(other.status) || SCHEDULED_CONTRACT_STATUSES.has(other.status))
   );
 }
 
@@ -226,6 +245,25 @@ export function classifyContractLifecycle(contract, context = {}) {
     base.severity = 'low';
     reasons.push(contract.parent_contract_id ? 'Rascunho de renovação ainda não ativado.' : 'Prospect/rascunho ainda não virou contrato efetivo.');
     actions.push('Não contar como entrada, saída ou MRR até ativar.');
+    return base;
+  }
+
+  if (SCHEDULED_CONTRACT_STATUSES.has(contract.status)) {
+    base.type = 'scheduled';
+    base.severity = OPEN_PAYMENT_STATUSES.has(contract.payment_status) ? 'medium' : 'low';
+    reasons.push(contract.parent_contract_id
+      ? 'Renovação aprovada, mas vigência ainda não começou.'
+      : 'Contrato aprovado, mas vigência ainda não começou.');
+    if (contract.start_date) reasons.push(`Início previsto em ${getContractLocalDate(contract.start_date)}.`);
+    actions.push('Não contar como aluno ativo nem MRR até a data de início.');
+    if (contract.parent_contract_id && createdLocal >= monthStart) {
+      base.counts.renewal = true;
+      reasons.push('Aprovado neste mês a partir de contrato pai: renovação agendada.');
+    }
+    if (OPEN_PAYMENT_STATUSES.has(contract.payment_status)) {
+      warnings.push('Há cobrança/pagamento pendente antes do início da vigência.');
+      actions.push('Tratar a cobrança no financeiro sem encerrar o contrato atual.');
+    }
     return base;
   }
 

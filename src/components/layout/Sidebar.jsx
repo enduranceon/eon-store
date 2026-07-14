@@ -179,15 +179,20 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('status', 'draft').is('parent_contract_id', null),
           supabase.from('assessment_contracts')
-            .select('id, payment_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+            .select('id, status, payment_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
             .not('status', 'in', '("cancelled","draft","voided")')
             .neq('payment_status', 'paid').neq('payment_status', 'refunded'),
         ]);
 
         const allOrders = [...(presaleOrders.data || []), ...(stockOrders.data || [])];
+        const isScheduledContractOpenPayment = (contract) =>
+          contract.status === 'scheduled' &&
+          !['paid', 'refunded', 'cancelled'].includes(contract.payment_status);
         const openSalesCount =
           allOrders.filter(isEffectiveOpenSale).length +
-          (contractsOpenPayments.data || []).filter(isEffectiveOpenSale).length;
+          (contractsOpenPayments.data || []).filter(contract =>
+            isEffectiveOpenSale(contract) || isScheduledContractOpenPayment(contract)
+          ).length;
         const todayCount =
           allOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status)).length +
           allOrders.filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o)).length +

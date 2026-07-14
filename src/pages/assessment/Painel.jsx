@@ -19,6 +19,7 @@ import {
   getLifecycleMonthStart,
   isContractPaymentOverdue,
 } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from 'recharts';
@@ -50,6 +51,7 @@ function average(values) {
 }
 
 const STATUS_CLS = {
+  scheduled: 'bg-blue-100 text-blue-700',
   active:    'bg-green-100 text-green-700',
   overdue:   'bg-red-100 text-red-700',
   on_leave:  'bg-amber-100 text-amber-700',
@@ -58,6 +60,7 @@ const STATUS_CLS = {
   voided:    'bg-amber-100 text-amber-700',
 };
 const STATUS_LABEL = {
+  scheduled: 'Agendado',
   active: 'Ativo', overdue: 'Vencido', on_leave: 'Licença',
   finished: 'Concluído', cancelled: 'Cancelado',
   voided: 'Descartado',
@@ -88,30 +91,7 @@ export default function Painel() {
         PreSaleCustomer.list('full_name').catch(e => { console.error('customers:', e); return []; }),
       ]);
 
-      // Auto-transição:
-      // - não renovou: conclui no fim da vigência, sem pendência financeira;
-      // - demais contratos vencidos seguem como overdue para revisão/cobrança.
-      const nowStr = todayLocalStr();
-      const isNonRenewal = (ct) => {
-        const reason = (ct.cancellation_reason || '').toLowerCase();
-        return reason.includes('não renovou') || reason.includes('nao renovou')
-          || reason.includes('não vai renovar') || reason.includes('nao vai renovar');
-      };
-      const expiredActive = c.filter(ct => ct.status === 'active' && ct.end_date < nowStr);
-      const toMarkFinished = expiredActive.filter(isNonRenewal);
-      const toMarkOverdue = expiredActive.filter(ct => !isNonRenewal(ct));
-      if (toMarkFinished.length > 0) {
-        await Promise.allSettled(
-          toMarkFinished.map(ct => AssessmentContract.update(ct.id, { status: 'finished' }))
-        );
-        toMarkFinished.forEach(ct => { ct.status = 'finished'; });
-      }
-      if (toMarkOverdue.length > 0) {
-        await Promise.allSettled(
-          toMarkOverdue.map(ct => AssessmentContract.update(ct.id, { status: 'overdue' }))
-        );
-        toMarkOverdue.forEach(ct => { ct.status = 'overdue'; });
-      }
+      await applyAssessmentContractTransitions(c);
 
       setContracts(c); setPlans(p); setModalities(m);
       setCoaches(co);  setCustomers(cu);

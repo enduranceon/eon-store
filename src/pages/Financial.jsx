@@ -20,6 +20,7 @@ import { isEffectiveOpenSale, isSafePaymentUrl } from '@/lib/sales';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { readPageCache, writePageCache } from '@/lib/page-cache';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
@@ -395,10 +396,17 @@ export default function Financial() {
           revenue_center_id: orderCenter(o.items),
         }));
         const stock     = (stockRes.data     || []).map(o => ({ ...o, type: 'stock',    customer: o.customer_name,  revenue_center_id: orderCenter(o.items) }));
-        const contracts = buildContractLifecycleRows(contractRes.data || [], { plansById: plansMap })
+        const contractRows = contractRes.data || [];
+        await applyAssessmentContractTransitions(contractRows);
+        const contracts = buildContractLifecycleRows(contractRows, { plansById: plansMap })
           .filter(c =>
             !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type) &&
-            (c.lifecycle?.counts?.active || c.payment_status === 'paid' || isEffectiveOpenSale(c))
+            (
+              c.lifecycle?.counts?.active ||
+              c.payment_status === 'paid' ||
+              isEffectiveOpenSale(c) ||
+              (c.status === 'scheduled' && !['paid', 'refunded', 'cancelled'].includes(c.payment_status))
+            )
           )
           .map(c => {
             const plan = plansMap[c.plan_id];
@@ -497,7 +505,14 @@ export default function Financial() {
   };
 
   // Exclui pedidos que já têm pagamento confirmado no Asaas mesmo que payment_status ainda não foi sincronizado
-  const activeOrders = orders.filter(o => isEffectiveOpenSale(o) && !ordersWithAsaasCache.has(o.id));
+  const isScheduledContractOpenPayment = (o) =>
+    o.type === 'contract' &&
+    o.status === 'scheduled' &&
+    !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
+  const activeOrders = orders.filter(o =>
+    (isEffectiveOpenSale(o) || isScheduledContractOpenPayment(o)) &&
+    !ordersWithAsaasCache.has(o.id)
+  );
 
   const paidThisMonth = orders
     .filter(o => o.payment_status === 'paid' && o.payment_date >= monthStart)
