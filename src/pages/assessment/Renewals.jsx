@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   RefreshCcw, RotateCcw, ChevronRight, Check, Trash2,
-  Calendar, Loader2, CheckCheck, Activity, Ban, Clock, Zap, MessageCircle,
+  Calendar, Loader2, CheckCheck, Activity, Ban, Clock, Zap, MessageCircle, PenLine,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -232,6 +232,12 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDe
                   Revisar <ChevronRight className="w-3.5 h-3.5 ml-1" />
                 </Button>
               </Link>
+              <Link to={`/assessoria/contratos/${draft.id}?ajustar-plano=1`}>
+                <Button size="sm" variant="outline" disabled={busy}
+                  className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                  <PenLine className="w-3.5 h-3.5 mr-1" /> Trocar plano
+                </Button>
+              </Link>
               <Button size="sm" disabled={busy}
                 className="bg-green-600 hover:bg-green-700"
                 onClick={() => onActivate(draft, parent)}>
@@ -325,6 +331,14 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
                   Revisar <ChevronRight className="w-3.5 h-3.5 ml-1" />
                 </Button>
               </Link>
+              {!isTerminalPayment && (
+                <Link to={`/assessoria/contratos/${contract.id}?ajustar-plano=1`}>
+                  <Button size="sm" variant="outline" disabled={busy}
+                    className="border-blue-200 text-blue-700 hover:bg-blue-50">
+                    <PenLine className="w-3.5 h-3.5 mr-1" /> Trocar plano
+                  </Button>
+                </Link>
+              )}
             </div>
           </div>
         </div>

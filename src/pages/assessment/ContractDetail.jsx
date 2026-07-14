@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   Link2, QrCode, RefreshCw, History, Pause, XCircle, RotateCcw,
@@ -94,6 +94,8 @@ const PAY = {
   refunded:           { label: 'Estornado',    badge: 'outline' },
   partially_refunded: { label: 'Est. parcial', badge: 'warning' },
 };
+
+const ADJUSTABLE_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue']);
 
 const EXTERNAL_CHARGE_METHODS = [
   { value: 'pix', label: 'PIX' },
@@ -236,6 +238,7 @@ export default function ContractDetail() {
   // Contract detail page — handles assessment contracts with full event timeline
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [contract, setContract] = useState(null);
   const [student, setStudent]   = useState(null);
   const [coach, setCoach]       = useState(null);
@@ -759,7 +762,7 @@ export default function ContractDetail() {
   };
 
   // Detecta se o contrato está em estado "não pago" — permite ajuste ou descarte.
-  const isUnpaid = contract && !['paid', 'refunded', 'cancelled'].includes(contract.payment_status || '');
+  const isUnpaid = contract && ADJUSTABLE_PAYMENT_STATUSES.has(contract.payment_status || 'pending');
 
   const selectedAdjustPlan = plans.find(p => p.id === adjustPlanForm.plan_id) || null;
   const selectedAdjustModality = modalities.find(m => m.id === selectedAdjustPlan?.modality_id) || null;
@@ -767,7 +770,7 @@ export default function ContractDetail() {
     ? addPeriod(adjustPlanForm.start_date, selectedAdjustPlan)
     : '';
 
-  const openAdjustPlanModal = () => {
+  const openAdjustPlanModal = useCallback(() => {
     setAdjustPlanForm({
       plan_id: contract.plan_id || '',
       start_date: contract.start_date || todayLocalStr(),
@@ -777,7 +780,22 @@ export default function ContractDetail() {
       discount_reason: contract.discount_reason || '',
     });
     setAdjustPlanModal(true);
-  };
+  }, [contract]);
+
+  useEffect(() => {
+    if (searchParams.get('ajustar-plano') !== '1' || loading || !contract) return;
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('ajustar-plano');
+    setSearchParams(nextParams, { replace: true });
+
+    if (!isUnpaid) {
+      toast.error('Só é possível trocar o plano antes do pagamento');
+      return;
+    }
+    const timer = setTimeout(openAdjustPlanModal, 0);
+    return () => clearTimeout(timer);
+  }, [contract, isUnpaid, loading, openAdjustPlanModal, searchParams, setSearchParams]);
 
   const savePlanAdjustment = async () => {
     if (!isUnpaid) return toast.error('Só é possível ajustar plano antes do pagamento');
@@ -851,9 +869,13 @@ export default function ContractDetail() {
         previous_payment_status: contract.payment_status,
         cleared_payment_link: !!(contract.external_payment_link || contract.asaas_payment_link || contract.asaas_pix_copy),
         cancelled_asaas_charge: hadAsaasCharge,
-      }, 'Ajuste de plano antes do pagamento');
+        is_renewal: isRenewalContract(contract),
+        parent_contract_id: contract.parent_contract_id || null,
+      }, isRenewalContract(contract) ? 'Troca de plano na renovação antes do pagamento' : 'Ajuste de plano antes do pagamento');
 
-      toast.success('Contrato ajustado. Gere ou envie a cobrança correta agora.');
+      toast.success(isRenewalContract(contract)
+        ? 'Renovação ajustada. Gere ou envie a cobrança correta agora.'
+        : 'Contrato ajustado. Gere ou envie a cobrança correta agora.');
       setAdjustPlanModal(false);
       load();
     } catch (e) {
@@ -1796,7 +1818,7 @@ export default function ContractDetail() {
                   onClick={openAdjustPlanModal}
                   title="Cliente pediu outro plano antes de pagar. Ajusta este contrato e limpa a cobrança antiga."
                 >
-                  <PenLine className="w-4 h-4 mr-1.5" /> Ajustar plano
+                  <PenLine className="w-4 h-4 mr-1.5" /> {isRenewalContract(contract) ? 'Trocar plano' : 'Ajustar plano'}
                 </Button>
                 <Button
                   variant="outline"
@@ -2153,13 +2175,15 @@ export default function ContractDetail() {
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-blue-700">
-              <PenLine className="w-5 h-5" /> Ajustar plano
+              <PenLine className="w-5 h-5" /> {isRenewalContract(contract) ? 'Trocar plano da renovação' : 'Ajustar plano'}
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              Ajuste usado quando o cliente ainda não pagou e pediu outra condição. O contrato continua sendo o mesmo; cobrança/link antigo serão limpos para você gerar ou enviar a cobrança correta.
+              {isRenewalContract(contract)
+                ? 'Use quando o aluno vai continuar, mas em outro plano ou modalidade. A renovação continua ligada ao contrato anterior; cobrança/link antigo serão limpos para você gerar ou enviar a cobrança correta.'
+                : 'Ajuste usado quando o cliente ainda não pagou e pediu outra condição. O contrato continua sendo o mesmo; cobrança/link antigo serão limpos para você gerar ou enviar a cobrança correta.'}
             </div>
 
             <div className="grid sm:grid-cols-2 gap-3">
@@ -2174,7 +2198,7 @@ export default function ContractDetail() {
                       ...f,
                       plan_id: value,
                       installments: Math.min(months, nextPlan?.max_installments || months),
-                      enrollment_fee: Number(nextPlan?.enrollment_fee) || 0,
+                      enrollment_fee: isRenewalContract(contract) ? 0 : Number(nextPlan?.enrollment_fee) || 0,
                     }));
                   }}
                 >
