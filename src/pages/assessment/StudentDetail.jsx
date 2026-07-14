@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Phone, Mail, FileText, Plus, ChevronRight, IdCard, MessageCircle, Send } from 'lucide-react';
+import {
+  ArrowLeft, Phone, Mail, FileText, Plus, ChevronRight, IdCard,
+  MessageCircle, Send, Hash, Cake, MapPin,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +20,7 @@ import { DEFAULT_COMMUNITY_LINK, loadCommunicationConfig } from '@/lib/communica
 import CommunicationHistory from '@/components/CommunicationHistory';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCustomerAddress } from '@/lib/br-address';
 import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 
@@ -113,13 +117,21 @@ export default function StudentDetail() {
   }, [id, reloadFlag]);
 
   if (!customer) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
+  const address = formatCustomerAddress(customer);
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate('/assessoria/alunos')}><ArrowLeft className="w-4 h-4" /></Button>
         <div>
-          <h2 className="text-xl font-bold">{customer.full_name}</h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            {customer.customer_code && (
+              <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
+                {customer.customer_code}
+              </span>
+            )}
+            <h2 className="text-xl font-bold">{customer.full_name}</h2>
+          </div>
           <p className="text-sm text-muted-foreground flex items-center gap-3 flex-wrap">
             {customer.whatsapp && <span className="flex items-center gap-1"><Phone className="w-3 h-3" /> {customer.whatsapp}</span>}
             {customer.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {customer.email}</span>}
@@ -130,6 +142,34 @@ export default function StudentDetail() {
           </p>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><IdCard className="w-4 h-4" /> Dados cadastrais</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2 text-sm">
+          <div>
+            <p className="text-xs text-muted-foreground flex items-center gap-1"><Hash className="w-3 h-3" /> Código</p>
+            <p className="font-mono font-semibold">{customer.customer_code || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground flex items-center gap-1"><Cake className="w-3 h-3" /> Nascimento</p>
+            <p className="font-semibold">{customer.birth_date ? formatDate(customer.birth_date) : '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> Telefone</p>
+            <p className="font-semibold">{customer.whatsapp || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground flex items-center gap-1"><Mail className="w-3 h-3" /> Email</p>
+            <p className="font-semibold break-all">{customer.email || '—'}</p>
+          </div>
+          <div className="sm:col-span-2">
+            <p className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> Endereço</p>
+            <p className="font-semibold">{address || '—'}</p>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Contratos */}
       <Card>

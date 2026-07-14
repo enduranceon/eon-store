@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Pencil, Users, Phone, Mail, ChevronRight, Filter, UserCheck, Clock, UserX, Database } from 'lucide-react';
+import {
+  Plus, Search, Pencil, Users, Phone, Mail, ChevronRight, Filter,
+  UserCheck, Clock, UserX, Database, Loader2, MapPin,
+} from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,9 +14,24 @@ import { normalizePhone } from '@/api/db';
 import { usePageData } from '@/hooks/usePageData';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
+import { formatCep, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import { toast } from 'sonner';
 
-const empty = { full_name: '', email: '', whatsapp: '', cpf: '', active: true };
+const empty = {
+  full_name: '',
+  email: '',
+  whatsapp: '',
+  cpf: '',
+  birth_date: '',
+  address_zip: '',
+  address_street: '',
+  address_number: '',
+  address_complement: '',
+  address_neighborhood: '',
+  address_city: '',
+  address_state: '',
+  active: true,
+};
 
 const SITUATION = {
   active:    { label: 'Aluno ativo',       cls: 'bg-green-100 text-green-700' },
@@ -79,6 +97,7 @@ export default function Students() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
   const [saving, setSaving] = useState(false);
+  const [cepLoading, setCepLoading] = useState(false);
   const lifecycleRows = useMemo(
     () => buildContractLifecycleRows(contracts),
     [contracts]
@@ -107,7 +126,8 @@ export default function Students() {
   ];
 
   const open = (s) => {
-    if (s) { setEditing(s); setForm({ ...s, active: s.active ?? true }); }
+    setCepLoading(false);
+    if (s) { setEditing(s); setForm({ ...empty, ...s, active: s.active ?? true }); }
     else   { setEditing(null); setForm(empty); }
     setModal(true);
   };
@@ -121,6 +141,14 @@ export default function Students() {
         email: form.email?.trim().toLowerCase() || null,
         whatsapp: form.whatsapp ? normalizePhone(form.whatsapp) : null,
         cpf: form.cpf?.replace(/\D/g, '') || null,
+        birth_date: form.birth_date || null,
+        address_zip: normalizeCep(form.address_zip) || null,
+        address_street: form.address_street?.trim() || null,
+        address_number: form.address_number?.trim() || null,
+        address_complement: form.address_complement?.trim() || null,
+        address_neighborhood: form.address_neighborhood?.trim() || null,
+        address_city: form.address_city?.trim() || null,
+        address_state: form.address_state?.trim().toUpperCase() || null,
         active: !!form.active,
       };
       if (editing) await PreSaleCustomer.update(editing.id, payload);
@@ -132,6 +160,31 @@ export default function Students() {
     finally { setSaving(false); }
   };
 
+  const fillAddressByCep = async () => {
+    const cep = normalizeCep(form.address_zip);
+    if (!cep) return;
+    if (cep.length !== 8) return toast.error('Informe um CEP com 8 dígitos');
+
+    setCepLoading(true);
+    try {
+      const address = await lookupCepAddress(cep);
+      setForm(f => ({
+        ...f,
+        address_zip: formatCep(address.zip),
+        address_street: address.street || f.address_street,
+        address_complement: f.address_complement || address.complement || '',
+        address_neighborhood: address.neighborhood || f.address_neighborhood,
+        address_city: address.city || f.address_city,
+        address_state: address.state || f.address_state,
+      }));
+      toast.success('Endereço preenchido pelo CEP');
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível buscar o CEP');
+    } finally {
+      setCepLoading(false);
+    }
+  };
+
   const filtered = studentRows.filter(row => {
     const c = row.customer;
     if (viewFilter === 'active' && row.situationKey !== 'active') return false;
@@ -141,6 +194,7 @@ export default function Students() {
     if (!search) return true;
     const q = search.toLowerCase();
     return c.full_name?.toLowerCase().includes(q) ||
+           c.customer_code?.toLowerCase().includes(q) ||
            c.email?.toLowerCase().includes(q) ||
            c.whatsapp?.includes(search.replace(/\D/g, '')) ||
            c.cpf?.includes(search.replace(/\D/g, ''));
@@ -238,7 +292,16 @@ export default function Students() {
                 const totalC = row.effectiveContracts;
                 return (
                   <tr key={s.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/assessoria/alunos/${s.id}`)}>
-                    <td className="px-4 py-3 font-semibold">{s.full_name}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {s.customer_code && (
+                          <span className="font-mono text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
+                            {s.customer_code}
+                          </span>
+                        )}
+                        <span className="font-semibold">{s.full_name}</span>
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground space-y-0.5">
                       {s.whatsapp && <p className="flex items-center gap-1"><Phone className="w-3 h-3" /> {s.whatsapp}</p>}
                       {s.email && <p className="flex items-center gap-1"><Mail className="w-3 h-3" /> {s.email}</p>}
@@ -264,16 +327,57 @@ export default function Students() {
       )}
 
       <Dialog open={modal} onOpenChange={setModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{editing ? 'Editar pessoa' : 'Nova pessoa'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
+            {editing?.customer_code && (
+              <div>
+                <Label>Código</Label>
+                <Input className="mt-1 font-mono" value={editing.customer_code} disabled />
+              </div>
+            )}
             <div><Label>Nome completo *</Label><Input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>WhatsApp</Label><Input value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} placeholder="(11) 99999-9999" /></div>
               <div><Label>CPF</Label><Input value={form.cpf || ''} onChange={e => setForm(f => ({ ...f, cpf: e.target.value }))} placeholder="000.000.000-00" /></div>
             </div>
-            <div><Label>Email</Label><Input type="email" value={form.email || ''} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Email</Label><Input type="email" value={form.email || ''} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+              <div><Label>Nascimento</Label><Input type="date" value={form.birth_date || ''} onChange={e => setForm(f => ({ ...f, birth_date: e.target.value }))} /></div>
+            </div>
             <p className="text-xs text-muted-foreground">CPF é necessário para gerar cobranças no Asaas</p>
+            <div className="border-t pt-3 space-y-3">
+              <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5" /> Endereço
+              </p>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <div>
+                  <Label>CEP</Label>
+                  <Input
+                    className="mt-1"
+                    value={form.address_zip || ''}
+                    onChange={e => setForm(f => ({ ...f, address_zip: formatCep(e.target.value) }))}
+                    onBlur={fillAddressByCep}
+                    placeholder="00000-000"
+                  />
+                </div>
+                <Button type="button" variant="outline" className="self-end" onClick={fillAddressByCep} disabled={cepLoading || normalizeCep(form.address_zip).length !== 8}>
+                  {cepLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Buscar'}
+                </Button>
+              </div>
+              <div className="grid grid-cols-[1fr_96px] gap-3">
+                <div><Label>Rua</Label><Input className="mt-1" value={form.address_street || ''} onChange={e => setForm(f => ({ ...f, address_street: e.target.value }))} /></div>
+                <div><Label>Número</Label><Input className="mt-1" value={form.address_number || ''} onChange={e => setForm(f => ({ ...f, address_number: e.target.value }))} /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><Label>Complemento</Label><Input className="mt-1" value={form.address_complement || ''} onChange={e => setForm(f => ({ ...f, address_complement: e.target.value }))} /></div>
+                <div><Label>Bairro</Label><Input className="mt-1" value={form.address_neighborhood || ''} onChange={e => setForm(f => ({ ...f, address_neighborhood: e.target.value }))} /></div>
+              </div>
+              <div className="grid grid-cols-[1fr_80px] gap-3">
+                <div><Label>Cidade</Label><Input className="mt-1" value={form.address_city || ''} onChange={e => setForm(f => ({ ...f, address_city: e.target.value }))} /></div>
+                <div><Label>UF</Label><Input className="mt-1 uppercase" maxLength={2} value={form.address_state || ''} onChange={e => setForm(f => ({ ...f, address_state: e.target.value.toUpperCase() }))} /></div>
+              </div>
+            </div>
             <label className="flex items-center gap-2 pt-2">
               <input type="checkbox" checked={form.active !== false} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} className="w-4 h-4 accent-blue-600" />
               <span className="text-sm">Cadastro ativo</span>
