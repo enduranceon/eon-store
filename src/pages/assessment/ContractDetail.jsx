@@ -22,6 +22,7 @@ import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import { isSafePaymentUrl } from '@/lib/sales';
+import { EXTERNAL_CHARGE_METHODS, externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
 import {
@@ -96,31 +97,6 @@ const PAY = {
 };
 
 const ADJUSTABLE_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue']);
-
-const EXTERNAL_CHARGE_METHODS = [
-  { value: 'pix', label: 'PIX' },
-  { value: 'boleto', label: 'Boleto' },
-  ...Array.from({ length: 12 }, (_, i) => {
-    const n = i + 1;
-    return { value: `card_${n}x`, label: `Cartão ${n}x` };
-  }),
-];
-
-const EXTERNAL_CHARGE_METHOD_LABELS = Object.fromEntries(
-  EXTERNAL_CHARGE_METHODS.map(method => [method.value, method.label]),
-);
-
-function normalizeExternalChargeMethod(method, installments = 1) {
-  if (method === 'credit_card') return `card_${Math.max(Number(installments) || 1, 1)}x`;
-  if (method === 'pix_asaas') return 'pix';
-  if (method === 'boleto_asaas') return 'boleto';
-  if (EXTERNAL_CHARGE_METHOD_LABELS[method]) return method;
-  return Number(installments) > 1 ? `card_${installments}x` : 'pix';
-}
-
-function externalChargeMethodLabel(method) {
-  return EXTERNAL_CHARGE_METHOD_LABELS[method] || method || '—';
-}
 
 function isNonRenewalReason(reason) {
   const text = String(reason || '').toLowerCase();

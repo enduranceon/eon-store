@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   RefreshCcw, RotateCcw, ChevronRight, Check, Trash2,
-  Calendar, Loader2, CheckCheck, Activity, Ban, Clock, Zap, MessageCircle, PenLine,
+  Calendar, Loader2, CheckCheck, Activity, Ban, Clock, Zap, MessageCircle, PenLine, Link2,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
@@ -18,6 +19,8 @@ import { getActivationStatusForContract } from '@/lib/assessment-contract-lifecy
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
+import { isSafePaymentUrl } from '@/lib/sales';
+import { EXTERNAL_CHARGE_METHODS, externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 
@@ -263,6 +266,7 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
   const planName = contract.plan_snapshot?.name
     || (modality ? `${modality.name} · ${contract.plan_snapshot?.period_months || ''}m` : 'Plano');
   const charged = hasChargeInfo(contract);
+  const hasExternalCharge = Boolean(contract.external_payment_link && !contract.asaas_charge_id);
   const sent = Boolean(contract.payment_message_sent_at);
   const pay = PAY_STATUS[contract.payment_status] || { label: contract.payment_status || 'Aguardando', cls: 'bg-gray-100 text-gray-600' };
   const isTerminalPayment = TERMINAL_PAYMENT_STATUSES.has(contract.payment_status);
@@ -282,7 +286,9 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
               <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Agendada</span>
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${pay.cls}`}>{pay.label}</span>
               {charged && (
-                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">Cobrança pronta</span>
+                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">
+                  {hasExternalCharge ? 'Cobrança externa' : 'Cobrança pronta'}
+                </span>
               )}
               {sent && (
                 <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">Mensagem enviada</span>
@@ -366,7 +372,14 @@ export default function Renewals() {
   const [scanResult, setScanResult] = useState(null);
   const [activationModal, setActivationModal] = useState(null);
   const [chargeModal, setChargeModal] = useState(null);
-  const [chargeForm, setChargeForm] = useState({ billing_type: 'PIX', due_date: defaultAsaasDueDate() });
+  const [chargeForm, setChargeForm] = useState({
+    mode: 'asaas',
+    billing_type: 'PIX',
+    due_date: defaultAsaasDueDate(),
+    external_link: '',
+    external_payment_method: 'pix',
+    external_invoice_number: '',
+  });
   const [charging, setCharging] = useState(false);
   const [messageTask, setMessageTask] = useState(null);
 
@@ -375,7 +388,7 @@ export default function Renewals() {
     try {
       const { data: renewalData } = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
         .in('status', ['draft', 'scheduled'])
         .not('parent_contract_id', 'is', null)
         .order('start_date', { ascending: true })
@@ -468,13 +481,15 @@ export default function Renewals() {
 
   const openChargeModal = (contract) => {
     const customer = customers[contract.customer_id];
-    if (!customer?.cpf) {
-      toast.error('Cadastre o CPF do aluno antes de gerar cobrança');
-      return;
-    }
+    const suggestedDueDate = suggestedAssessmentChargeDueDate(contract);
+    const defaultExternalMethod = normalizeExternalChargeMethod(contract.payment_method, contract.installments);
     setChargeForm({
+      mode: customer?.cpf ? 'asaas' : 'external',
       billing_type: 'PIX',
-      due_date: suggestedAssessmentChargeDueDate(contract),
+      due_date: suggestedDueDate,
+      external_link: contract.external_payment_link || '',
+      external_payment_method: defaultExternalMethod,
+      external_invoice_number: contract.external_invoice_number || '',
     });
     setChargeModal(contract);
   };
@@ -538,7 +553,7 @@ export default function Renewals() {
 
       const { data: updated } = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
         .eq('id', contract.id)
         .single();
 
@@ -558,6 +573,73 @@ export default function Renewals() {
       await load();
     } catch (e) {
       toast.error(e.message || 'Erro ao gerar cobrança');
+    } finally {
+      setCharging(false);
+    }
+  };
+
+  const saveExternalScheduledCharge = async () => {
+    if (!chargeModal) return;
+    const contract = chargeModal;
+    const customer = customers[contract.customer_id];
+    const link = chargeForm.external_link.trim();
+    const dueDate = chargeForm.due_date;
+    const invoiceNumber = chargeForm.external_invoice_number.trim();
+    const paymentMethod = normalizeExternalChargeMethod(chargeForm.external_payment_method, contract.installments);
+
+    if (!link) return toast.error('Informe o link da cobrança externa');
+    if (!isSafePaymentUrl(link)) return toast.error('Link inválido — deve começar com https://');
+    if (!dueDate) return toast.error('Informe a data de vencimento');
+    if (contract.asaas_charge_id) return toast.error('Esta renovação já tem cobrança Asaas');
+
+    setCharging(true);
+    try {
+      const updates = {
+        external_payment_link: link,
+        due_date: dueDate,
+        payment_method: paymentMethod,
+        external_invoice_number: invoiceNumber || null,
+      };
+      if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
+        updates.payment_status = 'charge_sent';
+      }
+
+      await AssessmentContract.update(contract.id, updates);
+      await AssessmentContractEvent.create({
+        contract_id: contract.id,
+        event_type: 'external_charge_registered',
+        payload: {
+          link,
+          due_date: dueDate,
+          payment_method: paymentMethod,
+          method_label: externalChargeMethodLabel(paymentMethod),
+          invoice_number: invoiceNumber || null,
+          source: 'renewals_page',
+        },
+        notes: 'Cobrança externa da renovação registrada pela aba de Renovações',
+      }).catch(() => {});
+
+      const { data: updated } = await supabase
+        .from('assessment_contracts')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
+        .eq('id', contract.id)
+        .single();
+
+      const nextContract = updated || {
+        ...contract,
+        ...updates,
+        payment_status: updates.payment_status || contract.payment_status,
+      };
+      toast.success('Cobrança externa cadastrada. Mensagem pronta para envio.');
+      setChargeModal(null);
+      setMessageTask(chargeTaskForRenewal(nextContract, {
+        customer,
+        coach: coaches[nextContract.coach_id],
+        modality: modalities[nextContract.plan_snapshot?.modality_id],
+      }));
+      await load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar cobrança externa');
     } finally {
       setCharging(false);
     }
@@ -694,6 +776,8 @@ export default function Renewals() {
   const activationBusy = !!activationDraft && busy === activationDraft.id;
   const activationCustomer = activationDraft ? customers[activationDraft.customer_id] : null;
   const activationTotal = activationDraft ? contractTotal(activationDraft) : 0;
+  const chargeModalCustomer = chargeModal ? customers[chargeModal.customer_id] : null;
+  const chargeModeIsExternal = chargeForm.mode === 'external';
   const hasRenewalWork = orderedDrafts.length > 0 || orderedScheduled.length > 0;
 
   // ─────────────────────────────────────────────────────────────────
@@ -854,26 +938,105 @@ export default function Renewals() {
               </div>
 
               <div>
-                <Label>Forma de cobrança</Label>
-                <div className="grid grid-cols-3 gap-2 mt-1">
-                  {[
-                    { value: 'PIX', label: 'PIX' },
-                    { value: 'BOLETO', label: 'Boleto' },
-                    { value: 'CREDIT_CARD', label: `Cartão ${chargeModal.installments || 1}x` },
-                  ].map(method => (
-                    <Button
-                      key={method.value}
-                      type="button"
-                      variant={chargeForm.billing_type === method.value ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setChargeForm(form => ({ ...form, billing_type: method.value }))}
-                      disabled={charging}
-                    >
-                      {method.label}
-                    </Button>
-                  ))}
+                <Label>Tipo de cobrança</Label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <Button
+                    type="button"
+                    variant={chargeForm.mode === 'asaas' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setChargeForm(form => ({ ...form, mode: 'asaas' }))}
+                    disabled={charging}
+                  >
+                    <Zap className="w-3.5 h-3.5 mr-1.5" /> Asaas
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={chargeModeIsExternal ? 'default' : 'outline'}
+                    size="sm"
+                    className={chargeModeIsExternal ? '' : 'border-amber-200 text-amber-700 hover:bg-amber-50'}
+                    onClick={() => setChargeForm(form => ({ ...form, mode: 'external' }))}
+                    disabled={charging}
+                  >
+                    <Link2 className="w-3.5 h-3.5 mr-1.5" /> Externa/manual
+                  </Button>
                 </div>
               </div>
+
+              {chargeForm.mode === 'asaas' ? (
+                <>
+                  {!chargeModalCustomer?.cpf && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                      Para gerar no Asaas, cadastre o CPF do aluno. A cobrança externa/manual pode ser usada sem CPF.
+                    </div>
+                  )}
+
+                  <div>
+                    <Label>Forma de cobrança</Label>
+                    <div className="grid grid-cols-3 gap-2 mt-1">
+                      {[
+                        { value: 'PIX', label: 'PIX' },
+                        { value: 'BOLETO', label: 'Boleto' },
+                        { value: 'CREDIT_CARD', label: `Cartão ${chargeModal.installments || 1}x` },
+                      ].map(method => (
+                        <Button
+                          key={method.value}
+                          type="button"
+                          variant={chargeForm.billing_type === method.value ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setChargeForm(form => ({ ...form, billing_type: method.value }))}
+                          disabled={charging}
+                        >
+                          {method.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <Label>Forma da cobrança externa</Label>
+                    <Select
+                      value={chargeForm.external_payment_method}
+                      onValueChange={value => setChargeForm(form => ({ ...form, external_payment_method: value }))}
+                      disabled={charging}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Selecione a forma" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EXTERNAL_CHARGE_METHODS.map(method => (
+                          <SelectItem key={method.value} value={method.value}>
+                            {method.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>Link de pagamento</Label>
+                    <Input
+                      className="mt-1 font-mono text-xs"
+                      placeholder="https://..."
+                      value={chargeForm.external_link}
+                      onChange={e => setChargeForm(form => ({ ...form, external_link: e.target.value }))}
+                      disabled={charging}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Número da fatura</Label>
+                    <Input
+                      className="mt-1 font-mono text-xs"
+                      placeholder="Opcional"
+                      value={chargeForm.external_invoice_number}
+                      onChange={e => setChargeForm(form => ({ ...form, external_invoice_number: e.target.value }))}
+                      disabled={charging}
+                    />
+                  </div>
+                </>
+              )}
 
               <div>
                 <Label>Vencimento</Label>
@@ -886,17 +1049,34 @@ export default function Renewals() {
                 />
               </div>
 
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-                Depois de gerar, a mensagem de WhatsApp será aberta já com o link/PIX da cobrança.
+              <div className={`rounded-lg border p-3 text-sm ${chargeModeIsExternal ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-blue-200 bg-blue-50 text-blue-900'}`}>
+                {chargeModeIsExternal
+                  ? 'Use quando a cobrança foi gerada por fora. Depois de salvar, o envio para WhatsApp fica pronto com esse link.'
+                  : 'Depois de gerar, a mensagem de WhatsApp será aberta já com o link/PIX da cobrança.'}
               </div>
 
               <div className="flex justify-end gap-2 pt-1">
                 <Button type="button" variant="outline" disabled={charging} onClick={() => setChargeModal(null)}>
                   Cancelar
                 </Button>
-                <Button type="button" disabled={charging || !chargeForm.due_date} onClick={generateScheduledCharge}>
-                  {charging ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Zap className="w-4 h-4 mr-1.5" />}
-                  {charging ? 'Gerando...' : 'Gerar e preparar envio'}
+                <Button
+                  type="button"
+                  disabled={
+                    charging ||
+                    !chargeForm.due_date ||
+                    (chargeForm.mode === 'asaas' && !chargeModalCustomer?.cpf) ||
+                    (chargeModeIsExternal && !chargeForm.external_link.trim())
+                  }
+                  onClick={chargeModeIsExternal ? saveExternalScheduledCharge : generateScheduledCharge}
+                >
+                  {charging ? (
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  ) : chargeModeIsExternal ? (
+                    <Link2 className="w-4 h-4 mr-1.5" />
+                  ) : (
+                    <Zap className="w-4 h-4 mr-1.5" />
+                  )}
+                  {charging ? 'Salvando...' : chargeModeIsExternal ? 'Salvar e preparar envio' : 'Gerar e preparar envio'}
                 </Button>
               </div>
             </div>
