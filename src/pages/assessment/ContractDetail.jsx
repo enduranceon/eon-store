@@ -20,6 +20,7 @@ import {
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
+import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import { isSafePaymentUrl } from '@/lib/sales';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
@@ -456,6 +457,7 @@ export default function ContractDetail() {
   // Abre modal de confirmação (não chama Asaas ainda)
   const openChargeConfirm = (billing_type = 'PIX') => {
     if (!student?.cpf) return toast.error('Cadastre o CPF do aluno antes de gerar cobrança');
+    setChargeDueDate(suggestedAssessmentChargeDueDate(contract));
     setChargeConfirmModal(billing_type);
   };
 
@@ -942,7 +944,11 @@ export default function ContractDetail() {
         start_date:         newStart,
         end_date:           newEnd,
         original_end_date:  newEnd,
-        due_date:           defaultAsaasDueDate(),
+        due_date:           suggestedAssessmentChargeDueDate({
+          parent_contract_id: contract.id,
+          start_date: newStart,
+          end_date: newEnd,
+        }),
         installments:       contract.installments,
         enrollment_fee:     0,
         auto_renewal:       contract.auto_renewal ?? false,
@@ -1142,7 +1148,7 @@ export default function ContractDetail() {
   const openExternalSaleModal = () => {
     setExternalSaleForm({
       link:           contract?.external_payment_link || '',
-      due_date:       contract?.due_date || defaultAsaasDueDate(),
+      due_date:       suggestedAssessmentChargeDueDate(contract),
       payment_method: normalizeExternalChargeMethod(contract?.payment_method, contract?.installments),
       invoice_number: contract?.external_invoice_number || '',
     });
@@ -1867,7 +1873,9 @@ export default function ContractDetail() {
                         value={chargeDueDate}
                         onChange={e => setChargeDueDate(e.target.value)}
                       />
-                      <p className="mt-1 text-[11px] text-muted-foreground">padrão D+{DEFAULT_ASAAS_DUE_DAYS}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {isRenewalContract(contract) ? 'padrão: início da nova vigência' : `padrão D+${DEFAULT_ASAAS_DUE_DAYS}`}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2103,6 +2111,9 @@ export default function ContractDetail() {
                 value={externalSaleForm.due_date}
                 onChange={e => setExternalSaleForm(f => ({ ...f, due_date: e.target.value }))}
               />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {isRenewalContract(contract) ? 'Para renovação, o padrão é o início da nova vigência.' : `Padrão do sistema: D+${DEFAULT_ASAAS_DUE_DAYS}.`}
+              </p>
             </div>
             <div className="flex gap-2 pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setExternalSaleModal(false)} disabled={externalSaleSaving}>

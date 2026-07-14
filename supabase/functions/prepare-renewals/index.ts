@@ -122,6 +122,7 @@ Deno.serve(async (req: Request) => {
         const newStart = parent.end_date;
         const months   = getPlanMonths(plan, snapshot);
         const newEnd   = addMonthsToDate(newStart, months);
+        const newDueDate = newStart < todayStr ? todayStr : newStart;
 
         // Cria o draft
         const { data: draft, error: draftErr } = await supabase
@@ -135,7 +136,7 @@ Deno.serve(async (req: Request) => {
             start_date:         newStart,
             end_date:           newEnd,
             original_end_date:  newEnd,
-            due_date:           newEnd,
+            due_date:           newDueDate,
             installments:       parent.installments || 1,
             enrollment_fee:     0, // renovações não cobram matrícula
             manual_discount:    0,
@@ -164,6 +165,7 @@ Deno.serve(async (req: Request) => {
             draft_contract_number: draft.contract_number,
             draft_start:           newStart,
             draft_end:             newEnd,
+            draft_due_date:        newDueDate,
             auto_generated:        true,
             horizon_days:          horizonDays,
           },
@@ -180,6 +182,7 @@ Deno.serve(async (req: Request) => {
             parent_contract_num:  parent.contract_number,
             plan_id:              parent.plan_id,
             installments:         parent.installments,
+            due_date:             newDueDate,
           },
           notes: `Rascunho de renovação de ${parent.contract_number}`,
         });

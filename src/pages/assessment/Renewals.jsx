@@ -17,6 +17,7 @@ import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 import { getActivationStatusForContract } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { defaultAsaasDueDate } from '@/lib/payment-methods';
+import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 
@@ -146,7 +147,7 @@ function chargeTaskForRenewal(contract, { customer, coach, modality } = {}) {
     customerWhatsapp: customer?.whatsapp || '',
     totalValue: total,
     paymentStatus: contract.payment_status || 'pending',
-    dueDate: contract.due_date || defaultAsaasDueDate(),
+    dueDate: suggestedAssessmentChargeDueDate(contract),
     asaasChargeId: contract.asaas_charge_id,
     asaasPaymentLink: contract.asaas_payment_link,
     asaasPixCopy: contract.asaas_pix_copy,
@@ -260,6 +261,10 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
   const pay = PAY_STATUS[contract.payment_status] || { label: contract.payment_status || 'Aguardando', cls: 'bg-gray-100 text-gray-600' };
   const isTerminalPayment = TERMINAL_PAYMENT_STATUSES.has(contract.payment_status);
   const canSendCharge = charged && !isTerminalPayment;
+  const chargeDueDate = isTerminalPayment
+    ? (contract.due_date || suggestedAssessmentChargeDueDate(contract))
+    : suggestedAssessmentChargeDueDate(contract);
+  const chargeDueLabel = charged || isTerminalPayment ? 'Vencimento' : 'Vencimento sugerido';
 
   return (
     <Card className="border-blue-200 bg-blue-50/30">
@@ -291,7 +296,7 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
                 <Calendar className="w-3 h-3" />
                 Vigência agendada {formatDate(contract.start_date)} → {formatDate(contract.end_date)}
               </span>
-              {contract.due_date && <span>Vencimento: <b className="text-gray-700">{formatDate(contract.due_date)}</b></span>}
+              {chargeDueDate && <span>{chargeDueLabel}: <b className="text-gray-700">{formatDate(chargeDueDate)}</b></span>}
               {coach && <span>Coach: <b className="text-gray-700">{coach.name}</b></span>}
               <span>
                 {installments}x de <b className="text-gray-700">{formatCurrency(valuePerInst)}</b>
@@ -455,7 +460,7 @@ export default function Renewals() {
     }
     setChargeForm({
       billing_type: 'PIX',
-      due_date: contract.due_date || defaultAsaasDueDate(),
+      due_date: suggestedAssessmentChargeDueDate(contract),
     });
     setChargeModal(contract);
   };
