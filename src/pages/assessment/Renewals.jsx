@@ -204,6 +204,7 @@ export default function Renewals() {
   const [scanForm,   setScanForm]   = useState({ horizon_days: RENEWAL_ATTENTION_WINDOW_DAYS });
   const [scanning,   setScanning]   = useState(false);
   const [scanResult, setScanResult] = useState(null);
+  const [activationModal, setActivationModal] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -255,13 +256,14 @@ export default function Renewals() {
 
   // ── Ações: renovação ─────────────────────────────────────────────────────
 
-  const activateRenewal = async (draft, parent) => {
+  const openActivationModal = (draft, parent) => {
     const nextStatus = getActivationStatusForContract(draft);
-    const startsLater = nextStatus === 'scheduled';
-    const message = startsLater
-      ? `Agendar renovação ${draft.contract_number}?\n\nA cobrança/venda da renovação ficará aberta, mas ela só entra como contrato ativo em ${formatDate(draft.start_date)}.\n\nO contrato anterior permanece ativo até a virada da vigência.`
-      : `Ativar renovação ${draft.contract_number}?\n\nA renovação entra em vigor agora e o contrato anterior será marcado como concluído.`;
-    if (!confirm(message)) return;
+    setActivationModal({ draft, parent, nextStatus });
+  };
+
+  const activateRenewal = async () => {
+    if (!activationModal?.draft) return;
+    const { draft, parent, nextStatus } = activationModal;
     setBusy(draft.id);
     try {
       await AssessmentContract.update(draft.id, { status: nextStatus });
@@ -287,6 +289,7 @@ export default function Renewals() {
       toast.success(nextStatus === 'scheduled'
         ? `Renovação ${draft.contract_number} agendada!`
         : `Renovação ${draft.contract_number} ativada!`);
+      setActivationModal(null);
       load();
     } catch (e) {
       toast.error('Erro ao ativar: ' + (e.message || ''));
@@ -412,6 +415,13 @@ export default function Renewals() {
   const firstDraftDaysLeft = firstDraft
     ? renewalDaysLeft(firstDraft, parents[firstDraft.parent_contract_id], todayStr)
     : null;
+  const activationDraft = activationModal?.draft;
+  const activationParent = activationModal?.parent;
+  const activationNextStatus = activationModal?.nextStatus || 'active';
+  const activationStartsLater = activationNextStatus === 'scheduled';
+  const activationBusy = !!activationDraft && busy === activationDraft.id;
+  const activationCustomer = activationDraft ? customers[activationDraft.customer_id] : null;
+  const activationTotal = activationDraft ? contractTotal(activationDraft) : 0;
 
   // ─────────────────────────────────────────────────────────────────
   // RENDER
@@ -491,7 +501,7 @@ export default function Renewals() {
               customer={customers[draft.customer_id]}
               coach={coaches[draft.coach_id]}
               modality={modalities[draft.plan_snapshot?.modality_id]}
-              onActivate={activateRenewal}
+              onActivate={openActivationModal}
               onDecline={declineRenewal}
               onDiscard={discardRenewal}
               busy={busy === draft.id}
@@ -499,6 +509,83 @@ export default function Renewals() {
           ))}
         </div>
       )}
+
+      {/* Modal: agendar/ativar renovação */}
+      <Dialog open={!!activationModal} onOpenChange={open => !open && !activationBusy && setActivationModal(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {activationStartsLater ? (
+                <Clock className="w-5 h-5 text-blue-600" />
+              ) : (
+                <Check className="w-5 h-5 text-green-600" />
+              )}
+              {activationStartsLater ? 'Agendar renovação' : 'Ativar renovação'}
+            </DialogTitle>
+          </DialogHeader>
+
+          {activationDraft && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-gray-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm font-semibold text-blue-700">{activationDraft.contract_number}</p>
+                    <p className="text-sm font-semibold text-gray-900 truncate">
+                      {activationCustomer?.full_name || 'Aluno'}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {formatDate(activationDraft.start_date)} → {formatDate(activationDraft.end_date)}
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold text-gray-900 shrink-0">{formatCurrency(activationTotal)}</p>
+                </div>
+              </div>
+
+              {activationStartsLater ? (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                  A renovação ficará aprovada e a cobrança pode ser tratada agora. Ela só entra como contrato ativo em <b>{formatDate(activationDraft.start_date)}</b>.
+                  {activationParent && (
+                    <span> O contrato anterior <b>{activationParent.contract_number}</b> permanece ativo até a virada da vigência.</span>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
+                  A renovação entra em vigor agora.
+                  {activationParent && (
+                    <span> O contrato anterior <b>{activationParent.contract_number}</b> será marcado como concluído.</span>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={activationBusy}
+                  onClick={() => setActivationModal(null)}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  disabled={activationBusy}
+                  className={activationStartsLater ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}
+                  onClick={activateRenewal}
+                >
+                  {activationBusy ? (
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  ) : activationStartsLater ? (
+                    <Clock className="w-4 h-4 mr-1.5" />
+                  ) : (
+                    <Check className="w-4 h-4 mr-1.5" />
+                  )}
+                  {activationStartsLater ? 'Agendar' : 'Ativar'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: scan de renovações */}
       <Dialog open={scanModal} onOpenChange={open => !open && !scanning && setScanModal(false)}>
