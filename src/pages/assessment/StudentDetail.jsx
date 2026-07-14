@@ -124,7 +124,9 @@ export default function StudentDetail() {
             {customer.whatsapp && <span className="flex items-center gap-1"><Phone className="w-3 h-3" /> {customer.whatsapp}</span>}
             {customer.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {customer.email}</span>}
             {customer.cpf && <span className="flex items-center gap-1"><IdCard className="w-3 h-3" /> {customer.cpf}</span>}
-            <Badge variant={customer.active !== false ? 'success' : 'secondary'}>{customer.active !== false ? 'Ativo' : 'Inativo'}</Badge>
+            <Badge variant={customer.active !== false ? 'success' : 'secondary'}>
+              {customer.active !== false ? 'Cadastro ativo' : 'Cadastro inativo'}
+            </Badge>
           </p>
         </div>
       </div>

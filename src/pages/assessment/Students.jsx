@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Pencil, Users, Phone, Mail, ChevronRight, Filter } from 'lucide-react';
+import { Plus, Search, Pencil, Users, Phone, Mail, ChevronRight, Filter, UserCheck, Clock, UserX, Database } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,15 +10,54 @@ import { PreSaleCustomer, AssessmentContract } from '@/api/entities';
 import { normalizePhone } from '@/api/db';
 import { usePageData } from '@/hooks/usePageData';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { toast } from 'sonner';
 
 const empty = { full_name: '', email: '', whatsapp: '', cpf: '', active: true };
+
+const SITUATION = {
+  active:    { label: 'Aluno ativo',       cls: 'bg-green-100 text-green-700' },
+  scheduled: { label: 'Agendado',          cls: 'bg-blue-100 text-blue-700' },
+  former:    { label: 'Ex-aluno',          cls: 'bg-gray-100 text-gray-600' },
+  prospect:  { label: 'Prospect',          cls: 'bg-amber-100 text-amber-700' },
+  base:      { label: 'Base sem contrato', cls: 'bg-slate-100 text-slate-600' },
+};
+
+function classifyStudent(customer, lifecycleRows) {
+  const rows = lifecycleRows.filter(c => c.customer_id === customer.id);
+  const activeContracts = rows.filter(c => c.lifecycle?.counts?.active);
+  const scheduledContracts = rows.filter(c => c.lifecycle?.type === 'scheduled');
+  const effectiveContracts = rows.filter(c =>
+    !['pending_sale', 'renewal', 'voided_sale'].includes(c.lifecycle?.type)
+  );
+  const prospectContracts = rows.filter(c =>
+    ['pending_sale', 'renewal'].includes(c.lifecycle?.type)
+  );
+
+  const key = activeContracts.length > 0 ? 'active'
+    : scheduledContracts.length > 0 ? 'scheduled'
+    : effectiveContracts.length > 0 ? 'former'
+    : prospectContracts.length > 0 ? 'prospect'
+    : 'base';
+
+  return {
+    customer,
+    activeContracts,
+    scheduledContracts,
+    effectiveContracts,
+    prospectContracts,
+    allContracts: rows,
+    situation: SITUATION[key],
+    situationKey: key,
+  };
+}
 
 async function loadStudentsPage() {
   const [customers, contracts] = await Promise.all([
     PreSaleCustomer.list('full_name').catch(() => []),
     AssessmentContract.list('-created_at').catch(() => []),
   ]);
+  await applyAssessmentContractTransitions(contracts);
   return { customers, contracts };
 }
 
@@ -35,7 +74,7 @@ export default function Students() {
     onError: error => console.error('Erro ao carregar alunos:', error),
   });
   const [search, setSearch] = useState('');
-  const [onlyStudents, setOnlyStudents] = useState(false); // padrão: mostra toda a base
+  const [viewFilter, setViewFilter] = useState('all');
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
@@ -44,6 +83,28 @@ export default function Students() {
     () => buildContractLifecycleRows(contracts),
     [contracts]
   );
+  const studentRows = useMemo(
+    () => customers.map(customer => classifyStudent(customer, lifecycleRows)),
+    [customers, lifecycleRows]
+  );
+
+  const summary = useMemo(() => ({
+    total: studentRows.length,
+    active: studentRows.filter(row => row.situationKey === 'active').length,
+    scheduled: studentRows.filter(row => row.situationKey === 'scheduled').length,
+    former: studentRows.filter(row => row.situationKey === 'former').length,
+    prospects: studentRows.filter(row => row.situationKey === 'prospect').length,
+    base: studentRows.filter(row => row.situationKey === 'base').length,
+    withHistory: studentRows.filter(row => ['active', 'scheduled', 'former'].includes(row.situationKey)).length,
+  }), [studentRows]);
+
+  const viewFilters = [
+    { key: 'all', label: 'Toda base', count: summary.total },
+    { key: 'active', label: 'Ativos', count: summary.active },
+    { key: 'history', label: 'Com histórico', count: summary.withHistory },
+    { key: 'base', label: 'Sem contrato', count: summary.base },
+    ...(summary.prospects > 0 ? [{ key: 'prospect', label: 'Prospects', count: summary.prospects }] : []),
+  ];
 
   const open = (s) => {
     if (s) { setEditing(s); setForm({ ...s, active: s.active ?? true }); }
@@ -71,17 +132,12 @@ export default function Students() {
     finally { setSaving(false); }
   };
 
-  const activeContractsByCustomer = (id) =>
-    lifecycleRows.filter(c => c.customer_id === id && c.lifecycle?.counts?.active);
-
-  const totalContractsByCustomer = (id) =>
-    lifecycleRows.filter(c =>
-      c.customer_id === id &&
-      !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type)
-    );
-
-  const filtered = customers.filter(c => {
-    if (onlyStudents && totalContractsByCustomer(c.id).length === 0) return false;
+  const filtered = studentRows.filter(row => {
+    const c = row.customer;
+    if (viewFilter === 'active' && row.situationKey !== 'active') return false;
+    if (viewFilter === 'history' && !['active', 'scheduled', 'former'].includes(row.situationKey)) return false;
+    if (viewFilter === 'base' && row.situationKey !== 'base') return false;
+    if (viewFilter === 'prospect' && row.situationKey !== 'prospect') return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return c.full_name?.toLowerCase().includes(q) ||
@@ -95,9 +151,36 @@ export default function Students() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Alunos</h2>
-          <p className="text-sm text-muted-foreground">{filtered.length} pessoa{filtered.length !== 1 ? 's' : ''} {onlyStudents ? '(com contratos)' : '(base completa)'}</p>
+          <p className="text-sm text-muted-foreground">{filtered.length} pessoa{filtered.length !== 1 ? 's' : ''} na visão selecionada</p>
         </div>
         <Button onClick={() => open(null)}><Plus className="w-4 h-4 mr-2" /> Nova pessoa</Button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-green-50"><UserCheck className="w-4 h-4 text-green-600" /></div>
+            <div><p className="text-xs text-muted-foreground">Alunos ativos</p><p className="text-xl font-bold text-green-700">{summary.active}</p></div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-blue-50"><Clock className="w-4 h-4 text-blue-600" /></div>
+            <div><p className="text-xs text-muted-foreground">Agendados</p><p className="text-xl font-bold text-blue-700">{summary.scheduled}</p></div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-gray-50"><UserX className="w-4 h-4 text-gray-600" /></div>
+            <div><p className="text-xs text-muted-foreground">Ex-alunos</p><p className="text-xl font-bold text-gray-700">{summary.former}</p></div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2 rounded-full bg-slate-50"><Database className="w-4 h-4 text-slate-600" /></div>
+            <div><p className="text-xs text-muted-foreground">Base sem contrato</p><p className="text-xl font-bold text-slate-700">{summary.base}</p></div>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -105,28 +188,33 @@ export default function Students() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Buscar por nome, telefone, CPF, email..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <button
-          onClick={() => setOnlyStudents(s => !s)}
-          className={`text-xs font-medium px-3 py-2 rounded-lg border flex items-center gap-1.5 ${onlyStudents ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-600'}`}
-        >
-          <Filter className="w-3.5 h-3.5" />
-          {onlyStudents ? 'Apenas alunos' : 'Toda a base'}
-        </button>
+        {viewFilters.map(filter => (
+          <button
+            key={filter.key}
+            onClick={() => setViewFilter(filter.key)}
+            className={`text-xs font-medium px-3 py-2 rounded-lg border flex items-center gap-1.5 ${viewFilter === filter.key ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            {filter.label} <span className="font-bold">{filter.count}</span>
+          </button>
+        ))}
       </div>
 
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
-        💡 A base de pessoas é unificada com <strong>Clientes</strong>. Quem é cliente da loja já aparece aqui.
+        A base de pessoas é unificada com <strong>Clientes</strong>. A situação de assessoria abaixo vem dos contratos, não do cadastro da pessoa.
       </div>
 
       {filtered.length === 0 ? (
         <Card><CardContent className="flex flex-col items-center py-16 text-center">
           <Users className="w-10 h-10 text-muted-foreground mb-3" />
           <p className="text-sm text-muted-foreground">
-            {onlyStudents ? 'Nenhuma pessoa com contrato de assessoria' : 'Nenhuma pessoa cadastrada'}
+            {viewFilter === 'active' ? 'Nenhum aluno ativo'
+              : viewFilter === 'base' ? 'Nenhuma pessoa sem contrato'
+              : 'Nenhuma pessoa nesta visão'}
           </p>
-          {onlyStudents && (
-            <button onClick={() => setOnlyStudents(false)} className="text-sm text-blue-600 hover:underline mt-2">
-              Ver toda a base de clientes
+          {viewFilter !== 'all' && (
+            <button onClick={() => setViewFilter('all')} className="text-sm text-blue-600 hover:underline mt-2">
+              Ver toda a base
             </button>
           )}
         </CardContent></Card>
@@ -139,14 +227,15 @@ export default function Students() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Contato</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Contratos ativos</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Total contratos</th>
-                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Status</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Situação assessoria</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {filtered.map(s => {
-                const activeC = activeContractsByCustomer(s.id);
-                const totalC = totalContractsByCustomer(s.id);
+              {filtered.map(row => {
+                const s = row.customer;
+                const activeC = row.activeContracts;
+                const totalC = row.effectiveContracts;
                 return (
                   <tr key={s.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/assessoria/alunos/${s.id}`)}>
                     <td className="px-4 py-3 font-semibold">{s.full_name}</td>
@@ -157,9 +246,10 @@ export default function Students() {
                     <td className="px-4 py-3 text-center font-bold text-blue-700">{activeC.length}</td>
                     <td className="px-4 py-3 text-center text-muted-foreground">{totalC.length}</td>
                     <td className="px-4 py-3 text-center">
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.active !== false ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                        {s.active !== false ? 'Ativo' : 'Inativo'}
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${row.situation.cls}`}>
+                        {row.situation.label}
                       </span>
+                      {s.active === false && <p className="text-[10px] text-gray-500 mt-1">cadastro inativo</p>}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button onClick={(e) => { e.stopPropagation(); open(s); }} className="p-1.5 hover:bg-gray-100 rounded text-gray-500 mr-1"><Pencil className="w-3.5 h-3.5" /></button>
@@ -186,7 +276,7 @@ export default function Students() {
             <p className="text-xs text-muted-foreground">CPF é necessário para gerar cobranças no Asaas</p>
             <label className="flex items-center gap-2 pt-2">
               <input type="checkbox" checked={form.active !== false} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} className="w-4 h-4 accent-blue-600" />
-              <span className="text-sm">Pessoa ativa</span>
+              <span className="text-sm">Cadastro ativo</span>
             </label>
             <div className="flex gap-2 pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setModal(false)}>Cancelar</Button>
