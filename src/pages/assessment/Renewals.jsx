@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   RefreshCcw, RotateCcw, ChevronRight, Check, Trash2,
@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
@@ -34,6 +34,73 @@ function contractTotal(contract) {
   return Math.max(0, base + enrollment - discount);
 }
 
+const DAY_MS = 86400000;
+
+function localDate(dateStr) {
+  if (!dateStr) return null;
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(String(dateStr))
+    ? new Date(`${dateStr}T00:00:00`)
+    : new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(dateStr, days) {
+  const d = localDate(dateStr);
+  if (!d) return '';
+  d.setDate(d.getDate() + days);
+  return toLocalDateStr(d);
+}
+
+function daysBetween(dateStr, todayStr = todayLocalStr()) {
+  const target = localDate(dateStr);
+  const today = localDate(todayStr);
+  if (!target || !today) return null;
+  return Math.round((target - today) / DAY_MS);
+}
+
+function renewalDate(draft, parent) {
+  return parent?.end_date || draft.start_date || draft.end_date || '';
+}
+
+function renewalDaysLeft(draft, parent, todayStr = todayLocalStr()) {
+  return daysBetween(renewalDate(draft, parent), todayStr);
+}
+
+function renewalTimingLabel(daysLeft) {
+  if (daysLeft === null) return 'Sem data';
+  if (daysLeft < -1) return `Venceu há ${Math.abs(daysLeft)} dias`;
+  if (daysLeft === -1) return 'Venceu ontem';
+  if (daysLeft === 0) return 'Vence hoje';
+  if (daysLeft === 1) return 'Vence amanhã';
+  return `Vence em ${daysLeft} dias`;
+}
+
+function renewalTimingClass(daysLeft) {
+  if (daysLeft === null) return 'bg-gray-100 text-gray-600';
+  if (daysLeft <= 0) return 'bg-red-100 text-red-700';
+  if (daysLeft <= 3) return 'bg-amber-100 text-amber-700';
+  if (daysLeft <= RENEWAL_ATTENTION_WINDOW_DAYS) return 'bg-blue-100 text-blue-700';
+  return 'bg-gray-100 text-gray-600';
+}
+
+function compareRenewalDrafts(a, b, parents = {}) {
+  const parentA = parents[a.parent_contract_id];
+  const parentB = parents[b.parent_contract_id];
+  const dateA = renewalDate(a, parentA) || '9999-12-31';
+  const dateB = renewalDate(b, parentB) || '9999-12-31';
+  const byRenewalDate = dateA.localeCompare(dateB);
+  if (byRenewalDate !== 0) return byRenewalDate;
+  return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+}
+
+function normalizeScanDays(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return RENEWAL_ATTENTION_WINDOW_DAYS;
+  return Math.max(1, Math.min(90, Math.round(n)));
+}
+
 // ─────────────────────────────────────────────────────────────────
 // LINHA DE RENOVAÇÃO (gerada automaticamente, tem contrato pai)
 // ─────────────────────────────────────────────────────────────────
@@ -44,6 +111,9 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDi
     || (modality ? `${modality.name} · ${draft.plan_snapshot?.period_months || ''}m` : 'Plano');
   const installments = draft.installments || 1;
   const valuePerInst = installments > 0 ? total / installments : total;
+  const daysLeft     = renewalDaysLeft(draft, parent);
+  const timingLabel  = renewalTimingLabel(daysLeft);
+  const renewAt      = renewalDate(draft, parent);
 
   return (
     <Card className="border-blue-200">
@@ -53,6 +123,9 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDi
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm font-semibold text-blue-700">{draft.contract_number}</span>
               <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Rascunho</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${renewalTimingClass(daysLeft)}`}>
+                {timingLabel}
+              </span>
               {parent && (
                 <span className="text-[11px] text-muted-foreground">
                   renova <Link to={`/assessoria/contratos/${parent.id}`} className="text-blue-600 hover:underline font-mono">{parent.contract_number}</Link>
@@ -66,7 +139,7 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDi
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
-                {formatDate(draft.start_date)} → {formatDate(draft.end_date)}
+                Renovar em {formatDate(renewAt)} · nova vigência {formatDate(draft.start_date)} → {formatDate(draft.end_date)}
               </span>
               {coach && <span>Coach: <b className="text-gray-700">{coach.name}</b></span>}
               <span>
@@ -126,9 +199,10 @@ export default function Renewals() {
         .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, parent_contract_id, notes, created_at')
         .eq('status', 'draft')
         .not('parent_contract_id', 'is', null)
-        .order('created_at', { ascending: false });
+        .order('start_date', { ascending: true })
+        .order('created_at', { ascending: true });
 
-      const draftsList = draftsData || [];
+      const draftsList = [...(draftsData || [])].sort(compareRenewalDrafts);
       setDrafts(draftsList);
 
       if (draftsList.length === 0) {
@@ -231,7 +305,7 @@ export default function Renewals() {
     setScanResult(null);
     try {
       const { data, error } = await supabase.functions.invoke('prepare-renewals', {
-        body: { horizon_days: Number(scanForm.horizon_days) || RENEWAL_ATTENTION_WINDOW_DAYS },
+        body: { horizon_days: normalizeScanDays(scanForm.horizon_days) },
       });
       if (error) {
         let msg = error.message;
@@ -255,7 +329,18 @@ export default function Renewals() {
     }
   };
 
-  const totalValue = drafts.reduce((s, d) => s + contractTotal(d), 0);
+  const orderedDrafts = useMemo(
+    () => [...drafts].sort((a, b) => compareRenewalDrafts(a, b, parents)),
+    [drafts, parents]
+  );
+  const totalValue = orderedDrafts.reduce((s, d) => s + contractTotal(d), 0);
+  const todayStr = todayLocalStr();
+  const scanWindowDays = normalizeScanDays(scanForm.horizon_days);
+  const scanWindowEnd = addDays(todayStr, scanWindowDays);
+  const firstDraft = orderedDrafts[0];
+  const firstDraftDaysLeft = firstDraft
+    ? renewalDaysLeft(firstDraft, parents[firstDraft.parent_contract_id], todayStr)
+    : null;
 
   // ─────────────────────────────────────────────────────────────────
   // RENDER
@@ -287,7 +372,12 @@ export default function Renewals() {
             <div className="p-2 rounded-full bg-blue-50 shrink-0"><RefreshCcw className="w-5 h-5 text-blue-600" /></div>
             <div>
               <p className="text-xs text-muted-foreground">Pendentes</p>
-              <p className="text-xl font-bold text-blue-700">{drafts.length}</p>
+              <p className="text-xl font-bold text-blue-700">{orderedDrafts.length}</p>
+              {firstDraft && (
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Próxima: {renewalTimingLabel(firstDraftDaysLeft).toLowerCase()}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -307,7 +397,7 @@ export default function Renewals() {
           <Loader2 className="w-5 h-5 animate-spin" />
           <span className="text-sm">Carregando...</span>
         </div>
-      ) : drafts.length === 0 ? (
+      ) : orderedDrafts.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center py-16 text-center">
             <CheckCheck className="w-10 h-10 text-green-500 mb-3" />
@@ -322,7 +412,7 @@ export default function Renewals() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {drafts.map(draft => (
+          {orderedDrafts.map(draft => (
             <RenewalRow
               key={draft.id}
               draft={draft}
@@ -352,7 +442,7 @@ export default function Renewals() {
               Rascunhos já existentes não são duplicados.
             </p>
             <div>
-              <Label>Janela (dias antes do vencimento)</Label>
+              <Label>Janela de renovação</Label>
               <Input
                 type="number" min="1" max="90"
                 className="mt-1"
@@ -360,7 +450,15 @@ export default function Renewals() {
                 onChange={e => setScanForm(f => ({ ...f, horizon_days: e.target.value }))}
               />
               <p className="text-[11px] text-muted-foreground mt-1">
-                Padrão: {RENEWAL_ATTENTION_WINDOW_DAYS} dias. Contratos com vencimento dentro desta janela serão considerados.
+                Padrão do sistema: {RENEWAL_ATTENTION_WINDOW_DAYS} dias antes do vencimento.
+              </p>
+            </div>
+            <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3 text-xs text-blue-900 space-y-1">
+              <p>
+                Com <b>{scanWindowDays} dia{scanWindowDays === 1 ? '' : 's'}</b>, serão considerados contratos que vencem de <b>{formatDate(todayStr)}</b> até <b>{formatDate(scanWindowEnd)}</b>.
+              </p>
+              <p className="text-blue-700">
+                Depois de criados, os rascunhos aparecem do menor prazo para o maior prazo.
               </p>
             </div>
 
