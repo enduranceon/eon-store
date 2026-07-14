@@ -87,6 +87,16 @@ export function getContractCancellationDate(contract) {
   return contract?.cancellation_date || getContractLocalDate(contract?.updated_at);
 }
 
+export function isContractNonRenewal(contract) {
+  const reason = (contract?.cancellation_reason || '').toLowerCase();
+  return (
+    reason.includes('não renovou') ||
+    reason.includes('nao renovou') ||
+    reason.includes('não vai renovar') ||
+    reason.includes('nao vai renovar')
+  );
+}
+
 export function getContractTotalValue(contract, plansById = {}) {
   const snap = contract?.plan_snapshot || {};
   const plan = plansById[contract?.plan_id] || {};
@@ -227,6 +237,18 @@ export function classifyContractLifecycle(contract, context = {}) {
     return base;
   }
 
+  if (ACTIVE_CONTRACT_STATUSES.has(contract.status) && isContractNonRenewal(contract)) {
+    const effectiveEnd = getContractLocalDate(contract.end_date);
+    if (effectiveEnd && effectiveEnd < todayLocalStr()) {
+      base.type = 'real_exit';
+      base.severity = 'medium';
+      base.counts.exit = true;
+      reasons.push('Vigência encerrada e aluno informou que não vai renovar.');
+      actions.push('Contar como saída por não renovação, sem multa ou estorno.');
+      return base;
+    }
+  }
+
   if (ACTIVE_CONTRACT_STATUSES.has(contract.status)) {
     base.type = 'active';
     base.severity = 'ok';
@@ -251,10 +273,22 @@ export function classifyContractLifecycle(contract, context = {}) {
   }
 
   if (contract.status === 'finished') {
+    const replacement = getReplacementContract(contract, allContracts);
+    const customerStillActive = hasFutureOrActiveContract(contract, allContracts);
+
     base.type = 'finished';
     base.severity = 'low';
     reasons.push('Contrato chegou ao fim natural.');
     if (contract.parent_contract_id) reasons.push('Contrato faz parte de uma cadeia de renovação.');
+
+    if (isContractNonRenewal(contract) && !replacement && !customerStillActive) {
+      base.type = 'real_exit';
+      base.severity = 'medium';
+      base.counts.exit = true;
+      reasons.push('Aluno informou que não vai renovar e não há contrato ativo/substituto detectado.');
+      actions.push('Contar como saída por não renovação, sem multa ou estorno.');
+    }
+
     return base;
   }
 

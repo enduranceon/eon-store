@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   RefreshCcw, RotateCcw, ChevronRight, Check, Trash2,
-  Calendar, Loader2, CheckCheck, Activity,
+  Calendar, Loader2, CheckCheck, Activity, Ban,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -105,7 +105,7 @@ function normalizeScanDays(value) {
 // LINHA DE RENOVAÇÃO (gerada automaticamente, tem contrato pai)
 // ─────────────────────────────────────────────────────────────────
 
-function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDiscard, busy }) {
+function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDecline, onDiscard, busy }) {
   const total        = contractTotal(draft);
   const planName     = draft.plan_snapshot?.name
     || (modality ? `${modality.name} · ${draft.plan_snapshot?.period_months || ''}m` : 'Plano');
@@ -152,9 +152,15 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDi
             <span className="font-bold text-blue-700 text-base">{formatCurrency(total)}</span>
             <div className="flex gap-1.5">
               <Button size="sm" variant="outline" disabled={busy}
-                className="border-red-200 text-red-700 hover:bg-red-50"
+                className="border-amber-200 text-amber-700 hover:bg-amber-50"
+                onClick={() => onDecline(draft, parent)}>
+                <Ban className="w-3.5 h-3.5 mr-1" /> Não renovar
+              </Button>
+              <Button size="sm" variant="outline" disabled={busy}
+                className="border-gray-200 text-gray-600 hover:bg-gray-50"
+                title="Remove este rascunho e deixa o contrato apto a gerar uma nova renovação."
                 onClick={() => onDiscard(draft, parent)}>
-                <Trash2 className="w-3.5 h-3.5 mr-1" /> Descartar
+                <Trash2 className="w-3.5 h-3.5 mr-1" /> Recriar
               </Button>
               <Link to={`/assessoria/contratos/${draft.id}`}>
                 <Button size="sm" variant="outline" disabled={busy}>
@@ -216,7 +222,7 @@ export default function Renewals() {
       const modalityIds = [...new Set(draftsList.map(d => d.plan_snapshot?.modality_id).filter(Boolean))];
 
       const [parentRes, custRes, coachRes, modRes] = await Promise.all([
-        parentIds.length   ? supabase.from('assessment_contracts').select('id, contract_number, end_date, payment_status').in('id', parentIds) : Promise.resolve({ data: [] }),
+        parentIds.length   ? supabase.from('assessment_contracts').select('id, contract_number, status, end_date, payment_status').in('id', parentIds) : Promise.resolve({ data: [] }),
         customerIds.length ? supabase.from('presale_customers').select('id, full_name').in('id', customerIds)                                    : Promise.resolve({ data: [] }),
         coachIds.length    ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds)                                           : Promise.resolve({ data: [] }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds)                                     : Promise.resolve({ data: [] }),
@@ -293,6 +299,52 @@ export default function Renewals() {
       load();
     } catch (e) {
       toast.error('Erro ao descartar: ' + (e.message || ''));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const declineRenewal = async (draft, parent) => {
+    if (!parent) return toast.error('Contrato anterior não encontrado');
+    const shouldFinishNow = parent.end_date <= todayLocalStr();
+    const statusText = shouldFinishNow
+      ? 'O contrato anterior será concluído agora.'
+      : `O contrato anterior fica ativo até ${formatDate(parent.end_date)} e será concluído sem renovação.`;
+    if (!confirm(
+      `Registrar que ${draft.contract_number} não será renovado?\n\n` +
+      `O rascunho será excluído. ${statusText}\n\n` +
+      'Não haverá multa, estorno ou cobrança nova.'
+    )) return;
+
+    setBusy(draft.id);
+    try {
+      await AssessmentContract.update(parent.id, {
+        renewal_generated: true,
+        cancellation_date: parent.end_date,
+        cancellation_fee: 0,
+        cancellation_reason: 'Não renovou',
+        refund_status: null,
+        refund_amount: null,
+        ...(shouldFinishNow ? { status: 'finished' } : {}),
+      });
+      await AssessmentContract.delete(draft.id);
+      await AssessmentContractEvent.create({
+        contract_id: parent.id,
+        event_type:  'renewal_declined',
+        payload: {
+          discarded_draft_id:     draft.id,
+          discarded_draft_number: draft.contract_number,
+          effective_end_date:     parent.end_date,
+          status_after:           shouldFinishNow ? 'finished' : parent.status,
+          no_financial_penalty:   true,
+        },
+        notes: 'Aluno não vai renovar. Encerramento sem multa, estorno ou nova cobrança.',
+      }).catch(() => {});
+
+      toast.success('Não renovação registrada sem multa ou estorno.');
+      load();
+    } catch (e) {
+      toast.error('Erro ao registrar não renovação: ' + (e.message || ''));
     } finally {
       setBusy(null);
     }
@@ -421,6 +473,7 @@ export default function Renewals() {
               coach={coaches[draft.coach_id]}
               modality={modalities[draft.plan_snapshot?.modality_id]}
               onActivate={activateRenewal}
+              onDecline={declineRenewal}
               onDiscard={discardRenewal}
               busy={busy === draft.id}
             />

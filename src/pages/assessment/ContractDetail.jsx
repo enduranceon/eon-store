@@ -113,6 +113,12 @@ function externalChargeMethodLabel(method) {
   return EXTERNAL_CHARGE_METHOD_LABELS[method] || method || '—';
 }
 
+function isNonRenewalReason(reason) {
+  const text = String(reason || '').toLowerCase();
+  return text.includes('não renovou') || text.includes('nao renovou')
+    || text.includes('não vai renovar') || text.includes('nao vai renovar');
+}
+
 // ─── Timeline de eventos ─────────────────────────────────────────────────────
 const EVENT_META = {
   created:                  { icon: Plus,       color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Contrato criado' },
@@ -558,6 +564,7 @@ export default function ContractDetail() {
     cutoffDate.setHours(0, 0, 0, 0);
     const start = new Date(contract.start_date + 'T00:00:00');
     const end   = new Date(contract.end_date + 'T00:00:00');
+    if (cutoffDate >= end) return { remainingDays: 0, remaining: 0, fee: 0, refund: 0 };
     const totalDays   = Math.max(1, Math.round((end - start) / 86400000) + 1);
     const remainingDays = Math.max(0, Math.round((end - cutoffDate) / 86400000) + 1);
     const remaining = Number(planVal('price_total') || 0) * (remainingDays / totalDays);
@@ -589,6 +596,9 @@ export default function ContractDetail() {
   };
 
   const cancelContract = async () => {
+    if (contract?.end_date && cancelDate >= contract.end_date) {
+      return toast.error('Para fim de vigência sem renovação, use "Não renovar".');
+    }
     const c = cancellationCalc(cancelDate);
     const isRetroactive = cancelDate < todayLocalStr();
     const retroactiveNote = isRetroactive ? ` (retroativo de ${formatDate(cancelDate)})` : '';
@@ -620,6 +630,49 @@ export default function ContractDetail() {
       setCancelReason('');
       load();
     } catch (e) { toast.error(e.message); }
+  };
+
+  const markNoRenewal = async () => {
+    if (!contract?.end_date) return toast.error('Contrato sem data final');
+    const shouldFinishNow = contract.end_date <= todayLocalStr();
+    const statusText = shouldFinishNow
+      ? 'O contrato será marcado como concluído agora.'
+      : `O contrato permanece ativo até ${formatDate(contract.end_date)}.`;
+
+    if (!confirm(
+      `Registrar que ${contract.contract_number} não será renovado?\n\n` +
+      `${statusText}\n\n` +
+      'Não haverá multa, estorno ou nova cobrança.'
+    )) return;
+
+    try {
+      await AssessmentContract.update(id, {
+        renewal_generated: true,
+        cancellation_date: contract.end_date,
+        cancellation_fee: 0,
+        cancellation_reason: 'Não renovou',
+        refund_status: null,
+        refund_amount: null,
+        ...(shouldFinishNow ? { status: 'finished' } : {}),
+      });
+      await supabase
+        .from('assessment_contracts')
+        .delete()
+        .eq('status', 'draft')
+        .eq('parent_contract_id', id);
+      await logEvent('renewal_declined', {
+        effective_end_date: contract.end_date,
+        status_after: shouldFinishNow ? 'finished' : contract.status,
+        no_financial_penalty: true,
+      }, 'Aluno não vai renovar. Encerramento sem multa, estorno ou nova cobrança.');
+
+      toast.success(shouldFinishNow
+        ? 'Contrato concluído por não renovação.'
+        : 'Não renovação registrada. O contrato segue ativo até o fim da vigência.');
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao registrar não renovação');
+    }
   };
 
   // Descartar venda — para contratos NÃO pagos (pending/awaiting_charge/charge_sent/overdue).
@@ -1139,6 +1192,12 @@ export default function ContractDetail() {
   // Quando modal de cancelamento está aberta, usa cancelDate; senão usa hoje
   const calc = cancelModal ? cancellationCalc(cancelDate) : cancellationCalc();
   const canCancel = !['cancelled', 'finished', 'voided'].includes(contract.status);
+  const canMarkNoRenewal = canCancel
+    && !isUnpaid
+    && !contract.parent_contract_id
+    && ['active', 'overdue', 'on_leave'].includes(contract.status)
+    && !isNonRenewalReason(contract.cancellation_reason);
+  const cancelDateAtOrAfterEnd = !!(contract.end_date && cancelDate >= contract.end_date);
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
@@ -1662,6 +1721,16 @@ export default function ContractDetail() {
                 onClick={() => setRenewModal(true)}
               >
                 <RotateCcw className="w-4 h-4 mr-1.5" /> Renovar contrato
+              </Button>
+            )}
+            {canMarkNoRenewal && (
+              <Button
+                variant="outline"
+                className="text-amber-700 hover:bg-amber-50 border-amber-200"
+                onClick={markNoRenewal}
+                title="Use quando o aluno vai cumprir a vigência atual, mas não continuará no próximo ciclo."
+              >
+                <Ban className="w-4 h-4 mr-1.5" /> Não renovar
               </Button>
             )}
             {isUnpaid ? (
@@ -2255,6 +2324,11 @@ export default function ContractDetail() {
               {cancelDate < todayLocalStr() && (
                 <p className="text-xs text-amber-600 mt-1">⚠️ Cancelamento retroativo — ajusta cálculo e relatórios</p>
               )}
+              {cancelDateAtOrAfterEnd && (
+                <p className="text-xs text-amber-700 mt-1">
+                  Esta data está no fim ou após a vigência. Para aluno que apenas não vai renovar, use <b>Não renovar</b>: não há multa, estorno ou cobrança nova.
+                </p>
+              )}
             </div>
 
             {/* Resumo proporcional */}
@@ -2376,7 +2450,12 @@ export default function ContractDetail() {
 
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" onClick={() => setCancelModal(false)}>Voltar</Button>
-              <Button className="flex-1 bg-red-500 hover:bg-red-600 text-white" onClick={cancelContract}>
+              <Button
+                className="flex-1 bg-red-500 hover:bg-red-600 text-white"
+                onClick={cancelContract}
+                disabled={cancelDateAtOrAfterEnd}
+                title={cancelDateAtOrAfterEnd ? 'Use Não renovar para fim natural de vigência' : undefined}
+              >
                 Confirmar cancelamento
               </Button>
             </div>

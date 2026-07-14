@@ -88,11 +88,24 @@ export default function Painel() {
         PreSaleCustomer.list('full_name').catch(e => { console.error('customers:', e); return []; }),
       ]);
 
-      // Auto-transição: contratos active com end_date < hoje → overdue
+      // Auto-transição:
+      // - não renovou: conclui no fim da vigência, sem pendência financeira;
+      // - demais contratos vencidos seguem como overdue para revisão/cobrança.
       const nowStr = todayLocalStr();
-      const toMarkOverdue = c.filter(ct =>
-        ct.status === 'active' && ct.end_date < nowStr
-      );
+      const isNonRenewal = (ct) => {
+        const reason = (ct.cancellation_reason || '').toLowerCase();
+        return reason.includes('não renovou') || reason.includes('nao renovou')
+          || reason.includes('não vai renovar') || reason.includes('nao vai renovar');
+      };
+      const expiredActive = c.filter(ct => ct.status === 'active' && ct.end_date < nowStr);
+      const toMarkFinished = expiredActive.filter(isNonRenewal);
+      const toMarkOverdue = expiredActive.filter(ct => !isNonRenewal(ct));
+      if (toMarkFinished.length > 0) {
+        await Promise.allSettled(
+          toMarkFinished.map(ct => AssessmentContract.update(ct.id, { status: 'finished' }))
+        );
+        toMarkFinished.forEach(ct => { ct.status = 'finished'; });
+      }
       if (toMarkOverdue.length > 0) {
         await Promise.allSettled(
           toMarkOverdue.map(ct => AssessmentContract.update(ct.id, { status: 'overdue' }))
