@@ -672,7 +672,7 @@ export default function ContractDetail() {
       await AssessmentContract.update(id, {
         status:              'voided',
         payment_status:      'cancelled',
-        cancellation_date:   todayLocalStr(),
+        cancellation_date:   null,
         cancellation_fee:    0,
         cancellation_reason: 'Venda não concretizada (cliente nunca pagou)',
         refund_status:       null,
@@ -690,6 +690,7 @@ export default function ContractDetail() {
 
       // 3. Log de evento distinto (sale_voided ≠ cancelled)
       await logEvent('sale_voided', {
+        voided_at:            todayLocalStr(),
         had_asaas_charge:     !!contract.asaas_charge_id,
         had_external_link:     !!contract.external_payment_link,
         previous_asaas_charge_id: contract.asaas_charge_id || null,
