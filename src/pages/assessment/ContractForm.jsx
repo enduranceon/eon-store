@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, FileText, Save, Check, ChevronRight, Users, Calendar, RotateCcw, BadgeDollarSign, Plus, UserPlus, AlertTriangle, BadgeCheck, Loader2 } from 'lucide-react';
+import { ArrowLeft, FileText, Save, Check, ChevronRight, Users, Calendar, RotateCcw, BadgeDollarSign, Plus, UserPlus, AlertTriangle, BadgeCheck, Loader2, MapPin } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,7 @@ import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr, maskCpf } from '@/lib/utils';
 import { PhoneInput } from '@/components/PhoneInput';
 import { normalizePhone } from '@/lib/phone';
+import { formatCep, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { classifyContractLifecycle, isContractVoidedSale } from '@/lib/assessment-contract-lifecycle';
 import DiscountInput from '@/components/DiscountInput';
@@ -95,6 +96,22 @@ function PlanCard({ plan, modality, selected, onClick }) {
 // Chave de persistência por sessão (sobrevive a remounts, some no F5/fechar aba)
 const DRAFT_KEY = 'assessment:contract-form:draft';
 
+const emptyNewCustomer = {
+  full_name: '',
+  whatsapp: '',
+  email: '',
+  cpf: '',
+  gender: '',
+  birth_date: '',
+  address_zip: '',
+  address_street: '',
+  address_number: '',
+  address_complement: '',
+  address_neighborhood: '',
+  address_city: '',
+  address_state: '',
+};
+
 function loadDraft() {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
@@ -118,8 +135,9 @@ export default function ContractForm() {
   const [customerSearch, setCustomerSearch] = useState('');
   // Modal de cadastro rápido de aluno
   const [newCustomerModal, setNewCustomerModal] = useState(false);
-  const [newCustomer, setNewCustomer] = useState({ full_name: '', whatsapp: '', email: '', cpf: '', gender: '', birth_date: '' });
+  const [newCustomer, setNewCustomer] = useState(emptyNewCustomer);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
+  const [newCustomerCepLoading, setNewCustomerCepLoading] = useState(false);
 
   const draft = loadDraft();
 
@@ -226,14 +244,38 @@ export default function ContractForm() {
   const openNewCustomerModal = () => {
     const digits = customerSearch.replace(/\D/g, '');
     setNewCustomer({
+      ...emptyNewCustomer,
       full_name:  digits ? '' : customerSearch,
       whatsapp:   digits || '',
       email:      customerSearch.includes('@') ? customerSearch : '',
-      cpf:        '',
-      gender:     '',
-      birth_date: '',
     });
+    setNewCustomerCepLoading(false);
     setNewCustomerModal(true);
+  };
+
+  const fillNewCustomerAddressByCep = async () => {
+    const cep = normalizeCep(newCustomer.address_zip);
+    if (!cep) return;
+    if (cep.length !== 8) return toast.error('Informe um CEP com 8 dígitos');
+
+    setNewCustomerCepLoading(true);
+    try {
+      const address = await lookupCepAddress(cep);
+      setNewCustomer(c => ({
+        ...c,
+        address_zip: formatCep(address.zip),
+        address_street: address.street || c.address_street,
+        address_complement: c.address_complement || address.complement || '',
+        address_neighborhood: address.neighborhood || c.address_neighborhood,
+        address_city: address.city || c.address_city,
+        address_state: address.state || c.address_state,
+      }));
+      toast.success('Endereço preenchido pelo CEP');
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível buscar o CEP');
+    } finally {
+      setNewCustomerCepLoading(false);
+    }
   };
 
   const saveNewCustomer = async () => {
@@ -247,6 +289,13 @@ export default function ContractForm() {
         cpf:        newCustomer.cpf?.replace(/\D/g, '') || null,
         gender:     newCustomer.gender || null,
         birth_date: newCustomer.birth_date || null,
+        address_zip: normalizeCep(newCustomer.address_zip) || null,
+        address_street: newCustomer.address_street?.trim() || null,
+        address_number: newCustomer.address_number?.trim() || null,
+        address_complement: newCustomer.address_complement?.trim() || null,
+        address_neighborhood: newCustomer.address_neighborhood?.trim() || null,
+        address_city: newCustomer.address_city?.trim() || null,
+        address_state: newCustomer.address_state?.trim().toUpperCase() || null,
       };
       const created = await PreSaleCustomer.create(payload);
       // Adiciona à lista local e seleciona
@@ -254,7 +303,7 @@ export default function ContractForm() {
       setForm(f => ({ ...f, customer_id: created.id }));
       setCustomerSearch('');
       setNewCustomerModal(false);
-      setNewCustomer({ full_name: '', whatsapp: '', email: '', cpf: '', gender: '', birth_date: '' });
+      setNewCustomer(emptyNewCustomer);
       toast.success(`${created.full_name} cadastrado!`);
     } catch (e) {
       // CPF unique constraint pode estourar aqui
@@ -887,7 +936,7 @@ export default function ContractForm() {
 
       {/* ── Modal: Cadastrar novo aluno inline ─────────────────────────────── */}
       <Dialog open={newCustomerModal} onOpenChange={setNewCustomerModal}>
-        <DialogContent className="max-w-md" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-blue-600" /> Cadastrar novo aluno
@@ -939,6 +988,69 @@ export default function ContractForm() {
               <p className="text-[11px] text-muted-foreground mt-1">
                 Necessário para gerar cobrança no Asaas. Pode ser preenchido depois.
               </p>
+            </div>
+            <div className="border-t pt-3 space-y-3">
+              <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5" /> Endereço
+              </p>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <div>
+                  <Label>CEP</Label>
+                  <Input
+                    className="mt-1"
+                    value={newCustomer.address_zip || ''}
+                    onChange={e => setNewCustomer(c => ({ ...c, address_zip: formatCep(e.target.value) }))}
+                    onBlur={fillNewCustomerAddressByCep}
+                    placeholder="00000-000"
+                    inputMode="numeric"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="self-end"
+                  onClick={fillNewCustomerAddressByCep}
+                  disabled={newCustomerCepLoading || normalizeCep(newCustomer.address_zip).length !== 8}
+                >
+                  {newCustomerCepLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Buscar'}
+                </Button>
+              </div>
+              <div className="grid grid-cols-[1fr_96px] gap-3">
+                <div>
+                  <Label>Rua</Label>
+                  <Input className="mt-1" value={newCustomer.address_street || ''}
+                    onChange={e => setNewCustomer(c => ({ ...c, address_street: e.target.value }))} />
+                </div>
+                <div>
+                  <Label>Número</Label>
+                  <Input className="mt-1" value={newCustomer.address_number || ''}
+                    onChange={e => setNewCustomer(c => ({ ...c, address_number: e.target.value }))} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Complemento</Label>
+                  <Input className="mt-1" value={newCustomer.address_complement || ''}
+                    onChange={e => setNewCustomer(c => ({ ...c, address_complement: e.target.value }))} />
+                </div>
+                <div>
+                  <Label>Bairro</Label>
+                  <Input className="mt-1" value={newCustomer.address_neighborhood || ''}
+                    onChange={e => setNewCustomer(c => ({ ...c, address_neighborhood: e.target.value }))} />
+                </div>
+              </div>
+              <div className="grid grid-cols-[1fr_80px] gap-3">
+                <div>
+                  <Label>Cidade</Label>
+                  <Input className="mt-1" value={newCustomer.address_city || ''}
+                    onChange={e => setNewCustomer(c => ({ ...c, address_city: e.target.value }))} />
+                </div>
+                <div>
+                  <Label>UF</Label>
+                  <Input className="mt-1 uppercase" maxLength={2} value={newCustomer.address_state || ''}
+                    onChange={e => setNewCustomer(c => ({ ...c, address_state: e.target.value.toUpperCase() }))} />
+                </div>
+              </div>
             </div>
             <div className="flex gap-2 pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setNewCustomerModal(false)} disabled={creatingCustomer}>
