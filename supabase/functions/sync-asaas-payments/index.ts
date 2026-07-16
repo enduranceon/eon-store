@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireAdmin } from "../_shared/requireAdmin.ts";
 
 // Backfill / reconciliação do cache asaas_payments a partir da API do Asaas.
 
@@ -60,6 +61,14 @@ async function fetchPaymentsForCharge(chargeId: string): Promise<any[]> {
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+
+  // 🔒 AUTHZ: só admin allowlistado
+  const gate = await requireAdmin(req);
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: gate.status, headers: { ...cors, "Content-Type": "application/json" },
+    });
+  }
 
   // ✅ SEGURANÇA: aborta se as envs críticas não estão configuradas
   if (!ASAAS_BASE || !ASAAS_API_KEY) {

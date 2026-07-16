@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireAdmin } from "../_shared/requireAdmin.ts";
 
 // ✅ SEGURANÇA: sem fallback hardcoded.
 const ASAAS_BASE    = Deno.env.get("ASAAS_BASE_URL");
@@ -23,6 +24,10 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
+
+  // 🔒 AUTHZ: só admin allowlistado
+  const gate = await requireAdmin(req);
+  if (!gate.ok) return jsonResponse({ error: "unauthorized" }, gate.status);
 
   // ✅ SEGURANÇA: aborta se envs não configuradas
   if (!ASAAS_BASE || !ASAAS_API_KEY) {

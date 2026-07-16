@@ -6,3 +6,18 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Headers de segurança (auditoria 2026-07-15).
+# CSP estrito: o app só carrega assets próprios (/assets/*) e fala com o Supabase.
+# Se algo quebrar após deploy, ver o console: os ajustes mais prováveis são
+# adicionar 'unsafe-eval' em script-src (se alguma lib usar eval) ou ampliar
+# connect-src. Testar num deploy de branch/preview ANTES do --prod.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://bsiljrrodgtmtdilnuxr.supabase.co wss://bsiljrrodgtmtdilnuxr.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"

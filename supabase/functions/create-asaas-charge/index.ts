@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireAdmin } from "../_shared/requireAdmin.ts";
 
 // ✅ SEGURANÇA: sem fallback hardcoded.
 const ASAAS_BASE    = Deno.env.get("ASAAS_BASE_URL");
@@ -17,6 +18,14 @@ function mapStatus(s: string) {
 }
 
 Deno.serve(async (req: Request) => {
+  // 🔒 AUTHZ: só admin allowlistado (verify_jwt sozinho aceita a anon key pública)
+  const gate = await requireAdmin(req);
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: gate.status, headers: { "Content-Type": "application/json" },
+    });
+  }
+
   // ✅ SEGURANÇA: aborta se envs não configuradas
   if (!ASAAS_BASE || !ASAAS_API_KEY) {
     console.error("create-asaas-charge: ASAAS_BASE_URL ou ASAAS_API_KEY não configurados");

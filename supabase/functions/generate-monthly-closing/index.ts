@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireAdmin } from "../_shared/requireAdmin.ts";
 
 // Gera o fechamento de repasse de uma competência.
 //
@@ -117,6 +118,14 @@ function finalizeGroups(groups: Map<string, any>) {
 }
 
 Deno.serve(async (req: Request) => {
+  // 🔒 AUTHZ: só admin allowlistado
+  const gate = await requireAdmin(req);
+  if (!gate.ok) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: gate.status, headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   try {

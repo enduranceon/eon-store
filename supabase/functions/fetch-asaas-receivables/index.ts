@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { requireAdmin } from "../_shared/requireAdmin.ts";
 
 const ASAAS_BASE = Deno.env.get("ASAAS_BASE_URL") ?? "https://sandbox.asaas.com/api/v3";
 const ASAAS_API_KEY = Deno.env.get("ASAAS_API_KEY");
@@ -19,6 +20,10 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: cors });
   }
+
+  // 🔒 AUTHZ: só admin allowlistado
+  const gate = await requireAdmin(req);
+  if (!gate.ok) return json({ error: "unauthorized" }, gate.status);
 
   try {
     if (!ASAAS_API_KEY) {
