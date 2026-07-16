@@ -1131,6 +1131,37 @@ export default function OrderDetail() {
                 <Link2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span className="text-amber-800">Sem cobrança Asaas — você pode inserir um link externo abaixo (Stone, PagSeguro, etc.)</span>
               </div>
+
+              {/* Dados para cobrança — copie pra criar a cobrança no Asaas */}
+              <div className="border rounded-xl p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Dados para cobrança</p>
+                {[
+                  { label: 'Nome',     value: order.checkout_name || customer?.full_name },
+                  { label: 'WhatsApp', value: order.customer_whatsapp || order.checkout_whatsapp || customer?.whatsapp },
+                  { label: 'E-mail',   value: order.checkout_email || customer?.email },
+                  { label: 'CPF',      value: customer?.cpf },
+                ].map(({ label, value }) => value ? (
+                  <div key={label} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="text-muted-foreground text-xs w-16 shrink-0">{label}</span>
+                    <span className="flex-1 font-medium truncate">{value}</span>
+                    <button
+                      type="button"
+                      onClick={() => { navigator.clipboard.writeText(value); toast.success(`${label} copiado!`); }}
+                      className="text-blue-500 hover:text-blue-700 shrink-0 p-1 rounded hover:bg-blue-50"
+                      title={`Copiar ${label}`}
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : null)}
+                {!customer?.cpf && (
+                  <div className="flex items-start gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mt-1">
+                    <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>CPF não cadastrado — é obrigatório pra gerar a cobrança no Asaas.</span>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <div className="col-span-2">
                   <Label className="text-xs">Link de cobrança externo (opcional)</Label>
