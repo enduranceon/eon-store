@@ -143,6 +143,8 @@ export default function OrderDetail() {
   const [cancelChargeLoading, setCancelChargeLoading] = useState(false);
   // Vencimento escolhido ao enviar/registrar cobrança externa
   const [whatsappDueDate, setWhatsappDueDate] = useState('');
+  // Forma de pagamento confirmada pelo operador para a cobrança externa (não herda cegamente do checkout)
+  const [whatsappPayMethod, setWhatsappPayMethod] = useState('');
   // Histórico de ações da venda (sales_status_events)
   const [saleEvents, setSaleEvents] = useState([]);
   // Adicionar peça
@@ -478,7 +480,21 @@ export default function OrderDetail() {
     card_10x: 'Cartão 10x', card_11x: 'Cartão 11x', card_12x: 'Cartão 12x',
   };
 
-  const buildMessage = (manualLink = '', dueDate = order.due_date) => {
+  // Forma de pagamento exibida na mensagem de cobrança externa — só as 4 opções que o
+  // operador realmente escolhe ao criar a cobrança fora do Asaas (não confundir com PAYMENT_METHOD_LABEL,
+  // que é a preferência que o cliente indicou lá no checkout e pode não bater com o que foi cobrado de fato).
+  const EXTERNAL_PAY_METHOD_LABEL = { PIX: 'PIX', BOLETO: 'Boleto', CARTAO: 'Cartão', OUTRO: 'Combinado com o cliente' };
+
+  // Sugestão inicial a partir da preferência do checkout — o operador confirma/ajusta, nunca é silencioso.
+  const inferPayMethodKey = (pref) => {
+    if (!pref) return '';
+    if (pref.startsWith('card')) return 'CARTAO';
+    if (pref === 'boleto') return 'BOLETO';
+    if (pref === 'pix' || pref === 'pix_manual') return 'PIX';
+    return '';
+  };
+
+  const buildMessage = (manualLink = '', dueDate = order.due_date, payMethodKey = '') => {
     const itemLines = (order.items || []).filter(it => !it.cancelled).map(item => {
       const extras = (item.extras || []).map(e => `   ➕ ${e.name}: ${formatCurrency(e.price)}`).join('\n');
       const itemTotal = ((item.sale_price || 0) + (item.extras_total || 0)) * item.quantity;
@@ -506,43 +522,20 @@ export default function OrderDetail() {
       );
     }
 
-    // Modo manual com link externo
-    const preferredMethod = order.payment_preference || order.payment_method;
-    const payLabel = PAYMENT_METHOD_LABEL[preferredMethod] || preferredMethod || null;
+    // Modo manual com link externo — só existe mensagem "pronta" quando o link já foi colado.
+    // (Sem link, não há cobrança pra mandar; a prévia fica em branco na tela em vez de simular uma pergunta ao cliente.)
     const linkTrim = manualLink?.trim();
-    if (linkTrim) {
-      return (
-        `Olá, ${order.checkout_name}! 👋\n\n` +
-        `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
-        `📦 *Itens:*\n${itemLines}\n\n` +
-        `💰 *Total: ${formatCurrency(total)}*\n\n` +
-        (payLabel ? `💳 *Forma de pagamento:* ${payLabel}\n\n` : '') +
-        dueLine +
-        `🔗 *Link de pagamento:*\n${linkTrim}` +
-        trackingLine
-      );
-    }
+    if (!linkTrim) return '';
 
-    // Sem link — mensagem informativa
-    if (payLabel) {
-      return (
-        `Olá, ${order.checkout_name}! 👋\n\n` +
-        `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
-        `📦 *Itens:*\n${itemLines}\n\n` +
-        `💰 *Total: ${formatCurrency(total)}*\n\n` +
-        `💳 *Forma de pagamento:* ${payLabel}\n\n` +
-        `Em breve envio o link/QR para você finalizar o pagamento. 👍` +
-        trackingLine
-      );
-    }
-
-    // Fallback: sem preferência de pagamento registrada
+    const payLabel = EXTERNAL_PAY_METHOD_LABEL[payMethodKey] || '';
     return (
       `Olá, ${order.checkout_name}! 👋\n\n` +
       `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
       `📦 *Itens:*\n${itemLines}\n\n` +
       `💰 *Total: ${formatCurrency(total)}*\n\n` +
-      `Como você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 12x)` +
+      (payLabel ? `💳 *Forma de pagamento:* ${payLabel}\n\n` : '') +
+      dueLine +
+      `🔗 *Link de pagamento:*\n${linkTrim}` +
       trackingLine
     );
   };
@@ -550,9 +543,11 @@ export default function OrderDetail() {
   const openWhatsApp = () => {
     const savedExternalLink = order.external_payment_link || '';
     const due = order.due_date || defaultPaymentDueDate();
+    const suggestedMethod = inferPayMethodKey(order.payment_preference || order.payment_method);
     setWhatsappManualLink(savedExternalLink);
     setWhatsappDueDate(due);
-    setWhatsappMsg(buildMessage(savedExternalLink, due));
+    setWhatsappPayMethod(suggestedMethod);
+    setWhatsappMsg(buildMessage(savedExternalLink, due, suggestedMethod));
     setCopied(false);
     setWhatsappModal(true);
   };
@@ -1129,7 +1124,7 @@ export default function OrderDetail() {
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 <Link2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span className="text-amber-800">Sem cobrança Asaas — você pode inserir um link externo abaixo (Stone, PagSeguro, etc.)</span>
+                <span className="text-amber-800">Copie os dados abaixo, gere a cobrança no seu gateway (Asaas manual, Stone, PagSeguro...) e cole o link aqui.</span>
               </div>
 
               {/* Dados para cobrança — copie pra criar a cobrança no Asaas */}
@@ -1164,14 +1159,14 @@ export default function OrderDetail() {
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="col-span-2">
-                  <Label className="text-xs">Link de cobrança externo (opcional)</Label>
+                  <Label className="text-xs">Link de cobrança</Label>
                   <Input
                     className="mt-1 font-mono text-xs"
-                    placeholder="https://..."
+                    placeholder="Cole aqui o link gerado no Asaas, Stone, PagSeguro..."
                     value={whatsappManualLink}
                     onChange={e => {
                       setWhatsappManualLink(e.target.value);
-                      setWhatsappMsg(buildMessage(e.target.value, whatsappDueDate));
+                      setWhatsappMsg(buildMessage(e.target.value, whatsappDueDate, whatsappPayMethod));
                       setCopied(false);
                     }}
                   />
@@ -1184,31 +1179,61 @@ export default function OrderDetail() {
                     value={whatsappDueDate}
                     onChange={e => {
                       setWhatsappDueDate(e.target.value);
-                      setWhatsappMsg(buildMessage(whatsappManualLink, e.target.value));
+                      setWhatsappMsg(buildMessage(whatsappManualLink, e.target.value, whatsappPayMethod));
                       setCopied(false);
                     }}
                   />
+                </div>
+                <div className="col-span-2">
+                  <Label className="text-xs">Forma de pagamento usada</Label>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 mb-1.5">Confirme como o cliente vai pagar esse link — pode ser diferente do que ele pediu no checkout.</p>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[
+                      { key: 'PIX',    label: 'PIX' },
+                      { key: 'BOLETO', label: 'Boleto' },
+                      { key: 'CARTAO', label: 'Cartão' },
+                      { key: 'OUTRO',  label: 'Outro' },
+                    ].map(opt => (
+                      <button key={opt.key} type="button"
+                        onClick={() => {
+                          const next = whatsappPayMethod === opt.key ? '' : opt.key;
+                          setWhatsappPayMethod(next);
+                          setWhatsappMsg(buildMessage(whatsappManualLink, whatsappDueDate, next));
+                        }}
+                        className={`py-1.5 rounded-lg border-2 text-xs font-semibold transition-all ${
+                          whatsappPayMethod === opt.key
+                            ? 'border-blue-500 bg-blue-500 text-white'
+                            : 'border-gray-200 text-gray-600 hover:border-blue-300 bg-white'
+                        }`}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
           {/* Preview da mensagem */}
-          <div className="bg-gray-50 rounded-xl p-4 text-sm whitespace-pre-wrap font-mono border max-h-64 overflow-y-auto">
-            {whatsappMsg}
+          <div className="bg-gray-50 rounded-xl p-4 text-sm border max-h-64 overflow-y-auto">
+            {whatsappMsg ? (
+              <p className="whitespace-pre-wrap font-mono">{whatsappMsg}</p>
+            ) : (
+              <p className="text-muted-foreground italic">Cole o link de cobrança acima para gerar a prévia da mensagem.</p>
+            )}
           </div>
 
           <div className="flex gap-2">
-            <Button className="flex-1" variant="outline" onClick={copyMessage}>
+            <Button className="flex-1" variant="outline" onClick={copyMessage} disabled={!whatsappMsg}>
               {copied ? <><Check className="w-4 h-4 mr-1.5 text-green-600" />Copiado!</> : <><Copy className="w-4 h-4 mr-1.5" />Copiar</>}
             </Button>
-            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsAppDirect}>
+            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsAppDirect} disabled={!whatsappMsg}>
               <ExternalLink className="w-4 h-4 mr-1.5" />
               Abrir no WhatsApp
             </Button>
           </div>
           {['awaiting_charge', 'charge_sent'].includes(order.payment_status) && (
-            <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={markMessageSent}>
+            <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={markMessageSent} disabled={!order.asaas_charge_id && !whatsappManualLink.trim()}>
               <Check className="w-4 h-4 mr-1.5" />
               {order.payment_status === 'charge_sent' ? 'Registrar reenvio de cobrança' : 'Efetivar venda externa enviada'}
             </Button>
