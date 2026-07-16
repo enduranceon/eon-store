@@ -135,13 +135,18 @@ function buildCollectionMessage(order, externalLink = order?.external_payment_li
   const saleType = order.type === 'contract' ? 'contrato' : 'pedido';
   const customer = firstName(order.customer);
 
-  let msg = customer ? `Olá, ${customer}! Tudo bem?\n\n` : 'Olá! Tudo bem?\n\n';
   if (isOverdue) {
-    msg += `Estou passando porque a cobrança do seu ${saleType} *${order.order_number}*, no valor de *${formatCurrency(order.total_value || 0)}*, venceu${due ? ` em *${due}*` : ''}.\n\n`;
-  } else {
-    msg += `Segue novamente a cobrança do seu ${saleType} *${order.order_number}*, no valor de *${formatCurrency(order.total_value || 0)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
+    // Lembrete de cobrança vencida — direto (sem número de contrato nem lista de itens)
+    let msg = customer ? `Oi, ${customer}!\n\n` : 'Oi!\n\n';
+    msg += `Passando pra lembrar da cobrança de *${formatCurrency(order.total_value || 0)}* que venceu${due ? ` em *${due}*` : ''}.\n\n`;
+    if (link) msg += `Link de pagamento:\n${link}\n\n`;
+    else if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
+    msg += 'Se já tiver pago, é só desconsiderar. Qualquer dúvida, me chama aqui!';
+    return msg;
   }
 
+  let msg = customer ? `Olá, ${customer}! Tudo bem?\n\n` : 'Olá! Tudo bem?\n\n';
+  msg += `Segue novamente a cobrança do seu ${saleType} *${order.order_number}*, no valor de *${formatCurrency(order.total_value || 0)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
   if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
   if (link) msg += `Link de pagamento:\n${link}\n\n`;
   msg += 'Se o pagamento já foi realizado, pode desconsiderar esta mensagem. Qualquer dúvida, estou por aqui.';
