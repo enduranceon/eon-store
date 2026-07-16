@@ -30,11 +30,11 @@ Segue a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*{vencimento_text
     channel: 'whatsapp',
     active: true,
     order_index: 20,
-    message_template: `Ola, {nome}! Tudo bem?
+    message_template: `Oi, {nome}!
 
-Estou passando porque a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*, venceu{vencimento_atraso}.
+Passando pra lembrar da cobranca de *{valor}* que venceu{vencimento_atraso}.
 
-{itens_bloco}{pix_bloco}{link_bloco}Se o pagamento ja foi realizado, pode desconsiderar esta mensagem. Qualquer duvida, estou por aqui.`,
+{link_bloco}Se ja tiver pago, e so desconsiderar. Qualquer duvida, me chama aqui!`,
   },
   {
     slug: 'billing-charge-overdue-7d',
@@ -46,11 +46,11 @@ Estou passando porque a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*
     channel: 'whatsapp',
     active: true,
     order_index: 21,
-    message_template: `Ola, {nome}! Tudo bem?
+    message_template: `Oi, {nome}!
 
-Passando novamente sobre a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*, que venceu{vencimento_atraso}.
+Passando de novo pra lembrar da cobranca de *{valor}*, que venceu{vencimento_atraso} e segue em aberto.
 
-{itens_bloco}{pix_bloco}{link_bloco}Se voce precisar de algum ajuste ou quiser combinar outra forma de pagamento, me responde por aqui.`,
+{link_bloco}Se ja tiver pago, e so desconsiderar. Qualquer duvida, me chama aqui!`,
   },
   {
     slug: 'billing-charge-overdue-10d',
@@ -62,11 +62,11 @@ Passando novamente sobre a cobranca do seu {tipo} *{numero}*, no valor de *{valo
     channel: 'whatsapp',
     active: true,
     order_index: 22,
-    message_template: `Ola, {nome}! Tudo bem?
+    message_template: `Oi, {nome}!
 
-A cobranca do seu {tipo} *{numero}*, no valor de *{valor}*, segue em aberto desde {vencimento_atraso}.
+A cobranca de *{valor}* segue em aberto desde *{vencimento}*.
 
-{itens_bloco}{pix_bloco}{link_bloco}Consegue me dar um retorno sobre a previsao de pagamento? Assim eu mantenho tudo organizado por aqui.`,
+{link_bloco}Consegue me dar um retorno sobre o pagamento? Se ja pagou, e so desconsiderar.`,
   },
   {
     slug: 'billing-charge-overdue-return-11d',

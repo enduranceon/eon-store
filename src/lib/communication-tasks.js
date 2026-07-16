@@ -581,15 +581,22 @@ export function buildTaskMessage(task, options = {}) {
   const name = firstName(task.customerName);
   const itemsText = itemLines(task.items || []);
 
-  if (task.kind === TASK_KIND.CHARGE_SEND || task.kind === TASK_KIND.CHARGE_OVERDUE) {
+  if (task.kind === TASK_KIND.CHARGE_OVERDUE) {
+    // Lembrete de cobrança vencida — mensagem direta (sem número de contrato nem lista de itens)
+    const due = dueDate ? formatDate(dueDate) : '';
+    let msg = `Oi, ${name}!\n\n`;
+    msg += `Passando pra lembrar da cobrança de *${formatCurrency(task.totalValue)}* que venceu${due ? ` em *${due}*` : ''}.\n\n`;
+    if (paymentLink) msg += `Link de pagamento:\n${paymentLink}\n\n`;
+    else if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
+    msg += 'Se já tiver pago, é só desconsiderar. Qualquer dúvida, me chama aqui!';
+    return msg;
+  }
+
+  if (task.kind === TASK_KIND.CHARGE_SEND) {
     const saleType = task.sourceType === 'contract' ? 'contrato' : 'pedido';
     const due = dueDate ? formatDate(dueDate) : '';
     let msg = `Olá, ${name}! Tudo bem?\n\n`;
-    if (task.kind === TASK_KIND.CHARGE_OVERDUE) {
-      msg += `Estou passando porque a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*, venceu${due ? ` em *${due}*` : ''}.\n\n`;
-    } else {
-      msg += `Segue a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
-    }
+    msg += `Segue a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
     if (itemsText) msg += `Itens:\n${itemsText}\n\n`;
     if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
     if (paymentLink) msg += `Link de pagamento:\n${paymentLink}\n\n`;
