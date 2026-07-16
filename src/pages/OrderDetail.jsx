@@ -1922,12 +1922,12 @@ export default function OrderDetail() {
                     onClick={openWhatsApp}
                     className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
                   >
-                    <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
-                      <MessageCircle className="w-4 h-4 text-green-600" />
+                    <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                      <Link2 className="w-4 h-4 text-amber-600" />
                     </div>
                     <div className="flex-1">
-                      <p className="text-sm font-semibold">Enviar mensagem por WhatsApp</p>
-                      <p className="text-xs text-muted-foreground">Cobrar com link externo (Stone, PagSeguro…) ou só perguntar como pagar</p>
+                      <p className="text-sm font-semibold">Cadastrar cobrança externa</p>
+                      <p className="text-xs text-muted-foreground">Cole o link (Asaas manual, Stone, PagSeguro…) e envie ao cliente pelo WhatsApp</p>
                     </div>
                     <ExternalLink className="w-4 h-4 text-muted-foreground" />
                   </button>
