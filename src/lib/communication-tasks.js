@@ -324,6 +324,24 @@ function baseTask(kind, bucket, sale, extra = {}) {
   };
 }
 
+// Uma etapa de cobrança vencida conta como tratada se QUALQUER mensagem de cobrança
+// foi registrada depois que a etapa disparou — independente da tela de origem
+// (Central, Vendas em aberto, detalhe do pedido/contrato). Sem isso, enviar por
+// outra tela deixava a etapa "pendente" na fila e induzia cobrança duplicada.
+function chargeMessageSentSince(sale, events, triggerDate) {
+  if (!triggerDate) return false;
+  if (sale.paymentMessageSentAt && toLocalDateStr(sale.paymentMessageSentAt) >= triggerDate) return true;
+  return events.some(ev => {
+    const isChargeMessage =
+      ev.event_type === 'payment_message_sent' ||
+      ev.new_status === 'charge_sent' ||
+      ['charge_sent', 'charge_resent'].includes(eventPayload(ev).action);
+    if (!isChargeMessage) return false;
+    const sentDate = toLocalDateStr(ev.created_at);
+    return Boolean(sentDate && sentDate >= triggerDate);
+  });
+}
+
 function buildChargeTasks(sale, todayStr, { sendRule, overdueRules = [] }, events = []) {
   if (TERMINAL_PAYMENT_STATUSES.has(sale.paymentStatus)) return [];
   if (!OPEN_PAYMENT_STATUSES.has(sale.paymentStatus)) return [];
@@ -335,7 +353,9 @@ function buildChargeTasks(sale, todayStr, { sendRule, overdueRules = [] }, event
     const dueOverdueRules = overdueRules
       .filter(rule => {
         const offset = Math.max(0, Number(rule.days_offset) || 0);
-        return dueDelta <= -offset && !ruleAlreadyHandled(events, rule, todayStr);
+        return dueDelta <= -offset
+          && !ruleAlreadyHandled(events, rule, todayStr)
+          && !chargeMessageSentSince(sale, events, addDays(sale.dueDate, offset));
       })
       .sort((a, b) => (Number(a.days_offset) || 0) - (Number(b.days_offset) || 0));
 

@@ -62,7 +62,6 @@ import AssMonthlyClosing from '@/pages/assessment/MonthlyClosing';
 import AssClosingDetail from '@/pages/assessment/ClosingDetail';
 const AssCoachStatement = lazy(() => import('@/pages/assessment/CoachStatement'));
 import AssPainel from '@/pages/assessment/Painel';
-import AssRegua from '@/pages/assessment/Regua';
 import AssRenewals from '@/pages/assessment/Renewals';
 import AssProspects from '@/pages/assessment/Prospects';
 import AssCentralFinanceira from '@/pages/assessment/CentralFinanceira';
@@ -151,7 +150,8 @@ export default function App() {
           {/* Assessoria */}
           <Route path="/assessoria"               element={<AdminLayout><AssPainel /></AdminLayout>} />
           <Route path="/assessoria/planos"        element={<AdminLayout><AssPlanos /></AdminLayout>} />
-          <Route path="/assessoria/regua"         element={<AdminLayout><AssRegua /></AdminLayout>} />
+          {/* A antiga "Régua" foi absorvida pela Central de Comunicação (regras) e Renovações */}
+          <Route path="/assessoria/regua"         element={<Navigate to="/comunicacao/configuracoes" replace />} />
           <Route path="/assessoria/configuracoes" element={<AdminLayout><AssConfiguracoes /></AdminLayout>} />
           <Route path="/assessoria/coaches"       element={<AdminLayout><AssCoaches /></AdminLayout>} />
           <Route path="/assessoria/alunos"        element={<AdminLayout><AssStudents /></AdminLayout>} />

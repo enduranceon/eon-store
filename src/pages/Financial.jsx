@@ -16,8 +16,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { isEffectiveOpenSale, isSafePaymentUrl } from '@/lib/sales';
-import { phoneDigitsForWhatsApp } from '@/lib/phone';
+import { isEffectiveOpenSale } from '@/lib/sales';
+import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
+import { DEFAULT_COMMUNICATION_RULES, loadCommunicationConfig } from '@/lib/communication-config';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { readPageCache, writePageCache } from '@/lib/page-cache';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
@@ -118,40 +120,88 @@ function PaymentStageChip({ status, hasAsaasCharge }) {
   );
 }
 
-function firstName(name) {
-  return (name || '').trim().split(/\s+/)[0] || '';
+function addDaysStr(dateStr, days) {
+  if (!dateStr) return '';
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + days);
+  return toLocalDateStr(d);
 }
 
-function paymentLinkFor(order, externalLink = order?.external_payment_link) {
-  return order?.asaas_payment_link || externalLink?.trim() || '';
-}
+// Constrói a task de cobrança desta venda no MESMO formato da Central de
+// Comunicação: mesmo texto (regras configuráveis), mesmo registro de histórico
+// e mesma baixa de etapa na fila. O botão daqui é só um atalho contextual —
+// a fila da Central reconhece o envio e não oferece a mesma etapa de novo.
+function collectionTaskFor(order, rules = DEFAULT_COMMUNICATION_RULES) {
+  const todayStr = todayLocalStr();
+  const isOverdue = Boolean(order.due_date && order.due_date < todayStr);
+  const lastSent = order.payment_message_sent_at ? toLocalDateStr(order.payment_message_sent_at) : '';
+  const activeRules = (rules || []).filter(r => r.active !== false);
 
-function buildCollectionMessage(order, externalLink = order?.external_payment_link) {
-  if (!order) return '';
-  const link = paymentLinkFor(order, externalLink);
-  const pixCopy = order.asaas_pix_copy;
-  const due = order.due_date ? formatDate(order.due_date) : null;
-  const isOverdue = order.due_date && order.due_date < todayLocalStr();
-  const saleType = order.type === 'contract' ? 'contrato' : 'pedido';
-  const customer = firstName(order.customer);
-
+  let kind = TASK_KIND.CHARGE_SEND;
+  let rule = activeRules.find(r => r.task_kind === 'charge_send') || null;
+  let title = order.payment_message_sent_at ? 'Reenviar cobrança' : 'Enviar cobrança';
   if (isOverdue) {
-    // Lembrete de cobrança vencida — direto (sem número de contrato nem lista de itens)
-    let msg = customer ? `Oi, ${customer}!\n\n` : 'Oi!\n\n';
-    msg += `Passando pra lembrar da cobrança de *${formatCurrency(order.total_value || 0)}* que venceu${due ? ` em *${due}*` : ''}.\n\n`;
-    if (link) msg += `Link de pagamento:\n${link}\n\n`;
-    else if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
-    msg += 'Se já tiver pago, é só desconsiderar. Qualquer dúvida, me chama aqui!';
-    return msg;
+    kind = TASK_KIND.CHARGE_OVERDUE;
+    rule = activeRules
+      .filter(r => r.task_kind === 'charge_overdue')
+      .sort((a, b) => (Number(a.days_offset) || 0) - (Number(b.days_offset) || 0))
+      .find(r => {
+        const trigger = addDaysStr(order.due_date, Math.max(0, Number(r.days_offset) || 0));
+        return trigger && trigger <= todayStr && (!lastSent || lastSent < trigger);
+      }) || null;
+    title = rule?.name || 'Reenviar cobrança vencida';
   }
 
-  let msg = customer ? `Olá, ${customer}! Tudo bem?\n\n` : 'Olá! Tudo bem?\n\n';
-  msg += `Segue novamente a cobrança do seu ${saleType} *${order.order_number}*, no valor de *${formatCurrency(order.total_value || 0)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
-  if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
-  if (link) msg += `Link de pagamento:\n${link}\n\n`;
-  msg += 'Se o pagamento já foi realizado, pode desconsiderar esta mensagem. Qualquer dúvida, estou por aqui.';
-  return msg;
+  const items = (order.items || [])
+    .filter(it => it && !it.cancelled)
+    .map((it, i) => {
+      const quantity = Math.max(1, Number(it.quantity) || 1);
+      const name = String(it.product_name || it.name || `Item ${i + 1}`).trim();
+      const variation = String(it.variation || '').trim();
+      const label = variation && !name.toLowerCase().includes(variation.toLowerCase()) ? `${name} - ${variation}` : name;
+      const unit = (Number(it.sale_price ?? it.price ?? 0) || 0) + (Number(it.extras_total) || 0);
+      return { label, quantity, lineTotal: Math.max(0, unit * quantity) };
+    });
+
+  const tableByType = { presale: 'presale_orders', stock: 'stock_orders', contract: 'assessment_contracts' };
+  const hrefByType = {
+    presale: `/pedidos/${order.id}`,
+    stock: `/estoque/pedidos/${order.id}`,
+    contract: `/assessoria/contratos/${order.id}`,
+  };
+
+  return {
+    id: `open-sale:${order.type}:${order.id}:${order.payment_message_sent_at || ''}`,
+    kind,
+    bucket: TASK_BUCKET.CHARGES,
+    sourceType: order.type,
+    tableName: tableByType[order.type],
+    sourceId: order.id,
+    sourceLabel: order.type === 'contract' ? 'Contrato' : 'Pedido',
+    orderNumber: order.order_number,
+    customerName: order.customer || 'Cliente',
+    customerWhatsapp: order.customer_whatsapp || '',
+    totalValue: Number(order.total_value) || 0,
+    paymentStatus: order.payment_status,
+    dueDate: order.due_date || '',
+    asaasChargeId: order.asaas_charge_id,
+    asaasPaymentLink: order.asaas_payment_link,
+    asaasPixCopy: order.asaas_pix_copy,
+    externalPaymentLink: order.external_payment_link,
+    paymentMessageSentAt: order.payment_message_sent_at,
+    items,
+    itemSummary: items[0]?.label || '',
+    href: hrefByType[order.type],
+    title,
+    statusLabel: order.due_date ? `vence em ${formatDate(order.due_date)}` : 'definir vencimento',
+    ruleId: rule?.id || null,
+    ruleSlug: rule?.slug || null,
+    ruleName: rule?.name || null,
+    messageTemplate: rule?.message_template || '',
+  };
 }
+
 
 function OrderRow({ o, onEditDueDate, onCollectPayment }) {
   const link = o.type === 'stock'    ? `/estoque/pedidos/${o.id}`
@@ -302,10 +352,16 @@ export default function Financial() {
   const [dueDateModal, setDueDateModal]       = useState(null);
   const [dueDateForm, setDueDateForm]         = useState({ date: '' });
   const [savingDueDate, setSavingDueDate]     = useState(false);
-  const [collectionModal, setCollectionModal] = useState(null);
-  const [collectionForm, setCollectionForm]   = useState({ externalLink: '', message: '' });
-  const [collectionCopied, setCollectionCopied] = useState(false);
-  const [savingCollection, setSavingCollection] = useState(false);
+  const [collectionTask, setCollectionTask] = useState(null);
+  const [commConfig, setCommConfig] = useState({ rules: DEFAULT_COMMUNICATION_RULES, communityLink: '' });
+
+  useEffect(() => {
+    let alive = true;
+    loadCommunicationConfig()
+      .then(cfg => { if (alive) setCommConfig({ rules: cfg.rules || DEFAULT_COMMUNICATION_RULES, communityLink: cfg.communityLink || '' }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const [asaasPayments, setAsaasPayments] = useState(() => cachedFinancialData?.asaasPayments || []);
   const [syncingAsaas, setSyncingAsaas]   = useState(false);
 
@@ -700,111 +756,29 @@ export default function Financial() {
   };
 
   const openCollectionEditor = (order) => {
-    const externalLink = order.external_payment_link || '';
-    setCollectionModal(order);
-    setCollectionForm({
-      externalLink,
-      message: buildCollectionMessage(order, externalLink),
-    });
-    setCollectionCopied(false);
+    setCollectionTask(collectionTaskFor(order, commConfig.rules));
   };
 
-  const updateCollectionExternalLink = (externalLink) => {
-    setCollectionForm({
-      externalLink,
-      message: buildCollectionMessage(collectionModal, externalLink),
-    });
-    setCollectionCopied(false);
-  };
-
-  const copyCollectionMessage = async () => {
-    try {
-      await navigator.clipboard.writeText(collectionForm.message);
-      setCollectionCopied(true);
-      setTimeout(() => setCollectionCopied(false), 2000);
-    } catch {
-      toast.error('Não consegui copiar a mensagem');
-    }
-  };
-
-  const openCollectionWhatsApp = () => {
-    if (!collectionModal?.customer_whatsapp) {
-      toast.error('Cliente sem WhatsApp cadastrado');
-      return;
-    }
-    const phone = phoneDigitsForWhatsApp(collectionModal.customer_whatsapp);
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(collectionForm.message)}`, '_blank');
-  };
-
-  const markCollectionSent = async () => {
-    if (!collectionModal) return;
-    const tableByType = {
-      presale: 'presale_orders',
-      stock: 'stock_orders',
-      contract: 'assessment_contracts',
-    };
-    const tableName = tableByType[collectionModal.type];
-    if (!tableName) return toast.error('Tipo de venda inválido');
-
-    const externalLink = collectionForm.externalLink.trim();
-    if (externalLink && !isSafePaymentUrl(externalLink)) {
-      toast.error('Informe um link válido começando com https://');
-      return;
-    }
+  // Pós-envio: o registro no banco (link, vencimento, status, evento de histórico)
+  // é feito pelo registerCommunicationSend dentro do diálogo compartilhado — aqui
+  // só refletimos na lista local o que o backend já gravou.
+  const handleCollectionSent = () => {
+    const t = collectionTask;
+    setCollectionTask(null);
+    if (!t) return;
     const nowIso = new Date().toISOString();
-    const hasAsaasPaymentInfo = !!(collectionModal.asaas_payment_link || collectionModal.asaas_pix_copy);
-    const updates = { payment_message_sent_at: nowIso };
-    if (!hasAsaasPaymentInfo) {
-      updates.external_payment_link = externalLink || null;
-      if (!collectionModal.due_date) {
-        updates.due_date = defaultPaymentDueDate();
-      }
-    }
-    if (['awaiting_charge', 'pending'].includes(collectionModal.payment_status)) {
-      updates.payment_status = 'charge_sent';
-    }
-
-    setSavingCollection(true);
-    try {
-      const { error } = await supabase.from(tableName).update(updates).eq('id', collectionModal.id);
-      if (error) throw error;
-
-      if (collectionModal.type === 'contract') {
-        supabase.from('assessment_contract_event').insert({
-          contract_id: collectionModal.id,
-          event_type: 'payment_message_sent',
-          payload: {
-            due_date: collectionModal.due_date || null,
-            has_asaas_link: !!collectionModal.asaas_payment_link,
-            has_external_link: !!externalLink,
-            source: 'financial_open_sales',
-          },
-          notes: 'Mensagem de cobrança enviada em Vendas em aberto',
-        }).then(({ error: eventError }) => {
-          if (eventError) console.warn('[contract_event] falha ao registrar payment_message_sent:', eventError.message);
-        });
-      }
-
-      const nextOrders = orders.map(o =>
-        o.id === collectionModal.id && o.type === collectionModal.type
-          ? {
-              ...o,
-              external_payment_link: !hasAsaasPaymentInfo ? (externalLink || null) : o.external_payment_link,
-              payment_message_sent_at: nowIso,
-              payment_status: updates.payment_status || o.payment_status,
-              due_date: updates.due_date || o.due_date,
-            }
-          : o
-      );
-      setOrders(nextOrders);
-      patchFinancialPageCache({ orders: nextOrders });
-      toast.success('Mensagem registrada');
-      setCollectionModal(null);
-    } catch (e) {
-      toast.error(e.message || 'Erro ao registrar mensagem');
-    } finally {
-      setSavingCollection(false);
-    }
+    setOrders(prev => {
+      const next = prev.map(o => (o.id === t.sourceId && o.type === t.sourceType)
+        ? {
+            ...o,
+            payment_message_sent_at: nowIso,
+            payment_status: ['awaiting_charge', 'pending'].includes(o.payment_status) ? 'charge_sent' : o.payment_status,
+            due_date: o.due_date || defaultPaymentDueDate(),
+          }
+        : o);
+      patchFinancialPageCache({ orders: next });
+      return next;
+    });
   };
 
   if (loading) return (
@@ -1134,94 +1108,14 @@ export default function Financial() {
         </CardContent>
       </Card>
 
-      {/* ── Modal: mensagem de cobrança ─────────────────────── */}
-      <Dialog open={!!collectionModal} onOpenChange={open => !open && setCollectionModal(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <MessageCircle className="w-5 h-5 text-green-600" />
-              Mensagem de cobrança
-            </DialogTitle>
-          </DialogHeader>
-          {collectionModal && (
-            <div className="space-y-4">
-              <div className="rounded-lg border bg-gray-50 p-3 text-sm space-y-1">
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">Venda</span>
-                  <span className="font-mono font-semibold text-right">{collectionModal.order_number}</span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">Cliente</span>
-                  <span className="font-medium text-right truncate">{collectionModal.customer}</span>
-                </div>
-                <div className="flex justify-between gap-3 border-t pt-1 mt-1">
-                  <span className="text-muted-foreground">Vencimento</span>
-                  <span className="font-medium">
-                    {collectionModal.due_date ? formatDate(collectionModal.due_date) : 'Sem vencimento'}
-                  </span>
-                </div>
-              </div>
-
-              {collectionModal.asaas_payment_link || collectionModal.asaas_pix_copy ? (
-                <div className="flex items-start gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                  <Zap className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-0.5" />
-                  <span className="text-blue-800">Cobrança Asaas encontrada. Link/PIX entram automaticamente na mensagem.</span>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-start gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    <Link2 className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                    <span className="text-amber-800">Cobrança externa. Informe o link para salvar e reenviar depois.</span>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Link externo</Label>
-                    <Input
-                      className="mt-1 font-mono text-xs"
-                      placeholder="https://..."
-                      value={collectionForm.externalLink}
-                      onChange={e => updateCollectionExternalLink(e.target.value)}
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <Label className="text-xs">Mensagem</Label>
-                <Textarea
-                  rows={9}
-                  className="mt-1 font-mono text-xs"
-                  value={collectionForm.message}
-                  onChange={e => {
-                    setCollectionForm(f => ({ ...f, message: e.target.value }));
-                    setCollectionCopied(false);
-                  }}
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <Button className="flex-1" variant="outline" onClick={copyCollectionMessage}>
-                  {collectionCopied
-                    ? <><Check className="w-4 h-4 mr-1.5 text-green-600" />Copiado</>
-                    : <><Copy className="w-4 h-4 mr-1.5" />Copiar</>}
-                </Button>
-                <Button
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                  onClick={openCollectionWhatsApp}
-                  disabled={!collectionModal.customer_whatsapp}
-                >
-                  <ExternalLink className="w-4 h-4 mr-1.5" />
-                  WhatsApp
-                </Button>
-              </div>
-
-              <Button className="w-full" onClick={markCollectionSent} disabled={savingCollection}>
-                <CheckCheck className="w-4 h-4 mr-1.5" />
-                {savingCollection ? 'Registrando...' : 'Registrar envio'}
-              </Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* ── Cobrança: mesmo diálogo/motor da Central de Comunicação ── */}
+      <CommunicationSendDialog
+        key={collectionTask?.id || 'none'}
+        task={collectionTask}
+        communityLink={commConfig.communityLink}
+        onClose={() => setCollectionTask(null)}
+        onSent={handleCollectionSent}
+      />
 
       {/* ── Modal: definir vencimento ────────────────────────── */}
       <Dialog open={!!dueDateModal} onOpenChange={open => !open && setDueDateModal(null)}>
