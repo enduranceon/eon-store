@@ -184,7 +184,8 @@ explicitamente permitidos pelo backend:
 - `categories`: categorias e subcategorias;
 - `suppliers`: fornecedores;
 - `trainers`: treinadores;
-- `revenue-centers`: centros de receita.
+- `revenue-centers`: centros de receita;
+- `payment-methods`: configuração administrativa de formas, prazos e parcelas.
 
 Rotas:
 
@@ -203,7 +204,11 @@ cores e tipos de centro de receita e limita o tamanho dos textos.
 
 Fornecedores com produtos vinculados não podem ser excluídos. Centros de
 receita preservam o comportamento do schema: referências existentes passam a
-`NULL` por `ON DELETE SET NULL`.
+`NULL` por `ON DELETE SET NULL`. Métodos de pagamento marcados como `system`
+nunca podem ser excluídos; métodos já usados por cobranças também permanecem
+protegidos pela chave estrangeira. O endpoint operacional
+`GET /payments/methods` continua retornando somente métodos ativos, enquanto
+`/catalog/payment-methods` atende a tela administrativa completa.
 
 ## Próximos módulos
 
@@ -211,7 +216,9 @@ As próximas rotas devem cobrir criação, consulta, cancelamento e reconciliaç
 de cobranças Asaas, demais escritas de vendas e os cadastros ainda atendidos
 pelo proxy legado em `src/api/db.js`. O acesso direto às tabelas só deve ser
 revogado depois que todos os consumidores daquele domínio estiverem usando a
-API.
+API. Para `payment_methods`, as gravações diretas de `anon` e `authenticated`
+já podem ser revogadas; a leitura autenticada permanece temporariamente para o
+diagnóstico administrativo legado.
 
 O RPC antigo `record_manual_payment` permanece temporariamente como fallback de
 rollout, restrito à mesma allowlist administrativa. O frontend novo não o usa;

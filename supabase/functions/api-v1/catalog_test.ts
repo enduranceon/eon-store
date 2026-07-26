@@ -1,5 +1,6 @@
 import {
   CatalogInputError,
+  handleCatalogRequest,
   normalizeCatalogPayload,
   parseCatalogSort,
 } from "./catalog.ts";
@@ -106,4 +107,75 @@ Deno.test("catalog sorting is restricted per resource", () => {
     "invalid_sort",
   );
   expectCatalogError(() => parseCatalogSort("unknown", "name"), "not_found");
+});
+
+Deno.test("payment method catalog validates and normalizes administrative fields", () => {
+  const payload = normalizeCatalogPayload("payment-methods", {
+    group_name: "  Sem gateway  ",
+    name: "  Cartão presencial  ",
+    kind: "credit",
+    fee_percent: 2.5,
+    fee_fixed: 0,
+    credit_days_first: 1,
+    credit_days_between: 30,
+    installments: 3,
+    active: true,
+    internal_code: "card_machine_3x",
+  }, "create");
+
+  assert(payload.group_name === "Sem gateway", "group name was not trimmed");
+  assert(payload.name === "Cartão presencial", "method name was not trimmed");
+  assert(payload.installments === 3, "installments changed");
+
+  expectCatalogError(() =>
+    normalizeCatalogPayload("payment-methods", {
+      group_name: "Sem gateway",
+      name: "Inválido",
+      kind: "credit",
+      installments: 13,
+    }, "create"), "invalid_field");
+
+  expectCatalogError(() =>
+    normalizeCatalogPayload("payment-methods", {
+      group_name: "Sem gateway",
+      name: "Inválido",
+      kind: "credit",
+      system: false,
+    }, "create"), "invalid_field");
+});
+
+Deno.test("payment method catalog refuses deletion of system methods", async () => {
+  const protectedQuery = {
+    select() {
+      return this;
+    },
+    eq() {
+      return this;
+    },
+    maybeSingle() {
+      return Promise.resolve({
+        data: {
+          id: "00000000-0000-4000-8000-000000000001",
+          system: true,
+        },
+        error: null,
+      });
+    },
+  };
+  const supabase = {
+    from(table: string) {
+      assert(table === "payment_methods", "unexpected protected table");
+      return protectedQuery;
+    },
+  };
+
+  const response = await handleCatalogRequest(
+    new Request("https://example.test", { method: "DELETE" }),
+    "/catalog/payment-methods/00000000-0000-4000-8000-000000000001",
+    supabase as never,
+  );
+
+  assert(response?.status === 409, "system method deletion was not blocked");
+  const body = await response.json();
+  assert(body.code === "protected_resource", "wrong protected error code");
 });

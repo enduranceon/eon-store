@@ -10,6 +10,11 @@ interface DeleteGuard {
   message: string;
 }
 
+interface DeleteProtection {
+  field: "system";
+  message: string;
+}
+
 interface CatalogResource {
   table: string;
   selectColumns: string;
@@ -18,6 +23,7 @@ interface CatalogResource {
   defaultSort: string;
   updatedColumn: "updated_at" | "updated_date";
   deleteGuard?: DeleteGuard;
+  deleteProtection?: DeleteProtection;
 }
 
 const UUID_PATTERN =
@@ -30,6 +36,15 @@ const REVENUE_CENTER_TYPES = new Set([
   "eventos",
   "general",
 ]);
+const PAYMENT_METHOD_KINDS = new Set([
+  "pix",
+  "boleto",
+  "credit",
+  "cash",
+  "transfer",
+  "other",
+]);
+const INTERNAL_CODE_PATTERN = /^[a-z0-9_]{1,80}$/;
 
 const CATALOG_RESOURCES: Record<string, CatalogResource> = {
   categories: {
@@ -77,6 +92,41 @@ const CATALOG_RESOURCES: Record<string, CatalogResource> = {
     sortFields: ["id", "name", "type", "active", "created_at", "updated_at"],
     defaultSort: "name",
     updatedColumn: "updated_at",
+  },
+  "payment-methods": {
+    table: "payment_methods",
+    selectColumns:
+      "id,group_name,name,kind,fee_percent,fee_fixed,credit_days_first,credit_days_between,installments,active,system,order_index,internal_code,created_at,updated_at",
+    writableFields: [
+      "group_name",
+      "name",
+      "kind",
+      "fee_percent",
+      "fee_fixed",
+      "credit_days_first",
+      "credit_days_between",
+      "installments",
+      "active",
+      "order_index",
+      "internal_code",
+    ],
+    sortFields: [
+      "id",
+      "group_name",
+      "name",
+      "kind",
+      "active",
+      "system",
+      "order_index",
+      "created_at",
+      "updated_at",
+    ],
+    defaultSort: "order_index",
+    updatedColumn: "updated_at",
+    deleteProtection: {
+      field: "system",
+      message: "Métodos do sistema não podem ser excluídos",
+    },
   },
 };
 
@@ -260,6 +310,124 @@ function normalizeRevenueCenter(
   }
 }
 
+function requiredTextField(
+  payload: CatalogPayload,
+  output: CatalogPayload,
+  field: string,
+  label: string,
+  mode: CatalogMode,
+  maxLength = 120,
+): void {
+  if (!(field in payload)) {
+    if (mode === "create") {
+      throw new CatalogInputError(`${label} é obrigatório`, "invalid_field");
+    }
+    return;
+  }
+
+  const value = payload[field];
+  if (typeof value !== "string") {
+    throw new CatalogInputError(`${label} inválido`, "invalid_field");
+  }
+
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength) {
+    throw new CatalogInputError(
+      `${label} deve ter entre 1 e ${maxLength} caracteres`,
+      "invalid_field",
+    );
+  }
+  output[field] = normalized;
+}
+
+function boundedNumber(
+  payload: CatalogPayload,
+  output: CatalogPayload,
+  field: string,
+  minimum: number,
+  maximum: number,
+  integer = false,
+): void {
+  if (!(field in payload)) return;
+
+  const value = payload[field];
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < minimum ||
+    value > maximum ||
+    (integer && !Number.isInteger(value))
+  ) {
+    throw new CatalogInputError(`Campo ${field} inválido`, "invalid_field");
+  }
+  output[field] = value;
+}
+
+function normalizePaymentMethod(
+  payload: CatalogPayload,
+  output: CatalogPayload,
+  mode: CatalogMode,
+): void {
+  requiredTextField(payload, output, "group_name", "Grupo", mode);
+  requiredTextField(payload, output, "kind", "Tipo", mode, 32);
+
+  if (
+    typeof output.kind === "string" &&
+    !PAYMENT_METHOD_KINDS.has(output.kind)
+  ) {
+    throw new CatalogInputError(
+      "Tipo de método de pagamento inválido",
+      "invalid_kind",
+    );
+  }
+
+  boundedNumber(payload, output, "fee_percent", 0, 100);
+  boundedNumber(payload, output, "fee_fixed", 0, 1_000_000);
+  boundedNumber(payload, output, "credit_days_first", 0, 3_650, true);
+  boundedNumber(payload, output, "credit_days_between", 0, 3_650, true);
+  boundedNumber(payload, output, "installments", 1, 12, true);
+  boundedNumber(payload, output, "order_index", 0, 100_000, true);
+
+  if ("active" in payload) {
+    if (typeof payload.active !== "boolean") {
+      throw new CatalogInputError(
+        "Situação do método de pagamento inválida",
+        "invalid_active",
+      );
+    }
+    output.active = payload.active;
+  }
+
+  if ("internal_code" in payload) {
+    const code = payload.internal_code;
+    if (code === null || code === "") {
+      output.internal_code = null;
+    } else if (
+      typeof code !== "string" ||
+      !INTERNAL_CODE_PATTERN.test(code)
+    ) {
+      throw new CatalogInputError(
+        "Código interno inválido",
+        "invalid_internal_code",
+      );
+    } else {
+      output.internal_code = code;
+    }
+  }
+
+  if (mode === "create") {
+    if (!("fee_percent" in output)) output.fee_percent = 0;
+    if (!("fee_fixed" in output)) output.fee_fixed = 0;
+    if (!("credit_days_first" in output)) output.credit_days_first = 1;
+    if (!("credit_days_between" in output)) {
+      output.credit_days_between = 30;
+    }
+    if (!("installments" in output)) output.installments = 1;
+    if (!("active" in output)) output.active = true;
+    if (!("order_index" in output)) output.order_index = 0;
+  }
+}
+
 export function normalizeCatalogPayload(
   resourceKey: string,
   payload: unknown,
@@ -301,6 +469,8 @@ export function normalizeCatalogPayload(
     normalizeContactFields(payload, output);
   } else if (resourceKey === "revenue-centers") {
     normalizeRevenueCenter(payload, output);
+  } else if (resourceKey === "payment-methods") {
+    normalizePaymentMethod(payload, output, mode);
   }
 
   return output;
@@ -493,6 +663,24 @@ export async function handleCatalogRequest(
   }
 
   if (req.method === "DELETE" && itemId) {
+    if (resource.deleteProtection) {
+      const protectedField = resource.deleteProtection.field;
+      const { data: protectedRow, error } = await supabase
+        .from(resource.table)
+        .select(`id,${protectedField}`)
+        .eq("id", itemId)
+        .maybeSingle();
+
+      if (error) return databaseError(error, resourceKey, "delete_protection");
+      if (!protectedRow) return notFoundResponse();
+      if (protectedRow.system === true) {
+        return jsonResponse({
+          error: resource.deleteProtection.message,
+          code: "protected_resource",
+        }, 409);
+      }
+    }
+
     if (resource.deleteGuard) {
       const { count, error } = await supabase
         .from(resource.deleteGuard.table)
