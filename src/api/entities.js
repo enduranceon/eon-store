@@ -1,19 +1,20 @@
 import { db } from './db';
+import { createCatalogEntity } from './client';
 
 export const PreSaleCampaign  = db.entities.PreSaleCampaign;
 export const PreSaleProduct   = db.entities.PreSaleProduct;
 export const PreSaleCustomer  = db.entities.PreSaleCustomer;
 export const PreSaleOrder     = db.entities.PreSaleOrder;
-export const PreSaleSupplier  = db.entities.PreSaleSupplier;
-export const PreSaleCategory  = db.entities.PreSaleCategory;
-export const PreSaleTrainer   = db.entities.PreSaleTrainer;
+export const PreSaleSupplier  = createCatalogEntity('suppliers', 'presale_suppliers');
+export const PreSaleCategory  = createCatalogEntity('categories', 'presale_categories');
+export const PreSaleTrainer   = createCatalogEntity('trainers', 'presale_trainers');
 export const StockProduct     = db.entities.StockProduct;
 export const StockOrder       = db.entities.StockOrder;
 export const Product          = db.entities.Product;
 export const Coupon           = db.entities.Coupon;
 
 // Universal
-export const RevenueCenter    = db.entities.RevenueCenter;
+export const RevenueCenter    = createCatalogEntity('revenue-centers', 'revenue_centers');
 export const DiscountLog      = db.entities.DiscountLog;
 
 // Régua de renovação

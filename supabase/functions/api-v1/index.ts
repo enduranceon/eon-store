@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { jsonResponse, optionsResponse } from "../_shared/http.ts";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
 import { createServiceClient } from "../_shared/serviceClient.ts";
+import { handleCatalogRequest } from "./catalog.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handleReturnsRequest } from "./returns.ts";
 
@@ -46,6 +47,9 @@ Deno.serve(async (req: Request) => {
       code: "api_misconfigured",
     }, 500);
   }
+
+  const catalogResponse = await handleCatalogRequest(req, path, serviceClient);
+  if (catalogResponse) return catalogResponse;
 
   const returnsResponse = await handleReturnsRequest(req, path, serviceClient);
   if (returnsResponse) return returnsResponse;
