@@ -4,6 +4,17 @@
 
 drop policy if exists auth_full on public.payment_methods;
 
+-- `app_admin_only` é RESTRICTIVE e, sozinho, não concede acesso. Esta policy
+-- PERMISSIVE mantém o SELECT usado pelo diagnóstico, ainda limitado pela
+-- interseção com `app_admin_only` à allowlist administrativa.
+drop policy if exists payment_methods_admin_select on public.payment_methods;
+create policy payment_methods_admin_select
+  on public.payment_methods
+  as permissive
+  for select
+  to authenticated
+  using (eon_private.is_app_admin());
+
 revoke all privileges
   on table public.payment_methods
   from anon;
