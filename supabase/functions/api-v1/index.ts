@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { jsonResponse, optionsResponse } from "../_shared/http.ts";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
 import { createServiceClient } from "../_shared/serviceClient.ts";
+import { handleBillingRequest } from "./billing.ts";
 import { handleCatalogRequest } from "./catalog.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handlePaymentsRequest } from "./payments.ts";
@@ -54,6 +55,14 @@ Deno.serve(async (req: Request) => {
 
   const returnsResponse = await handleReturnsRequest(req, path, serviceClient);
   if (returnsResponse) return returnsResponse;
+
+  const billingResponse = await handleBillingRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (billingResponse) return billingResponse;
 
   const paymentsResponse = await handlePaymentsRequest(
     req,

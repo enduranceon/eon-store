@@ -11,7 +11,9 @@ reversível.
 - cancelamento, estorno e cancelamento parcial de itens;
 - registro, ajuste e reabertura de pagamentos manuais;
 - categorias, fornecedores, treinadores e centros de receita;
-- configuração administrativa de métodos de pagamento (etapa atual).
+- configuração administrativa de métodos de pagamento;
+- alteração de vencimento por comando autenticado
+  (`PATCH /orders/:type/:id/due-date`), com idempotência e reconciliação.
 
 ## Escritas diretas restantes
 
@@ -68,7 +70,9 @@ credencial privilegiada do painel.
 
 1. concluir a configuração de métodos de pagamento e revogar suas escritas
    diretas;
-2. migrar o ciclo de cobranças Asaas e as alterações de vencimento;
+2. continuar a migração do ciclo de cobranças Asaas; a alteração de vencimento
+   já está centralizada, mas criação, consulta e cancelamento da cobrança ainda
+   usam fluxos legados;
 3. migrar as demais escritas de pedidos e estoque;
 4. migrar transições de contratos e renovações;
 5. migrar produtos, campanhas, clientes e cupons;
@@ -82,3 +86,26 @@ Um domínio só é considerado separado quando todas as telas consumidoras usam 
 API, os campos aceitos estão em allowlist, as regras críticas são autoritativas
 no backend, há teste automatizado, o smoke test autenticado passa e os grants de
 gravação do navegador foram revogados sem quebrar consumidores remanescentes.
+
+## Runbook de reconciliação de vencimento
+
+Uma operação `change_due_date` só entra em `reconciliation_required` quando o
+Asaas pode ter recebido a alteração, mas o estado local não pôde ser confirmado.
+O `operation_id` retornado pela API é o protocolo da ocorrência.
+Uma falha de infraestrutura também pode deixar a operação em `prepared`; ela só
+pode ser liberada manualmente depois que o lease expirar e o Asaas for consultado.
+
+1. consultar a operação no ledger e comparar `previous_due_date`,
+   `target_due_date`, `asaas_charge_id` e `external_result`;
+2. consultar a cobrança no Asaas sem mutação e comparar o vencimento real com a
+   venda e com `asaas_payments`;
+3. corrigir a divergência pela fonte autoritativa escolhida e registrar a
+   justificativa;
+4. somente depois da conferência, liberar o bloqueio com a RPC server-only
+   `release_order_due_date_operation(operation_id, actor_id, notes)`;
+5. repetir o comando com uma nova chave de idempotência se a venda ainda não
+   estiver no vencimento desejado.
+
+A RPC de liberação não corrige dados nem chama o Asaas: ela apenas encerra o
+bloqueio depois da revisão manual auditada. Nunca deve ser exposta diretamente
+ao navegador.
