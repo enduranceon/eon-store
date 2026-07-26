@@ -1,7 +1,11 @@
-// Helpers para registro manual de pagamento usando a configuração payment_methods.
-// Gera parcelas projetadas em asaas_payments com source='manual' e status='CONFIRMED'.
+// Adaptadores do frontend para o ciclo de pagamento manual da API autenticada.
 
-import { supabase } from '@/api/db';
+import {
+  adjustManualPayment as adjustManualPaymentViaApi,
+  listPaymentMethods,
+  recordManualPayment as recordManualPaymentViaApi,
+  reopenManualPayment as reopenManualPaymentViaApi,
+} from '@/api/client';
 import { nextBusinessDay } from '@/lib/business-days';
 
 // Tabela de labels para payment_method (cobre códigos legacy + novos internal_codes).
@@ -40,12 +44,7 @@ export function getPaymentMethodLabel(code) {
 
 // Carrega métodos ativos, agrupados por group_name.
 export async function loadActivePaymentMethods() {
-  const { data, error } = await supabase
-    .from('payment_methods')
-    .select('*')
-    .eq('active', true)
-    .order('order_index', { ascending: true });
-  if (error) throw error;
+  const data = await listPaymentMethods();
 
   const map = {};
   for (const m of data || []) {
@@ -62,90 +61,49 @@ export async function loadActivePaymentMethods() {
   });
 }
 
-// Adiciona N dias a uma string de data YYYY-MM-DD e retorna no mesmo formato.
+// Preview usado pelo formulário. O backend recalcula a mesma projeção e é a
+// fonte de verdade no momento da gravação.
 function addDaysLocal(yyyymmdd, days) {
-  const [y, m, d] = yyyymmdd.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + days);
-  return dt.toISOString().slice(0, 10);
+  const [year, month, day] = yyyymmdd.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
-// Calcula as datas de cada parcela a partir da data de pagamento + configuração.
-// Cada parcela cai N dias depois da anterior (não do pagamento original).
-// Se cair em fim de semana ou feriado nacional, joga pro próximo dia útil.
-// Retorna array de { number, total, due_date, credit_date }.
 export function projectInstallments(methodConfig, paymentDate) {
   if (!methodConfig || !paymentDate) return [];
-  const n = Math.max(1, Math.min(12, Number(methodConfig.installments) || 1));
-  const first = Number(methodConfig.credit_days_first) || 0;
-  const step = Number(methodConfig.credit_days_between) || 32;
-  const result = [];
-  let lastDate = paymentDate;
-  for (let i = 1; i <= n; i++) {
-    // Primeira parcela: paymentDate + credit_days_first
-    // Demais: parcela anterior + credit_days_between
-    const offset = i === 1 ? first : step;
-    const raw = addDaysLocal(lastDate, offset);
-    const creditDate = nextBusinessDay(raw);
-    result.push({
-      number: i,
-      total: n,
+  const installments = Math.max(1, Math.min(12, Number(methodConfig.installments) || 1));
+  const firstOffset = Number(methodConfig.credit_days_first) || 0;
+  const nextOffset = Number(methodConfig.credit_days_between) || 32;
+  const projection = [];
+  let previousDate = paymentDate;
+
+  for (let number = 1; number <= installments; number += 1) {
+    const rawDate = addDaysLocal(previousDate, number === 1 ? firstOffset : nextOffset);
+    const creditDate = nextBusinessDay(rawDate);
+    projection.push({
+      number,
+      total: installments,
       due_date: creditDate,
       credit_date: creditDate,
     });
-    lastDate = creditDate;
+    previousDate = creditDate;
   }
-  return result;
+
+  return projection;
 }
 
-// Cria as N entradas em asaas_payments para um pagamento manual.
-// `orderRef` = { order_id, order_type, total_value, external_reference (opcional) }
+// Registra o pagamento e suas parcelas em uma única transação no backend.
 export async function createManualInstallments(methodConfig, paymentDate, orderRef, totalValue) {
   if (!methodConfig) throw new Error('Método de pagamento obrigatório');
   if (!paymentDate)  throw new Error('Data de pagamento obrigatória');
   if (!orderRef?.order_id || !orderRef?.order_type) throw new Error('order_id e order_type obrigatórios');
 
-  const totalV = Number(totalValue) || 0;
-  const parcels = projectInstallments(methodConfig, paymentDate);
-  const { data, error } = await supabase.rpc('record_manual_payment', {
-    p_order_type: orderRef.order_type,
-    p_order_id: orderRef.order_id,
-    p_payment_method_id: methodConfig.id,
-    p_payment_date: paymentDate,
-    p_total: totalV,
-    p_installments: parcels,
+  return recordManualPaymentViaApi(orderRef.order_type, orderRef.order_id, {
+    paymentMethodId: methodConfig.id,
+    paymentDate,
+    total: Number(totalValue) || 0,
   });
-  if (error) throw error;
-
-  // O financeiro trabalha com valor recebido cheio; net_value fica igual ao value por compatibilidade.
-  const { data: rows } = await supabase
-    .from('asaas_payments')
-    .select('id, value')
-    .eq('order_id', orderRef.order_id)
-    .eq('order_type', orderRef.order_type)
-    .eq('source', 'manual')
-    .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH']);
-
-  if (rows?.length) {
-    await Promise.all(rows.map(row =>
-      supabase
-        .from('asaas_payments')
-        .update({ net_value: Number(row.value) || 0 })
-        .eq('id', row.id)
-    ));
-  }
-
-  const tableByType = {
-    presale: 'presale_orders',
-    stock: 'stock_orders',
-    contract: 'assessment_contracts',
-  };
-  const table = tableByType[orderRef.order_type];
-  if (table) {
-    await supabase.from(table).update({ manual_fee: null }).eq('id', orderRef.order_id);
-  }
-
-  return data;
 }
 
 // Recalcula proporcionalmente os valores das parcelas manuais de um pedido
@@ -155,51 +113,15 @@ export async function createManualInstallments(methodConfig, paymentDate, orderR
 // - Recalcula value e net_value pelo mesmo valor
 //
 // orderRef = { order_id, order_type }
-// newTotalValue = novo valor total do pedido
-//
-// Retorna { adjusted: bool, installments: N, new_value_per_inst, new_net_per_inst }
-export async function adjustManualInstallmentsValue(orderRef, newTotalValue) {
+// O backend lê o total atual da própria venda para não confiar no navegador.
+export async function adjustManualInstallmentsValue(orderRef, adjustment) {
   if (!orderRef?.order_id || !orderRef?.order_type) return { adjusted: false };
-  const newTotal = Math.max(0, Number(newTotalValue) || 0);
+  return adjustManualPaymentViaApi(orderRef.order_type, orderRef.order_id, adjustment);
+}
 
-  // Busca parcelas manuais atuais
-  const { data: rows, error: fetchErr } = await supabase
-    .from('asaas_payments')
-    .select('id, value, payment_method_id')
-    .eq('order_id', orderRef.order_id)
-    .eq('order_type', orderRef.order_type)
-    .eq('source', 'manual')
-    .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH']);
-
-  if (fetchErr || !rows?.length) return { adjusted: false };
-
-  const n = rows.length;
-  if (newTotal === 0) {
-    // Cancelamento total — marca como CANCELLED em vez de ajustar
-    await supabase.from('asaas_payments')
-      .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-      .in('id', rows.map(r => r.id));
-    return { adjusted: true, installments: n, cancelled: true };
+export async function reopenManualPayment(orderRef) {
+  if (!orderRef?.order_id || !orderRef?.order_type) {
+    throw new Error('order_id e order_type obrigatórios');
   }
-
-  const newPerInst    = Math.round((newTotal / n) * 100) / 100;
-  const newNetPerInst = newPerInst;
-
-  // Atualiza cada linha (preserva datas, ID, método)
-  for (const r of rows) {
-    await supabase.from('asaas_payments')
-      .update({
-        value:      newPerInst,
-        net_value:  newNetPerInst,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', r.id);
-  }
-
-  return {
-    adjusted: true,
-    installments: n,
-    new_value_per_inst: newPerInst,
-    new_net_per_inst:   newNetPerInst,
-  };
+  return reopenManualPaymentViaApi(orderRef.order_type, orderRef.order_id);
 }

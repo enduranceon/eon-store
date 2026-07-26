@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer, PreSaleProduct } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
+import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, reopenManualPayment } from '@/lib/manual-payment';
 import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
@@ -314,15 +314,10 @@ export default function OrderDetail() {
     if (!editPayMethodDate) return toast.error('Informe a data de pagamento');
     setEditPayMethodSaving(true);
     try {
-      // Busca a config do método pelo internal_code
-      const { data: methods, error: mErr } = await supabase
-        .from('payment_methods')
-        .select('*')
-        .eq('internal_code', editPayMethodValue)
-        .eq('active', true)
-        .limit(1);
-      if (mErr) throw mErr;
-      const methodConfig = methods?.[0];
+      const groups = await loadActivePaymentMethods();
+      const methodConfig = groups
+        .flatMap(([, methods]) => methods)
+        .find(method => method.internal_code === editPayMethodValue);
       if (!methodConfig) throw new Error('Método de pagamento não encontrado');
 
       // Cria parcelas no fluxo de caixa (substitui qualquer registro anterior)
@@ -586,21 +581,7 @@ export default function OrderDetail() {
   const reopenPayment = async () => {
     setReopenLoading(true);
     try {
-      // 1. Apaga parcelas manuais em asaas_payments
-      await supabase.from('asaas_payments')
-        .delete()
-        .eq('order_id', id)
-        .eq('order_type', 'presale')
-        .eq('source', 'manual');
-
-      // 2. Reseta order
-      await PreSaleOrder.update(id, {
-        payment_status: 'awaiting_charge',
-        payment_date:   null,
-        payment_method: null,
-        manual_payment: false,
-        manual_fee:     null,
-      });
+      await reopenManualPayment({ order_id: id, order_type: 'presale' });
 
       toast.success('Pagamento revertido. Pedido voltou para "Pedido recebido".');
       setReopenModal(false);
@@ -1002,19 +983,25 @@ export default function OrderDetail() {
           const subItens = activeItems.reduce((s, it) => s + (it.sale_price || 0) * it.quantity, 0);
           const cupom = Number(order.discount_value) || 0;
           const newTotal = Math.max(0, subItens - cupom - newValue);
+          if (order.manual_payment && order.payment_status === 'paid') {
+            const result = await adjustManualInstallmentsValue(
+              { order_id: order.id, order_type: 'presale' },
+              {
+                total: newTotal,
+                manualDiscount: newValue,
+                discountReason: reason,
+              },
+            );
+            await load();
+            return result;
+          }
           await PreSaleOrder.update(order.id, {
             manual_discount: newValue,
             discount_reason: reason || null,
             total_value:     newTotal,
           });
-          // Recalcula parcelas manuais se já estava pago manualmente
-          if (order.manual_payment && order.payment_status === 'paid') {
-            await adjustManualInstallmentsValue(
-              { order_id: order.id, order_type: 'presale' },
-              newTotal,
-            );
-          }
           await load();
+          return undefined;
         }}
       />
 

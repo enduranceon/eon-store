@@ -142,6 +142,56 @@ export async function cancelOrderItem(
   return response.data;
 }
 
+export async function listPaymentMethods(options = {}) {
+  const response = await apiRequest('/payments/methods', options);
+  return response.data;
+}
+
+export async function recordManualPayment(
+  orderType,
+  orderId,
+  { paymentMethodId, paymentDate, total },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/manual-payment`, {
+    ...options,
+    method: 'POST',
+    body: {
+      payment_method_id: paymentMethodId,
+      payment_date: paymentDate,
+      total,
+    },
+  });
+  return response.data;
+}
+
+export async function adjustManualPayment(
+  orderType,
+  orderId,
+  { total, manualDiscount, discountReason = '', discountRecurring = false },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/manual-payment`, {
+    ...options,
+    method: 'PATCH',
+    body: {
+      total,
+      manual_discount: manualDiscount,
+      discount_reason: discountReason,
+      discount_recurring: discountRecurring,
+    },
+  });
+  return response.data;
+}
+
+export async function reopenManualPayment(orderType, orderId, options = {}) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/manual-payment`, {
+    ...options,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
 function catalogResourcePath(resource, id) {
   const base = `/catalog/${encodeURIComponent(resource)}`;
   return id ? `${base}/${encodeURIComponent(id)}` : base;

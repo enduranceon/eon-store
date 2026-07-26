@@ -131,6 +131,51 @@ deve cancelar/reabrir a cobrança e gerar outra com o valor correto. Mudanças
 concorrentes no pedido após um estorno externo levam a operação para
 `reconciliation_required`.
 
+### Pagamentos manuais
+
+`GET /payments/methods` lista apenas os métodos ativos e os campos necessários
+para o formulário administrativo.
+
+`POST /orders/:type/:id/manual-payment` registra um pagamento manual. `:type`
+aceita `presale`, `stock` ou `contract` e o corpo usa:
+
+```json
+{
+  "payment_method_id": "uuid",
+  "payment_date": "2026-07-26",
+  "total": 350
+}
+```
+
+O backend busca a configuração ativa do método e calcula as datas de crédito,
+incluindo fins de semana e feriados nacionais. Uma única transação confere o
+valor autoritativo da venda, impede conflito com cobrança Asaas, substitui as
+parcelas manuais, marca a venda como paga e registra os eventos com o operador
+do JWT. Em contratos ainda em rascunho, a mesma transação ativa ou agenda o
+contrato. Repetir exatamente a mesma chamada não recria parcelas nem eventos.
+
+`PATCH /orders/:type/:id/manual-payment` altera o desconto de uma venda já paga
+manualmente:
+
+```json
+{
+  "total": 300,
+  "manual_discount": 50,
+  "discount_reason": "Fidelidade",
+  "discount_recurring": false
+}
+```
+
+O Postgres recalcula o total a partir dos itens ou do snapshot do plano, rejeita
+um total divergente e, na mesma transação, atualiza o desconto, o histórico e as
+parcelas. A última parcela absorve a diferença de centavos para que a soma seja
+sempre exata.
+
+`DELETE /orders/:type/:id/manual-payment` reabre exclusivamente um pagamento
+manual confirmado. A remoção das parcelas, a volta para `awaiting_charge` (ou
+`pending` em contrato) e os eventos de auditoria são atômicos e idempotentes.
+Pagamentos Asaas são rejeitados por essa rota.
+
 ### Cadastros administrativos
 
 Os recursos abaixo usam o mesmo contrato CRUD e aceitam apenas campos
@@ -162,11 +207,15 @@ receita preservam o comportamento do schema: referências existentes passam a
 
 ## Próximos módulos
 
-As próximas rotas devem cobrir criação, consulta e reabertura de cobranças,
-pagamentos manuais, demais escritas de vendas e os cadastros ainda atendidos
+As próximas rotas devem cobrir criação, consulta, cancelamento e reconciliação
+de cobranças Asaas, demais escritas de vendas e os cadastros ainda atendidos
 pelo proxy legado em `src/api/db.js`. O acesso direto às tabelas só deve ser
 revogado depois que todos os consumidores daquele domínio estiverem usando a
 API.
+
+O RPC antigo `record_manual_payment` permanece temporariamente como fallback de
+rollout, restrito à mesma allowlist administrativa. O frontend novo não o usa;
+o acesso pode ser removido depois da confirmação da versão em produção.
 
 ## Ordem de publicação
 
