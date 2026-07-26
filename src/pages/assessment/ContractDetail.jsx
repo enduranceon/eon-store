@@ -1298,7 +1298,12 @@ export default function ContractDetail() {
 
       {/* Desconto manual */}
       <DiscountInput
-        subtotal={Number(plan?.price_total || 0) + (Number(contract.enrollment_fee) || 0)}
+        subtotal={Math.max(
+          0,
+          (Number(planVal('price_total')) || 0) +
+          (Number(contract.enrollment_fee) || 0) -
+          (Number(contract.credit_balance) || 0),
+        )}
         currentDiscount={Number(contract.manual_discount) || 0}
         currentReason={contract.discount_reason || ''}
         currentRecurring={contract.discount_recurring || false}
@@ -1346,7 +1351,12 @@ export default function ContractDetail() {
         const methodLabel = getPaymentMethodLabel(contract.payment_method);
         const planTotal = Number(planVal('price_total')) || 0;
         const enroll    = Number(contract.enrollment_fee) || 0;
-        const totalPaid = planTotal + enroll - (Number(contract.manual_discount) || 0);
+        const totalPaid = Math.max(
+          0,
+          planTotal + enroll -
+          (Number(contract.manual_discount) || 0) -
+          (Number(contract.credit_balance) || 0),
+        );
         const isRefunded = contract.payment_status === 'refunded';
         const blockColors = isRefunded
           ? { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', valueText: 'text-purple-800' }

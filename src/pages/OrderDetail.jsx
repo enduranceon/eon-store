@@ -970,7 +970,10 @@ export default function OrderDetail() {
 
       {/* Desconto manual */}
       <DiscountInput
-        subtotal={(order.items || []).filter(it => !it.cancelled).reduce((s, it) => s + (it.sale_price || 0) * it.quantity, 0) - (Number(order.discount_value) || 0)}
+        subtotal={(order.items || []).filter(it => !it.cancelled).reduce(
+          (sum, item) => sum + ((Number(item.sale_price) || 0) + (Number(item.extras_total) || 0)) * (Number(item.quantity) || 0),
+          0,
+        ) - (Number(order.discount_value) || 0)}
         currentDiscount={Number(order.manual_discount) || 0}
         currentReason={order.discount_reason || ''}
         lockedReason={order.asaas_charge_id
@@ -980,7 +983,10 @@ export default function OrderDetail() {
         entityId={order.id}
         onSave={async (newValue, reason) => {
           const activeItems = (order.items || []).filter(it => !it.cancelled);
-          const subItens = activeItems.reduce((s, it) => s + (it.sale_price || 0) * it.quantity, 0);
+          const subItens = activeItems.reduce(
+            (sum, item) => sum + ((Number(item.sale_price) || 0) + (Number(item.extras_total) || 0)) * (Number(item.quantity) || 0),
+            0,
+          );
           const cupom = Number(order.discount_value) || 0;
           const newTotal = Math.max(0, subItens - cupom - newValue);
           if (order.manual_payment && order.payment_status === 'paid') {
