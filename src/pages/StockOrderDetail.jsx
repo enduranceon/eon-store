@@ -20,6 +20,7 @@ import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
+import { cancelOrder as cancelOrderViaApi } from '@/api/client';
 
 const PAYMENT_STATUS = {
   pending:         { label: 'Pedido recebido',   badge: 'secondary' },
@@ -243,15 +244,20 @@ export default function StockOrderDetail() {
 
   const confirmCancelAsaasCharge = async () => {
     const reason = cancelReason === 'Outro' ? cancelReasonCustom : cancelReason;
+    if (!reason?.trim()) return toast.error('Informe o motivo do cancelamento');
+
+    setAsaasLoading(true);
     try {
-      await callAsaas('cancel');
-      await supabase.from('stock_orders').update({ cancellation_reason: reason || null }).eq('id', id);
-      await returnCouponUse(id, 'stock');
+      await cancelOrderViaApi('stock', id, reason);
       setCancelModal(false);
       setAsaasStatus(null);
-      toast.success('Cobrança cancelada.');
+      toast.success('Pedido e cobrança cancelados.');
       load();
-    } catch (e) { toast.error(e.message || 'Erro ao cancelar'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cancelar');
+    } finally {
+      setAsaasLoading(false);
+    }
   };
 
   const confirmRefund = async () => {

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Package, CheckCircle2, Clock, Undo2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { supabase } from '@/api/db';
+import { completeOrderReturn, listOrderReturns, receiveOrderReturn } from '@/api/client';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { invalidatePageCacheByTag } from '@/lib/page-cache';
@@ -16,12 +16,7 @@ const TABS = [
 ];
 
 async function loadReturnsPage() {
-  const { data, error } = await supabase
-    .from('order_returns')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return data || [];
+  return listOrderReturns();
 }
 
 export default function Returns() {
@@ -38,10 +33,7 @@ export default function Returns() {
   const markReceived = async (ret) => {
     setActionId(ret.id);
     try {
-      await supabase.from('order_returns').update({
-        status: 'received',
-        received_at: new Date().toISOString(),
-      }).eq('id', ret.id);
+      await receiveOrderReturn(ret.id);
       toast.success('Marcado como recebido!');
       invalidatePageCacheByTag('order_returns');
       await refresh({ force: true });
@@ -55,20 +47,8 @@ export default function Returns() {
   const restock = async (ret) => {
     setActionId(ret.id);
     try {
-      if (ret.product_id) {
-        const { data: prod } = await supabase
-          .from('stock_products').select('quantity').eq('id', ret.product_id).single();
-        if (prod) {
-          await supabase.from('stock_products')
-            .update({ quantity: (prod.quantity || 0) + ret.quantity })
-            .eq('id', ret.product_id);
-        }
-      }
-      await supabase.from('order_returns').update({
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-      }).eq('id', ret.id);
-      toast.success(ret.product_id ? 'Estoque reposto!' : 'Devolução concluída!');
+      const result = await completeOrderReturn(ret.id);
+      toast.success(result.stock_restocked ? 'Estoque reposto!' : 'Devolução concluída!');
       invalidatePageCacheByTag('order_returns');
       if (ret.product_id) invalidatePageCacheByTag('stock_products');
       await refresh({ force: true });

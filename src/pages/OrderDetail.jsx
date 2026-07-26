@@ -20,6 +20,7 @@ import DiscountInput from '@/components/DiscountInput';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
 import { toast } from 'sonner';
 import { returnCouponUse } from '@/lib/coupon';
+import { cancelOrder as cancelOrderViaApi } from '@/api/client';
 
 const PAYMENT_STATUS = {
   pending: { label: 'Pedido recebido', badge: 'secondary' },
@@ -768,37 +769,7 @@ export default function OrderDetail() {
 
     setCancelOrderLoading(true);
     try {
-      // 1) Se tem cobrança Asaas, cancela ela primeiro (só se ainda não foi paga)
-      if (order.asaas_charge_id && order.payment_status !== 'paid') {
-        try {
-          await callAsaas('cancel');
-        } catch (e) {
-          console.warn('Falha ao cancelar cobrança Asaas:', e.message);
-        }
-      }
-
-      // 2) Apaga parcelas manuais (se houver)
-      await supabase.from('asaas_payments')
-        .delete()
-        .eq('order_id', id)
-        .eq('order_type', 'presale')
-        .eq('source', 'manual');
-
-      // 3) Atualiza pedido para cancelled
-      await supabase.from('presale_orders').update({
-        payment_status: 'cancelled',
-        cancellation_reason: reason,
-        asaas_charge_id: null,
-        asaas_payment_link: null,
-        asaas_pix_qrcode: null,
-        asaas_pix_copy: null,
-        external_payment_link: null,
-      }).eq('id', id);
-
-      // 4) Devolve uso de cupom (se houver)
-      await returnCouponUse(id, 'presale');
-
-      await logSaleEvent('cancelled', reason, { action: 'order_cancelled' });
+      await cancelOrderViaApi('presale', id, reason);
 
       toast.success('Pedido cancelado.');
       setCancelOrderModal(false);
