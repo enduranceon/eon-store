@@ -1,4 +1,5 @@
 import { supabase } from '@/api/db';
+import { invalidatePageCacheByTag } from '@/lib/page-cache';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '');
 const SUPABASE_PUBLIC_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -139,4 +140,73 @@ export async function cancelOrderItem(
     body: { reason, was_delivered: wasDelivered },
   });
   return response.data;
+}
+
+function catalogResourcePath(resource, id) {
+  const base = `/catalog/${encodeURIComponent(resource)}`;
+  return id ? `${base}/${encodeURIComponent(id)}` : base;
+}
+
+function matchesFilters(row, filters) {
+  return Object.entries(filters).every(([key, value]) => {
+    if (value === null || value === undefined) return row[key] == null;
+    if (Array.isArray(value)) return value.includes(row[key]);
+    return row[key] === value;
+  });
+}
+
+function catalogWritePayload(data) {
+  const payload = { ...data };
+  delete payload.id;
+  delete payload.created_at;
+  delete payload.created_date;
+  delete payload.updated_at;
+  delete payload.updated_date;
+  return payload;
+}
+
+export function createCatalogEntity(resource, cacheTag) {
+  const list = async (sortBy = '-created_date') => {
+    const path = `${catalogResourcePath(resource)}?sort=${encodeURIComponent(sortBy)}`;
+    const response = await apiRequest(path);
+    return response.data;
+  };
+
+  return {
+    list,
+
+    async filter(filters = {}, sortBy = '-created_date') {
+      const rows = await list(sortBy);
+      return rows.filter(row => matchesFilters(row, filters));
+    },
+
+    async get(id) {
+      const response = await apiRequest(catalogResourcePath(resource, id));
+      return response.data;
+    },
+
+    async create(data) {
+      const response = await apiRequest(catalogResourcePath(resource), {
+        method: 'POST',
+        body: catalogWritePayload(data),
+      });
+      invalidatePageCacheByTag(cacheTag);
+      return response.data;
+    },
+
+    async update(id, data) {
+      const response = await apiRequest(catalogResourcePath(resource, id), {
+        method: 'PATCH',
+        body: catalogWritePayload(data),
+      });
+      invalidatePageCacheByTag(cacheTag);
+      return response.data;
+    },
+
+    async delete(id) {
+      await apiRequest(catalogResourcePath(resource, id), { method: 'DELETE' });
+      invalidatePageCacheByTag(cacheTag);
+      return true;
+    },
+  };
 }

@@ -131,12 +131,42 @@ deve cancelar/reabrir a cobrança e gerar outra com o valor correto. Mudanças
 concorrentes no pedido após um estorno externo levam a operação para
 `reconciliation_required`.
 
+### Cadastros administrativos
+
+Os recursos abaixo usam o mesmo contrato CRUD e aceitam apenas campos
+explicitamente permitidos pelo backend:
+
+- `categories`: categorias e subcategorias;
+- `suppliers`: fornecedores;
+- `trainers`: treinadores;
+- `revenue-centers`: centros de receita.
+
+Rotas:
+
+```text
+GET    /catalog/:resource?sort=-created_date
+GET    /catalog/:resource/:id
+POST   /catalog/:resource
+PATCH  /catalog/:resource/:id
+DELETE /catalog/:resource/:id
+```
+
+Os identificadores devem ser UUIDs. Campos de sistema como `id`, datas de
+criação e datas de atualização são rejeitados no corpo. A ordenação também é
+restrita por recurso. O backend normaliza nomes e e-mails, valida subcategorias,
+cores e tipos de centro de receita e limita o tamanho dos textos.
+
+Fornecedores com produtos vinculados não podem ser excluídos. Centros de
+receita preservam o comportamento do schema: referências existentes passam a
+`NULL` por `ON DELETE SET NULL`.
+
 ## Próximos módulos
 
 As próximas rotas devem cobrir criação, consulta e reabertura de cobranças,
-pagamentos manuais e demais escritas de vendas. O acesso direto às tabelas só
-deve ser revogado depois que todos os consumidores daquele domínio estiverem
-usando a API.
+pagamentos manuais, demais escritas de vendas e os cadastros ainda atendidos
+pelo proxy legado em `src/api/db.js`. O acesso direto às tabelas só deve ser
+revogado depois que todos os consumidores daquele domínio estiverem usando a
+API.
 
 ## Ordem de publicação
 
