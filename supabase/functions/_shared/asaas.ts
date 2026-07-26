@@ -111,3 +111,26 @@ export async function deleteAsaasPayment(chargeId: string): Promise<"deleted" | 
 
   return "deleted";
 }
+
+export async function refundAsaasPayment(
+  chargeId: string,
+  value: number,
+  description: string,
+): Promise<AsaasPayload> {
+  const response = await asaasFetch(`/payments/${encodeURIComponent(chargeId)}/refund`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value, description }),
+  });
+  const payload = await responsePayload(response);
+
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "O Asaas recusou o estorno"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_refund_failed",
+    );
+  }
+
+  return payload;
+}

@@ -96,13 +96,47 @@ cupom ou reposição. Se o pedido ou a cobrança vinculada mudar entre a prepara
 e a conclusão, a operação passa para `reconciliation_required` e a API retorna
 `409`, sem forçar uma atualização local possivelmente incorreta.
 
+### `POST /orders/:type/:id/refund`
+
+Estorna integralmente um pedido pago no Asaas. O corpo contém `reason`. A API
+registra primeiro uma operação, consulta os estornos já existentes na cobrança
+e envia ao Asaas um marcador único no formato `EON refund <operation_id>`.
+Assim, uma repetição após timeout reconhece o estorno anterior antes de decidir
+se deve fazer um novo `POST`.
+
+Depois da confirmação externa, uma transação altera o pedido para `refunded`,
+devolve o cupom, cria as devoluções dos itens e registra o evento de auditoria.
+Pedido de estoque ainda não entregue é reposto imediatamente. Quando já foi
+entregue, a reposição só acontece depois da conclusão na Central de Devoluções.
+
+### `POST /orders/:type/:id/items/:index/cancel`
+
+Cancela um item usando o corpo:
+
+```json
+{
+  "reason": "Produto indisponível",
+  "was_delivered": false
+}
+```
+
+O backend recalcula de forma autoritativa o subtotal, o desconto proporcional
+do cupom, o desconto manual, o custo e o valor de estorno. Para pagamentos
+manuais, as parcelas são redistribuídas em centavos e continuam somando
+exatamente o novo total. Para pagamentos Asaas, a mesma estratégia de marcador
+idempotente é usada no estorno parcial.
+
+A rota rejeita a alteração quando existe cobrança não paga ativa: o operador
+deve cancelar/reabrir a cobrança e gerar outra com o valor correto. Mudanças
+concorrentes no pedido após um estorno externo levam a operação para
+`reconciliation_required`.
+
 ## Próximos módulos
 
-As próximas rotas devem cobrir estorno integral de pagamentos e cancelamento
-parcial de itens. Esses fluxos precisam de identificação idempotente do estorno
-e reconciliação explícita com o Asaas antes que as escritas diretas restantes do
-frontend sejam removidas. O acesso direto às tabelas só deve ser revogado depois
-que todos os consumidores daquele domínio estiverem usando a API.
+As próximas rotas devem cobrir criação, consulta e reabertura de cobranças,
+pagamentos manuais e demais escritas de vendas. O acesso direto às tabelas só
+deve ser revogado depois que todos os consumidores daquele domínio estiverem
+usando a API.
 
 ## Ordem de publicação
 

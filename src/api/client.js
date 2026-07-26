@@ -116,3 +116,27 @@ export async function cancelOrder(orderType, orderId, reason, options = {}) {
   });
   return response.data;
 }
+
+export async function refundOrder(orderType, orderId, reason, options = {}) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/refund`, {
+    ...options,
+    method: 'POST',
+    body: { reason },
+  });
+  return response.data;
+}
+
+export async function cancelOrderItem(
+  orderType,
+  orderId,
+  itemIndex,
+  { reason = '', wasDelivered = false } = {},
+  options = {},
+) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/items/${itemIndex}/cancel`, {
+    ...options,
+    method: 'POST',
+    body: { reason, was_delivered: wasDelivered },
+  });
+  return response.data;
+}

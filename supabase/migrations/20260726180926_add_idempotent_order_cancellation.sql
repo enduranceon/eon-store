@@ -5,6 +5,8 @@
 CREATE TABLE public.order_operations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   operation_type TEXT NOT NULL CHECK (operation_type IN ('cancel_order')),
+  operation_key TEXT NOT NULL DEFAULT 'full'
+    CHECK (char_length(operation_key) BETWEEN 1 AND 100),
   order_type TEXT NOT NULL CHECK (order_type IN ('presale', 'stock')),
   order_id UUID NOT NULL,
   status TEXT NOT NULL DEFAULT 'prepared'
@@ -17,7 +19,8 @@ CREATE TABLE public.order_operations (
   last_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (operation_type, order_type, order_id)
+  CONSTRAINT order_operations_unique_command
+    UNIQUE (operation_type, order_type, order_id, operation_key)
 );
 
 CREATE INDEX order_operations_status_created_idx
@@ -86,6 +89,7 @@ BEGIN
 
   INSERT INTO public.order_operations (
     operation_type,
+    operation_key,
     order_type,
     order_id,
     status,
@@ -96,6 +100,7 @@ BEGIN
   )
   VALUES (
     'cancel_order',
+    'full',
     p_order_type,
     p_order_id,
     CASE WHEN v_payment_status = 'cancelled' THEN 'completed' ELSE 'prepared' END,
@@ -115,14 +120,14 @@ BEGIN
       )
     ELSE NULL END
   )
-  ON CONFLICT (operation_type, order_type, order_id) DO NOTHING;
+  ON CONFLICT (operation_type, order_type, order_id, operation_key) DO NOTHING;
 
   SELECT * INTO v_operation
   FROM public.order_operations
   WHERE operation_type = 'cancel_order'
+    AND operation_key = 'full'
     AND order_type = p_order_type
-    AND order_id = p_order_id
-  FOR UPDATE;
+    AND order_id = p_order_id;
 
   -- A legacy path or a concurrent operator may already have cancelled the
   -- order. Close a previously prepared operation without touching Asaas again.
@@ -173,26 +178,15 @@ DECLARE
   v_result JSONB;
   v_error TEXT;
 BEGIN
+  -- Read the operation first without a row lock so every mutation acquires
+  -- locks in the same order: order row, then operation row.
   SELECT * INTO v_operation
   FROM public.order_operations
   WHERE id = p_operation_id
-    AND operation_type = 'cancel_order'
-  FOR UPDATE;
+    AND operation_type = 'cancel_order';
 
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'Operação não encontrada';
-  END IF;
-
-  IF v_operation.status = 'completed' THEN
-    RETURN v_operation.result;
-  END IF;
-
-  IF v_operation.status = 'reconciliation_required' THEN
-    RETURN jsonb_build_object(
-      'operation_id', v_operation.id,
-      'status', v_operation.status,
-      'error', v_operation.last_error
-    );
   END IF;
 
   v_expected_charge_id := NULLIF(v_operation.payload->>'asaas_charge_id', '');
@@ -213,6 +207,24 @@ BEGIN
 
   IF NOT FOUND THEN
     RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'Pedido não encontrado';
+  END IF;
+
+  SELECT * INTO v_operation
+  FROM public.order_operations
+  WHERE id = p_operation_id
+    AND operation_type = 'cancel_order'
+  FOR UPDATE;
+
+  IF v_operation.status = 'completed' THEN
+    RETURN v_operation.result;
+  END IF;
+
+  IF v_operation.status = 'reconciliation_required' THEN
+    RETURN jsonb_build_object(
+      'operation_id', v_operation.id,
+      'status', v_operation.status,
+      'error', v_operation.last_error
+    );
   END IF;
 
   IF v_payment_status = 'cancelled' THEN
