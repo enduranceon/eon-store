@@ -8,9 +8,14 @@ import {
 import { jsonResponse } from "../_shared/http.ts";
 
 const CANCELLABLE_ASAAS_STATUSES = new Set(["PENDING", "OVERDUE"]);
-const REFUNDABLE_ASAAS_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
+const REFUNDABLE_ASAAS_STATUSES = new Set([
+  "RECEIVED",
+  "CONFIRMED",
+  "RECEIVED_IN_CASH",
+]);
 const INACTIVE_REFUND_STATUSES = new Set(["FAILED", "CANCELLED", "CANCELED"]);
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface PreparedCancellation {
   operation_id: string;
@@ -27,7 +32,10 @@ interface PreparedRefund extends PreparedCancellation {
   external_result?: Record<string, unknown> | null;
 }
 
-function databaseError(error: { code?: string; message?: string }, operation: string): Response {
+function databaseError(
+  error: { code?: string; message?: string },
+  operation: string,
+): Response {
   console.error(`api-v1 orders ${operation}:`, error);
 
   if (error.code === "P0002") {
@@ -36,8 +44,11 @@ function databaseError(error: { code?: string; message?: string }, operation: st
   if (error.code === "22023") {
     return jsonResponse({ error: error.message, code: "invalid_request" }, 400);
   }
-  if (error.code === "P0001") {
-    return jsonResponse({ error: error.message, code: "invalid_transition" }, 409);
+  if (error.code === "P0001" || error.code === "23505") {
+    return jsonResponse(
+      { error: error.message, code: "invalid_transition" },
+      409,
+    );
   }
 
   return jsonResponse({
@@ -48,7 +59,10 @@ function databaseError(error: { code?: string; message?: string }, operation: st
 
 function externalError(error: unknown): Response {
   if (error instanceof AsaasApiError) {
-    return jsonResponse({ error: error.message, code: error.code }, error.status);
+    return jsonResponse(
+      { error: error.message, code: error.code },
+      error.status,
+    );
   }
 
   console.error("api-v1 orders unexpected external error:", error);
@@ -71,7 +85,9 @@ async function parseReason(req: Request): Promise<string | null> {
   }
 }
 
-async function parseObject(req: Request): Promise<Record<string, unknown> | null> {
+async function parseObject(
+  req: Request,
+): Promise<Record<string, unknown> | null> {
   try {
     const body = await req.json();
     return body && typeof body === "object" && !Array.isArray(body)
@@ -82,7 +98,9 @@ async function parseObject(req: Request): Promise<Record<string, unknown> | null
   }
 }
 
-async function cancelExternalCharge(chargeId: string): Promise<Record<string, unknown>> {
+async function cancelExternalCharge(
+  chargeId: string,
+): Promise<Record<string, unknown>> {
   const lookup = await getAsaasPayment(chargeId);
 
   if (!lookup.found) {
@@ -90,7 +108,11 @@ async function cancelExternalCharge(chargeId: string): Promise<Record<string, un
   }
 
   if (lookup.status === "CANCELLED") {
-    return { provider: "asaas", outcome: "already_cancelled", previous_status: lookup.status };
+    return {
+      provider: "asaas",
+      outcome: "already_cancelled",
+      previous_status: lookup.status,
+    };
   }
 
   if (!CANCELLABLE_ASAAS_STATUSES.has(lookup.status)) {
@@ -110,7 +132,9 @@ function numericValue(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function confirmedExternalResult(value: unknown): Record<string, unknown> | null {
+function confirmedExternalResult(
+  value: unknown,
+): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const result = value as Record<string, unknown>;
   return result.outcome === "refunded" || result.outcome === "already_refunded"
@@ -123,10 +147,13 @@ async function persistExternalResult(
   operationId: string,
   externalResult: Record<string, unknown>,
 ): Promise<Response | null> {
-  const { error } = await supabase.rpc("record_order_operation_external_result", {
-    p_operation_id: operationId,
-    p_external_result: externalResult,
-  });
+  const { error } = await supabase.rpc(
+    "record_order_operation_external_result",
+    {
+      p_operation_id: operationId,
+      p_external_result: externalResult,
+    },
+  );
   return error ? databaseError(error, "record external refund") : null;
 }
 
@@ -137,7 +164,11 @@ export async function executeExternalRefund(
   allowAlreadyFullyRefunded: boolean,
 ): Promise<Record<string, unknown>> {
   if (!Number.isFinite(requestedValue) || requestedValue <= 0) {
-    throw new AsaasApiError("Valor de estorno inválido", 409, "invalid_refund_value");
+    throw new AsaasApiError(
+      "Valor de estorno inválido",
+      409,
+      "invalid_refund_value",
+    );
   }
 
   const lookup = await getAsaasPayment(chargeId);
@@ -161,7 +192,9 @@ export async function executeExternalRefund(
       provider: "asaas",
       outcome: "already_refunded",
       requested_value: requestedValue,
-      provider_refund_id: typeof matchingRefund.id === "string" ? matchingRefund.id : null,
+      provider_refund_id: typeof matchingRefund.id === "string"
+        ? matchingRefund.id
+        : null,
     };
   }
 
@@ -171,7 +204,10 @@ export async function executeExternalRefund(
     return sum + Math.max(0, numericValue(entry.value));
   }, 0);
   const paymentValue = Math.max(0, numericValue(lookup.payment.value));
-  const remainingValue = Math.max(0, Math.round((paymentValue - refundedTotal) * 100) / 100);
+  const remainingValue = Math.max(
+    0,
+    Math.round((paymentValue - refundedTotal) * 100) / 100,
+  );
 
   if (lookup.status === "REFUNDED" || remainingValue < 0.01) {
     if (allowAlreadyFullyRefunded) {
@@ -215,7 +251,10 @@ export async function executeExternalRefund(
   };
 }
 
-function reconciliationResponse(message: string, completed: Record<string, unknown>): Response {
+function reconciliationResponse(
+  message: string,
+  completed: Record<string, unknown>,
+): Response {
   return jsonResponse({
     error: message,
     code: "reconciliation_required",
@@ -231,16 +270,24 @@ export async function handleOrdersRequest(
 ): Promise<Response | null> {
   if (req.method !== "POST") return null;
 
-  const refundMatch = path.match(/^\/orders\/(presale|stock)\/([^/]+)\/refund$/);
+  const refundMatch = path.match(
+    /^\/orders\/(presale|stock)\/([^/]+)\/refund$/,
+  );
   if (refundMatch) {
     const [, orderType, orderId] = refundMatch;
     if (!UUID_PATTERN.test(orderId)) {
-      return jsonResponse({ error: "Identificador de pedido inválido", code: "invalid_order_id" }, 400);
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
     }
 
     const reason = await parseReason(req);
     if (!reason) {
-      return jsonResponse({ error: "Informe um motivo de estorno válido", code: "invalid_reason" }, 400);
+      return jsonResponse({
+        error: "Informe um motivo de estorno válido",
+        code: "invalid_reason",
+      }, 400);
     }
 
     const { data, error } = await supabase.rpc("prepare_order_refund", {
@@ -252,7 +299,9 @@ export async function handleOrdersRequest(
     if (error) return databaseError(error, "prepare refund");
     const prepared = data as PreparedRefund;
 
-    if (prepared.status === "completed") return jsonResponse({ data: prepared.result });
+    if (prepared.status === "completed") {
+      return jsonResponse({ data: prepared.result });
+    }
     if (prepared.status === "reconciliation_required") {
       return jsonResponse({
         error: "Este estorno precisa de conferência manual",
@@ -283,7 +332,10 @@ export async function handleOrdersRequest(
 
     const { data: completed, error: completeError } = await supabase.rpc(
       "complete_order_refund",
-      { p_operation_id: prepared.operation_id, p_external_result: externalResult },
+      {
+        p_operation_id: prepared.operation_id,
+        p_external_result: externalResult,
+      },
     );
     if (completeError) return databaseError(completeError, "complete refund");
     if (completed?.status === "reconciliation_required") {
@@ -295,17 +347,27 @@ export async function handleOrdersRequest(
     return jsonResponse({ data: completed });
   }
 
-  const itemMatch = path.match(/^\/orders\/(presale|stock)\/([^/]+)\/items\/(\d+)\/cancel$/);
+  const itemMatch = path.match(
+    /^\/orders\/(presale|stock)\/([^/]+)\/items\/(\d+)\/cancel$/,
+  );
   if (itemMatch) {
     const [, orderType, orderId, itemIndexText] = itemMatch;
     if (!UUID_PATTERN.test(orderId)) {
-      return jsonResponse({ error: "Identificador de pedido inválido", code: "invalid_order_id" }, 400);
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
     }
 
     const body = await parseObject(req);
     const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
-    if (!body || reason.length > 500 || typeof body.was_delivered !== "boolean") {
-      return jsonResponse({ error: "Dados do cancelamento do item são inválidos", code: "invalid_request" }, 400);
+    if (
+      !body || reason.length > 500 || typeof body.was_delivered !== "boolean"
+    ) {
+      return jsonResponse({
+        error: "Dados do cancelamento do item são inválidos",
+        code: "invalid_request",
+      }, 400);
     }
 
     const { data, error } = await supabase.rpc("prepare_item_cancellation", {
@@ -319,7 +381,9 @@ export async function handleOrdersRequest(
     if (error) return databaseError(error, "prepare item cancellation");
     const prepared = data as PreparedRefund;
 
-    if (prepared.status === "completed") return jsonResponse({ data: prepared.result });
+    if (prepared.status === "completed") {
+      return jsonResponse({ data: prepared.result });
+    }
     if (prepared.status === "reconciliation_required") {
       return jsonResponse({
         error: "Este cancelamento de item precisa de conferência manual",
@@ -358,9 +422,14 @@ export async function handleOrdersRequest(
 
     const { data: completed, error: completeError } = await supabase.rpc(
       "complete_item_cancellation",
-      { p_operation_id: prepared.operation_id, p_external_result: externalResult },
+      {
+        p_operation_id: prepared.operation_id,
+        p_external_result: externalResult,
+      },
     );
-    if (completeError) return databaseError(completeError, "complete item cancellation");
+    if (completeError) {
+      return databaseError(completeError, "complete item cancellation");
+    }
     if (completed?.status === "reconciliation_required") {
       return reconciliationResponse(
         "O pedido mudou durante o cancelamento do item e precisa de conferência manual",
@@ -375,12 +444,18 @@ export async function handleOrdersRequest(
 
   const [, orderType, orderId] = match;
   if (!UUID_PATTERN.test(orderId)) {
-    return jsonResponse({ error: "Identificador de pedido inválido", code: "invalid_order_id" }, 400);
+    return jsonResponse({
+      error: "Identificador de pedido inválido",
+      code: "invalid_order_id",
+    }, 400);
   }
 
   const reason = await parseReason(req);
   if (!reason) {
-    return jsonResponse({ error: "Informe um motivo de cancelamento válido", code: "invalid_reason" }, 400);
+    return jsonResponse({
+      error: "Informe um motivo de cancelamento válido",
+      code: "invalid_reason",
+    }, 400);
   }
 
   const { data: preparedData, error: prepareError } = await supabase.rpc(
@@ -427,10 +502,13 @@ export async function handleOrdersRequest(
     },
   );
 
-  if (completeError) return databaseError(completeError, "complete cancellation");
+  if (completeError) {
+    return databaseError(completeError, "complete cancellation");
+  }
   if (completed?.status === "reconciliation_required") {
     return jsonResponse({
-      error: "O pedido mudou durante o cancelamento e precisa de conferência manual",
+      error:
+        "O pedido mudou durante o cancelamento e precisa de conferência manual",
       code: "reconciliation_required",
       details: { operation_id: completed.operation_id },
     }, 409);

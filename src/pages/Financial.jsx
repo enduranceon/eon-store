@@ -2,9 +2,8 @@ import { useCallback, useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   DollarSign, Calendar, CheckCircle2, Clock, AlertTriangle,
-  ChevronRight, RefreshCw, Zap, Wallet, Receipt,
+  ChevronRight, RefreshCw, Wallet, Receipt,
   BarChart3, RotateCcw, CheckCheck, MessageCircle,
-  Copy, ExternalLink, Link2, Check,
 } from 'lucide-react';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
@@ -32,6 +32,12 @@ const RECEIVABLES_CACHE_KEY = 'asaas_receivables_cache_v1';
 const RECEIVABLES_CACHE_TTL = 5 * 60 * 1000;
 const FINANCIAL_PAGE_CACHE_TTL = 60 * 1000;
 const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview';
+const ADJUSTABLE_DUE_DATE_STATUSES = new Set([
+  'pending',
+  'awaiting_charge',
+  'charge_sent',
+  'overdue',
+]);
 
 function writeFinancialPageCache(data) {
   writePageCache(FINANCIAL_PAGE_CACHE_KEY, data, [
@@ -57,6 +63,7 @@ function patchFinancialPageCache(partial) {
 // ─────────────────────────────────────────────────────────────────
 function getTodayStr()      { return todayLocalStr(); }
 function getMonthStartStr() { const d = new Date(); d.setDate(1); return toLocalDateStr(d); }
+function newDueDateOperationKey() { return crypto.randomUUID(); }
 
 function daysDiff(dateStr) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -207,7 +214,10 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
   const link = o.type === 'stock'    ? `/estoque/pedidos/${o.id}`
              : o.type === 'contract' ? `/assessoria/contratos/${o.id}`
              : `/pedidos/${o.id}`;
-  const canEditDueDate = !!onEditDueDate && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
+  const hasUnsupportedInstallment = !!o.asaas_charge_id && getInstallmentN(o) > 1;
+  const canEditDueDate = !!onEditDueDate
+    && ADJUSTABLE_DUE_DATE_STATUSES.has(o.payment_status)
+    && !hasUnsupportedInstallment;
   const canCollect = !!onCollectPayment && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
 
   return (
@@ -350,7 +360,7 @@ export default function Financial() {
   const [refundDoneForm, setRefundDoneForm]   = useState({ date: '', notes: '' });
   const [savingRefund, setSavingRefund]       = useState(false);
   const [dueDateModal, setDueDateModal]       = useState(null);
-  const [dueDateForm, setDueDateForm]         = useState({ date: '' });
+  const [dueDateForm, setDueDateForm]         = useState({ date: '', idempotencyKey: '' });
   const [savingDueDate, setSavingDueDate]     = useState(false);
   const [collectionTask, setCollectionTask] = useState(null);
   const [commConfig, setCommConfig] = useState({ rules: DEFAULT_COMMUNICATION_RULES, communityLink: '' });
@@ -700,7 +710,10 @@ export default function Financial() {
   };
 
   const openDueDateEditor = (order) => {
-    setDueDateForm({ date: order.due_date || defaultPaymentDueDate() });
+    setDueDateForm({
+      date: order.due_date || defaultPaymentDueDate(),
+      idempotencyKey: newDueDateOperationKey(),
+    });
     setDueDateModal(order);
   };
 
@@ -708,40 +721,19 @@ export default function Financial() {
     if (!dueDateForm.date) return toast.error('Informe o vencimento');
     if (!dueDateModal) return;
 
-    const tableByType = {
-      presale: 'presale_orders',
-      stock: 'stock_orders',
-      contract: 'assessment_contracts',
-    };
-    const tableName = tableByType[dueDateModal.type];
-    if (!tableName) return toast.error('Tipo de venda inválido');
-
     setSavingDueDate(true);
     try {
-      const { error } = await supabase
-        .from(tableName)
-        .update({ due_date: dueDateForm.date })
-        .eq('id', dueDateModal.id);
-      if (error) throw error;
-
-      if (dueDateModal.type === 'contract') {
-        supabase.from('assessment_contract_event').insert({
-          contract_id: dueDateModal.id,
-          event_type: 'due_date_changed',
-          payload: {
-            from: dueDateModal.due_date || null,
-            to: dueDateForm.date,
-            source: 'financial_open_sales',
-          },
-          notes: 'Vencimento ajustado em Vendas em aberto',
-        }).then(({ error: eventError }) => {
-          if (eventError) console.warn('[contract_event] falha ao registrar due_date_changed:', eventError.message);
-        });
-      }
+      const result = await updateOrderDueDate(
+        dueDateModal.type,
+        dueDateModal.id,
+        dueDateForm.date,
+        dueDateForm.idempotencyKey || newDueDateOperationKey(),
+      );
+      const savedDueDate = result?.due_date || dueDateForm.date;
 
       const nextOrders = orders.map(o =>
         o.id === dueDateModal.id && o.type === dueDateModal.type
-          ? { ...o, due_date: dueDateForm.date }
+          ? { ...o, due_date: savedDueDate }
           : o
       );
       setOrders(nextOrders);
@@ -749,7 +741,14 @@ export default function Financial() {
       toast.success('Vencimento atualizado');
       setDueDateModal(null);
     } catch (e) {
-      toast.error(e.message || 'Erro ao salvar vencimento');
+      if (e.code === 'reconciliation_required') {
+        const operationId = e.details?.operation_id;
+        toast.error(`${e.message || 'Alteração pendente de conferência'}${operationId ? ` · Protocolo ${operationId}` : ''}`);
+      } else if (e.code === 'operation_in_progress') {
+        toast.error('Esta alteração já está em processamento. Aguarde alguns segundos e tente novamente.');
+      } else {
+        toast.error(e.message || 'Erro ao salvar vencimento');
+      }
     } finally {
       setSavingDueDate(false);
     }
@@ -1149,13 +1148,16 @@ export default function Financial() {
                   type="date"
                   className="mt-1"
                   value={dueDateForm.date}
-                  onChange={e => setDueDateForm({ date: e.target.value })}
+                  onChange={e => setDueDateForm({
+                    date: e.target.value,
+                    idempotencyKey: newDueDateOperationKey(),
+                  })}
                 />
               </div>
 
               {dueDateModal.asaas_charge_id && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                  Esta venda já tem cobrança Asaas. Aqui o vencimento interno do lançamento será ajustado.
+                  Esta venda tem cobrança Asaas. O vencimento será confirmado no Asaas antes de atualizar o lançamento interno.
                 </p>
               )}
 

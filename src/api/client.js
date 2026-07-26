@@ -59,6 +59,7 @@ export async function apiRequest(path, {
   method = 'GET',
   body,
   accessToken,
+  idempotencyKey,
   signal,
 } = {}) {
   if (!SUPABASE_URL || !SUPABASE_PUBLIC_KEY) {
@@ -76,6 +77,7 @@ export async function apiRequest(path, {
     headers: {
       apikey: SUPABASE_PUBLIC_KEY,
       Authorization: `Bearer ${token}`,
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -115,6 +117,29 @@ export async function cancelOrder(orderType, orderId, reason, options = {}) {
     method: 'POST',
     body: { reason },
   });
+  return response.data;
+}
+
+export async function updateOrderDueDate(
+  orderType,
+  orderId,
+  dueDate,
+  idempotencyKey,
+  options = {},
+) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/due-date`, {
+    ...options,
+    method: 'PATCH',
+    body: { due_date: dueDate },
+    idempotencyKey,
+  });
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+  };
+  if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
+  invalidatePageCacheByTag('asaas_payments');
   return response.data;
 }
 

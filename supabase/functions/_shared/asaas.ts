@@ -50,7 +50,11 @@ function errorMessage(payload: AsaasPayload, fallback: string): string {
   return fallback;
 }
 
-async function asaasFetch(path: string, init: RequestInit = {}): Promise<Response> {
+async function asaasFetch(
+  path: string,
+  init: RequestInit = {},
+  unavailableCode = "asaas_unavailable",
+): Promise<Response> {
   const { baseUrl, apiKey } = config();
 
   try {
@@ -64,11 +68,14 @@ async function asaasFetch(path: string, init: RequestInit = {}): Promise<Respons
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    console.error("api-v1 Asaas request failed:", error instanceof Error ? error.message : error);
+    console.error(
+      "api-v1 Asaas request failed:",
+      error instanceof Error ? error.message : error,
+    );
     throw new AsaasApiError(
       "Não foi possível confirmar a cobrança no Asaas",
       502,
-      "asaas_unavailable",
+      unavailableCode,
     );
   }
 }
@@ -77,8 +84,14 @@ export type AsaasPaymentLookup =
   | { found: false }
   | { found: true; status: string; payment: AsaasPayload };
 
-export async function getAsaasPayment(chargeId: string): Promise<AsaasPaymentLookup> {
-  const response = await asaasFetch(`/payments/${encodeURIComponent(chargeId)}`);
+export async function getAsaasPayment(
+  chargeId: string,
+): Promise<AsaasPaymentLookup> {
+  const response = await asaasFetch(
+    `/payments/${encodeURIComponent(chargeId)}`,
+    {},
+    "asaas_lookup_unavailable",
+  );
   const payload = await responsePayload(response);
 
   if (response.status === 404) return { found: false };
@@ -90,14 +103,21 @@ export async function getAsaasPayment(chargeId: string): Promise<AsaasPaymentLoo
     );
   }
 
-  const status = typeof payload.status === "string" ? payload.status : "UNKNOWN";
+  const status = typeof payload.status === "string"
+    ? payload.status
+    : "UNKNOWN";
   return { found: true, status, payment: payload };
 }
 
-export async function deleteAsaasPayment(chargeId: string): Promise<"deleted" | "already_missing"> {
-  const response = await asaasFetch(`/payments/${encodeURIComponent(chargeId)}`, {
-    method: "DELETE",
-  });
+export async function deleteAsaasPayment(
+  chargeId: string,
+): Promise<"deleted" | "already_missing"> {
+  const response = await asaasFetch(
+    `/payments/${encodeURIComponent(chargeId)}`,
+    {
+      method: "DELETE",
+    },
+  );
   const payload = await responsePayload(response);
 
   if (response.status === 404) return "already_missing";
@@ -112,16 +132,51 @@ export async function deleteAsaasPayment(chargeId: string): Promise<"deleted" | 
   return "deleted";
 }
 
+export async function updateAsaasPaymentDueDate(
+  chargeId: string,
+  billingType: string,
+  value: number,
+  dueDate: string,
+): Promise<AsaasPayload> {
+  const response = await asaasFetch(
+    `/payments/${encodeURIComponent(chargeId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        billingType,
+        value,
+        dueDate,
+      }),
+    },
+    "asaas_due_date_update_unavailable",
+  );
+  const payload = await responsePayload(response);
+
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "O Asaas recusou a alteração de vencimento"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_due_date_update_failed",
+    );
+  }
+
+  return payload;
+}
+
 export async function refundAsaasPayment(
   chargeId: string,
   value: number,
   description: string,
 ): Promise<AsaasPayload> {
-  const response = await asaasFetch(`/payments/${encodeURIComponent(chargeId)}/refund`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value, description }),
-  });
+  const response = await asaasFetch(
+    `/payments/${encodeURIComponent(chargeId)}/refund`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value, description }),
+    },
+  );
   const payload = await responsePayload(response);
 
   if (!response.ok) {
