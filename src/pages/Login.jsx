@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Store, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/api/db';
+import { getCurrentAdmin } from '@/api/client';
 import { toast } from 'sonner';
 
 export default function Login() {
@@ -16,14 +17,15 @@ export default function Login() {
     if (!email || !password) return toast.error('Preencha e-mail e senha');
 
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setLoading(false);
       return toast.error('E-mail ou senha incorretos');
     }
 
-    const { data: isAdmin, error: accessError } = await supabase.rpc('is_app_admin');
-    if (accessError || !isAdmin) {
+    try {
+      await getCurrentAdmin({ accessToken: data.session?.access_token });
+    } catch {
       await supabase.auth.signOut();
       setLoading(false);
       return toast.error('Esta conta não tem acesso ao painel');

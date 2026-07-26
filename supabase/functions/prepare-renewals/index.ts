@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { requireAdmin } from "../_shared/requireAdmin.ts";
 
 // Cria contratos de renovação em status 'draft' para contratos que estão prestes a vencer.
 // Idempotente: usa renewal_generated=true como flag para nunca gerar 2x.
@@ -44,6 +45,10 @@ Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
+
+  // 🔒 AUTHZ: só admin allowlistado
+  const gate = await requireAdmin(req);
+  if (!gate.ok) return jsonResponse({ error: "unauthorized" }, gate.status);
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,

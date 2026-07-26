@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/api/db';
+import { getCurrentAdmin } from '@/api/client';
 import { AuthContext } from '@/contexts/AuthContext';
 import { clearPageCache } from '@/lib/page-cache';
 
@@ -33,15 +34,22 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // Usuário novo (ou primeira validação): faz checagem de admin
-      const { data: isAdmin, error } = await supabase.rpc('is_app_admin');
+      // Usuário novo (ou primeira validação): valida o JWT e a permissão na API.
+      let accessGranted = false;
+      let accessError = null;
+      try {
+        await getCurrentAdmin({ accessToken: session.access_token });
+        accessGranted = true;
+      } catch (error) {
+        accessError = error;
+      }
       if (!active) return;
 
-      if (error || !isAdmin) {
+      if (!accessGranted) {
         verifiedIdRef.current = null;
         setUser(null);
-        if (error) console.error('is_app_admin falhou:', error);
-        else await supabase.auth.signOut();
+        if (accessError) console.error('Validação da sessão na API falhou:', accessError);
+        await supabase.auth.signOut();
       } else {
         verifiedIdRef.current = sessionUserId;
         setUser(session.user);

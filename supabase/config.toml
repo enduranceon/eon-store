@@ -10,7 +10,13 @@ verify_jwt = false
 [functions.validate-coupon]
 verify_jwt = false
 
+[functions.public-assessment-prospect-test]
+verify_jwt = false
+
 # Admin/internal functions. Keep JWT verification enabled.
+[functions.api-v1]
+verify_jwt = true
+
 [functions.create-asaas-charge]
 verify_jwt = true
 

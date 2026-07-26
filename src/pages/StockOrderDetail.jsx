@@ -19,7 +19,7 @@ import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-method
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
-import { returnCouponUse } from '@/lib/coupon';
+import { cancelOrder as cancelOrderViaApi, cancelOrderItem, refundOrder } from '@/api/client';
 
 const PAYMENT_STATUS = {
   pending:         { label: 'Pedido recebido',   badge: 'secondary' },
@@ -243,27 +243,39 @@ export default function StockOrderDetail() {
 
   const confirmCancelAsaasCharge = async () => {
     const reason = cancelReason === 'Outro' ? cancelReasonCustom : cancelReason;
+    if (!reason?.trim()) return toast.error('Informe o motivo do cancelamento');
+
+    setAsaasLoading(true);
     try {
-      await callAsaas('cancel');
-      await supabase.from('stock_orders').update({ cancellation_reason: reason || null }).eq('id', id);
-      await returnCouponUse(id, 'stock');
+      await cancelOrderViaApi('stock', id, reason);
       setCancelModal(false);
       setAsaasStatus(null);
-      toast.success('Cobrança cancelada.');
+      toast.success('Pedido e cobrança cancelados.');
       load();
-    } catch (e) { toast.error(e.message || 'Erro ao cancelar'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cancelar');
+    } finally {
+      setAsaasLoading(false);
+    }
   };
 
   const confirmRefund = async () => {
     const reason = refundReason === 'Outro' ? refundReasonCustom : refundReason;
+    if (!reason?.trim()) return toast.error('Informe o motivo do estorno');
+
+    setAsaasLoading(true);
     try {
-      await callAsaas('refund', { reason });
-      await supabase.from('stock_orders').update({ cancellation_reason: reason || null }).eq('id', id);
-      await returnCouponUse(id, 'stock');
+      const result = await refundOrder('stock', id, reason);
       setRefundModal(false);
-      toast.success('Estorno realizado com sucesso!');
+      toast.success(result?.awaiting_physical_return
+        ? 'Estorno realizado — aguardando devolução física.'
+        : 'Estorno realizado com sucesso!');
       load();
-    } catch (e) { toast.error(e.message || 'Erro ao estornar'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao estornar');
+    } finally {
+      setAsaasLoading(false);
+    }
   };
 
   const PAYMENT_METHOD_LABEL = {
@@ -434,88 +446,22 @@ export default function StockOrderDetail() {
 
   const confirmCancelItem = async () => {
     const item = items[cancelItemIndex];
-    const itemPrice = (item.sale_price || 0) * item.quantity;
-
-    // Calcula novo estado dos itens
-    const newItems = items.map((it, i) =>
-      i === cancelItemIndex ? { ...it, cancelled: true, cancelled_at: new Date().toISOString() } : it
-    );
-    const activeItems = newItems.filter(it => !it.cancelled);
-    const newSubtotal = activeItems.reduce((sum, it) => sum + (it.sale_price || 0) * it.quantity, 0);
-
-    // Recalcula desconto de cupom proporcionalmente
-    const oldDiscount = Number(order.discount_value) || 0;
-    const oldSubtotal = (order.total_value || 0) + oldDiscount;
-    let newDiscount = 0;
-    if (oldDiscount > 0 && oldSubtotal > 0) {
-      newDiscount = Math.round((newSubtotal * (oldDiscount / oldSubtotal)) * 100) / 100;
-      newDiscount = Math.min(newDiscount, newSubtotal);
-    }
-    const newTotal = Math.max(0, newSubtotal - newDiscount);
-    const refundValue = Math.max(0, (order.total_value || 0) - newTotal);
-    const allCancelled = activeItems.length === 0;
-    const newPaymentStatus = allCancelled
-      ? (order.payment_status === 'paid' ? 'refunded' : 'cancelled')
-      : order.payment_status;
+    if (!item) return toast.error('Item não encontrado');
 
     setCancelItemLoading(true);
     try {
-      // 1. Asaas PRIMEIRO — se falhar, nada é alterado no DB
-      if (order.payment_status === 'paid' && order.asaas_charge_id && refundValue > 0) {
-        await callAsaas('refund', { value: refundValue, reason: cancelItemReason || 'Cancelamento de peça' });
-      }
-
-      // 3. Atualiza pedido
-      await supabase.from('stock_orders').update({
-        items: newItems,
-        total_value: newTotal,
-        discount_value: newDiscount,
-        ...(allCancelled ? { payment_status: newPaymentStatus } : {}),
-      }).eq('id', id);
-
-      // 3b. Se o pagamento foi manual, recalcula parcelas em asaas_payments
-      if (order.manual_payment && !allCancelled) {
-        await adjustManualInstallmentsValue(
-          { order_id: id, order_type: 'stock' },
-          newTotal,
-        );
-      }
-
-      // 4. Reposição automática de estoque se não foi entregue
-      if (!cancelItemDelivered && item.product_id) {
-        const { data: prod } = await supabase
-          .from('stock_products').select('quantity').eq('id', item.product_id).single();
-        if (prod) {
-          await supabase.from('stock_products')
-            .update({ quantity: (prod.quantity || 0) + item.quantity })
-            .eq('id', item.product_id);
-        }
-      }
-
-      // 5. Registra devolução
-      await supabase.from('order_returns').insert({
-        order_id: id,
-        order_type: 'stock',
-        order_number: order.order_number,
-        customer_name: order.customer_name,
-        item_index: cancelItemIndex,
-        product_id: item.product_id || null,
-        product_name: item.product_name,
-        variation: item.variation || null,
-        quantity: item.quantity,
-        unit_price: item.sale_price || 0,
-        refund_value: refundValue,
-        was_delivered: cancelItemDelivered,
-        status: cancelItemDelivered ? 'pending_return' : 'completed',
-        notes: cancelItemReason || null,
+      const result = await cancelOrderItem('stock', id, cancelItemIndex, {
+        reason: cancelItemReason,
+        wasDelivered: cancelItemDelivered,
       });
 
-      // 6. Se todas as peças foram canceladas, devolve uso de cupom
-      if (allCancelled) await returnCouponUse(id, 'stock');
-
       setCancelItemModal(false);
-      const stockMsg = !cancelItemDelivered && item.product_id ? ' Estoque reposto automaticamente.' : '';
-      toast.success(cancelItemDelivered ? 'Peça cancelada — aguardando devolução física.' : `Peça cancelada.${stockMsg}`);
+      const stockMsg = !result?.awaiting_physical_return && item.product_id
+        ? ' Estoque reposto automaticamente.'
+        : '';
+      toast.success(result?.awaiting_physical_return
+        ? 'Peça cancelada — aguardando devolução física.'
+        : `Peça cancelada.${stockMsg}`);
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao cancelar peça');
@@ -891,12 +837,17 @@ export default function StockOrderDetail() {
               {order.payment_status === 'paid' && order.asaas_charge_id && (() => {
                 const itemPrice = (items[cancelItemIndex].sale_price || 0) * items[cancelItemIndex].quantity;
                 const oldDiscount = Number(order.discount_value) || 0;
-                const oldSubtotal = (order.total_value || 0) + oldDiscount;
-                const newSubtotal = oldSubtotal - itemPrice;
+                const oldManualDiscount = Number(order.manual_discount) || 0;
+                const oldSubtotal = items.filter(it => !it.cancelled).reduce(
+                  (sum, it) => sum + (it.sale_price || 0) * it.quantity,
+                  0,
+                );
+                const newSubtotal = Math.max(0, oldSubtotal - itemPrice);
                 const newDiscount = oldDiscount > 0 && oldSubtotal > 0
                   ? Math.min(Math.round((newSubtotal * (oldDiscount / oldSubtotal)) * 100) / 100, newSubtotal)
                   : 0;
-                const refund = Math.max(0, (order.total_value || 0) - (newSubtotal - newDiscount));
+                const newManualDiscount = Math.min(oldManualDiscount, Math.max(0, newSubtotal - newDiscount));
+                const refund = Math.max(0, (order.total_value || 0) - (newSubtotal - newDiscount - newManualDiscount));
                 return (
                   <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-700">
                     Estorno de {formatCurrency(refund)} será processado no Asaas.
