@@ -324,6 +324,24 @@ function baseTask(kind, bucket, sale, extra = {}) {
   };
 }
 
+// Uma etapa de cobrança vencida conta como tratada se QUALQUER mensagem de cobrança
+// foi registrada depois que a etapa disparou — independente da tela de origem
+// (Central, Vendas em aberto, detalhe do pedido/contrato). Sem isso, enviar por
+// outra tela deixava a etapa "pendente" na fila e induzia cobrança duplicada.
+function chargeMessageSentSince(sale, events, triggerDate) {
+  if (!triggerDate) return false;
+  if (sale.paymentMessageSentAt && toLocalDateStr(sale.paymentMessageSentAt) >= triggerDate) return true;
+  return events.some(ev => {
+    const isChargeMessage =
+      ev.event_type === 'payment_message_sent' ||
+      ev.new_status === 'charge_sent' ||
+      ['charge_sent', 'charge_resent'].includes(eventPayload(ev).action);
+    if (!isChargeMessage) return false;
+    const sentDate = toLocalDateStr(ev.created_at);
+    return Boolean(sentDate && sentDate >= triggerDate);
+  });
+}
+
 function buildChargeTasks(sale, todayStr, { sendRule, overdueRules = [] }, events = []) {
   if (TERMINAL_PAYMENT_STATUSES.has(sale.paymentStatus)) return [];
   if (!OPEN_PAYMENT_STATUSES.has(sale.paymentStatus)) return [];
@@ -335,7 +353,9 @@ function buildChargeTasks(sale, todayStr, { sendRule, overdueRules = [] }, event
     const dueOverdueRules = overdueRules
       .filter(rule => {
         const offset = Math.max(0, Number(rule.days_offset) || 0);
-        return dueDelta <= -offset && !ruleAlreadyHandled(events, rule, todayStr);
+        return dueDelta <= -offset
+          && !ruleAlreadyHandled(events, rule, todayStr)
+          && !chargeMessageSentSince(sale, events, addDays(sale.dueDate, offset));
       })
       .sort((a, b) => (Number(a.days_offset) || 0) - (Number(b.days_offset) || 0));
 
@@ -581,15 +601,22 @@ export function buildTaskMessage(task, options = {}) {
   const name = firstName(task.customerName);
   const itemsText = itemLines(task.items || []);
 
-  if (task.kind === TASK_KIND.CHARGE_SEND || task.kind === TASK_KIND.CHARGE_OVERDUE) {
+  if (task.kind === TASK_KIND.CHARGE_OVERDUE) {
+    // Lembrete de cobrança vencida — mensagem direta (sem número de contrato nem lista de itens)
+    const due = dueDate ? formatDate(dueDate) : '';
+    let msg = `Oi, ${name}!\n\n`;
+    msg += `Passando pra lembrar da cobrança de *${formatCurrency(task.totalValue)}* que venceu${due ? ` em *${due}*` : ''}.\n\n`;
+    if (paymentLink) msg += `Link de pagamento:\n${paymentLink}\n\n`;
+    else if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
+    msg += 'Se já tiver pago, é só desconsiderar. Qualquer dúvida, me chama aqui!';
+    return msg;
+  }
+
+  if (task.kind === TASK_KIND.CHARGE_SEND) {
     const saleType = task.sourceType === 'contract' ? 'contrato' : 'pedido';
     const due = dueDate ? formatDate(dueDate) : '';
     let msg = `Olá, ${name}! Tudo bem?\n\n`;
-    if (task.kind === TASK_KIND.CHARGE_OVERDUE) {
-      msg += `Estou passando porque a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*, venceu${due ? ` em *${due}*` : ''}.\n\n`;
-    } else {
-      msg += `Segue a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
-    }
+    msg += `Segue a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
     if (itemsText) msg += `Itens:\n${itemsText}\n\n`;
     if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
     if (paymentLink) msg += `Link de pagamento:\n${paymentLink}\n\n`;

@@ -27,7 +27,6 @@ const ASSESSORIA_ITEMS = [
   { label: 'Renovações',     icon: RefreshCcw,    to: '/assessoria/renovacoes',   badge: 'renewals' },
   { label: 'Prospects',      icon: UserPlus,      to: '/assessoria/prospects',    badge: 'prospects' },
   { label: 'Auditoria',      icon: ListChecks,    to: '/assessoria/auditoria' },
-  { label: 'Régua',          icon: CalendarClock, to: '/assessoria/regua' },
   { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
   { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },
   { label: 'Fechamento',     icon: DollarSign,    to: '/assessoria/fechamento' },
