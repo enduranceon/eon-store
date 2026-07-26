@@ -4,6 +4,7 @@ import { requireAdmin } from "../_shared/requireAdmin.ts";
 import { createServiceClient } from "../_shared/serviceClient.ts";
 import { handleCatalogRequest } from "./catalog.ts";
 import { handleOrdersRequest } from "./orders.ts";
+import { handlePaymentsRequest } from "./payments.ts";
 import { handleReturnsRequest } from "./returns.ts";
 
 function routePath(req: Request): string {
@@ -53,6 +54,14 @@ Deno.serve(async (req: Request) => {
 
   const returnsResponse = await handleReturnsRequest(req, path, serviceClient);
   if (returnsResponse) return returnsResponse;
+
+  const paymentsResponse = await handlePaymentsRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (paymentsResponse) return paymentsResponse;
 
   const ordersResponse = await handleOrdersRequest(
     req,

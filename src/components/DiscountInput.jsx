@@ -73,18 +73,19 @@ export default function DiscountInput({
     if (numValue > safeSubtotal) return toast.error('Desconto maior que o subtotal');
     setSaving(true);
     try {
-      await onSave?.(numValue, reason, recurring);
+      const saveResult = await onSave?.(numValue, reason, recurring);
       // Log auditoria (não bloqueia salvar se falhar)
       if (entityId && entityType && numValue !== currentDiscount) {
         try {
-          await DiscountLog.create({
-            entity_type:    entityType,
-            entity_id:      entityId,
-            previous_value: Number(currentDiscount) || 0,
-            new_value:      numValue,
-            reason:         reason || null,
-          });
-          // Atualiza histórico local
+          if (!saveResult?.audit_logged) {
+            await DiscountLog.create({
+              entity_type:    entityType,
+              entity_id:      entityId,
+              previous_value: Number(currentDiscount) || 0,
+              new_value:      numValue,
+              reason:         reason || null,
+            });
+          }
           const fresh = await DiscountLog.filter({ entity_type: entityType, entity_id: entityId }, '-created_at');
           setHistory(fresh);
         } catch (e) { console.error('Log error:', e); }

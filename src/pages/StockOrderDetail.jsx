@@ -13,7 +13,7 @@ import { StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
-import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue } from '@/lib/manual-payment';
+import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, reopenManualPayment } from '@/lib/manual-payment';
 import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
@@ -409,18 +409,7 @@ export default function StockOrderDetail() {
   const reopenPayment = async () => {
     setReopenLoading(true);
     try {
-      await supabase.from('asaas_payments')
-        .delete()
-        .eq('order_id', id)
-        .eq('order_type', 'stock')
-        .eq('source', 'manual');
-      await StockOrder.update(id, {
-        payment_status: 'awaiting_charge',
-        payment_date:   null,
-        payment_method: null,
-        manual_payment: false,
-        manual_fee:     null,
-      });
+      await reopenManualPayment({ order_id: id, order_type: 'stock' });
       toast.success('Pagamento revertido. Pedido voltou para "Pedido recebido".');
       setReopenModal(false);
       load();
@@ -599,19 +588,25 @@ export default function StockOrderDetail() {
           const subItens = activeItems.reduce((s, it) => s + (it.sale_price || 0) * it.quantity, 0);
           const cupom = Number(order.discount_value) || 0;
           const newTotal = Math.max(0, subItens - cupom - newValue);
+          if (order.manual_payment && order.payment_status === 'paid') {
+            const result = await adjustManualInstallmentsValue(
+              { order_id: order.id, order_type: 'stock' },
+              {
+                total: newTotal,
+                manualDiscount: newValue,
+                discountReason: reason,
+              },
+            );
+            await load();
+            return result;
+          }
           await StockOrder.update(order.id, {
             manual_discount: newValue,
             discount_reason: reason || null,
             total_value:     newTotal,
           });
-          // Recalcula parcelas manuais se já estava pago manualmente
-          if (order.manual_payment && order.payment_status === 'paid') {
-            await adjustManualInstallmentsValue(
-              { order_id: order.id, order_type: 'stock' },
-              newTotal,
-            );
-          }
           await load();
+          return undefined;
         }}
       />
 

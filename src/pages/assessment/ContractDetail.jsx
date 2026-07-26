@@ -29,7 +29,7 @@ import {
   registerExternalAssessmentContractCharge,
 } from '@/lib/assessment-contract-operations';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
-import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel } from '@/lib/manual-payment';
+import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel, reopenManualPayment } from '@/lib/manual-payment';
 import {
   getActivationStatusForContract,
   getContractKindLabel,
@@ -837,26 +837,7 @@ export default function ContractDetail() {
   const reopenPayment = async () => {
     setReopenLoading(true);
     try {
-      // 1. Apaga parcelas manuais em asaas_payments
-      await supabase.from('asaas_payments')
-        .delete()
-        .eq('order_id', id)
-        .eq('order_type', 'contract')
-        .eq('source', 'manual');
-
-      // 2. Reseta contrato
-      await AssessmentContract.update(id, {
-        payment_status: 'pending',
-        payment_date:   null,
-        payment_method: null,
-        manual_payment: false,
-        manual_fee:     null,
-      });
-
-      await logEvent('payment_reverted', {
-        method_before: contract.payment_method,
-        fee_before:    contract.manual_fee,
-      }, 'Pagamento manual revertido');
+      await reopenManualPayment({ order_id: id, order_type: 'contract' });
 
       toast.success('Pagamento revertido. Contrato voltou para "Pendente".');
       setReopenModal(false);
@@ -1029,15 +1010,6 @@ export default function ContractDetail() {
         { order_id: id, order_type: 'contract', external_reference: contract.contract_number },
         totalV,
       );
-      await activateDraftIfNeeded();
-      await logEvent('manual_payment_recorded', {
-        method:       method.internal_code || method.kind,
-        method_name:  method.name,
-        date:         manualPayForm.date,
-        value:        totalV,
-        fee:          result.total_fee,
-        installments: result.installments,
-      });
       toast.success(`Pagamento registrado! ${result.installments > 1 ? `${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
       setManualPayModal(false);
       load();
@@ -1326,7 +1298,12 @@ export default function ContractDetail() {
 
       {/* Desconto manual */}
       <DiscountInput
-        subtotal={Number(plan?.price_total || 0) + (Number(contract.enrollment_fee) || 0)}
+        subtotal={Math.max(
+          0,
+          (Number(planVal('price_total')) || 0) +
+          (Number(contract.enrollment_fee) || 0) -
+          (Number(contract.credit_balance) || 0),
+        )}
         currentDiscount={Number(contract.manual_discount) || 0}
         currentReason={contract.discount_reason || ''}
         currentRecurring={contract.discount_recurring || false}
@@ -1337,22 +1314,30 @@ export default function ContractDetail() {
         entityType="assessment_contract"
         entityId={contract.id}
         onSave={async (newValue, reason, recurring) => {
+          if (contract.manual_payment && contract.payment_status === 'paid') {
+            const basePrice = Number(planVal('price_total')) || 0;
+            const enroll    = Number(contract.enrollment_fee) || 0;
+            const credit    = Number(contract.credit_balance) || 0;
+            const newTotal  = Math.max(0, basePrice + enroll - newValue - credit);
+            const result = await adjustManualInstallmentsValue(
+              { order_id: contract.id, order_type: 'contract' },
+              {
+                total: newTotal,
+                manualDiscount: newValue,
+                discountReason: reason,
+                discountRecurring: recurring,
+              },
+            );
+            await load();
+            return result;
+          }
           await AssessmentContract.update(contract.id, {
             manual_discount:    newValue,
             discount_reason:    reason || null,
             discount_recurring: recurring || false,
           });
-          // Recalcula parcelas manuais se já estava pago manualmente
-          if (contract.manual_payment && contract.payment_status === 'paid') {
-            const basePrice = Number(planVal('price_total')) || 0;
-            const enroll    = Number(contract.enrollment_fee) || 0;
-            const newTotal  = Math.max(0, basePrice + enroll - newValue);
-            await adjustManualInstallmentsValue(
-              { order_id: contract.id, order_type: 'contract' },
-              newTotal,
-            );
-          }
           await load();
+          return undefined;
         }}
       />
 
@@ -1366,7 +1351,12 @@ export default function ContractDetail() {
         const methodLabel = getPaymentMethodLabel(contract.payment_method);
         const planTotal = Number(planVal('price_total')) || 0;
         const enroll    = Number(contract.enrollment_fee) || 0;
-        const totalPaid = planTotal + enroll - (Number(contract.manual_discount) || 0);
+        const totalPaid = Math.max(
+          0,
+          planTotal + enroll -
+          (Number(contract.manual_discount) || 0) -
+          (Number(contract.credit_balance) || 0),
+        );
         const isRefunded = contract.payment_status === 'refunded';
         const blockColors = isRefunded
           ? { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', valueText: 'text-purple-800' }
