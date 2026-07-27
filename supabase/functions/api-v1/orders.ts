@@ -395,7 +395,11 @@ export async function handleOrdersRequest(
         body.external_payment_link !== undefined &&
         typeof body.external_payment_link !== "string") ||
       (body.due_date !== null && body.due_date !== undefined &&
-        typeof body.due_date !== "string")
+        typeof body.due_date !== "string") ||
+      (body.metadata !== undefined &&
+        (!body.metadata || typeof body.metadata !== "object" ||
+          Array.isArray(body.metadata) ||
+          JSON.stringify(body.metadata).length > 30_000))
     ) {
       return jsonResponse({
         error: "Dados da mensagem de cobrança inválidos",
@@ -403,12 +407,13 @@ export async function handleOrdersRequest(
       }, 400);
     }
     const { data, error } = await supabase.rpc(
-      "mark_order_payment_message_sent",
+      "mark_order_payment_message_sent_with_metadata",
       {
         p_order_type: orderType,
         p_order_id: orderId,
         p_external_payment_link: body.external_payment_link ?? null,
         p_due_date: body.due_date ?? null,
+        p_metadata: body.metadata ?? {},
         p_actor_id: actorId,
       },
     );

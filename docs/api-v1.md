@@ -187,6 +187,13 @@ explicitamente permitidos pelo backend:
 - `revenue-centers`: centros de receita;
 - `payment-methods`: configuração administrativa de formas, prazos e parcelas.
 
+Os demais cadastros administrativos usam o contrato equivalente em
+`/admin-records/:resource`: campanhas, produtos, clientes, cupons, descontos,
+regras de renovação e comunicação, modalidades, planos, coaches e parâmetros
+de repasse. A API também expõe comandos específicos para mesclar clientes,
+substituir itens de uma venda, registrar eventos de comunicação e transicionar
+fechamentos.
+
 Rotas:
 
 ```text
@@ -210,15 +217,12 @@ protegidos pela chave estrangeira. O endpoint operacional
 `GET /payments/methods` continua retornando somente métodos ativos, enquanto
 `/catalog/payment-methods` atende a tela administrativa completa.
 
-## Próximos módulos
+## Estado da migração
 
-As próximas rotas devem cobrir criação, consulta, cancelamento e reconciliação
-de cobranças Asaas, demais escritas de vendas e os cadastros ainda atendidos
-pelo proxy legado em `src/api/db.js`. O acesso direto às tabelas só deve ser
-revogado depois que todos os consumidores daquele domínio estiverem usando a
-API. Para `payment_methods`, as gravações diretas de `anon` e `authenticated`
-já podem ser revogadas; a leitura autenticada permanece temporariamente para o
-diagnóstico administrativo legado.
+Todos os consumidores de escrita do frontend usam a API ou as entradas
+públicas dedicadas. Os grants de `INSERT`, `UPDATE`, `DELETE` e `TRUNCATE` de
+`anon` e `authenticated` nas tabelas públicas foram revogados. Leituras do
+painel continuam protegidas pelas políticas administrativas de RLS.
 
 O RPC antigo `record_manual_payment` permanece temporariamente como fallback de
 rollout, restrito à mesma allowlist administrativa. O frontend novo não o usa;

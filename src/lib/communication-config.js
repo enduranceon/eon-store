@@ -1,4 +1,6 @@
 import { supabase } from '@/api/db';
+import { CommunicationRule } from '@/api/entities';
+import { saveCommunityLinkSetting } from '@/api/client';
 import { RENEWAL_ATTENTION_WINDOW_OFFSET } from '@/lib/assessment-renewal-window';
 
 export const DEFAULT_COMMUNITY_LINK = 'https://chat.whatsapp.com/Eow2KTzNHwr0Q5n5XrTow3';
@@ -187,15 +189,7 @@ export async function loadCommunicationConfig() {
 }
 
 export async function saveCommunityLink(url) {
-  const payload = {
-    key: 'community_link',
-    value: { url: String(url || '').trim() },
-    updated_at: new Date().toISOString(),
-  };
-  const { error } = await supabase
-    .from('communication_settings')
-    .upsert(payload, { onConflict: 'key' });
-  if (error) throw error;
+  await saveCommunityLinkSetting(String(url || '').trim());
 }
 
 export async function saveCommunicationRule(rule) {
@@ -210,15 +204,13 @@ export async function saveCommunicationRule(rule) {
     message_template: String(rule.message_template || '').trim(),
     active: !!rule.active,
     order_index: Number(rule.order_index) || 0,
-    updated_at: new Date().toISOString(),
   };
   if (!payload.name) throw new Error('Nome obrigatorio');
   if (!payload.message_template) throw new Error('Template obrigatorio');
 
-  const { error } = await supabase
-    .from('communication_rules')
-    .upsert(payload, { onConflict: 'slug' });
-  if (error) throw error;
+  const [existing] = await CommunicationRule.filter({ slug: payload.slug }, 'order_index');
+  if (existing) await CommunicationRule.update(existing.id, payload);
+  else await CommunicationRule.create(payload);
 }
 
 // trigger_event + task_kind são fixados pelo banco (CHECK), então ao criar uma
@@ -264,6 +256,5 @@ export async function duplicateCommunicationRule(rule) {
 
 export async function deleteCommunicationRule(id) {
   if (!id) throw new Error('Regra sem id');
-  const { error } = await supabase.from('communication_rules').delete().eq('id', id);
-  if (error) throw error;
+  await CommunicationRule.delete(id);
 }

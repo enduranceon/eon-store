@@ -26,6 +26,7 @@ import {
   createOrderCharge,
   markOrderPaymentMessageSent,
   refundOrder,
+  replacePresaleOrderItems,
   syncOrderChargeStatus,
   updateOrderDiscount,
   updateOrderFulfillment,
@@ -702,10 +703,6 @@ export default function OrderDetail() {
     };
 
     const newItems = [...items, newItem];
-    const activeItems = newItems.filter(it => !it.cancelled);
-    const newSubtotal = activeItems.reduce((s, it) => s + ((it.sale_price || 0) + (it.extras_total || 0)) * it.quantity, 0);
-    const newTotalCost = activeItems.reduce((s, it) => s + ((it.cost_price || 0) * it.quantity), 0);
-    const newTotal = Math.max(0, newSubtotal - (Number(order.discount_value) || 0) - (Number(order.manual_discount) || 0));
 
     setAddItemLoading(true);
     try {
@@ -714,31 +711,8 @@ export default function OrderDetail() {
         await cancelOrderCharge('presale', id, 'Itens da venda alterados');
       }
 
-      // 2) Limpa parcelas manuais (se houver) — vai gerar nova cobrança depois
-      await supabase.from('asaas_payments')
-        .delete()
-        .eq('order_id', id)
-        .eq('order_type', 'presale')
-        .eq('source', 'manual');
-
-      // 3) Atualiza pedido: novos itens + zera tudo de cobrança, volta para "Pedido recebido"
-      await supabase.from('presale_orders').update({
-        items: newItems,
-        total_value: newTotal,
-        total_cost: newTotalCost,
-        payment_status: 'awaiting_charge',
-        payment_method: null,
-        payment_date: null,
-        due_date: null,
-        asaas_charge_id: null,
-        asaas_payment_link: null,
-        asaas_pix_qrcode: null,
-        asaas_pix_copy: null,
-        external_payment_link: null,
-        payment_message_sent_at: null,
-        manual_payment: false,
-        manual_fee: null,
-      }).eq('id', id);
+      // 2) O backend recalcula os totais, remove parcelas manuais e reinicia a cobrança em uma transação.
+      await replacePresaleOrderItems(id, newItems);
 
       toast.success('Peça adicionada! Pedido voltou para "Pedido recebido" — gere a cobrança novamente.');
       setAddItemModal(false);

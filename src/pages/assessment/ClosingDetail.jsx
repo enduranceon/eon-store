@@ -15,6 +15,11 @@ import {
   PayoutMonthlyClosing, PayoutMonthlyStatementItem, AssessmentCoach,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
+import {
+  createPayoutAdjustment,
+  deletePayoutAdjustment,
+  transitionPayoutClosing,
+} from '@/api/client';
 import { formatCurrency, formatDate, formatCompetence } from '@/lib/utils';
 import { EXPENSE_CATEGORIES, expenseCategoryLabel } from '@/lib/payout-expenses';
 import { toast } from 'sonner';
@@ -112,12 +117,7 @@ export default function ClosingDetail() {
     if (!confirm('Aprovar fechamento?\n\nOs valores ficam congelados e coaches passam a visualizar o extrato. Você ainda pode reabrir se precisar ajustar.')) return;
     setApproving(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      await PayoutMonthlyClosing.update(id, {
-        status: 'approved',
-        approved_at: new Date().toISOString(),
-        approved_by: user?.id || null,
-      });
+      await transitionPayoutClosing(id, 'approve');
       toast.success('Fechamento aprovado e congelado!'); load();
     } catch (e) { toast.error(e.message); }
     finally { setApproving(false); }
@@ -127,12 +127,7 @@ export default function ClosingDetail() {
     if (!confirm('Marcar como pago?\n\nIndica que os repasses foram efetivados. Após isso, o fechamento fica permanentemente bloqueado para edição.')) return;
     setMarkingPaid(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      await PayoutMonthlyClosing.update(id, {
-        status: 'paid',
-        paid_at: new Date().toISOString(),
-        paid_by: user?.id || null,
-      });
+      await transitionPayoutClosing(id, 'pay');
       toast.success('Fechamento marcado como pago!'); load();
     } catch (e) { toast.error(e.message); }
     finally { setMarkingPaid(false); }
@@ -142,11 +137,7 @@ export default function ClosingDetail() {
     if (!confirm('Reabrir fechamento aprovado?\n\nVolta para "em revisão" e libera novamente para edição. Use apenas se precisar corrigir algo antes do pagamento.')) return;
     setReopening(true);
     try {
-      await PayoutMonthlyClosing.update(id, {
-        status: 'pending_approval',
-        approved_at: null,
-        approved_by: null,
-      });
+      await transitionPayoutClosing(id, 'reopen');
       toast.success('Fechamento reaberto para edição'); load();
     } catch (e) { toast.error(e.message); }
     finally { setReopening(false); }
@@ -173,10 +164,8 @@ export default function ClosingDetail() {
     if (!adjustForm.adjustment_reason?.trim()) return toast.error('Motivo do ajuste é obrigatório');
     setSavingAdjust(true);
     try {
-      await PayoutMonthlyStatementItem.create({
-        closing_id:  id,
+      await createPayoutAdjustment(id, {
         coach_id:    adjustForm.coach_id,
-        source_type: 'manual_adjustment',
         expense_category: adjustForm.category || 'outros',
         description: adjustForm.description?.trim() || expenseCategoryLabel(adjustForm.category),
         amount:      Number(adjustForm.amount),
@@ -193,7 +182,7 @@ export default function ClosingDetail() {
   const removeAdjust = async (item) => {
     if (!confirm(`Remover ajuste de ${formatCurrency(item.amount)}?`)) return;
     try {
-      await PayoutMonthlyStatementItem.delete(item.id);
+      await deletePayoutAdjustment(id, item.id);
       toast.success('Ajuste removido'); load();
     } catch (e) {
       // Mensagem do trigger é amigável
