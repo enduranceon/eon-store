@@ -282,6 +282,103 @@ export async function changeAssessmentContractPlan(
   return response.data;
 }
 
+function invalidateAssessmentContractLifecycle() {
+  invalidatePageCacheByTag('assessment_contracts');
+  invalidatePageCacheByTag('assessment_leaves');
+  invalidatePageCacheByTag('assessment_contract_coach_history');
+  invalidatePageCacheByTag('assessment_contract_event');
+  invalidatePageCacheByTag('asaas_payments');
+}
+
+export async function updateAssessmentContractDates(
+  contractId,
+  { startDate, endDate, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/dates`, {
+    ...options,
+    method: 'PATCH',
+    body: {
+      start_date: startDate,
+      end_date: endDate,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function changeAssessmentContractCoach(
+  contractId,
+  { coachId, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/coach`, {
+    ...options,
+    method: 'PATCH',
+    body: { coach_id: coachId, expected_updated_at: expectedUpdatedAt },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function startAssessmentContractLeave(
+  contractId,
+  { startDate, endDate, reason = null, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/leaves`, {
+    ...options,
+    method: 'POST',
+    body: {
+      start_date: startDate,
+      end_date: endDate,
+      reason,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function finishAssessmentContractLeave(
+  contractId,
+  leaveId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/leaves/${leaveId}/finish`,
+    {
+      ...options,
+      method: 'POST',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function cancelAssessmentContract(
+  contractId,
+  { cancellationDate, cancellationFeePct, reason = null, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/cancel`, {
+    ...options,
+    method: 'POST',
+    body: {
+      cancellation_date: cancellationDate,
+      cancellation_fee_pct: cancellationFeePct,
+      reason,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidateAssessmentContractLifecycle();
+  invalidatePageCacheByTag('payout_pending_repasse');
+  return response.data;
+}
+
 export async function resolveAssessmentRenewal(
   renewalId,
   {
