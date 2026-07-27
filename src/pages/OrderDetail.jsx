@@ -19,7 +19,14 @@ import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
 import { toast } from 'sonner';
-import { cancelOrder as cancelOrderViaApi, cancelOrderItem, createOrderCharge, refundOrder } from '@/api/client';
+import {
+  cancelOrder as cancelOrderViaApi,
+  cancelOrderCharge,
+  cancelOrderItem,
+  createOrderCharge,
+  refundOrder,
+  syncOrderChargeStatus,
+} from '@/api/client';
 
 const PAYMENT_STATUS = {
   pending: { label: 'Pedido recebido', badge: 'secondary' },
@@ -336,20 +343,6 @@ export default function OrderDetail() {
     }
   };
 
-  const callAsaas = async (action, extra = {}) => {
-    setAsaasLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('create-asaas-charge', {
-        body: { action, order_id: id, order_type: 'presale', ...extra },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
-    } finally {
-      setAsaasLoading(false);
-    }
-  };
-
   // Registra uma ação no histórico da venda (sales_status_events)
   const logSaleEvent = async (newStatus, reason, metadata = {}) => {
     try {
@@ -387,8 +380,9 @@ export default function OrderDetail() {
   };
 
   const verifyAsaasStatus = async () => {
+    setAsaasLoading(true);
     try {
-      const data = await callAsaas('status');
+      const data = await syncOrderChargeStatus('presale', id);
       setAsaasStatus(data);
       if (data.is_paid) {
         toast.success('Pagamento confirmado! Pedido atualizado para Pago.');
@@ -396,7 +390,11 @@ export default function OrderDetail() {
       } else {
         toast.info(`Status: ${data.label}`);
       }
-    } catch (e) { toast.error(e.message || 'Erro ao verificar'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao verificar');
+    } finally {
+      setAsaasLoading(false);
+    }
   };
 
   // Abre modal de cancelamento de cobrança
@@ -414,34 +412,7 @@ export default function OrderDetail() {
 
     setCancelChargeLoading(true);
     try {
-      const hadAsaas    = !!order.asaas_charge_id;
-      const hadExternal = !!order.external_payment_link;
-
-      // Se há cobrança nativa no Asaas (não paga), cancela no gateway primeiro
-      if (hadAsaas && order.payment_status !== 'paid') {
-        try { await callAsaas('cancel'); }
-        catch (e) { console.warn('Falha ao cancelar cobrança Asaas:', e.message); }
-      }
-
-      await supabase.from('presale_orders').update({
-        payment_status:          'awaiting_charge',
-        external_payment_link:   null,
-        asaas_charge_id:         null,
-        asaas_payment_link:      null,
-        asaas_pix_qrcode:        null,
-        asaas_pix_copy:          null,
-        payment_message_sent_at: null,
-        due_date:                null,
-        cancellation_reason:     reason,
-      }).eq('id', id);
-
-      await logSaleEvent('awaiting_charge', reason, {
-        action:                'charge_cancelled',
-        had_asaas_charge:      hadAsaas,
-        had_external_link:     hadExternal,
-        previous_due_date:     order.due_date || null,
-        previous_external_link: order.external_payment_link || null,
-      });
+      await cancelOrderCharge('presale', id, reason);
 
       setCancelModal(false);
       setAsaasStatus(null);
@@ -764,8 +735,8 @@ export default function OrderDetail() {
     setAddItemLoading(true);
     try {
       // 1) Se tem cobrança Asaas ativa, cancela primeiro (pra não deixar uma cobrança com valor errado solta)
-      if (order.asaas_charge_id) {
-        await callAsaas('cancel');
+      if (order.asaas_charge_id || order.external_payment_link) {
+        await cancelOrderCharge('presale', id, 'Itens da venda alterados');
       }
 
       // 2) Limpa parcelas manuais (se houver) — vai gerar nova cobrança depois

@@ -299,17 +299,21 @@ Se a peça **não foi entregue** quando cancelada:
 
 ### Edge Functions envolvidas
 
-1. **`create-asaas-charge`** (v6) — Faz todas as operações com Asaas:
-   - `create` — Cria cobrança PIX/boleto/cartão
-   - `status` — Verifica status manualmente
-   - `cancel` — Cancela cobrança não paga
-   - `refund` — Estorna (total ou parcial via `value`)
+1. **`api-v1`** — API administrativa protegida por JWT e allowlist de admin:
+   - cria cobranças PIX/boleto/cartão com idempotência;
+   - consulta o status e sincroniza pagamentos confirmados;
+   - cancela cobranças não pagas sem apagar a venda;
+   - altera vencimento, cancela pedidos/itens e processa estornos;
+   - registra operações financeiras que precisam de reconciliação.
 
 2. **`asaas-webhook`** (v3) — Recebe eventos do Asaas em tempo real:
    - `PAYMENT_RECEIVED` / `PAYMENT_CONFIRMED` → marca como **Pago**
    - `PAYMENT_DELETED` → marca como **Cancelado**
    - `PAYMENT_REFUNDED` → marca como **Estornado** + devolve cupom
-   - Validação de token via Supabase Secret `ASAAS_WEBHOOK_TOKEN` (opcional)
+   - Validação obrigatória via Supabase Secret `ASAAS_WEBHOOK_TOKEN`
+
+3. **`create-asaas-charge`** — Função legada mantida temporariamente para
+   compatibilidade. O frontend administrativo não a chama mais.
 
 ### Configuração no Asaas (já feita)
 - URL webhook: `https://bsiljrrodgtmtdilnuxr.supabase.co/functions/v1/asaas-webhook`
@@ -317,9 +321,9 @@ Se a peça **não foi entregue** quando cancelada:
 - Token configurável (recomendado validar no Secret)
 
 ### Ambiente atual
-- **Sandbox** (`sandbox.asaas.com`)
-- Chave hardcoded como fallback na edge function
-- Para produção: mudar `ASAAS_BASE` para `www.asaas.com` + setar Secret `ASAAS_API_KEY`
+- O ambiente é definido pelo Secret `ASAAS_BASE_URL`.
+- A chave é lida exclusivamente do Secret `ASAAS_API_KEY`; não existe fallback
+  hardcoded no código.
 
 ---
 
@@ -380,7 +384,8 @@ Localizadas em Supabase → Edge Functions.
 
 | Nome | JWT | O que faz |
 |---|---|---|
-| `create-asaas-charge` | ✅ Sim | Operações Asaas (create/status/cancel/refund) |
+| `api-v1` | ✅ Sim | API administrativa, incluindo ciclo financeiro e Asaas |
+| `create-asaas-charge` | ✅ Sim | Compatibilidade legada; sem chamadas do frontend administrativo |
 | `asaas-webhook` | ❌ Não | Recebe eventos do Asaas, atualiza status |
 | `get-public-order` | ❌ Não | Retorna dados sanitizados do pedido para `/p/:id` |
 | `validate-coupon` | ❌ Não | Valida cupom no checkout sem expor a tabela toda |

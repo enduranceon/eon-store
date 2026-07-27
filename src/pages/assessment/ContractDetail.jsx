@@ -18,6 +18,7 @@ import {
   AssessmentLeave, AssessmentContractCoachHist, AssessmentContractEvent,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
+import { cancelOrderCharge } from '@/api/client';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
@@ -408,25 +409,11 @@ export default function ContractDetail() {
   const cancelAsaasCharge = async () => {
     setCancelChargeLoading(true);
     try {
-      // Cancela no Asaas (best-effort — pode já ter expirado)
-      if (contract.asaas_charge_id) {
-        try {
-          await supabase.functions.invoke('create-asaas-charge', {
-            body: { action: 'cancel', order_id: id, order_type: 'contract' },
-          });
-        } catch (e) {
-          console.warn('[cancel-charge] Asaas cancel failed (continuing anyway):', e.message);
-        }
-      }
-      // Limpa cobrança do contrato, volta pro pendente
-      await AssessmentContract.update(id, {
-        asaas_charge_id:         null,
-        asaas_payment_link:      null,
-        asaas_pix_copy:          null,
-        payment_message_sent_at: null,
-        payment_status:          'pending',
-      });
-      await logEvent('charge_cancelled', { previous_charge_id: contract.asaas_charge_id });
+      await cancelOrderCharge(
+        'contract',
+        id,
+        'Cobrança cancelada para ajuste do contrato',
+      );
       toast.success('Cobrança cancelada. Aplique o desconto e gere uma nova cobrança.');
       setCancelChargeModal(false);
       load();
@@ -674,17 +661,13 @@ export default function ContractDetail() {
     }
     setVoiding(true);
     try {
-      // 1. Se tem cobrança Asaas ativa, cancela primeiro (best-effort)
-      if (contract.asaas_charge_id) {
-        try {
-          const { error } = await supabase.functions.invoke('create-asaas-charge', {
-            body: { action: 'cancel', order_id: id, order_type: 'contract' },
-          });
-          if (error) console.warn('[voidContract] Asaas cancel falhou:', error);
-        } catch (e) {
-          console.warn('[voidContract] Asaas cancel exception:', e);
-          // não bloqueia — usuário pode cancelar manualmente no Asaas depois
-        }
+      // 1. Confirma o cancelamento ou a desvinculação antes de encerrar a venda.
+      if (contract.asaas_charge_id || contract.external_payment_link) {
+        await cancelOrderCharge(
+          'contract',
+          id,
+          'Venda não concretizada (cliente nunca pagou)',
+        );
       }
 
       // 2. Marca contrato como descartado (não é saída/churn)
@@ -788,15 +771,12 @@ export default function ContractDetail() {
     setAdjustPlanSaving(true);
     try {
       const hadAsaasCharge = !!contract.asaas_charge_id;
-      if (hadAsaasCharge) {
-        try {
-          const { error } = await supabase.functions.invoke('create-asaas-charge', {
-            body: { action: 'cancel', order_id: id, order_type: 'contract' },
-          });
-          if (error) console.warn('[savePlanAdjustment] Asaas cancel falhou:', error);
-        } catch (e) {
-          console.warn('[savePlanAdjustment] Asaas cancel exception:', e);
-        }
+      if (hadAsaasCharge || contract.external_payment_link) {
+        await cancelOrderCharge(
+          'contract',
+          id,
+          'Plano do contrato alterado antes do pagamento',
+        );
       }
 
       await supabase.from('asaas_payments')
