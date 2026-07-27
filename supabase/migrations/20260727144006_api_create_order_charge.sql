@@ -1287,3 +1287,4 @@ COMMENT ON FUNCTION public.complete_order_charge_creation(
 COMMENT ON FUNCTION public.finalize_order_charge_creation_failure(
   UUID, UUID, TEXT, TEXT, BOOLEAN, JSONB
 ) IS 'Closes a failed charge attempt or blocks it for manual reconciliation.';
+
