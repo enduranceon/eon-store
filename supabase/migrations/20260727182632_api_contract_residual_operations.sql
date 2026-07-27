@@ -26,22 +26,6 @@ GRANT SELECT, INSERT, UPDATE ON TABLE public.assessment_contract_creation_operat
 COMMENT ON TABLE public.assessment_contract_creation_operations IS
   'Server-only idempotency ledger for assessment contract creation.';
 
--- The two public enrollment pages now use the validated Edge Function. Remove
--- their former direct-write paths so the browser can no longer insert rows or
--- invoke the legacy SECURITY DEFINER customer upsert.
-DROP POLICY IF EXISTS "anon_insert_draft_contracts"
-  ON public.assessment_contracts;
-DROP POLICY IF EXISTS "anon_insert_customers"
-  ON public.presale_customers;
-REVOKE INSERT ON TABLE public.assessment_contracts FROM anon;
-REVOKE INSERT ON TABLE public.presale_customers FROM anon;
-REVOKE ALL ON FUNCTION public.upsert_assessment_customer(
-  text, text, text, text, date
-) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.upsert_assessment_customer(
-  text, text, text, text, date, text
-) FROM PUBLIC, anon, authenticated;
-
 CREATE OR REPLACE FUNCTION public.create_assessment_contract_from_admin(
   p_customer_id uuid,
   p_coach_id uuid,
