@@ -3,6 +3,8 @@ import { jsonResponse, optionsResponse } from "../_shared/http.ts";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
 import { createServiceClient } from "../_shared/serviceClient.ts";
 import { handleBillingRequest } from "./billing.ts";
+import { handleAdminRecordRequest } from "./admin-records.ts";
+import { handleAdminOperationRequest } from "./admin-operations.ts";
 import { handleCatalogRequest } from "./catalog.ts";
 import { handleChargeLifecycleRequest } from "./charge-lifecycle.ts";
 import { handleChargeRequest } from "./charges.ts";
@@ -85,6 +87,22 @@ Deno.serve(async (req: Request) => {
 
   const catalogResponse = await handleCatalogRequest(req, path, serviceClient);
   if (catalogResponse) return catalogResponse;
+
+  const adminRecordResponse = await handleAdminRecordRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (adminRecordResponse) return adminRecordResponse;
+
+  const adminOperationResponse = await handleAdminOperationRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (adminOperationResponse) return adminOperationResponse;
 
   const returnsResponse = await handleReturnsRequest(req, path, serviceClient);
   if (returnsResponse) return returnsResponse;

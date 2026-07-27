@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan, AssessmentModality, AssessmentCoach, StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
+import { mergeCustomers } from '@/api/client';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
@@ -51,7 +52,6 @@ export default function CustomerDetail() {
         full_name:      c.full_name,
         whatsapp:       c.whatsapp,
         email:          c.email,
-        trainer:        c.trainer,
         cpf:            c.cpf || '',
         internal_notes: c.internal_notes || '',
       });
@@ -124,28 +124,14 @@ export default function CustomerDetail() {
     setMerging(true);
     try {
       const { duplicate, duplicateOrders } = mergeModal;
-
-      // 1. Move todos os pedidos do duplicado para este cliente
-      if (duplicateOrders.length > 0) {
-        await Promise.all(
-          duplicateOrders.map(o =>
-            supabase.from('presale_orders').update({ customer_id: id }).eq('id', o.id)
-          )
-        );
-      }
-
-      // 2. Salva o CPF neste cliente (e outros dados se o duplicado tiver infos extras)
       const mergedData = {
-        ...form,
-        // Aproveita dados do duplicado se este não tiver
+        full_name: form.full_name,
+        whatsapp: form.whatsapp || duplicate.whatsapp || '',
         email: form.email || duplicate.email || '',
-        trainer: form.trainer || duplicate.trainer || '',
+        cpf: form.cpf || duplicate.cpf || '',
         internal_notes: [form.internal_notes, duplicate.internal_notes].filter(Boolean).join('\n\n[Mesclado de outro perfil]\n') || '',
       };
-      await PreSaleCustomer.update(id, mergedData);
-
-      // 3. Apaga o cliente duplicado
-      await supabase.from('presale_customers').delete().eq('id', duplicate.id);
+      await mergeCustomers(id, duplicate.id, mergedData);
 
       toast.success(`Clientes mesclados! ${duplicateOrders.length > 0 ? `${duplicateOrders.length} pedido(s) movido(s).` : ''}`);
       setMergeModal(null);
@@ -443,7 +429,6 @@ export default function CustomerDetail() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div><Label>E-mail</Label><Input value={form.email || ''} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} className="mt-1" /></div>
-                <div><Label>Treinador</Label><Input value={form.trainer || ''} onChange={e => setForm(f => ({ ...f, trainer: e.target.value }))} className="mt-1" /></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -468,7 +453,6 @@ export default function CustomerDetail() {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-muted-foreground" /><span>{customer.whatsapp || '-'}</span></div>
               <div className="flex items-center gap-2"><Mail className="w-4 h-4 text-muted-foreground" /><span>{customer.email || '-'}</span></div>
-              <div className="flex items-center gap-2"><User className="w-4 h-4 text-muted-foreground" /><span>Treinador: {customer.trainer || '-'}</span></div>
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground text-xs">CPF:</span>
                 {customer.cpf ? (

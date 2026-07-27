@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-import { invalidatePageCacheByTag } from '@/lib/page-cache';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -10,35 +9,6 @@ function parseSortBy(sortBy = '-created_date') {
   const desc = sortBy.startsWith('-');
   const field = desc ? sortBy.slice(1) : sortBy;
   return { field, ascending: !desc };
-}
-
-// Convert empty strings to null for UUID foreign-key fields
-function sanitize(data) {
-  const out = {};
-  for (const [k, v] of Object.entries(data)) {
-    if (typeof v === 'string' && v === '' && k.endsWith('_id')) {
-      out[k] = null;
-    } else {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-
-// Tabelas modernas usam `updated_at`; tabelas legadas usam `updated_date`.
-// Esse Set lista as que usam `updated_at` (consultado no SELECT do schema).
-const TABLES_WITH_UPDATED_AT = new Set([
-  'assessment_modalities', 'assessment_plans', 'assessment_coaches',
-  'assessment_contracts', 'assessment_leaves', 'assessment_contract_coach_history',
-  'payout_growth_tiers', 'payout_role_modality_rates',
-  'payout_monthly_closings', 'payout_monthly_statement_items',
-  'renewal_rules', 'revenue_centers',
-  'contract_renewal_actions', 'discount_log', 'payment_methods',
-  'communication_settings', 'communication_rules',
-]);
-
-function getUpdatedColumn(tableName) {
-  return TABLES_WITH_UPDATED_AT.has(tableName) ? 'updated_at' : 'updated_date';
 }
 
 // Tenta ordenar por `field`. Se a coluna não existir (42703), faz fallback
@@ -86,45 +56,6 @@ function createSupabaseProxy(tableName) {
         return q;
       };
       return safeOrder(buildQuery, field, ascending);
-    },
-
-    async create(data) {
-      const rest = { ...data };
-      delete rest.id;
-      delete rest.created_date;
-      delete rest.order_number;
-      const { data: created, error } = await supabase
-        .from(tableName)
-        .insert(sanitize(rest))
-        .select()
-        .single();
-      if (error) throw error;
-      invalidatePageCacheByTag(tableName);
-      return created;
-    },
-
-    async update(id, data) {
-      const rest = { ...data };
-      delete rest.id;
-      delete rest.created_date;
-      delete rest.created_at;
-      const updatedCol = getUpdatedColumn(tableName);
-      const { data: updated, error } = await supabase
-        .from(tableName)
-        .update(sanitize({ ...rest, [updatedCol]: new Date().toISOString() }))
-        .eq('id', id)
-        .select()
-        .single();
-      if (error) throw error;
-      invalidatePageCacheByTag(tableName);
-      return updated;
-    },
-
-    async delete(id) {
-      const { error } = await supabase.from(tableName).delete().eq('id', id);
-      if (error) throw error;
-      invalidatePageCacheByTag(tableName);
-      return true;
     },
 
     async get(id) {
@@ -182,49 +113,6 @@ export function normalizePhone(value) {
   return value ? value.replace(/\D/g, '') : value;
 }
 
-export function normalizeEmail(value) {
-  return value ? value.trim().toLowerCase() : value;
-}
-
-async function findOrCreateCustomer({ full_name, whatsapp, email, trainer }) {
-  const cleanPhone = normalizePhone(whatsapp);
-  const cleanEmail = normalizeEmail(email);
-
-  let existing = null;
-  if (cleanPhone) {
-    // Pega o cliente mais recente caso haja duplicatas (não usa single pra tolerar duplicatas)
-    const { data, error } = await supabase
-      .from('presale_customers')
-      .select('*')
-      .eq('whatsapp', cleanPhone)
-      .order('created_date', { ascending: false })
-      .limit(1);
-    if (error) throw error;
-    existing = data?.[0] || null;
-  }
-  if (!existing && cleanEmail) {
-    const { data, error } = await supabase
-      .from('presale_customers')
-      .select('*')
-      .eq('email', cleanEmail)
-      .order('created_date', { ascending: false })
-      .limit(1);
-    if (error) throw error;
-    existing = data?.[0] || null;
-  }
-  if (existing) {
-    const updates = {};
-    if (full_name && full_name !== existing.full_name) updates.full_name = full_name;
-    if (cleanEmail && cleanEmail !== existing.email) updates.email = cleanEmail;
-    if (trainer && trainer !== existing.trainer) updates.trainer = trainer;
-    if (Object.keys(updates).length > 0) {
-      return entities.PreSaleCustomer.update(existing.id, updates);
-    }
-    return existing;
-  }
-  return entities.PreSaleCustomer.create({ full_name, whatsapp: cleanPhone, email: cleanEmail, trainer });
-}
-
 export async function getCampaignBySlugOrId(slugOrId) {
   const { data: bySlug, error: slugErr } = await supabase
     .from('presale_campaigns')
@@ -252,7 +140,6 @@ export { supabase };
 export const db = {
   entities,
   helpers: {
-    findOrCreateCustomer,
     seedTrainers,
   },
 };

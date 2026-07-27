@@ -181,7 +181,7 @@ export async function updateOrderFulfillment(
 export async function markOrderPaymentMessageSent(
   orderType,
   orderId,
-  { externalPaymentLink = null, dueDate = null },
+  { externalPaymentLink = null, dueDate = null, metadata = {} },
   options = {},
 ) {
   const response = await apiRequest(`/orders/${orderType}/${orderId}/payment-message`, {
@@ -190,6 +190,7 @@ export async function markOrderPaymentMessageSent(
     body: {
       external_payment_link: externalPaymentLink,
       due_date: dueDate,
+      metadata,
     },
   });
   invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
@@ -1028,4 +1029,142 @@ export function createCatalogEntity(resource, cacheTag) {
       return true;
     },
   };
+}
+
+function adminRecordPath(resource, id) {
+  const base = `/admin-records/${encodeURIComponent(resource)}`;
+  return id ? `${base}/${encodeURIComponent(id)}` : base;
+}
+
+export function createAdminRecordEntity(resource, cacheTag) {
+  const list = async (sortBy) => {
+    const path = sortBy
+      ? `${adminRecordPath(resource)}?sort=${encodeURIComponent(sortBy)}`
+      : adminRecordPath(resource);
+    const response = await apiRequest(path);
+    return response.data;
+  };
+
+  return {
+    list,
+
+    async filter(filters = {}, sortBy) {
+      const rows = await list(sortBy);
+      return rows.filter(row => matchesFilters(row, filters));
+    },
+
+    async get(id) {
+      const response = await apiRequest(adminRecordPath(resource, id));
+      return response.data;
+    },
+
+    async create(data) {
+      const response = await apiRequest(adminRecordPath(resource), {
+        method: 'POST',
+        body: catalogWritePayload(data),
+      });
+      invalidatePageCacheByTag(cacheTag);
+      return response.data;
+    },
+
+    async update(id, data) {
+      const response = await apiRequest(adminRecordPath(resource, id), {
+        method: 'PATCH',
+        body: catalogWritePayload(data),
+      });
+      invalidatePageCacheByTag(cacheTag);
+      return response.data;
+    },
+
+    async delete(id) {
+      await apiRequest(adminRecordPath(resource, id), { method: 'DELETE' });
+      invalidatePageCacheByTag(cacheTag);
+      return true;
+    },
+  };
+}
+
+export async function mergeCustomers(targetId, duplicateId, customer, options = {}) {
+  const response = await apiRequest(`/customers/${targetId}/merge`, {
+    ...options,
+    method: 'POST',
+    body: { duplicate_id: duplicateId, customer },
+  });
+  invalidatePageCacheByTag('presale_customers');
+  invalidatePageCacheByTag('presale_orders');
+  invalidatePageCacheByTag('stock_orders');
+  invalidatePageCacheByTag('assessment_contracts');
+  return response.data;
+}
+
+export async function replacePresaleOrderItems(orderId, items, options = {}) {
+  const response = await apiRequest(`/orders/presale/${orderId}/items`, {
+    ...options,
+    method: 'PUT',
+    body: { items },
+  });
+  invalidatePageCacheByTag('presale_orders');
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
+export async function saveCommunityLinkSetting(url, options = {}) {
+  const response = await apiRequest('/communications/settings/community-link', {
+    ...options,
+    method: 'PUT',
+    body: { url },
+  });
+  invalidatePageCacheByTag('communication_settings');
+  return response.data;
+}
+
+export async function recordCommunicationEvent(payload, options = {}) {
+  const response = await apiRequest('/communications/events', {
+    ...options,
+    method: 'POST',
+    body: payload,
+  });
+  invalidatePageCacheByTag(payload.source_type === 'contract'
+    ? 'assessment_contract_event'
+    : 'sales_status_events');
+  return response.data;
+}
+
+export async function transitionPayoutClosing(closingId, action, options = {}) {
+  const response = await apiRequest(`/payouts/closings/${closingId}/${action}`, {
+    ...options,
+    method: 'POST',
+  });
+  invalidatePageCacheByTag('payout_monthly_closings');
+  return response.data;
+}
+
+export async function createPayoutAdjustment(closingId, payload, options = {}) {
+  const response = await apiRequest(`/payouts/closings/${closingId}/adjustments`, {
+    ...options,
+    method: 'POST',
+    body: payload,
+  });
+  invalidatePageCacheByTag('payout_monthly_statement_items');
+  return response.data;
+}
+
+export async function deletePayoutAdjustment(closingId, itemId, options = {}) {
+  await apiRequest(`/payouts/closings/${closingId}/adjustments/${itemId}`, {
+    ...options,
+    method: 'DELETE',
+  });
+  invalidatePageCacheByTag('payout_monthly_statement_items');
+  return true;
+}
+
+export async function importLegacyPresaleOrder(payload, options = {}) {
+  const response = await apiRequest('/admin-records/legacy-presale-orders', {
+    ...options,
+    method: 'POST',
+    body: catalogWritePayload(payload),
+  });
+  invalidatePageCacheByTag('presale_orders');
+  return response.data;
 }

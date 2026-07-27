@@ -1,40 +1,40 @@
 import { db } from './db';
-import { createCatalogEntity, StockProductApi } from './client';
+import { createAdminRecordEntity, createCatalogEntity, StockProductApi } from './client';
 
-export const PreSaleCampaign  = db.entities.PreSaleCampaign;
-export const PreSaleProduct   = db.entities.PreSaleProduct;
-export const PreSaleCustomer  = db.entities.PreSaleCustomer;
+export const PreSaleCampaign  = createAdminRecordEntity('campaigns', 'presale_campaigns');
+export const PreSaleProduct   = createAdminRecordEntity('presale-products', 'presale_products');
+export const PreSaleCustomer  = createAdminRecordEntity('customers', 'presale_customers');
 export const PreSaleOrder     = db.entities.PreSaleOrder;
 export const PreSaleSupplier  = createCatalogEntity('suppliers', 'presale_suppliers');
 export const PreSaleCategory  = createCatalogEntity('categories', 'presale_categories');
 export const PreSaleTrainer   = createCatalogEntity('trainers', 'presale_trainers');
 export const StockProduct     = StockProductApi;
 export const StockOrder       = db.entities.StockOrder;
-export const Product          = db.entities.Product;
-export const Coupon           = db.entities.Coupon;
+export const Product          = createAdminRecordEntity('products', 'products');
+export const Coupon           = createAdminRecordEntity('coupons', 'coupons');
 
 // Universal
 export const RevenueCenter    = createCatalogEntity('revenue-centers', 'revenue_centers');
-export const DiscountLog      = db.entities.DiscountLog;
+export const DiscountLog      = createAdminRecordEntity('discount-logs', 'discount_log');
 
 // Régua de renovação
-export const RenewalRule              = db.entities.RenewalRule;
+export const RenewalRule              = createAdminRecordEntity('renewal-rules', 'renewal_rules');
 export const ContractRenewalAction    = db.entities.ContractRenewalAction;
 export const CommunicationSetting      = db.entities.CommunicationSetting;
-export const CommunicationRule         = db.entities.CommunicationRule;
+export const CommunicationRule         = createAdminRecordEntity('communication-rules', 'communication_rules');
 
 // Módulo Assessoria
-export const AssessmentModality          = db.entities.AssessmentModality;
-export const AssessmentPlan              = db.entities.AssessmentPlan;
-export const AssessmentCoach             = db.entities.AssessmentCoach;
+export const AssessmentModality          = createAdminRecordEntity('modalities', 'assessment_modalities');
+export const AssessmentPlan              = createAdminRecordEntity('plans', 'assessment_plans');
+export const AssessmentCoach             = createAdminRecordEntity('coaches', 'assessment_coaches');
 export const AssessmentContract          = db.entities.AssessmentContract;
 export const AssessmentContractCoachHist = db.entities.AssessmentContractCoachHist;
 export const AssessmentLeave             = db.entities.AssessmentLeave;
 export const AssessmentContractEvent     = db.entities.AssessmentContractEvent;
 export const PaymentMethodConfig         = createCatalogEntity('payment-methods', 'payment_methods');
-export const PayoutRoleModalityRate      = db.entities.PayoutRoleModalityRate;
-export const PayoutGrowthTier            = db.entities.PayoutGrowthTier;
-export const PayoutMonthlyClosing        = db.entities.PayoutMonthlyClosing;
-export const PayoutMonthlyStatementItem  = db.entities.PayoutMonthlyStatementItem;
-export const { findOrCreateCustomer, seedTrainers } = db.helpers;
+export const PayoutRoleModalityRate      = createAdminRecordEntity('payout-rates', 'payout_role_modality_rates');
+export const PayoutGrowthTier            = createAdminRecordEntity('payout-tiers', 'payout_growth_tiers');
+export const PayoutMonthlyClosing        = createAdminRecordEntity('payout-closings', 'payout_monthly_closings');
+export const PayoutMonthlyStatementItem  = createAdminRecordEntity('payout-items', 'payout_monthly_statement_items');
+export const { seedTrainers } = db.helpers;
 export { getCampaignBySlugOrId } from '@/api/db';
