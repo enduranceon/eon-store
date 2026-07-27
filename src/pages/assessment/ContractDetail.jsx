@@ -619,6 +619,22 @@ export default function ContractDetail() {
 
   const markNoRenewal = async () => {
     if (!contract?.end_date) return toast.error('Contrato sem data final');
+
+    const { data: openRenewals, error: renewalLookupError } = await supabase
+      .from('assessment_contracts')
+      .select('id, contract_number')
+      .eq('parent_contract_id', contract.id)
+      .in('status', ['draft', 'scheduled', 'active', 'overdue', 'on_leave'])
+      .limit(1);
+    if (renewalLookupError) {
+      return toast.error('Não foi possível conferir as vendas de renovação');
+    }
+    if (openRenewals?.length) {
+      toast.info(`Resolva primeiro a venda de renovação ${openRenewals[0].contract_number}`);
+      navigate(`/assessoria/renovacoes?resolver=${openRenewals[0].id}`);
+      return;
+    }
+
     const shouldFinishNow = contract.end_date <= todayLocalStr();
     const statusText = shouldFinishNow
       ? 'O contrato será marcado como concluído agora.'
@@ -633,7 +649,6 @@ export default function ContractDetail() {
     try {
       await markAssessmentContractNonRenewal({
         contract,
-        deleteDrafts: true,
       });
 
       toast.success(shouldFinishNow
@@ -652,6 +667,12 @@ export default function ContractDetail() {
   //   - Marca status='voided' e payment_status='cancelled' (trigger SQL limpa asaas_payments)
   //   - Coach já está protegido (edge function exige payment_status='paid')
   const voidContract = async () => {
+    if (isRenewalContract(contract)) {
+      toast.info('Renovações devem ser encerradas pela tela de Renovações');
+      setVoidModal(false);
+      navigate(`/assessoria/renovacoes?resolver=${contract.id}`);
+      return;
+    }
     setVoiding(true);
     try {
       // 1. Se tem cobrança Asaas ativa, cancela primeiro (best-effort)
@@ -710,7 +731,14 @@ export default function ContractDetail() {
   };
 
   // Detecta se o contrato está em estado "não pago" — permite ajuste ou descarte.
-  const isUnpaid = contract && ADJUSTABLE_PAYMENT_STATUSES.has(contract.payment_status || 'pending');
+  const isUnpaid = contract
+    && ADJUSTABLE_PAYMENT_STATUSES.has(contract.payment_status || 'pending')
+    && !contract.manual_payment
+    && !contract.payment_date
+    && !contract.refund_status
+    && Number(contract.refund_amount || 0) === 0
+    && !contract.refund_date
+    && !String(contract.refund_notes || '').trim();
 
   const selectedAdjustPlan = plans.find(p => p.id === adjustPlanForm.plan_id) || null;
   const selectedAdjustModality = modalities.find(m => m.id === selectedAdjustPlan?.modality_id) || null;
@@ -1132,14 +1160,26 @@ export default function ContractDetail() {
   // Quando modal de cancelamento está aberta, usa cancelDate; senão usa hoje
   const calc = cancelModal ? cancellationCalc(cancelDate) : cancellationCalc();
   const canCancel = !['cancelled', 'finished', 'voided'].includes(contract.status);
-  const canCreateRenewal = canCancel
+  const canCreateRenewal = !contract.parent_contract_id
     && !contract.renewal_generated
-    && ['active', 'overdue', 'on_leave'].includes(contract.status);
+    && !isNonRenewalReason(contract.cancellation_reason)
+    && ['active', 'overdue', 'on_leave', 'finished'].includes(contract.status);
   const canMarkNoRenewal = canCancel
     && !isUnpaid
     && !contract.parent_contract_id
     && ['active', 'overdue', 'on_leave'].includes(contract.status)
-    && !isNonRenewalReason(contract.cancellation_reason);
+    && !String(contract.cancellation_reason || '').trim()
+    && !contract.cancellation_date
+    && Number(contract.cancellation_fee || 0) === 0
+    && !contract.refund_status
+    && Number(contract.refund_amount || 0) === 0
+    && !contract.refund_date
+    && !String(contract.refund_notes || '').trim()
+    && !['refunded', 'partially_refunded'].includes(contract.payment_status);
+  const canVoidUnpaidSale = isUnpaid && (
+    !isRenewalContract(contract)
+    || ['draft', 'scheduled', 'active', 'overdue'].includes(contract.status)
+  );
   const cancelDateAtOrAfterEnd = !!(contract.end_date && cancelDate >= contract.end_date);
 
   return (
@@ -1688,7 +1728,7 @@ export default function ContractDetail() {
       </Card>
 
       {/* Ações de fim de contrato */}
-      {canCancel && (
+      {(canCancel || canCreateRenewal) && (
         <Card className="border-gray-100">
           <CardContent className="pt-4 flex flex-wrap gap-2">
             {canCreateRenewal && (
@@ -1710,7 +1750,7 @@ export default function ContractDetail() {
                 <Ban className="w-4 h-4 mr-1.5" /> Não renovar
               </Button>
             )}
-            {isUnpaid ? (
+            {canCancel && (canVoidUnpaidSale ? (
               <>
                 <Button
                   variant="outline"
@@ -1723,7 +1763,14 @@ export default function ContractDetail() {
                 <Button
                   variant="outline"
                   className="text-amber-700 border-amber-300 hover:bg-amber-50"
-                  onClick={() => setVoidModal(true)}
+                  onClick={() => {
+                    if (isRenewalContract(contract)) {
+                      toast.info('Escolha o motivo do encerramento na tela de Renovações');
+                      navigate(`/assessoria/renovacoes?resolver=${contract.id}`);
+                    } else {
+                      setVoidModal(true);
+                    }
+                  }}
                   title="Cliente desistiu antes do pagamento — descarta a venda sem multa nem cobrança ao coach"
                 >
                   <XCircle className="w-4 h-4 mr-1.5" /> Descartar venda
@@ -1737,7 +1784,7 @@ export default function ContractDetail() {
               >
                 <XCircle className="w-4 h-4 mr-1.5" /> Cancelar contrato
               </Button>
-            )}
+            ))}
           </CardContent>
         </Card>
       )}

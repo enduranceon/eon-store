@@ -132,11 +132,36 @@ export async function registerExternalAssessmentContractCharge({
 
 export async function markAssessmentContractNonRenewal({
   contract,
-  draft = null,
-  deleteDrafts = false,
 }) {
   if (!contract?.id) throw new Error('Contrato anterior não encontrado');
   if (!contract.end_date) throw new Error('Contrato sem data final');
+  if (
+    contract.refund_status
+    || Number(contract.refund_amount || 0) !== 0
+    || contract.refund_date
+    || String(contract.refund_notes || '').trim()
+    || ['refunded', 'partially_refunded'].includes(contract.payment_status)
+  ) {
+    throw new Error('O contrato possui movimentação de estorno e precisa de conferência');
+  }
+  if (
+    String(contract.cancellation_reason || '').trim()
+    || Number(contract.cancellation_fee || 0) !== 0
+    || contract.cancellation_date
+  ) {
+    throw new Error('O contrato já possui outro registro de encerramento');
+  }
+
+  const { data: openRenewals, error: renewalLookupError } = await supabase
+    .from('assessment_contracts')
+    .select('id, contract_number')
+    .eq('parent_contract_id', contract.id)
+    .in('status', ['draft', 'scheduled', 'active', 'overdue', 'on_leave'])
+    .limit(1);
+  if (renewalLookupError) throw renewalLookupError;
+  if (openRenewals?.length) {
+    throw new Error(`Resolva primeiro a venda de renovação ${openRenewals[0].contract_number}`);
+  }
 
   const shouldFinishNow = contract.end_date <= todayLocalStr();
   const updates = {
@@ -144,26 +169,14 @@ export async function markAssessmentContractNonRenewal({
     cancellation_date: contract.end_date,
     cancellation_fee: 0,
     cancellation_reason: 'Não renovou',
-    refund_status: null,
-    refund_amount: null,
     ...(shouldFinishNow ? { status: 'finished' } : {}),
   };
 
   await AssessmentContract.update(contract.id, updates);
 
-  if (draft?.id) {
-    await AssessmentContract.delete(draft.id);
-  } else if (deleteDrafts) {
-    await supabase
-      .from('assessment_contracts')
-      .delete()
-      .eq('status', 'draft')
-      .eq('parent_contract_id', contract.id);
-  }
-
   await logContractEvent(contract.id, 'renewal_declined', {
-    discarded_draft_id: draft?.id || null,
-    discarded_draft_number: draft?.contract_number || null,
+    discarded_draft_id: null,
+    discarded_draft_number: null,
     effective_end_date: contract.end_date,
     status_after: shouldFinishNow ? 'finished' : contract.status,
     no_financial_penalty: true,

@@ -143,6 +143,48 @@ export async function updateOrderDueDate(
   return response.data;
 }
 
+export async function resolveAssessmentRenewal(
+  renewalId,
+  {
+    resolution,
+    reasonCode,
+    reason,
+    expectedUpdatedAt,
+    expectedPaymentStatus,
+    expectedChargeId = null,
+    externalCancellationConfirmed = false,
+    externalConfirmationNote = null,
+    serviceStarted = false,
+  },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${renewalId}/renewal-resolution`,
+    {
+      ...options,
+      method: 'POST',
+      idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+      body: {
+        resolution,
+        reason_code: reasonCode,
+        reason,
+        expected_updated_at: expectedUpdatedAt,
+        expected_payment_status: expectedPaymentStatus,
+        expected_charge_id: expectedChargeId,
+        external_cancellation_confirmed: externalCancellationConfirmed,
+        external_confirmation_note: externalConfirmationNote,
+        service_started: serviceStarted,
+      },
+    },
+  );
+  invalidatePageCacheByTag('assessment_contracts');
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('assessment_contract_event');
+  invalidatePageCacheByTag('sales_status_events');
+  invalidatePageCacheByTag('payout_pending_repasse');
+  return response.data;
+}
+
 export async function refundOrder(orderType, orderId, reason, options = {}) {
   const response = await apiRequest(`/orders/${orderType}/${orderId}/refund`, {
     ...options,
