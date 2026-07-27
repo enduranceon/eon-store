@@ -86,6 +86,33 @@ export async function apiRequest(path, {
   return parseResponse(response);
 }
 
+export async function publicApiRequest(path, {
+  method = 'GET',
+  body,
+  idempotencyKey,
+  signal,
+} = {}) {
+  if (!SUPABASE_URL || !SUPABASE_PUBLIC_KEY) {
+    throw new ApiError('API não configurada no frontend', {
+      status: 500,
+      code: 'api_not_configured',
+    });
+  }
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const response = await fetch(`${API_BASE_URL}${normalizedPath}`, {
+    method,
+    signal,
+    headers: {
+      apikey: SUPABASE_PUBLIC_KEY,
+      Authorization: `Bearer ${SUPABASE_PUBLIC_KEY}`,
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  return parseResponse(response);
+}
+
 export function getCurrentAdmin(options = {}) {
   return apiRequest('/session', options);
 }
@@ -288,6 +315,129 @@ function invalidateAssessmentContractLifecycle() {
   invalidatePageCacheByTag('assessment_contract_coach_history');
   invalidatePageCacheByTag('assessment_contract_event');
   invalidatePageCacheByTag('asaas_payments');
+}
+
+export async function createAssessmentContract(
+  {
+    customerId,
+    coachId,
+    planId,
+    startDate,
+    installments,
+    enrollmentFee,
+    manualDiscount,
+    discountReason = null,
+    autoRenewal = false,
+    notes = null,
+    replacementContractId = null,
+  },
+  options = {},
+) {
+  const response = await apiRequest('/orders/contracts', {
+    ...options,
+    method: 'POST',
+    idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+    body: {
+      customer_id: customerId,
+      coach_id: coachId,
+      plan_id: planId,
+      start_date: startDate,
+      installments,
+      enrollment_fee: enrollmentFee,
+      manual_discount: manualDiscount,
+      discount_reason: discountReason,
+      auto_renewal: autoRenewal,
+      notes,
+      replacement_contract_id: replacementContractId,
+    },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function submitPublicAssessmentEnrollment(
+  {
+    planId,
+    coachId,
+    fullName,
+    whatsapp,
+    email = '',
+    cpf,
+    gender = null,
+    birthDate = null,
+    paymentType,
+    installments,
+  },
+  options = {},
+) {
+  const response = await publicApiRequest('/public/assessment-enrollments', {
+    ...options,
+    method: 'POST',
+    idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+    body: {
+      plan_id: planId,
+      coach_id: coachId,
+      full_name: fullName,
+      whatsapp,
+      email,
+      cpf,
+      gender,
+      birth_date: birthDate,
+      payment_type: paymentType,
+      installments,
+    },
+  });
+  return response.data;
+}
+
+export async function runAssessmentContractTransitions(options = {}) {
+  const response = await apiRequest('/orders/contracts/transitions', {
+    ...options,
+    method: 'POST',
+    body: {},
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function updateAssessmentContractDiscount(
+  contractId,
+  { manualDiscount, discountReason, discountRecurring, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/discount`, {
+    ...options,
+    method: 'PATCH',
+    body: {
+      manual_discount: manualDiscount,
+      discount_reason: discountReason,
+      discount_recurring: discountRecurring,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function completeAssessmentContractRefund(
+  contractId,
+  { refundDate, refundNotes, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/refund-completion`,
+    {
+      ...options,
+      method: 'POST',
+      body: {
+        refund_date: refundDate,
+        refund_notes: refundNotes,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
 }
 
 export async function updateAssessmentContractDates(

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { CheckCircle2, Loader2, AlertCircle, Clock, BadgeDollarSign, ChevronLeft, CreditCard, QrCode } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { supabase } from '@/api/db';
+import { submitPublicAssessmentEnrollment } from '@/api/client';
 import { formatCurrency, maskCpf, validateCpf } from '@/lib/utils';
 import { PhoneInput } from '@/components/PhoneInput';
 import { normalizePhone, isValidPhone } from '@/lib/phone';
@@ -22,13 +23,6 @@ function periodLabel(months) {
   if (n === 1)  return '1 mês';
   if (n === 12) return '12 meses (Anual)';
   return `${n} meses`;
-}
-
-function addPlanMonths(startStr, months) {
-  const d = new Date(startStr + 'T12:00:00');
-  d.setMonth(d.getMonth() + months);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function PaymentSelector({ planMonths, paymentType, installments, onChange }) {
@@ -107,6 +101,7 @@ export default function PublicModalityPlans() {
     payment_type: 'card', installments: 1,
   });
   const [cpfTouched, setCpfTouched] = useState(false);
+  const enrollmentOperationKey = useRef(crypto.randomUUID());
 
   useEffect(() => {
     (async () => {
@@ -144,55 +139,21 @@ export default function PublicModalityPlans() {
 
     setSubmitting(true);
     try {
-      const cpfClean = form.cpf.replace(/\D/g, '');
-
-      const { data: customerId, error: custErr } = await supabase
-        .rpc('upsert_assessment_customer', {
-          p_full_name:  form.full_name.trim(),
-          p_whatsapp:   normalizePhone(form.whatsapp) || null,
-          p_cpf:        cpfClean || null,
-          p_gender:     form.gender    || null,
-          p_birth_date: form.birth_date || null,
-          p_email:      form.email.trim() || null,
-        });
-      if (custErr) throw custErr;
-      const customer = { id: customerId };
-
       const plan      = selectedPlan;
-      const startDate = new Date().toISOString().split('T')[0];
-      const endDate   = addPlanMonths(startDate, getPlanMonths(plan));
-
-      const { error: contractErr } = await supabase
-        .from('assessment_contracts')
-        .insert({
-          customer_id:   customer.id,
-          coach_id:      form.coach_id,
-          plan_id:       plan.id,
-          plan_snapshot: {
-            plan_id:          plan.id,
-            name:             plan.name || null,
-            modality_id:      plan.modality_id,
-            price_total:      Number(plan.price_total)    || 0,
-            price_monthly:    Number(plan.price_monthly)  || 0,
-            enrollment_fee:   Number(plan.enrollment_fee) || 0,
-            max_installments: plan.max_installments,
-            period_months:    getPlanMonths(plan),
-            snapshot_at:      new Date().toISOString(),
-            snapshot_source:  'public_enrollment',
-          },
-          status:            'draft',
-          payment_status:    'pending',
-          start_date:        startDate,
-          end_date:          endDate,
-          original_end_date: endDate,
-          payment_method: form.payment_type,
-          installments:   form.payment_type === 'card' ? form.installments : 1,
-          enrollment_fee: Number(plan.enrollment_fee) || 0,
-          auto_renewal:   false,
-          notes:          'Adesão via formulário público',
-        });
-
-      if (contractErr) throw contractErr;
+      await submitPublicAssessmentEnrollment({
+        planId: plan.id,
+        coachId: form.coach_id,
+        fullName: form.full_name.trim(),
+        whatsapp: normalizePhone(form.whatsapp) || '',
+        email: form.email.trim(),
+        cpf: form.cpf.replace(/\D/g, ''),
+        gender: form.gender || null,
+        birthDate: form.birth_date || null,
+        paymentType: form.payment_type,
+        installments: form.payment_type === 'card' ? form.installments : 1,
+      }, {
+        idempotencyKey: enrollmentOperationKey.current,
+      });
       setDone(true);
     } catch (err) {
       toast.error(err.message || 'Erro ao enviar. Tente novamente.');

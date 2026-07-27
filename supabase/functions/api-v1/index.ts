@@ -10,6 +10,10 @@ import { handleContractRequest } from "./contracts.ts";
 import { handleContractBillingRequest } from "./contract-billing.ts";
 import { handleContractLifecycleRequest } from "./contract-lifecycle.ts";
 import { handleContractMembershipRequest } from "./contract-membership.ts";
+import {
+  handleContractResidualRequest,
+  handlePublicAssessmentRequest,
+} from "./contract-residual.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
@@ -27,6 +31,29 @@ function routePath(req: Request): string {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return optionsResponse();
 
+  const path = routePath(req);
+
+  // A adesão pública não exige usuário administrativo, mas continua atrás da
+  // verificação JWT da plataforma e só grava por uma operação validada.
+  if (path === "/public/assessment-enrollments") {
+    const publicClient = createServiceClient();
+    if (!publicClient) {
+      console.error(
+        "api-v1: SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente",
+      );
+      return jsonResponse({
+        error: "API não configurada",
+        code: "api_misconfigured",
+      }, 500);
+    }
+    const publicResponse = await handlePublicAssessmentRequest(
+      req,
+      path,
+      publicClient,
+    );
+    if (publicResponse) return publicResponse;
+  }
+
   const gate = await requireAdmin(req);
   if (!gate.ok) {
     const code = gate.error || "unauthorized";
@@ -36,8 +63,6 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse({ error: message, code }, gate.status);
   }
-
-  const path = routePath(req);
 
   if (req.method === "GET" && path === "/session") {
     return jsonResponse({
@@ -110,6 +135,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (contractMembershipResponse) return contractMembershipResponse;
+
+  const contractResidualResponse = await handleContractResidualRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (contractResidualResponse) return contractResidualResponse;
 
   const billingResponse = await handleBillingRequest(
     req,

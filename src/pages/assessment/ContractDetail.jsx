@@ -30,6 +30,7 @@ import {
   setAssessmentContractAutoRenewal,
   startAssessmentContractLeave,
   updateAssessmentContractDates,
+  updateAssessmentContractDiscount,
   voidAssessmentContractSale,
 } from '@/api/client';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
@@ -1120,10 +1121,11 @@ export default function ContractDetail() {
             await load();
             return result;
           }
-          await AssessmentContract.update(contract.id, {
-            manual_discount:    newValue,
-            discount_reason:    reason || null,
-            discount_recurring: recurring || false,
+          await updateAssessmentContractDiscount(contract.id, {
+            manualDiscount: newValue,
+            discountReason: reason || null,
+            discountRecurring: recurring || false,
+            expectedUpdatedAt: contract.updated_at,
           });
           await load();
           return undefined;
