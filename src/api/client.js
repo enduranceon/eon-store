@@ -143,6 +143,46 @@ export async function updateOrderDueDate(
   return response.data;
 }
 
+export async function createOrderCharge(
+  orderType,
+  orderId,
+  {
+    billingType,
+    dueDate,
+    installments = 1,
+    cpf,
+    source,
+  },
+  options = {},
+) {
+  const body = {
+    billing_type: billingType,
+    due_date: dueDate,
+    ...(orderType === 'contract'
+      ? { source }
+      : { installments, cpf }),
+  };
+  const response = await apiRequest(
+    `/orders/${orderType}/${orderId}/charge`,
+    {
+      ...options,
+      method: 'POST',
+      idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+      body,
+    },
+  );
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+  };
+  if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('sales_status_events');
+  if (orderType === 'contract') invalidatePageCacheByTag('assessment_contract_event');
+  return response.data;
+}
+
 export async function resolveAssessmentRenewal(
   renewalId,
   {
