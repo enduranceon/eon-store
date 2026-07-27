@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { updateOrderDueDate } from '@/api/client';
+import { completeAssessmentContractRefund, updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
@@ -691,16 +691,11 @@ export default function Financial() {
     if (!refundDoneForm.date) return toast.error('Informe a data do estorno');
     setSavingRefund(true);
     try {
-      const { error } = await supabase
-        .from('assessment_contracts')
-        .update({
-          refund_status: 'done',
-          refund_date:   refundDoneForm.date,
-          refund_notes:  refundDoneForm.notes || null,
-          updated_at:    new Date().toISOString(),
-        })
-        .eq('id', refundDoneModal.id);
-      if (error) throw error;
+      await completeAssessmentContractRefund(refundDoneModal.id, {
+        refundDate: refundDoneForm.date,
+        refundNotes: refundDoneForm.notes || null,
+        expectedUpdatedAt: refundDoneModal.updated_at,
+      });
       toast.success('Estorno marcado como realizado!');
       setRefundDoneModal(null);
       // Remove da lista local sem recarregar tudo

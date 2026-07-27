@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, FileText, Save, Check, ChevronRight, Users, Calendar, RotateCcw, BadgeDollarSign, Plus, UserPlus, AlertTriangle, BadgeCheck, Loader2, MapPin } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -9,15 +9,14 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import {
-  AssessmentContract, PreSaleCustomer, AssessmentCoach, AssessmentPlan, AssessmentModality,
-  AssessmentContractEvent,
+  PreSaleCustomer, AssessmentCoach, AssessmentPlan, AssessmentModality,
 } from '@/api/entities';
+import { createAssessmentContract } from '@/api/client';
 import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr, maskCpf } from '@/lib/utils';
 import { PhoneInput } from '@/components/PhoneInput';
 import { normalizePhone } from '@/lib/phone';
 import { formatCep, lookupCepAddress, normalizeCep } from '@/lib/br-address';
-import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { classifyContractLifecycle, isContractVoidedSale } from '@/lib/assessment-contract-lifecycle';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
@@ -138,6 +137,7 @@ export default function ContractForm() {
   const [newCustomer, setNewCustomer] = useState(emptyNewCustomer);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [newCustomerCepLoading, setNewCustomerCepLoading] = useState(false);
+  const createOperationKey = useRef(crypto.randomUUID());
 
   const draft = loadDraft();
 
@@ -343,23 +343,6 @@ export default function ContractForm() {
     setStep('review');
   };
 
-  // Constrói o snapshot do plano: tudo que precisa ser preservado mesmo
-  // que o plano seja editado no futuro.
-  const buildPlanSnapshot = (plan) => ({
-    plan_id:           plan.id,
-    name:              plan.name || null,
-    modality_id:       plan.modality_id,
-    price_total:       Number(plan.price_total) || 0,
-    price_monthly:     Number(plan.price_monthly) || 0,
-    enrollment_fee:    Number(plan.enrollment_fee) || 0,
-    max_installments:  plan.max_installments,
-    period_months:     plan.period_months || getPlanMonths(plan),
-    period:            plan.period,
-    revenue_center_id: plan.revenue_center_id || null,
-    snapshot_at:       new Date().toISOString(),
-    snapshot_source:   'contract_create',
-  });
-
   const save = async () => {
     if (!form.customer_id) return toast.error('Selecione um aluno');
     if (!form.coach_id) return toast.error('Selecione um coach');
@@ -372,71 +355,22 @@ export default function ContractForm() {
 
     setSaving(true);
     try {
-      const planSnapshot = buildPlanSnapshot(selectedPlan);
-      const replacementNote = replacementContract
-        ? `Substitui registro descartado ${replacementContract.contract_number}`
-        : null;
-      const finalNotes = [replacementNote, form.notes && form.notes !== replacementNote ? form.notes : null]
-        .filter(Boolean)
-        .join(' · ') || null;
-      const created = await AssessmentContract.create({
-        customer_id:       form.customer_id,
-        coach_id:          form.coach_id,
-        plan_id:           selectedPlan.id,
-        plan_snapshot:     planSnapshot,
-        start_date:        form.start_date,
-        end_date:          endDate,
-        original_end_date: endDate,
-        due_date:          defaultPaymentDueDate(),
+      const result = await createAssessmentContract({
+        customerId:        form.customer_id,
+        coachId:           form.coach_id,
+        planId:            selectedPlan.id,
+        startDate:         form.start_date,
         installments,
-        enrollment_fee:    enrollmentFee,
-        manual_discount:   manualDiscount,
-        discount_reason:   form.discount_reason || null,
-        auto_renewal:      !!form.auto_renewal,
-        notes:             finalNotes,
+        enrollmentFee,
+        manualDiscount,
+        discountReason:    form.discount_reason || null,
+        autoRenewal:       !!form.auto_renewal,
+        notes:             form.notes || null,
+        replacementContractId: replacementContract?.id || null,
+      }, {
+        idempotencyKey: createOperationKey.current,
       });
-
-      // Registra evento de criação (auditoria) — best-effort, não bloqueia.
-      try {
-        await AssessmentContractEvent.create({
-          contract_id: created.id,
-          event_type:  'created',
-          payload: {
-            plan_snapshot: planSnapshot,
-            coach_id:        form.coach_id,
-            installments,
-            enrollment_fee:  enrollmentFee,
-            manual_discount: manualDiscount,
-            discount_reason: form.discount_reason || null,
-            auto_renewal:    !!form.auto_renewal,
-            total_value:     Number(selectedPlan.price_total) + enrollmentFee - manualDiscount,
-            prior_contracts: priorContracts.total,
-            prior_cancelled: priorContracts.cancelled,
-            replacement_of_contract_id: replacementContract?.id || null,
-            replacement_of_contract_number: replacementContract?.contract_number || null,
-          },
-          notes: replacementContract
-            ? `Criado como substituição de ${replacementContract.contract_number}`
-            : priorContracts.cancelled > 0
-            ? `Aluno tem ${priorContracts.cancelled} contrato(s) cancelado(s) anteriormente`
-            : null,
-        });
-        if (replacementContract) {
-          await AssessmentContractEvent.create({
-            contract_id: replacementContract.id,
-            event_type:  'sale_replaced',
-            payload: {
-              new_contract_id:     created.id,
-              new_contract_number: created.contract_number,
-              new_plan_id:         selectedPlan.id,
-              new_plan_snapshot:   planSnapshot,
-            },
-            notes: `Substituída pelo contrato ${created.contract_number}`,
-          });
-        }
-      } catch (eventErr) {
-        console.warn('[contract_event] falha ao registrar criação:', eventErr.message);
-      }
+      const created = result.contract;
 
       toast.success(`Contrato ${created.contract_number} criado!`);
       try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* noop */ }
