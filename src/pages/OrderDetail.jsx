@@ -24,8 +24,11 @@ import {
   cancelOrderCharge,
   cancelOrderItem,
   createOrderCharge,
+  markOrderPaymentMessageSent,
   refundOrder,
   syncOrderChargeStatus,
+  updateOrderDiscount,
+  updateOrderFulfillment,
 } from '@/api/client';
 
 const PAYMENT_STATUS = {
@@ -302,10 +305,10 @@ export default function OrderDetail() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await PreSaleOrder.update(id, {
-        delivery_status: deliveryStatus,
-        delivery_date:   deliveryDate || null,
-        internal_notes:  internalNotes,
+      await updateOrderFulfillment('presale', id, {
+        deliveryStatus,
+        deliveryDate: deliveryDate || null,
+        internalNotes,
       });
       toast.success('Atualizações salvas!');
       load();
@@ -340,22 +343,6 @@ export default function OrderDetail() {
       toast.error(e.message);
     } finally {
       setEditPayMethodSaving(false);
-    }
-  };
-
-  // Registra uma ação no histórico da venda (sales_status_events)
-  const logSaleEvent = async (newStatus, reason, metadata = {}) => {
-    try {
-      await supabase.from('sales_status_events').insert({
-        order_type:      'presale',
-        order_id:        id,
-        previous_status: order?.payment_status || null,
-        new_status:      newStatus,
-        reason,
-        metadata,
-      });
-    } catch (e) {
-      console.warn('[sales_status_events] falha ao registrar:', e.message);
     }
   };
 
@@ -592,21 +579,9 @@ export default function OrderDetail() {
         return;
       }
       const wasResent = order.payment_status === 'charge_sent';
-      const updates = { payment_message_sent_at: new Date().toISOString() };
-      if (isExternal) {
-        updates.external_payment_link = externalLink || null;
-        updates.due_date = dueDate;
-      }
-      if (['awaiting_charge', 'pending'].includes(order.payment_status)) {
-        updates.payment_status = 'charge_sent';
-      }
-      await PreSaleOrder.update(id, updates);
-      await logSaleEvent('charge_sent', wasResent ? 'Cobrança reenviada' : 'Cobrança enviada', {
-        action:    wasResent ? 'charge_resent' : 'charge_sent',
-        channel:   'whatsapp',
-        via:       isExternal ? (externalLink ? 'external_link' : 'message_only') : 'asaas',
-        due_date:  dueDate || null,
-        link:      isExternal ? (externalLink || null) : (order.asaas_payment_link || null),
+      await markOrderPaymentMessageSent('presale', id, {
+        externalPaymentLink: isExternal ? (externalLink || null) : null,
+        dueDate: dueDate || null,
       });
       toast.success(wasResent ? 'Reenvio registrado!' : 'Mensagem marcada como enviada!');
       setWhatsappModal(false);
@@ -975,10 +950,9 @@ export default function OrderDetail() {
             await load();
             return result;
           }
-          await PreSaleOrder.update(order.id, {
-            manual_discount: newValue,
-            discount_reason: reason || null,
-            total_value:     newTotal,
+          await updateOrderDiscount('presale', order.id, {
+            manualDiscount: newValue,
+            discountReason: reason || null,
           });
           await load();
           return undefined;

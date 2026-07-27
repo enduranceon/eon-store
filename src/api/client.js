@@ -147,6 +147,75 @@ export async function cancelOrder(orderType, orderId, reason, options = {}) {
   return response.data;
 }
 
+export async function createStockOrder(payload, options = {}) {
+  const response = await apiRequest('/orders/stock', {
+    ...options,
+    method: 'POST',
+    body: payload,
+    idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+  });
+  invalidatePageCacheByTag('stock_orders');
+  invalidatePageCacheByTag('stock_products');
+  return response.data;
+}
+
+export async function updateOrderFulfillment(
+  orderType,
+  orderId,
+  { deliveryStatus, deliveryDate = null, internalNotes = null },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/fulfillment`, {
+    ...options,
+    method: 'PATCH',
+    body: {
+      delivery_status: deliveryStatus,
+      delivery_date: deliveryDate,
+      internal_notes: internalNotes,
+    },
+  });
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  return response.data;
+}
+
+export async function markOrderPaymentMessageSent(
+  orderType,
+  orderId,
+  { externalPaymentLink = null, dueDate = null },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/payment-message`, {
+    ...options,
+    method: 'POST',
+    body: {
+      external_payment_link: externalPaymentLink,
+      due_date: dueDate,
+    },
+  });
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
+export async function updateOrderDiscount(
+  orderType,
+  orderId,
+  { manualDiscount, discountReason = null },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/discount`, {
+    ...options,
+    method: 'PATCH',
+    body: {
+      manual_discount: manualDiscount,
+      discount_reason: discountReason,
+    },
+  });
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
 export async function updateOrderDueDate(
   orderType,
   orderId,
@@ -835,6 +904,62 @@ export async function reopenManualPayment(orderType, orderId, options = {}) {
   });
   return response.data;
 }
+
+function inventoryProductPath(id) {
+  const base = '/inventory/products';
+  return id ? `${base}/${encodeURIComponent(id)}` : base;
+}
+
+function inventoryWritePayload(data) {
+  const payload = { ...data };
+  delete payload.id;
+  delete payload.created_at;
+  delete payload.created_date;
+  delete payload.updated_at;
+  delete payload.updated_date;
+  return payload;
+}
+
+export const StockProductApi = {
+  async list() {
+    const response = await apiRequest(inventoryProductPath());
+    return response.data;
+  },
+
+  async filter(filters = {}) {
+    const rows = await this.list();
+    return rows.filter(row => matchesFilters(row, filters));
+  },
+
+  async get(id) {
+    const response = await apiRequest(inventoryProductPath(id));
+    return response.data;
+  },
+
+  async create(data) {
+    const response = await apiRequest(inventoryProductPath(), {
+      method: 'POST',
+      body: inventoryWritePayload(data),
+    });
+    invalidatePageCacheByTag('stock_products');
+    return response.data;
+  },
+
+  async update(id, data) {
+    const response = await apiRequest(inventoryProductPath(id), {
+      method: 'PATCH',
+      body: inventoryWritePayload(data),
+    });
+    invalidatePageCacheByTag('stock_products');
+    return response.data;
+  },
+
+  async delete(id) {
+    await apiRequest(inventoryProductPath(id), { method: 'DELETE' });
+    invalidatePageCacheByTag('stock_products');
+    return true;
+  },
+};
 
 function catalogResourcePath(resource, id) {
   const base = `/catalog/${encodeURIComponent(resource)}`;

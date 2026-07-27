@@ -23,8 +23,11 @@ import {
   cancelOrder as cancelOrderViaApi,
   cancelOrderItem,
   createOrderCharge,
+  markOrderPaymentMessageSent,
   refundOrder,
   syncOrderChargeStatus,
+  updateOrderDiscount,
+  updateOrderFulfillment,
 } from '@/api/client';
 
 const PAYMENT_STATUS = {
@@ -140,10 +143,10 @@ export default function StockOrderDetail() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await StockOrder.update(id, {
-        delivery_status: deliveryStatus,
-        delivery_date:   deliveryDate || null,
-        internal_notes:  internalNotes,
+      await updateOrderFulfillment('stock', id, {
+        deliveryStatus,
+        deliveryDate: deliveryDate || null,
+        internalNotes,
       });
       toast.success('Atualizações salvas!');
       load();
@@ -384,17 +387,12 @@ export default function StockOrderDetail() {
         toast.error('Gere uma cobrança ou informe o link externo antes de efetivar a venda.');
         return;
       }
-      const updates = { payment_message_sent_at: new Date().toISOString() };
-      if (!order.asaas_charge_id) {
-        updates.external_payment_link = externalLink || null;
-        if (!order.due_date) {
-          updates.due_date = defaultPaymentDueDate();
-        }
-      }
-      if (['awaiting_charge', 'pending'].includes(order.payment_status)) {
-        updates.payment_status = 'charge_sent';
-      }
-      await StockOrder.update(id, updates);
+      await markOrderPaymentMessageSent('stock', id, {
+        externalPaymentLink: externalLink || null,
+        dueDate: order.asaas_charge_id
+          ? (order.due_date || null)
+          : (order.due_date || defaultPaymentDueDate()),
+      });
       toast.success('Mensagem marcada como enviada!');
       setWhatsappModal(false);
       load();
@@ -605,10 +603,9 @@ export default function StockOrderDetail() {
             await load();
             return result;
           }
-          await StockOrder.update(order.id, {
-            manual_discount: newValue,
-            discount_reason: reason || null,
-            total_value:     newTotal,
+          await updateOrderDiscount('stock', order.id, {
+            manualDiscount: newValue,
+            discountReason: reason || null,
           });
           await load();
           return undefined;
