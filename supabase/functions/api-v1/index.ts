@@ -6,6 +6,7 @@ import { handleBillingRequest } from "./billing.ts";
 import { handleCatalogRequest } from "./catalog.ts";
 import { handleChargeLifecycleRequest } from "./charge-lifecycle.ts";
 import { handleChargeRequest } from "./charges.ts";
+import { handleContractRequest } from "./contracts.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
@@ -74,6 +75,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (chargeLifecycleResponse) return chargeLifecycleResponse;
+
+  const contractResponse = await handleContractRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (contractResponse) return contractResponse;
 
   const billingResponse = await handleBillingRequest(
     req,

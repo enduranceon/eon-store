@@ -228,6 +228,60 @@ export async function cancelOrderCharge(
   return response.data;
 }
 
+export async function voidAssessmentContractSale(contractId, options = {}) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/void-sale`,
+    {
+      ...options,
+      method: 'POST',
+      idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+      body: {},
+    },
+  );
+  invalidatePageCacheByTag('assessment_contracts');
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('assessment_contract_event');
+  invalidatePageCacheByTag('sales_status_events');
+  invalidatePageCacheByTag('payout_pending_repasse');
+  return response.data;
+}
+
+export async function changeAssessmentContractPlan(
+  contractId,
+  {
+    planId,
+    startDate,
+    installments,
+    enrollmentFee,
+    manualDiscount,
+    discountReason = null,
+  },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/plan`,
+    {
+      ...options,
+      method: 'PATCH',
+      idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+      body: {
+        plan_id: planId,
+        start_date: startDate,
+        installments,
+        enrollment_fee: enrollmentFee,
+        manual_discount: manualDiscount,
+        discount_reason: discountReason,
+      },
+    },
+  );
+  invalidatePageCacheByTag('assessment_contracts');
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('assessment_contract_event');
+  invalidatePageCacheByTag('sales_status_events');
+  invalidatePageCacheByTag('payout_pending_repasse');
+  return response.data;
+}
+
 export async function resolveAssessmentRenewal(
   renewalId,
   {

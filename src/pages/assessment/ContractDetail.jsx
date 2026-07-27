@@ -18,7 +18,11 @@ import {
   AssessmentLeave, AssessmentContractCoachHist, AssessmentContractEvent,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { cancelOrderCharge } from '@/api/client';
+import {
+  cancelOrderCharge,
+  changeAssessmentContractPlan,
+  voidAssessmentContractSale,
+} from '@/api/client';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
@@ -44,7 +48,11 @@ function addPeriod(startStr, plan) {
   const months = plan?.period_months
     || { mensal: 1, trimestral: 3, semestral: 6, anual: 12 }[plan?.period]
     || 1;
+  const originalDay = d.getDate();
+  d.setDate(1);
   d.setMonth(d.getMonth() + months);
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(originalDay, lastDay));
   return toLocalDateStr(d);
 }
 
@@ -62,22 +70,6 @@ function getPlanMonths(plan) {
     || 1;
 }
 
-function buildPlanSnapshot(plan, source = 'contract_adjustment') {
-  return {
-    plan_id:           plan.id,
-    name:              plan.name || null,
-    modality_id:       plan.modality_id,
-    price_total:       Number(plan.price_total) || 0,
-    price_monthly:     Number(plan.price_monthly) || 0,
-    enrollment_fee:    Number(plan.enrollment_fee) || 0,
-    max_installments:  plan.max_installments,
-    period_months:     plan.period_months || getPlanMonths(plan),
-    period:            plan.period,
-    revenue_center_id: plan.revenue_center_id || null,
-    snapshot_at:       new Date().toISOString(),
-    snapshot_source:   source,
-  };
-}
 import { toast } from 'sonner';
 
 const STATUS = {
@@ -661,46 +653,7 @@ export default function ContractDetail() {
     }
     setVoiding(true);
     try {
-      // 1. Confirma o cancelamento ou a desvinculação antes de encerrar a venda.
-      if (contract.asaas_charge_id || contract.external_payment_link) {
-        await cancelOrderCharge(
-          'contract',
-          id,
-          'Venda não concretizada (cliente nunca pagou)',
-        );
-      }
-
-      // 2. Marca contrato como descartado (não é saída/churn)
-      // Trigger SQL cuida de zerar asaas_payments associados.
-      await AssessmentContract.update(id, {
-        status:              'voided',
-        payment_status:      'cancelled',
-        cancellation_date:   null,
-        cancellation_fee:    0,
-        cancellation_reason: 'Venda não concretizada (cliente nunca pagou)',
-        refund_status:       null,
-        refund_amount:       null,
-        payment_date:        null,
-        payment_method:      null,
-        due_date:            null,
-        external_payment_link: null,
-        payment_message_sent_at: null,
-        // Limpa referências da cobrança Asaas
-        asaas_charge_id:     null,
-        asaas_payment_link:  null,
-        asaas_pix_copy:      null,
-      });
-
-      // 3. Log de evento distinto (sale_voided ≠ cancelled)
-      await logEvent('sale_voided', {
-        voided_at:            todayLocalStr(),
-        had_asaas_charge:     !!contract.asaas_charge_id,
-        had_external_link:     !!contract.external_payment_link,
-        previous_asaas_charge_id: contract.asaas_charge_id || null,
-        previous_external_payment_link: contract.external_payment_link || null,
-        previous_payment_status: contract.payment_status,
-        previous_due_date:    contract.due_date,
-      }, 'Venda não concretizada');
+      await voidAssessmentContractSale(id);
 
       toast.success('Venda descartada. Cobrança Asaas cancelada e contrato encerrado sem multa.');
       setVoidModal(false);
@@ -766,67 +719,17 @@ export default function ContractDetail() {
     );
     const enrollmentFee = Math.max(Number(adjustPlanForm.enrollment_fee) || 0, 0);
     const manualDiscount = Math.max(Number(adjustPlanForm.manual_discount) || 0, 0);
-    const planSnapshot = buildPlanSnapshot(selectedAdjustPlan);
 
     setAdjustPlanSaving(true);
     try {
-      const hadAsaasCharge = !!contract.asaas_charge_id;
-      if (hadAsaasCharge || contract.external_payment_link) {
-        await cancelOrderCharge(
-          'contract',
-          id,
-          'Plano do contrato alterado antes do pagamento',
-        );
-      }
-
-      await supabase.from('asaas_payments')
-        .delete()
-        .eq('order_id', id)
-        .eq('order_type', 'contract')
-        .eq('source', 'manual');
-
-      await AssessmentContract.update(id, {
-        plan_id: selectedAdjustPlan.id,
-        plan_snapshot: planSnapshot,
-        start_date: adjustPlanForm.start_date,
-        end_date: adjustedEndDate,
-        original_end_date: adjustedEndDate,
+      await changeAssessmentContractPlan(id, {
+        planId: selectedAdjustPlan.id,
+        startDate: adjustPlanForm.start_date,
         installments,
-        enrollment_fee: enrollmentFee,
-        manual_discount: manualDiscount,
-        discount_reason: adjustPlanForm.discount_reason || null,
-        payment_status: 'pending',
-        payment_date: null,
-        payment_method: null,
-        manual_payment: false,
-        manual_fee: null,
-        due_date: null,
-        external_payment_link: null,
-        payment_message_sent_at: null,
-        asaas_charge_id: null,
-        asaas_payment_link: null,
-        asaas_pix_copy: null,
-        asaas_pix_qrcode: null,
+        enrollmentFee,
+        manualDiscount,
+        discountReason: adjustPlanForm.discount_reason || null,
       });
-
-      await logEvent('plan_changed', {
-        from_plan_id: contract.plan_id,
-        to_plan_id: selectedAdjustPlan.id,
-        from_plan_snapshot: contract.plan_snapshot || null,
-        to_plan_snapshot: planSnapshot,
-        from_start_date: contract.start_date,
-        to_start_date: adjustPlanForm.start_date,
-        from_end_date: contract.end_date,
-        to_end_date: adjustedEndDate,
-        installments,
-        enrollment_fee: enrollmentFee,
-        manual_discount: manualDiscount,
-        previous_payment_status: contract.payment_status,
-        cleared_payment_link: !!(contract.external_payment_link || contract.asaas_payment_link || contract.asaas_pix_copy),
-        cancelled_asaas_charge: hadAsaasCharge,
-        is_renewal: isRenewalContract(contract),
-        parent_contract_id: contract.parent_contract_id || null,
-      }, isRenewalContract(contract) ? 'Troca de plano na renovação antes do pagamento' : 'Ajuste de plano antes do pagamento');
 
       toast.success(isRenewalContract(contract)
         ? 'Renovação ajustada. Gere ou envie a cobrança correta agora.'
