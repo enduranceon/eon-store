@@ -1,5 +1,6 @@
 -- Contract membership operations used by the authenticated admin API.
 -- Every business mutation and its audit event happen in one transaction.
+-- Canonical Supabase migration history version: 20260727173928.
 
 ALTER TABLE public.order_operations
   DROP CONSTRAINT order_operations_operation_type_check;
