@@ -19,8 +19,13 @@ import {
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import {
+  cancelAssessmentContract,
   cancelOrderCharge,
+  changeAssessmentContractCoach,
   changeAssessmentContractPlan,
+  finishAssessmentContractLeave,
+  startAssessmentContractLeave,
+  updateAssessmentContractDates,
   voidAssessmentContractSale,
 } from '@/api/client';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
@@ -378,15 +383,10 @@ export default function ContractDetail() {
     if (dateForm.end_date <= dateForm.start_date) return toast.error('Data final deve ser após a inicial');
     setDateSaving(true);
     try {
-      await AssessmentContract.update(id, {
-        start_date: dateForm.start_date,
-        end_date:   dateForm.end_date,
-      });
-      await logEvent('dates_changed', {
-        old_start: contract.start_date,
-        new_start: dateForm.start_date,
-        old_end:   contract.end_date,
-        new_end:   dateForm.end_date,
+      await updateAssessmentContractDates(id, {
+        startDate: dateForm.start_date,
+        endDate: dateForm.end_date,
+        expectedUpdatedAt: contract.updated_at,
       });
       toast.success('Datas atualizadas');
       setDateModal(false);
@@ -445,14 +445,9 @@ export default function ContractDetail() {
   const changeCoach = async () => {
     if (!newCoachId || newCoachId === contract.coach_id) return setChangeCoachModal(false);
     try {
-      const oldCoach = coach;
-      const newCoach = coaches.find(c => c.id === newCoachId);
-      await AssessmentContract.update(id, { coach_id: newCoachId });
-      await logEvent('coach_changed', {
-        from_coach_id:   contract.coach_id,
-        from_coach_name: oldCoach?.name || null,
-        to_coach_id:     newCoachId,
-        to_coach_name:   newCoach?.name || null,
+      await changeAssessmentContractCoach(id, {
+        coachId: newCoachId,
+        expectedUpdatedAt: contract.updated_at,
       });
       toast.success('Coach trocado!'); setChangeCoachModal(false); load();
     } catch (e) { toast.error(e.message); }
@@ -463,36 +458,14 @@ export default function ContractDetail() {
     if (leaveForm.end_date < leaveForm.start_date) return toast.error('Fim antes do início');
     if (contract.status === 'on_leave') return toast.error('Contrato já está em licença');
     try {
-      const days = Math.round(
-        (new Date(leaveForm.end_date + 'T12:00:00') - new Date(leaveForm.start_date + 'T12:00:00')) / 86400000
-      ) + 1;
-      // Estender vencimento do contrato pelos dias de licença
-      const newEnd = new Date(contract.end_date + 'T12:00:00');
-      newEnd.setDate(newEnd.getDate() + days);
-      const newEndStr = toLocalDateStr(newEnd);
-
-      await Promise.all([
-        AssessmentLeave.create({
-          contract_id: id,
-          start_date:  leaveForm.start_date,
-          end_date:    leaveForm.end_date,
-          days,
-          status:      'active',
-          reason:      leaveForm.reason || null,
-        }),
-        AssessmentContract.update(id, {
-          status:   'on_leave',
-          end_date: newEndStr,
-        }),
-      ]);
-      await logEvent('leave_started', {
-        leave_start: leaveForm.start_date,
-        leave_end:   leaveForm.end_date,
-        days,
-        reason:      leaveForm.reason || null,
-        old_end_date: contract.end_date,
-        new_end_date: newEndStr,
+      const result = await startAssessmentContractLeave(id, {
+        startDate: leaveForm.start_date,
+        endDate: leaveForm.end_date,
+        reason: leaveForm.reason || null,
+        expectedUpdatedAt: contract.updated_at,
       });
+      const days = result.leave.days;
+      const newEndStr = result.contract.end_date;
       toast.success(`Licença registrada (${days} dias). Novo vencimento: ${formatDate(newEndStr)}.`);
       setLeaveModal(false);
       setLeaveForm({ start_date: todayLocalStr(), end_date: todayLocalStr(), reason: '' });
@@ -503,17 +476,12 @@ export default function ContractDetail() {
   const finishLeave = async (leave) => {
     if (!confirm(`Encerrar licença de ${leave.days} dias? O aluno retorna ao plano.`)) return;
     try {
-      const today     = todayLocalStr();
-      const newStatus = contract.end_date < today ? 'overdue' : 'active';
-      await Promise.all([
-        AssessmentLeave.update(leave.id, { status: 'finished' }),
-        AssessmentContract.update(id, { status: newStatus }),
-      ]);
-      await logEvent('leave_ended', {
-        leave_id: leave.id,
-        days:     leave.days,
-        new_status: newStatus,
-      });
+      const result = await finishAssessmentContractLeave(
+        id,
+        leave.id,
+        contract.updated_at,
+      );
+      const newStatus = result.contract.status;
       toast.success(`Licença encerrada. Aluno ${newStatus === 'active' ? 'retornou ao plano ativo' : 'com contrato vencido'}.`);
       load();
     } catch (e) { toast.error(e.message); }
@@ -567,26 +535,13 @@ export default function ContractDetail() {
     const retroactiveNote = isRetroactive ? ` (retroativo de ${formatDate(cancelDate)})` : '';
     if (!confirm(`Cancelar contrato com multa de ${formatCurrency(c.fee)} (${cancelFeePct}%)? Estorno: ${formatCurrency(c.refund)}.${retroactiveNote}`)) return;
     try {
-      await AssessmentContract.update(id, {
-        status:              'cancelled',
-        cancellation_date:   cancelDate,  // Data de cancelamento (pode ser retroativa)
-        cancellation_fee:    c.fee,
-        cancellation_reason: cancelReason || null,
-        // Controle de estorno pendente
-        refund_status: c.refund > 0 ? 'pending' : null,
-        refund_amount: c.refund > 0 ? c.refund  : null,
+      const result = await cancelAssessmentContract(id, {
+        cancellationDate: cancelDate,
+        cancellationFeePct: Number(cancelFeePct),
+        reason: cancelReason || null,
+        expectedUpdatedAt: contract.updated_at,
       });
-      await logEvent('cancelled', {
-        remaining_days:      c.remainingDays,
-        remaining_value:     c.remaining,
-        cancellation_fee:    c.fee,
-        cancellation_fee_pct: Number(cancelFeePct),
-        refund_amount:       c.refund,
-        cancellation_reason: cancelReason || null,
-        cancellation_date:   cancelDate,  // Data quando foi cancelado
-        payment_status_before: contract.payment_status,
-      }, cancelReason || null);
-      toast.success(c.refund > 0 ? 'Contrato cancelado. Estorno registrado como pendente.' : 'Contrato cancelado.');
+      toast.success(result.refund_amount > 0 ? 'Contrato cancelado. Estorno registrado como pendente.' : 'Contrato cancelado.');
       setCancelModal(false);
       // Reset cancel form
       setCancelDate(todayLocalStr());
