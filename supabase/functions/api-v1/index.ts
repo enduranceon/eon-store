@@ -9,6 +9,7 @@ import { handleChargeRequest } from "./charges.ts";
 import { handleContractRequest } from "./contracts.ts";
 import { handleContractBillingRequest } from "./contract-billing.ts";
 import { handleContractLifecycleRequest } from "./contract-lifecycle.ts";
+import { handleContractMembershipRequest } from "./contract-membership.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
@@ -101,6 +102,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (contractLifecycleResponse) return contractLifecycleResponse;
+
+  const contractMembershipResponse = await handleContractMembershipRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (contractMembershipResponse) return contractMembershipResponse;
 
   const billingResponse = await handleBillingRequest(
     req,

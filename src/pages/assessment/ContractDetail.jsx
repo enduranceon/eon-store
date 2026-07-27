@@ -23,9 +23,11 @@ import {
   cancelOrderCharge,
   changeAssessmentContractCoach,
   changeAssessmentContractPlan,
+  createAssessmentContractRenewal,
   finishAssessmentContractLeave,
   markAssessmentContractPaymentMessageSent,
   removeAssessmentContractExternalCharge,
+  setAssessmentContractAutoRenewal,
   startAssessmentContractLeave,
   updateAssessmentContractDates,
   voidAssessmentContractSale,
@@ -42,11 +44,7 @@ import {
 } from '@/lib/assessment-contract-operations';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel, reopenManualPayment } from '@/lib/manual-payment';
-import {
-  getActivationStatusForContract,
-  getContractKindLabel,
-  isRenewalContract,
-} from '@/lib/assessment-contract-lifecycle';
+import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 
@@ -133,6 +131,7 @@ const EVENT_META = {
   renewal_activated:        { icon: Check,      color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovação ativada' },
   renewal_scheduled:        { icon: Clock,      color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Renovação agendada' },
   renewal_declined:         { icon: Ban,        color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Não renovou' },
+  auto_renewal_changed:     { icon: RotateCcw,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Auto-renovação alterada' },
   charge_cancelled:         { icon: XCircle,    color: 'text-red-500',    bg: 'bg-red-50',    label: 'Cobrança cancelada' },
 };
 
@@ -345,15 +344,6 @@ export default function ContractDetail() {
     const snap = contract?.plan_snapshot;
     if (snap && snap[field] != null) return snap[field];
     return plan?.[field];
-  };
-
-  // Registra evento de auditoria — best-effort, nunca quebra a ação principal
-  const logEvent = async (event_type, payload = {}, notes = null) => {
-    try {
-      await AssessmentContractEvent.create({ contract_id: id, event_type, payload, notes });
-    } catch (e) {
-      console.warn(`[contract_event] falha ao registrar ${event_type}:`, e.message);
-    }
   };
 
   // Edição de datas
@@ -738,67 +728,9 @@ export default function ContractDetail() {
 
     setRenewLoading(true);
     try {
-      const newStart = contract.end_date;
-      const newEnd   = addPeriod(newStart, plan);
-      const newStatus = getActivationStatusForContract({ start_date: newStart });
-      const created  = await AssessmentContract.create({
-        customer_id:        contract.customer_id,
-        coach_id:           contract.coach_id,
-        plan_id:            contract.plan_id,
-        status:             newStatus,
-        start_date:         newStart,
-        end_date:           newEnd,
-        original_end_date:  newEnd,
-        due_date:           suggestedAssessmentChargeDueDate({
-          parent_contract_id: contract.id,
-          start_date: newStart,
-          end_date: newEnd,
-        }),
-        installments:       contract.installments,
-        enrollment_fee:     0,
-        auto_renewal:       contract.auto_renewal ?? false,
-        parent_contract_id: contract.id,
-        notes:              `Renovação manual de ${contract.contract_number}`,
-        // Copia desconto se marcado como recorrente
-        ...(contract.discount_recurring && contract.manual_discount > 0 ? {
-          manual_discount:    contract.manual_discount,
-          discount_reason:    contract.discount_reason || null,
-          discount_recurring: true,
-        } : {}),
-      });
-      await AssessmentContract.update(id, {
-        renewal_generated: true,
-        ...(newStatus === 'active' ? { status: 'finished' } : {}),
-      });
-      await logEvent('renewed', {
-        new_contract_id:     created.id,
-        new_contract_number: created.contract_number,
-        new_start: newStart,
-        new_end:   newEnd,
-        new_status: newStatus,
-        plan_id:   contract.plan_id,
-        installments: contract.installments,
-        had_open_payment: hasOpenPayment,
-      });
-      // Registra também no novo contrato pra rastrear que ele é uma renovação
-      try {
-        await AssessmentContractEvent.create({
-          contract_id: created.id,
-          event_type:  'created',
-          payload: {
-            via:                  'renewal',
-            parent_contract_id:   contract.id,
-            parent_contract_num:  contract.contract_number,
-            plan_id:              contract.plan_id,
-            installments:         contract.installments,
-            status_after:         newStatus,
-          },
-          notes: newStatus === 'scheduled'
-            ? `Renovação agendada de ${contract.contract_number}`
-            : `Renovação de ${contract.contract_number}`,
-        });
-      } catch { /* best-effort */ }
-      toast.success(newStatus === 'scheduled'
+      const result = await createAssessmentContractRenewal(id, contract.updated_at);
+      const created = result.contract;
+      toast.success(created.status === 'scheduled'
         ? `Renovação ${created.contract_number} agendada!`
         : `Contrato ${created.contract_number} criado!`);
       setRenewModal(false);
@@ -809,7 +741,11 @@ export default function ContractDetail() {
 
   const toggleAutoRenewal = async () => {
     try {
-      await AssessmentContract.update(id, { auto_renewal: !contract.auto_renewal });
+      await setAssessmentContractAutoRenewal(
+        id,
+        !contract.auto_renewal,
+        contract.updated_at,
+      );
       toast.success(contract.auto_renewal ? 'Renovação automática desativada' : 'Renovação automática ativada!');
       load();
     } catch (e) { toast.error(e.message); }
