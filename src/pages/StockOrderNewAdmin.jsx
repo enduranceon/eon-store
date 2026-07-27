@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { StockProduct, StockOrder, PreSaleCustomer } from '@/api/entities';
+import { StockProduct, PreSaleCustomer } from '@/api/entities';
+import { createStockOrder } from '@/api/client';
 import { formatCurrency } from '@/lib/utils';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
@@ -111,34 +112,20 @@ export default function StockOrderNewAdmin() {
     setSaving(true);
     try {
       const validatedItems = cartItems.map(i => ({
-        product_id:   i.product.id,
-        product_name: i.product.name,
-        quantity:     i.quantity,
-        sale_price:   Number(i.product.sale_price),
-        cost_price:   Number(i.product.cost_price || 0),
+        product_id: i.product.id,
+        quantity: i.quantity,
       }));
 
       const payload = {
-        customer_id:       customerId,
-        customer_name:     selectedCustomer.full_name,
-        customer_whatsapp: selectedCustomer.whatsapp || null,
-        customer_email:    selectedCustomer.email || null,
-        customer_cpf:      selectedCustomer.cpf || null,
-        items:             validatedItems,
-        total_value:       totalAfterDiscount,
-        manual_discount:   Number(discount.value) || 0,
-        discount_reason:   discount.reason || null,
+        customer_id: customerId,
+        items: validatedItems,
+        manual_discount: Number(discount.value) || 0,
+        discount_reason: discount.reason || null,
         payment_preference: paymentMethod,
-        payment_method:    null,
-        payment_status:    'awaiting_charge',
-        due_date:          null,
-        payment_date:      null,
-        delivery_status:   'awaiting_delivery',
-        delivery_method:   'pickup',
-        internal_notes:    notes || null,
+        internal_notes: notes || null,
       };
 
-      const order = await StockOrder.create(payload);
+      const order = await createStockOrder(payload);
       toast.success(`Pedido ${order.order_number} criado. Registre ou gere a cobrança para efetivar a venda.`);
       navigate(`/estoque/pedidos/${order.id}`);
     } catch (e) {

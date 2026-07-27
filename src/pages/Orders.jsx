@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { PreSaleOrder, PreSaleCampaign } from '@/api/entities';
+import { updateOrderFulfillment } from '@/api/client';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
@@ -116,7 +117,12 @@ export default function Orders() {
       orders: prev.orders.map(o => o.id === orderId ? { ...o, ...patch } : o),
     }));
     try {
-      await PreSaleOrder.update(orderId, patch);
+      const current = orders.find(o => o.id === orderId);
+      await updateOrderFulfillment('presale', orderId, {
+        deliveryStatus: patch.delivery_status,
+        deliveryDate: current?.delivery_date || null,
+        internalNotes: current?.internal_notes || null,
+      });
     } catch (e) {
       toast.error(e.message);
       refresh({ force: true }).catch(() => {});

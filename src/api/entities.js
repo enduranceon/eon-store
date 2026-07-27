@@ -1,5 +1,5 @@
 import { db } from './db';
-import { createCatalogEntity } from './client';
+import { createCatalogEntity, StockProductApi } from './client';
 
 export const PreSaleCampaign  = db.entities.PreSaleCampaign;
 export const PreSaleProduct   = db.entities.PreSaleProduct;
@@ -8,7 +8,7 @@ export const PreSaleOrder     = db.entities.PreSaleOrder;
 export const PreSaleSupplier  = createCatalogEntity('suppliers', 'presale_suppliers');
 export const PreSaleCategory  = createCatalogEntity('categories', 'presale_categories');
 export const PreSaleTrainer   = createCatalogEntity('trainers', 'presale_trainers');
-export const StockProduct     = db.entities.StockProduct;
+export const StockProduct     = StockProductApi;
 export const StockOrder       = db.entities.StockOrder;
 export const Product          = db.entities.Product;
 export const Coupon           = db.entities.Coupon;

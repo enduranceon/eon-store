@@ -15,6 +15,7 @@ import {
   handlePublicAssessmentRequest,
 } from "./contract-residual.ts";
 import { handleOrdersRequest } from "./orders.ts";
+import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
 import { handleReturnsRequest } from "./returns.ts";
@@ -87,6 +88,13 @@ Deno.serve(async (req: Request) => {
 
   const returnsResponse = await handleReturnsRequest(req, path, serviceClient);
   if (returnsResponse) return returnsResponse;
+
+  const inventoryResponse = await handleInventoryRequest(
+    req,
+    path,
+    serviceClient,
+  );
+  if (inventoryResponse) return inventoryResponse;
 
   const chargeResponse = await handleChargeRequest(
     req,

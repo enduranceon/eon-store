@@ -17,6 +17,49 @@ const INACTIVE_REFUND_STATUSES = new Set(["FAILED", "CANCELLED", "CANCELED"]);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+export class OrderInputError extends Error {
+  code: string;
+
+  constructor(message: string, code = "invalid_request") {
+    super(message);
+    this.name = "OrderInputError";
+    this.code = code;
+  }
+}
+
+export function requireIdempotencyKey(value: string | null): string {
+  const normalized = value?.trim() ?? "";
+  if (!UUID_PATTERN.test(normalized)) {
+    throw new OrderInputError(
+      "Chave de idempotência inválida",
+      "invalid_idempotency_key",
+    );
+  }
+  return normalized;
+}
+
+export function normalizeStockOrderCreationPayload(
+  value: unknown,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new OrderInputError("Corpo JSON inválido", "invalid_json");
+  }
+  const payload = value as Record<string, unknown>;
+  if (
+    typeof payload.customer_id !== "string" ||
+    !UUID_PATTERN.test(payload.customer_id)
+  ) {
+    throw new OrderInputError("Cliente inválido");
+  }
+  if (
+    !Array.isArray(payload.items) || payload.items.length < 1 ||
+    payload.items.length > 100
+  ) {
+    throw new OrderInputError("Informe entre 1 e 100 itens");
+  }
+  return payload;
+}
+
 interface PreparedCancellation {
   operation_id: string;
   status: "prepared" | "completed" | "reconciliation_required";
@@ -52,7 +95,7 @@ function databaseError(
   }
 
   return jsonResponse({
-    error: "Não foi possível processar o cancelamento",
+    error: "Não foi possível processar o pedido",
     code: "database_error",
   }, 500);
 }
@@ -268,6 +311,145 @@ export async function handleOrdersRequest(
   supabase: SupabaseClient,
   actorId: string,
 ): Promise<Response | null> {
+  if (req.method === "POST" && path === "/orders/stock") {
+    let payload: Record<string, unknown>;
+    let idempotencyKey: string;
+    try {
+      payload = normalizeStockOrderCreationPayload(await req.json());
+      idempotencyKey = requireIdempotencyKey(
+        req.headers.get("Idempotency-Key"),
+      );
+    } catch (error) {
+      if (error instanceof OrderInputError) {
+        return jsonResponse({ error: error.message, code: error.code }, 400);
+      }
+      return jsonResponse({
+        error: "Corpo JSON inválido",
+        code: "invalid_json",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc(
+      "create_stock_order_from_admin",
+      {
+        p_payload: payload,
+        p_actor_id: actorId,
+        p_idempotency_key: idempotencyKey,
+      },
+    );
+    if (error) return databaseError(error, "create stock order");
+    return jsonResponse({ data }, 201);
+  }
+
+  const fulfillmentMatch = path.match(
+    /^\/orders\/(presale|stock)\/([^/]+)\/fulfillment$/,
+  );
+  if (req.method === "PATCH" && fulfillmentMatch) {
+    const [, orderType, orderId] = fulfillmentMatch;
+    if (!UUID_PATTERN.test(orderId)) {
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
+    }
+    const body = await parseObject(req);
+    if (
+      !body || typeof body.delivery_status !== "string" ||
+      (body.delivery_date !== null && body.delivery_date !== undefined &&
+        typeof body.delivery_date !== "string") ||
+      (body.internal_notes !== null && body.internal_notes !== undefined &&
+        typeof body.internal_notes !== "string")
+    ) {
+      return jsonResponse({
+        error: "Dados de entrega inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc("update_order_fulfillment", {
+      p_order_type: orderType,
+      p_order_id: orderId,
+      p_delivery_status: body.delivery_status,
+      p_delivery_date: body.delivery_date ?? null,
+      p_internal_notes: body.internal_notes ?? null,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "update fulfillment");
+    return jsonResponse({ data });
+  }
+
+  const messageMatch = path.match(
+    /^\/orders\/(presale|stock)\/([^/]+)\/payment-message$/,
+  );
+  if (req.method === "POST" && messageMatch) {
+    const [, orderType, orderId] = messageMatch;
+    if (!UUID_PATTERN.test(orderId)) {
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
+    }
+    const body = await parseObject(req);
+    if (
+      !body ||
+      (body.external_payment_link !== null &&
+        body.external_payment_link !== undefined &&
+        typeof body.external_payment_link !== "string") ||
+      (body.due_date !== null && body.due_date !== undefined &&
+        typeof body.due_date !== "string")
+    ) {
+      return jsonResponse({
+        error: "Dados da mensagem de cobrança inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc(
+      "mark_order_payment_message_sent",
+      {
+        p_order_type: orderType,
+        p_order_id: orderId,
+        p_external_payment_link: body.external_payment_link ?? null,
+        p_due_date: body.due_date ?? null,
+        p_actor_id: actorId,
+      },
+    );
+    if (error) return databaseError(error, "mark payment message");
+    return jsonResponse({ data });
+  }
+
+  const discountMatch = path.match(
+    /^\/orders\/(presale|stock)\/([^/]+)\/discount$/,
+  );
+  if (req.method === "PATCH" && discountMatch) {
+    const [, orderType, orderId] = discountMatch;
+    if (!UUID_PATTERN.test(orderId)) {
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
+    }
+    const body = await parseObject(req);
+    const discount = Number(body?.manual_discount);
+    if (
+      !body || !Number.isFinite(discount) || discount < 0 ||
+      (body.discount_reason !== null && body.discount_reason !== undefined &&
+        typeof body.discount_reason !== "string")
+    ) {
+      return jsonResponse({
+        error: "Dados do desconto inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc("update_order_discount", {
+      p_order_type: orderType,
+      p_order_id: orderId,
+      p_manual_discount: discount,
+      p_discount_reason: body.discount_reason ?? null,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "update discount");
+    return jsonResponse({ data });
+  }
+
   if (req.method !== "POST") return null;
 
   const refundMatch = path.match(
