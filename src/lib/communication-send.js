@@ -1,4 +1,5 @@
 import { supabase } from '@/api/db';
+import { markAssessmentContractPaymentMessageSent } from '@/api/client';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { TASK_BUCKET, TASK_KIND, taskEventType } from '@/lib/communication-tasks';
 
@@ -58,6 +59,25 @@ export async function registerCommunicationSend(task, options = {}) {
   };
 
   if (isChargeTask) {
+    if (task.sourceType === 'contract') {
+      await markAssessmentContractPaymentMessageSent(task.sourceId, {
+        source: 'communication_center',
+        externalLink: nativePaymentInfo ? null : (trimmedLink || task.externalPaymentLink || null),
+        dueDate: nativePaymentInfo ? null : (dueDate || task.dueDate || defaultPaymentDueDate()),
+        expectedUpdatedAt: task.updatedAt,
+        metadata: {
+          task_kind: task.kind,
+          rule_slug: task.ruleSlug || null,
+          rule_name: task.ruleName || null,
+          channel: 'whatsapp',
+          message,
+          item_summary: task.itemSummary || null,
+          items: task.items || [],
+        },
+      });
+      return;
+    }
+
     const updates = { payment_message_sent_at: new Date().toISOString() };
     if (!nativePaymentInfo) {
       updates.external_payment_link = trimmedLink || null;
@@ -73,16 +93,12 @@ export async function registerCommunicationSend(task, options = {}) {
       .eq('id', task.sourceId);
     if (error) throw error;
 
-    if (task.sourceType === 'contract') {
-      await insertContractEvent(task.sourceId, eventType, payload, 'Mensagem enviada pela Central de Comunicação');
-    } else {
-      await insertSaleEvent(
-        task,
-        updates.payment_status || task.paymentStatus || 'charge_sent',
-        payload,
-        task.kind === TASK_KIND.CHARGE_OVERDUE ? 'Cobrança vencida reenviada' : 'Cobrança enviada pela Central de Comunicação',
-      );
-    }
+    await insertSaleEvent(
+      task,
+      updates.payment_status || task.paymentStatus || 'charge_sent',
+      payload,
+      task.kind === TASK_KIND.CHARGE_OVERDUE ? 'Cobrança vencida reenviada' : 'Cobrança enviada pela Central de Comunicação',
+    );
   } else {
     await insertContractEvent(task.sourceId, eventType, payload, `${task.title} pela Central de Comunicação`);
   }

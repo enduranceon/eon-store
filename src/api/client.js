@@ -379,6 +379,83 @@ export async function cancelAssessmentContract(
   return response.data;
 }
 
+export async function saveAssessmentContractExternalCharge(
+  contractId,
+  {
+    externalLink,
+    dueDate,
+    paymentMethod,
+    invoiceNumber = null,
+    source = 'contract_detail',
+    expectedUpdatedAt,
+  },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/external-charge`,
+    {
+      ...options,
+      method: 'PUT',
+      body: {
+        external_link: externalLink,
+        due_date: dueDate,
+        payment_method: paymentMethod,
+        invoice_number: invoiceNumber,
+        source,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function removeAssessmentContractExternalCharge(
+  contractId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/external-charge`,
+    {
+      ...options,
+      method: 'DELETE',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function markAssessmentContractPaymentMessageSent(
+  contractId,
+  {
+    source = 'contract_detail',
+    externalLink = null,
+    dueDate = null,
+    metadata = {},
+    expectedUpdatedAt,
+  },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/payment-message`,
+    {
+      ...options,
+      method: 'POST',
+      body: {
+        source,
+        external_link: externalLink,
+        due_date: dueDate,
+        metadata,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function resolveAssessmentRenewal(
   renewalId,
   {
