@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
+import { activateAssessmentContractRenewal } from '@/api/client';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -504,30 +504,16 @@ export default function Renewals() {
 
   const activateRenewal = async () => {
     if (!activationModal?.draft) return;
-    const { draft, parent, nextStatus } = activationModal;
+    const { draft, nextStatus } = activationModal;
     setBusy(draft.id);
     try {
-      await AssessmentContract.update(draft.id, { status: nextStatus });
+      const result = await activateAssessmentContractRenewal(
+        draft.id,
+        draft.updated_at,
+      );
+      const activatedStatus = result.contract?.status || nextStatus;
 
-      if (parent && nextStatus === 'active') {
-        await AssessmentContract.update(parent.id, { status: 'finished' });
-      }
-
-      await AssessmentContractEvent.create({
-        contract_id: draft.id,
-        event_type:  nextStatus === 'scheduled' ? 'renewal_scheduled' : 'renewal_activated',
-        payload: {
-          parent_contract_id:     parent?.id || null,
-          parent_contract_number: parent?.contract_number || null,
-          status_after:           nextStatus,
-          start_date:             draft.start_date || null,
-        },
-        notes: nextStatus === 'scheduled'
-          ? 'Rascunho de renovação aprovado e agendado'
-          : 'Rascunho de renovação aprovado e ativado',
-      }).catch(() => {});
-
-      toast.success(nextStatus === 'scheduled'
+      toast.success(activatedStatus === 'scheduled'
         ? `Renovação ${draft.contract_number} agendada!`
         : `Renovação ${draft.contract_number} ativada!`);
       setActivationModal(null);

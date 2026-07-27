@@ -9,11 +9,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
+import {
+  confirmAssessmentContractEnrollment,
+  refuseAssessmentContractEnrollment,
+} from '@/api/client';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
-import { getActivationStatusForContract } from '@/lib/assessment-contract-lifecycle';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
@@ -80,30 +82,12 @@ function ConfirmModal({ data, onClose, onDone }) {
     setConfirming(true);
     try {
       const hasLink = !!paymentLink.trim();
-      const nextStatus = getActivationStatusForContract(draft);
-      const updates = {
-        status:          nextStatus,
-        enrollment_fee:  localEnrollment,
-        manual_discount: localDiscount,
-        payment_status:  hasLink ? 'charge_sent' : 'awaiting_charge',
-      };
-      if (hasLink) {
-        updates.external_payment_link    = paymentLink.trim();
-        updates.payment_message_sent_at  = new Date().toISOString();
-      }
-
-      await AssessmentContract.update(draft.id, updates);
-      await AssessmentContractEvent.create({
-        contract_id: draft.id,
-        event_type:  'enrollment_activated',
-        payload:     {
-          source: 'public_enrollment',
-          payment_link_provided: !!paymentLink.trim(),
-          status_after: nextStatus,
-          start_date: draft.start_date || null,
-        },
-        notes:       'Adesão via formulário público confirmada',
-      }).catch(() => {});
+      await confirmAssessmentContractEnrollment(draft.id, {
+        enrollmentFee: localEnrollment,
+        manualDiscount: localDiscount,
+        externalPaymentLink: hasLink ? paymentLink.trim() : null,
+        expectedUpdatedAt: draft.updated_at,
+      });
 
       if (goToMessage) {
         setStep('message');
@@ -425,7 +409,7 @@ export default function Prospects() {
     try {
       const { data: draftsData } = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, notes, created_at')
+        .select('id, contract_number, customer_id, coach_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, notes, created_at, updated_at')
         .eq('status', 'draft')
         .is('parent_contract_id', null)
         .order('created_at', { ascending: false });
@@ -473,7 +457,7 @@ export default function Prospects() {
     if (!confirm(`Recusar a adesão de ${name}?\n\nO registro será excluído permanentemente.`)) return;
     setBusy(draft.id);
     try {
-      await AssessmentContract.delete(draft.id);
+      await refuseAssessmentContractEnrollment(draft.id, draft.updated_at);
       toast.success('Adesão recusada e removida');
       load();
     } catch (e) {

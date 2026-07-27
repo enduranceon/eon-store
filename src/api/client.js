@@ -379,6 +379,120 @@ export async function cancelAssessmentContract(
   return response.data;
 }
 
+export async function createAssessmentContractRenewal(
+  contractId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/renewal`, {
+    ...options,
+    method: 'POST',
+    idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+    body: { expected_updated_at: expectedUpdatedAt },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function activateAssessmentContractRenewal(
+  contractId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/renewal-activation`,
+    {
+      ...options,
+      method: 'POST',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function setAssessmentContractAutoRenewal(
+  contractId,
+  autoRenewal,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/auto-renewal`,
+    {
+      ...options,
+      method: 'PATCH',
+      body: {
+        auto_renewal: autoRenewal,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function markAssessmentContractNonRenewal(
+  contractId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/non-renewal`,
+    {
+      ...options,
+      method: 'POST',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function confirmAssessmentContractEnrollment(
+  contractId,
+  {
+    enrollmentFee,
+    manualDiscount,
+    externalPaymentLink = null,
+    expectedUpdatedAt,
+  },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/enrollment-confirmation`,
+    {
+      ...options,
+      method: 'POST',
+      body: {
+        enrollment_fee: enrollmentFee,
+        manual_discount: manualDiscount,
+        external_payment_link: externalPaymentLink,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function refuseAssessmentContractEnrollment(
+  contractId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/enrollment-refusal`,
+    {
+      ...options,
+      method: 'POST',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function saveAssessmentContractExternalCharge(
   contractId,
   {
