@@ -4,6 +4,7 @@ import { requireAdmin } from "../_shared/requireAdmin.ts";
 import { createServiceClient } from "../_shared/serviceClient.ts";
 import { handleBillingRequest } from "./billing.ts";
 import { handleCatalogRequest } from "./catalog.ts";
+import { handleChargeRequest } from "./charges.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
@@ -56,6 +57,14 @@ Deno.serve(async (req: Request) => {
 
   const returnsResponse = await handleReturnsRequest(req, path, serviceClient);
   if (returnsResponse) return returnsResponse;
+
+  const chargeResponse = await handleChargeRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (chargeResponse) return chargeResponse;
 
   const billingResponse = await handleBillingRequest(
     req,

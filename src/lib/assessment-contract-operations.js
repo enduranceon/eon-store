@@ -1,25 +1,9 @@
 import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
+import { createOrderCharge } from '@/api/client';
 import { supabase } from '@/api/db';
 import { todayLocalStr } from '@/lib/utils';
 import { isSafePaymentUrl } from '@/lib/sales';
 import { externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
-
-async function functionErrorMessage(error) {
-  let message = error?.message || 'Erro ao executar operação';
-  try {
-    if (error?.context && typeof error.context.json === 'function') {
-      const body = await error.context.json();
-      if (body?.error) message = body.error;
-      if (body?.asaas_details?.errors?.[0]?.description) {
-        message = body.asaas_details.errors[0].description;
-      }
-      console.error('[assessment-contract-operation details]', body);
-    }
-  } catch {
-    // Mantem a mensagem padrao quando o corpo da Edge Function nao puder ser lido.
-  }
-  return message;
-}
 
 async function logContractEvent(contractId, eventType, payload = {}, notes = null) {
   try {
@@ -45,30 +29,11 @@ export async function generateAssessmentContractCharge({
   if (!customer?.cpf) throw new Error('Cadastre o CPF do aluno antes de gerar cobrança');
   if (!dueDate) throw new Error('Informe a data de vencimento');
 
-  const { data, error } = await supabase.functions.invoke('generate-assessment-charge', {
-    body: {
-      contract_id: contract.id,
-      installments: contract.installments,
-      cpf: customer.cpf,
-      billing_type: billingType,
-      due_date: dueDate,
-    },
-  });
-
-  if (error) throw new Error(await functionErrorMessage(error));
-  if (data?.error) throw new Error(data.error);
-
-  await logContractEvent(contract.id, 'charge_generated', {
-    billing_type: billingType,
-    installments: contract.installments,
-    due_date: dueDate,
-    asaas_charge_id: data?.asaas_charge_id || null,
+  return createOrderCharge('contract', contract.id, {
+    billingType,
+    dueDate,
     source,
-  }, source === 'renewals_page'
-    ? 'Cobrança da renovação gerada pela aba de Renovações'
-    : null);
-
-  return data || {};
+  });
 }
 
 export async function registerExternalAssessmentContractCharge({

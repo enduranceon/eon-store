@@ -19,7 +19,7 @@ import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-method
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
-import { cancelOrder as cancelOrderViaApi, cancelOrderItem, refundOrder } from '@/api/client';
+import { cancelOrder as cancelOrderViaApi, cancelOrderItem, createOrderCharge, refundOrder } from '@/api/client';
 
 const PAYMENT_STATUS = {
   pending:         { label: 'Pedido recebido',   badge: 'secondary' },
@@ -213,13 +213,21 @@ export default function StockOrderDetail() {
   const createAsaasCharge = async (billingType) => {
     const cpf = asaasCpf.replace(/\D/g, '');
     if (cpf.length < 11) return toast.error('Informe o CPF do cliente (11 dígitos)');
-    await StockOrder.update(id, { customer_cpf: asaasCpf });
+    setAsaasLoading(true);
     try {
-      await callAsaas('create', { cpf: asaasCpf, billing_type: billingType, due_date: asaasDueDate, installments: asaasInstallments });
-      await supabase.from('stock_orders').update({ due_date: asaasDueDate }).eq('id', id);
+      await createOrderCharge('stock', id, {
+        billingType,
+        dueDate: asaasDueDate,
+        installments: billingType === 'CREDIT_CARD' ? asaasInstallments : 1,
+        cpf: asaasCpf,
+      });
       toast.success('Cobrança criada com sucesso!');
       load();
-    } catch (e) { toast.error(e.message || 'Erro ao criar cobrança'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao criar cobrança');
+    } finally {
+      setAsaasLoading(false);
+    }
   };
 
   const verifyAsaasStatus = async () => {

@@ -2,6 +2,25 @@ const REQUEST_TIMEOUT_MS = 12_000;
 
 type AsaasPayload = Record<string, unknown>;
 
+export interface AsaasCustomerInput {
+  name: string;
+  cpfCnpj: string;
+  email?: string;
+  phone?: string;
+  externalReference?: string;
+}
+
+export interface AsaasPaymentInput {
+  customer: string;
+  billingType: "PIX" | "BOLETO" | "CREDIT_CARD";
+  value?: number;
+  dueDate: string;
+  description: string;
+  externalReference: string;
+  installmentCount?: number;
+  totalValue?: number;
+}
+
 export class AsaasApiError extends Error {
   status: number;
   code: string;
@@ -64,6 +83,7 @@ async function asaasFetch(
       headers: {
         access_token: apiKey,
         Accept: "application/json",
+        "User-Agent": "EON-Store/1.0 (Supabase Edge Functions)",
         ...init.headers,
       },
       signal: AbortSignal.timeout(timeoutMs),
@@ -110,12 +130,19 @@ export async function getAsaasPayment(
   return { found: true, status, payment: payload };
 }
 
-function listData(payload: AsaasPayload): AsaasPayload[] {
-  if (!Array.isArray(payload.data) || payload.hasMore === true) {
+function listData(payload: AsaasPayload, resource: string): AsaasPayload[] {
+  if (!Array.isArray(payload.data)) {
     throw new AsaasApiError(
-      "O Asaas retornou um conjunto de parcelas incompleto",
+      `O Asaas retornou uma lista de ${resource} inválida`,
       502,
-      "asaas_installment_search_incomplete",
+      `asaas_${resource}_search_invalid`,
+    );
+  }
+  if (payload.hasMore === true) {
+    throw new AsaasApiError(
+      `O Asaas retornou uma lista de ${resource} incompleta`,
+      502,
+      `asaas_${resource}_search_incomplete`,
     );
   }
   if (
@@ -124,12 +151,119 @@ function listData(payload: AsaasPayload): AsaasPayload[] {
     )
   ) {
     throw new AsaasApiError(
-      "O Asaas retornou parcelas inválidas",
+      `O Asaas retornou itens de ${resource} inválidos`,
       502,
-      "asaas_installment_search_invalid",
+      `asaas_${resource}_search_invalid`,
     );
   }
   return payload.data as AsaasPayload[];
+}
+
+export async function getAsaasCustomer(
+  customerId: string,
+): Promise<AsaasPayload> {
+  const response = await asaasFetch(
+    `/customers/${encodeURIComponent(customerId)}`,
+    {},
+    "asaas_customer_lookup_unavailable",
+  );
+  const payload = await responsePayload(response);
+  if (response.status === 404) {
+    return { id: customerId, deleted: true };
+  }
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "Não foi possível confirmar o cliente no Asaas"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_customer_lookup_failed",
+    );
+  }
+  return payload;
+}
+
+async function findAsaasCustomers(
+  params: URLSearchParams,
+): Promise<AsaasPayload[]> {
+  params.set("limit", "100");
+  const response = await asaasFetch(
+    `/customers?${params.toString()}`,
+    {},
+    "asaas_customer_search_unavailable",
+  );
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "Não foi possível localizar o cliente no Asaas"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_customer_search_failed",
+    );
+  }
+  return listData(payload, "customer");
+}
+
+export async function findAsaasCustomersByCpf(
+  cpfCnpj: string,
+): Promise<AsaasPayload[]> {
+  return await findAsaasCustomers(new URLSearchParams({ cpfCnpj }));
+}
+
+export async function findAsaasCustomersByExternalReference(
+  externalReference: string,
+  cpfCnpj: string,
+): Promise<AsaasPayload[]> {
+  return await findAsaasCustomers(
+    new URLSearchParams({ externalReference, cpfCnpj }),
+  );
+}
+
+export async function createAsaasCustomer(
+  customer: AsaasCustomerInput,
+): Promise<AsaasPayload> {
+  const response = await asaasFetch(
+    "/customers",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(customer),
+    },
+    "asaas_customer_create_unavailable",
+  );
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "O Asaas recusou a criação do cliente"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_customer_create_failed",
+    );
+  }
+  if (typeof payload.id !== "string" || !payload.id) {
+    throw new AsaasApiError(
+      "O Asaas não confirmou a criação do cliente",
+      502,
+      "asaas_customer_create_unconfirmed",
+    );
+  }
+  return payload;
+}
+
+export async function findAsaasPaymentsByExternalReference(
+  externalReference: string,
+): Promise<AsaasPayload[]> {
+  const params = new URLSearchParams({ externalReference, limit: "100" });
+  const response = await asaasFetch(
+    `/payments?${params.toString()}`,
+    {},
+    "asaas_payment_search_unavailable",
+  );
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "Não foi possível reconciliar a cobrança no Asaas"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_payment_search_failed",
+    );
+  }
+  return listData(payload, "payment");
 }
 
 export async function getAsaasInstallmentPayments(
@@ -149,7 +283,56 @@ export async function getAsaasInstallmentPayments(
       "asaas_installment_search_failed",
     );
   }
-  return listData(payload);
+  return listData(payload, "installment");
+}
+
+export async function createAsaasPayment(
+  payment: AsaasPaymentInput,
+): Promise<AsaasPayload> {
+  const response = await asaasFetch(
+    "/payments",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payment),
+    },
+    "asaas_payment_create_unavailable",
+  );
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "O Asaas recusou a criação da cobrança"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_payment_create_failed",
+    );
+  }
+  if (typeof payload.id !== "string" || !payload.id) {
+    throw new AsaasApiError(
+      "O Asaas não confirmou a criação da cobrança",
+      502,
+      "asaas_payment_create_unconfirmed",
+    );
+  }
+  return payload;
+}
+
+export async function getAsaasPixQrCode(
+  chargeId: string,
+): Promise<AsaasPayload> {
+  const response = await asaasFetch(
+    `/payments/${encodeURIComponent(chargeId)}/pixQrCode`,
+    {},
+    "asaas_pix_lookup_unavailable",
+  );
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "Não foi possível obter o Pix da cobrança"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_pix_lookup_failed",
+    );
+  }
+  return payload;
 }
 
 export async function deleteAsaasPayment(

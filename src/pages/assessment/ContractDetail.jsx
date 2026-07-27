@@ -456,7 +456,6 @@ export default function ContractDetail() {
         dueDate: chargeDueDate,
         source: 'contract_detail',
       });
-      await activateDraftIfNeeded();
       toast.success('Cobrança gerada!');
       setChargeConfirmModal(null);
       load();
