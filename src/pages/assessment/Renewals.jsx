@@ -170,6 +170,7 @@ function chargeTaskForRenewal(contract, { customer, coach, modality } = {}) {
     asaasPixCopy: contract.asaas_pix_copy,
     externalPaymentLink: contract.external_payment_link,
     paymentMessageSentAt: contract.payment_message_sent_at,
+    updatedAt: contract.updated_at,
     items,
     itemSummary: itemLabel || 'Renovação',
     href: `/assessoria/contratos/${contract.id}`,

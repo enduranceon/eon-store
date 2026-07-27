@@ -1,9 +1,9 @@
 import { AssessmentContract, AssessmentContractEvent } from '@/api/entities';
-import { createOrderCharge } from '@/api/client';
+import { createOrderCharge, saveAssessmentContractExternalCharge } from '@/api/client';
 import { supabase } from '@/api/db';
 import { todayLocalStr } from '@/lib/utils';
 import { isSafePaymentUrl } from '@/lib/sales';
-import { externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
+import { normalizeExternalChargeMethod } from '@/lib/external-charge';
 
 async function logContractEvent(contractId, eventType, payload = {}, notes = null) {
   try {
@@ -55,43 +55,29 @@ export async function registerExternalAssessmentContractCharge({
   if (!cleanDueDate) throw new Error('Informe a data de vencimento');
   if (contract.asaas_charge_id) throw new Error('Esta venda já tem cobrança Asaas');
 
-  const hadExternalLink = !!contract.external_payment_link;
+  const result = await saveAssessmentContractExternalCharge(contract.id, {
+    externalLink: cleanLink,
+    dueDate: cleanDueDate,
+    paymentMethod: normalizedPaymentMethod,
+    invoiceNumber: cleanInvoiceNumber || null,
+    source,
+    expectedUpdatedAt: contract.updated_at,
+  });
+  const updatedContract = result.contract;
   const updates = {
-    external_payment_link: cleanLink,
-    due_date: cleanDueDate,
-    payment_method: normalizedPaymentMethod,
-    external_invoice_number: cleanInvoiceNumber || null,
+    external_payment_link: updatedContract.external_payment_link,
+    due_date: updatedContract.due_date,
+    payment_method: updatedContract.payment_method,
+    external_invoice_number: updatedContract.external_invoice_number,
+    payment_status: updatedContract.payment_status,
+    status: updatedContract.status,
+    updated_at: updatedContract.updated_at,
   };
-  if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
-    updates.payment_status = 'charge_sent';
-  }
-
-  await AssessmentContract.update(contract.id, updates);
-  await logContractEvent(
-    contract.id,
-    hadExternalLink ? 'external_charge_updated' : 'external_charge_registered',
-    {
-      link: cleanLink,
-      due_date: cleanDueDate,
-      payment_method: normalizedPaymentMethod,
-      method_label: externalChargeMethodLabel(normalizedPaymentMethod),
-      invoice_number: cleanInvoiceNumber || null,
-      previous_invoice_number: contract.external_invoice_number || null,
-      previous_link: contract.external_payment_link || null,
-      previous_due_date: contract.due_date || null,
-      previous_payment_method: contract.payment_method || null,
-      previous_method_label: externalChargeMethodLabel(normalizeExternalChargeMethod(contract.payment_method, contract.installments)),
-      source,
-    },
-    source === 'renewals_page'
-      ? 'Cobrança externa da renovação registrada pela aba de Renovações'
-      : null,
-  );
 
   return {
     updates,
-    paymentMethod: normalizedPaymentMethod,
-    hadExternalLink,
+    paymentMethod: updatedContract.payment_method,
+    hadExternalLink: result.had_external_link,
   };
 }
 

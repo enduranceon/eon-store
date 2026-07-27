@@ -24,6 +24,8 @@ import {
   changeAssessmentContractCoach,
   changeAssessmentContractPlan,
   finishAssessmentContractLeave,
+  markAssessmentContractPaymentMessageSent,
+  removeAssessmentContractExternalCharge,
   startAssessmentContractLeave,
   updateAssessmentContractDates,
   voidAssessmentContractSale,
@@ -352,19 +354,6 @@ export default function ContractDetail() {
     } catch (e) {
       console.warn(`[contract_event] falha ao registrar ${event_type}:`, e.message);
     }
-  };
-
-  // Ativa contrato se ainda estiver como draft (prospect)
-  const activateDraftIfNeeded = async () => {
-    if (contract?.status !== 'draft') return;
-    const nextStatus = getActivationStatusForContract(contract);
-    await AssessmentContract.update(id, { status: nextStatus });
-    await logEvent(
-      isRenewalContract(contract) && nextStatus === 'scheduled'
-        ? 'renewal_scheduled'
-        : 'enrollment_activated',
-      { source: 'admin_action', status_after: nextStatus, start_date: contract.start_date || null },
-    );
   };
 
   // Edição de datas
@@ -914,15 +903,12 @@ export default function ContractDetail() {
 
   const markMessageSent = async () => {
     try {
-      const updates = { payment_message_sent_at: new Date().toISOString() };
-      if (['pending', 'awaiting_charge'].includes(contract.payment_status)) {
-        updates.payment_status = 'charge_sent';
-      }
-      await AssessmentContract.update(id, updates);
-      await logEvent('payment_message_sent', {
-        via: 'whatsapp',
-        has_asaas_link:   !!contract.asaas_payment_link,
-        has_external_link: !!contract.external_payment_link,
+      await markAssessmentContractPaymentMessageSent(id, {
+        source: 'contract_detail',
+        externalLink: contract.external_payment_link || null,
+        dueDate: contract.due_date || null,
+        expectedUpdatedAt: contract.updated_at,
+        metadata: {},
       });
       toast.success('Mensagem marcada como enviada!');
       setWhatsappModal(false);
@@ -959,7 +945,6 @@ export default function ContractDetail() {
         invoiceNumber,
         source: 'contract_detail',
       });
-      await activateDraftIfNeeded();
       toast.success(hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa registrada! Agora envie a mensagem pro aluno.');
       setExternalSaleModal(false);
       await load();
@@ -973,16 +958,7 @@ export default function ContractDetail() {
   const removeExternalSale = async () => {
     if (!window.confirm('Remover o link de cobrança externa? Isso volta o contrato para aguardando cobrança.')) return;
     try {
-      const updates = {
-        external_payment_link:    null,
-        external_invoice_number:  null,
-        payment_message_sent_at:  null,
-      };
-      if (contract.payment_status === 'charge_sent') {
-        updates.payment_status = 'pending';
-      }
-      await AssessmentContract.update(id, updates);
-      await logEvent('external_charge_removed', {});
+      await removeAssessmentContractExternalCharge(id, contract.updated_at);
       toast.success('Cobrança externa removida.');
       await load();
     } catch (e) {

@@ -280,6 +280,7 @@ function normalizeContract(contract, maps) {
     asaasPixCopy: contract.asaas_pix_copy,
     externalPaymentLink: contract.external_payment_link,
     paymentMessageSentAt: contract.payment_message_sent_at,
+    updatedAt: contract.updated_at,
     parentContractId: contract.parent_contract_id,
     plan,
     planSnapshot,
@@ -320,6 +321,7 @@ function baseTask(kind, bucket, sale, extra = {}) {
     itemSummary: sale.itemSummary || '',
     href: sale.href,
     createdAt: sale.createdAt,
+    updatedAt: sale.updatedAt,
     ...extra,
   };
 }
