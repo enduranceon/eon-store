@@ -54,6 +54,7 @@ async function asaasFetch(
   path: string,
   init: RequestInit = {},
   unavailableCode = "asaas_unavailable",
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
   const { baseUrl, apiKey } = config();
 
@@ -65,7 +66,7 @@ async function asaasFetch(
         Accept: "application/json",
         ...init.headers,
       },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     console.error(
@@ -109,6 +110,48 @@ export async function getAsaasPayment(
   return { found: true, status, payment: payload };
 }
 
+function listData(payload: AsaasPayload): AsaasPayload[] {
+  if (!Array.isArray(payload.data) || payload.hasMore === true) {
+    throw new AsaasApiError(
+      "O Asaas retornou um conjunto de parcelas incompleto",
+      502,
+      "asaas_installment_search_incomplete",
+    );
+  }
+  if (
+    payload.data.some((item) =>
+      !item || typeof item !== "object" || Array.isArray(item)
+    )
+  ) {
+    throw new AsaasApiError(
+      "O Asaas retornou parcelas inválidas",
+      502,
+      "asaas_installment_search_invalid",
+    );
+  }
+  return payload.data as AsaasPayload[];
+}
+
+export async function getAsaasInstallmentPayments(
+  installmentId: string,
+): Promise<AsaasPayload[]> {
+  const response = await asaasFetch(
+    `/installments/${encodeURIComponent(installmentId)}/payments?limit=100`,
+    {},
+    "asaas_installment_search_unavailable",
+  );
+  const payload = await responsePayload(response);
+  if (response.status === 404) return [];
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "Não foi possível confirmar as parcelas no Asaas"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_installment_search_failed",
+    );
+  }
+  return listData(payload);
+}
+
 export async function deleteAsaasPayment(
   chargeId: string,
 ): Promise<"deleted" | "already_missing"> {
@@ -126,6 +169,29 @@ export async function deleteAsaasPayment(
       errorMessage(payload, "O Asaas recusou o cancelamento da cobrança"),
       response.status >= 500 ? 502 : 409,
       "asaas_cancel_failed",
+    );
+  }
+
+  return "deleted";
+}
+
+export async function deleteAsaasInstallmentPayments(
+  installmentId: string,
+): Promise<"deleted" | "already_missing"> {
+  const response = await asaasFetch(
+    `/installments/${encodeURIComponent(installmentId)}/payments`,
+    { method: "DELETE" },
+    "asaas_installment_cancel_unavailable",
+    65_000,
+  );
+  const payload = await responsePayload(response);
+
+  if (response.status === 404) return "already_missing";
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "O Asaas recusou o cancelamento das parcelas"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_installment_cancel_failed",
     );
   }
 

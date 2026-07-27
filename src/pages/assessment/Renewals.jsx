@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
-  RefreshCcw, RotateCcw, ChevronRight, Check, Trash2,
+  RefreshCcw, RotateCcw, ChevronRight, Check, XCircle,
   Calendar, Loader2, CheckCheck, Activity, Ban, Clock, Zap, MessageCircle, PenLine, Link2,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,11 +22,12 @@ import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billi
 import { EXTERNAL_CHARGE_METHODS, normalizeExternalChargeMethod } from '@/lib/external-charge';
 import {
   generateAssessmentContractCharge,
-  markAssessmentContractNonRenewal,
   registerExternalAssessmentContractCharge,
 } from '@/lib/assessment-contract-operations';
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
+import RenewalResolutionDialog from '@/components/RenewalResolutionDialog';
+import { canResolveAssessmentRenewal } from '@/lib/assessment-renewal-resolution';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -52,7 +53,9 @@ function hasChargeInfo(contract) {
     contract?.asaas_charge_id ||
     contract?.asaas_payment_link ||
     contract?.asaas_pix_copy ||
-    contract?.external_payment_link
+    contract?.asaas_pix_qrcode ||
+    contract?.external_payment_link ||
+    contract?.external_invoice_number
   );
 }
 
@@ -240,9 +243,9 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDe
               </Button>
               <Button size="sm" variant="outline" disabled={busy}
                 className="border-gray-200 text-gray-600 hover:bg-gray-50"
-                title="Remove este rascunho e deixa o contrato apto a gerar uma nova renovação."
+                title="Descarta esta venda sem registrar saída da atleta."
                 onClick={() => onDiscard(draft, parent)}>
-                <Trash2 className="w-3.5 h-3.5 mr-1" /> Recriar
+                <XCircle className="w-3.5 h-3.5 mr-1" /> Descartar venda
               </Button>
               <Link to={`/assessoria/contratos/${draft.id}`}>
                 <Button size="sm" variant="outline" disabled={busy}>
@@ -273,7 +276,7 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDe
   );
 }
 
-function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGenerateCharge, onSendMessage, busy }) {
+function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGenerateCharge, onSendMessage, onResolve, busy }) {
   const total = contractTotal(contract);
   const installments = contract.installments || 1;
   const valuePerInst = installments > 0 ? total / installments : total;
@@ -284,7 +287,21 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
   const sent = Boolean(contract.payment_message_sent_at);
   const pay = PAY_STATUS[contract.payment_status] || { label: contract.payment_status || 'Aguardando', cls: 'bg-gray-100 text-gray-600' };
   const isTerminalPayment = TERMINAL_PAYMENT_STATUSES.has(contract.payment_status);
-  const canSendCharge = charged && !isTerminalPayment;
+  const resolutionAllowed = canResolveAssessmentRenewal(contract);
+  const canSendCharge = charged
+    && !isTerminalPayment
+    && !contract.manual_payment
+    && !contract.refund_status
+    && Number(contract.refund_amount || 0) === 0
+    && !contract.refund_date
+    && !String(contract.refund_notes || '').trim()
+    && (contract.payment_status === 'partially_paid' || !contract.payment_date);
+  const lifecycle = {
+    scheduled: 'Agendada',
+    active: 'Ativa',
+    overdue: 'Vigência vencida',
+    on_leave: 'Em pausa',
+  }[contract.status] || contract.status;
   const chargeDueDate = isTerminalPayment
     ? (contract.due_date || suggestedAssessmentChargeDueDate(contract))
     : suggestedAssessmentChargeDueDate(contract);
@@ -297,7 +314,7 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm font-semibold text-blue-700">{contract.contract_number}</span>
-              <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Agendada</span>
+              <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">{lifecycle}</span>
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${pay.cls}`}>{pay.label}</span>
               {charged && (
                 <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">
@@ -333,7 +350,7 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
           <div className="flex flex-col items-end gap-2 shrink-0">
             <span className="font-bold text-blue-700 text-base">{formatCurrency(total)}</span>
             <div className="flex gap-1.5 flex-wrap justify-end">
-              {!charged && !isTerminalPayment && (
+              {!charged && resolutionAllowed && (
                 <Button size="sm" disabled={busy} onClick={() => onGenerateCharge(contract)}
                   className="bg-blue-600 hover:bg-blue-700">
                   {busy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1" />}
@@ -351,13 +368,20 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
                   Revisar <ChevronRight className="w-3.5 h-3.5 ml-1" />
                 </Button>
               </Link>
-              {!isTerminalPayment && (
+              {resolutionAllowed && (
                 <Link to={`/assessoria/contratos/${contract.id}?ajustar-plano=1`}>
                   <Button size="sm" variant="outline" disabled={busy}
                     className="border-blue-200 text-blue-700 hover:bg-blue-50">
                     <PenLine className="w-3.5 h-3.5 mr-1" /> Trocar plano
                   </Button>
                 </Link>
+              )}
+              {resolutionAllowed && (
+                <Button size="sm" variant="outline" disabled={busy}
+                  className="border-amber-200 text-amber-700 hover:bg-amber-50"
+                  onClick={() => onResolve(contract, parent)}>
+                  <Ban className="w-3.5 h-3.5 mr-1" /> Encerrar renovação
+                </Button>
               )}
             </div>
           </div>
@@ -372,6 +396,7 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
 // ─────────────────────────────────────────────────────────────────
 
 export default function Renewals() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [drafts,     setDrafts]     = useState([]);
   const [scheduled,  setScheduled]  = useState([]);
   const [parents,    setParents]    = useState({});
@@ -396,19 +421,22 @@ export default function Renewals() {
   });
   const [charging, setCharging] = useState(false);
   const [messageTask, setMessageTask] = useState(null);
+  const [resolutionTarget, setResolutionTarget] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: renewalData } = await supabase
+      const renewalFields = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, payment_date, manual_payment, refund_status, refund_amount, refund_date, refund_notes, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, asaas_pix_qrcode, external_payment_link, external_invoice_number, payment_message_sent_at';
+      const { data: renewalData, error: renewalError } = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
-        .in('status', ['draft', 'scheduled'])
+        .select(renewalFields)
+        .in('status', ['draft', 'scheduled', 'active', 'overdue', 'on_leave'])
         .not('parent_contract_id', 'is', null)
         .order('start_date', { ascending: true })
         .order('created_at', { ascending: true });
+      if (renewalError) throw renewalError;
 
-      const renewalList = [...(renewalData || [])].sort(compareRenewalDrafts);
+      let renewalList = [...(renewalData || [])].sort(compareRenewalDrafts);
 
       if (renewalList.length === 0) {
         setDrafts([]); setScheduled([]);
@@ -427,12 +455,29 @@ export default function Renewals() {
         coachIds.length    ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds)                                           : Promise.resolve({ data: [] }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds)                                     : Promise.resolve({ data: [] }),
       ]);
+      const relatedError = [parentRes, custRes, coachRes, modRes].find(result => result.error)?.error;
+      if (relatedError) throw relatedError;
 
       await applyAssessmentContractTransitions([...(renewalList || []), ...(parentRes.data || [])]);
 
+      const [renewalRefreshRes, parentRefreshRes] = await Promise.all([
+        supabase.from('assessment_contracts').select(renewalFields).in('id', renewalList.map(contract => contract.id)),
+        parentIds.length
+          ? supabase.from('assessment_contracts').select('id, contract_number, status, end_date, payment_status').in('id', parentIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (renewalRefreshRes.error) throw renewalRefreshRes.error;
+      if (parentRefreshRes.error) throw parentRefreshRes.error;
+      renewalList = [...(renewalRefreshRes.data || [])]
+        .filter(contract => contract.parent_contract_id)
+        .sort(compareRenewalDrafts);
+
       setDrafts(renewalList.filter(contract => contract.status === 'draft'));
-      setScheduled(renewalList.filter(contract => contract.status === 'scheduled'));
-      setParents(Object.fromEntries((parentRes.data || []).map(p => [p.id, p])));
+      setScheduled(renewalList.filter(contract =>
+        ['scheduled', 'active', 'overdue', 'on_leave'].includes(contract.status)
+        && !TERMINAL_PAYMENT_STATUSES.has(contract.payment_status)
+      ));
+      setParents(Object.fromEntries((parentRefreshRes.data || []).map(p => [p.id, p])));
       setCustomers(Object.fromEntries((custRes.data  || []).map(c => [c.id, c])));
       setCoaches(Object.fromEntries((coachRes.data   || []).map(c => [c.id, c])));
       setModalities(Object.fromEntries((modRes.data  || []).map(m => [m.id, m])));
@@ -608,61 +653,25 @@ export default function Renewals() {
     }
   };
 
-  const discardRenewal = async (draft, parent) => {
-    if (!confirm(`Descartar a renovação ${draft.contract_number}?\n\nO rascunho será excluído e o contrato anterior voltará a ser elegível para nova renovação.`)) return;
-    setBusy(draft.id);
-    try {
-      await AssessmentContract.delete(draft.id);
-
-      if (parent) {
-        await AssessmentContract.update(parent.id, { renewal_generated: false });
-        await AssessmentContractEvent.create({
-          contract_id: parent.id,
-          event_type:  'renewal_discarded',
-          payload: {
-            discarded_draft_id:     draft.id,
-            discarded_draft_number: draft.contract_number,
-          },
-          notes: 'Rascunho de renovação descartado',
-        }).catch(() => {});
-      }
-
-      toast.success('Rascunho descartado');
-      load();
-    } catch (e) {
-      toast.error('Erro ao descartar: ' + (e.message || ''));
-    } finally {
-      setBusy(null);
+  const openResolution = useCallback((contract, parent, initialChoice = '') => {
+    if (!parent) {
+      toast.error('Contrato anterior não encontrado; atualize a lista antes de continuar');
+      return;
     }
-  };
-
-  const declineRenewal = async (draft, parent) => {
-    if (!parent) return toast.error('Contrato anterior não encontrado');
-    const shouldFinishNow = parent.end_date <= todayLocalStr();
-    const statusText = shouldFinishNow
-      ? 'O contrato anterior será concluído agora.'
-      : `O contrato anterior fica ativo até ${formatDate(parent.end_date)} e será concluído sem renovação.`;
-    if (!confirm(
-      `Registrar que ${draft.contract_number} não será renovado?\n\n` +
-      `O rascunho será excluído. ${statusText}\n\n` +
-      'Não haverá multa, estorno ou cobrança nova.'
-    )) return;
-
-    setBusy(draft.id);
-    try {
-      await markAssessmentContractNonRenewal({
-        contract: parent,
-        draft,
-      });
-
-      toast.success('Não renovação registrada sem multa ou estorno.');
-      load();
-    } catch (e) {
-      toast.error('Erro ao registrar não renovação: ' + (e.message || ''));
-    } finally {
-      setBusy(null);
+    if (!canResolveAssessmentRenewal(contract)) {
+      toast.error('Esta renovação possui movimentação ou situação que exige revisão');
+      return;
     }
-  };
+    setResolutionTarget({
+      contract,
+      parent,
+      customerName: customers[contract.customer_id]?.full_name || '',
+      initialChoice,
+    });
+  }, [customers]);
+
+  const discardRenewal = (draft, parent) => openResolution(draft, parent, 'created_in_error');
+  const declineRenewal = (draft, parent) => openResolution(draft, parent, 'customer_declined');
 
   // ── Scan de renovações ───────────────────────────────────────────────────
 
@@ -724,6 +733,23 @@ export default function Renewals() {
   const chargeModalCustomer = chargeModal ? customers[chargeModal.customer_id] : null;
   const chargeModeIsExternal = chargeForm.mode === 'external';
   const hasRenewalWork = orderedDrafts.length > 0 || orderedScheduled.length > 0;
+
+  useEffect(() => {
+    const renewalId = searchParams.get('resolver');
+    if (!renewalId || loading || resolutionTarget) return;
+
+    const contract = [...orderedDrafts, ...orderedScheduled]
+      .find(candidate => candidate.id === renewalId);
+    const timer = setTimeout(() => {
+      if (contract) {
+        openResolution(contract, parents[contract.parent_contract_id]);
+      } else {
+        toast.error('A renovação solicitada não está disponível para encerramento');
+      }
+      setSearchParams({}, { replace: true });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [loading, openResolution, orderedDrafts, orderedScheduled, parents, resolutionTarget, searchParams, setSearchParams]);
 
   // ─────────────────────────────────────────────────────────────────
   // RENDER
@@ -848,12 +874,23 @@ export default function Renewals() {
                   modality={modalities[contract.plan_snapshot?.modality_id]}
                   onGenerateCharge={openChargeModal}
                   onSendMessage={openMessageForRenewal}
+                  onResolve={openResolution}
                   busy={busy === contract.id || (chargeModal?.id === contract.id && charging)}
                 />
               ))}
             </section>
           )}
         </div>
+      )}
+
+      {resolutionTarget && (
+        <RenewalResolutionDialog
+          key={`${resolutionTarget.contract.id}:${resolutionTarget.initialChoice}`}
+          target={resolutionTarget}
+          onClose={() => setResolutionTarget(null)}
+          onResolved={load}
+          onRefresh={load}
+        />
       )}
 
       {/* Modal: gerar cobrança da renovação agendada */}

@@ -6,6 +6,7 @@ import { handleBillingRequest } from "./billing.ts";
 import { handleCatalogRequest } from "./catalog.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handlePaymentsRequest } from "./payments.ts";
+import { handleRenewalRequest } from "./renewals.ts";
 import { handleReturnsRequest } from "./returns.ts";
 
 function routePath(req: Request): string {
@@ -63,6 +64,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (billingResponse) return billingResponse;
+
+  const renewalResponse = await handleRenewalRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (renewalResponse) return renewalResponse;
 
   const paymentsResponse = await handlePaymentsRequest(
     req,
