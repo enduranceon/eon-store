@@ -183,6 +183,51 @@ export async function createOrderCharge(
   return response.data;
 }
 
+export async function syncOrderChargeStatus(orderType, orderId, options = {}) {
+  const response = await apiRequest(
+    `/orders/${orderType}/${orderId}/charge/status`,
+    {
+      ...options,
+      method: 'POST',
+    },
+  );
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+  };
+  if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
+  invalidatePageCacheByTag('asaas_payments');
+  return response.data;
+}
+
+export async function cancelOrderCharge(
+  orderType,
+  orderId,
+  reason,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/${orderType}/${orderId}/charge/cancel`,
+    {
+      ...options,
+      method: 'POST',
+      idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+      body: { reason },
+    },
+  );
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+  };
+  if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('sales_status_events');
+  if (orderType === 'contract') invalidatePageCacheByTag('assessment_contract_event');
+  return response.data;
+}
+
 export async function resolveAssessmentRenewal(
   renewalId,
   {

@@ -19,7 +19,13 @@ import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-method
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
-import { cancelOrder as cancelOrderViaApi, cancelOrderItem, createOrderCharge, refundOrder } from '@/api/client';
+import {
+  cancelOrder as cancelOrderViaApi,
+  cancelOrderItem,
+  createOrderCharge,
+  refundOrder,
+  syncOrderChargeStatus,
+} from '@/api/client';
 
 const PAYMENT_STATUS = {
   pending:         { label: 'Pedido recebido',   badge: 'secondary' },
@@ -196,20 +202,6 @@ export default function StockOrderDetail() {
     }
   };
 
-  const callAsaas = async (action, extra = {}) => {
-    setAsaasLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('create-asaas-charge', {
-        body: { action, order_id: id, order_type: 'stock', ...extra },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
-    } finally {
-      setAsaasLoading(false);
-    }
-  };
-
   const createAsaasCharge = async (billingType) => {
     const cpf = asaasCpf.replace(/\D/g, '');
     if (cpf.length < 11) return toast.error('Informe o CPF do cliente (11 dígitos)');
@@ -231,8 +223,9 @@ export default function StockOrderDetail() {
   };
 
   const verifyAsaasStatus = async () => {
+    setAsaasLoading(true);
     try {
-      const data = await callAsaas('status');
+      const data = await syncOrderChargeStatus('stock', id);
       setAsaasStatus(data);
       if (data.is_paid) {
         toast.success('Pagamento confirmado! Pedido atualizado para Pago.');
@@ -240,7 +233,11 @@ export default function StockOrderDetail() {
       } else {
         toast.info(`Status: ${data.label}`);
       }
-    } catch (e) { toast.error(e.message || 'Erro ao verificar'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao verificar');
+    } finally {
+      setAsaasLoading(false);
+    }
   };
 
   const cancelAsaasCharge = () => {
