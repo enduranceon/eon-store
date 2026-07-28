@@ -497,6 +497,13 @@ export default function ContractDetail() {
   const openCancelModal = async () => {
     setCancelModal(true);
     setCancelInstData(null);
+    // Já existe agendamento? Abre com a data e a multa combinadas, para
+    // reagendar ser o caminho natural em vez de recomeçar do zero.
+    if (contract?.scheduled_cancellation_date) {
+      setCancelDate(contract.scheduled_cancellation_date);
+      setCancelFeePct(Number(contract.scheduled_cancellation_fee_pct) || 0);
+      setCancelReason(contract.scheduled_cancellation_reason || '');
+    }
     if (contract?.asaas_charge_id) {
       setLoadingCancelInst(true);
       try {
@@ -980,6 +987,11 @@ export default function ContractDetail() {
             {getContractKindLabel(contract)}
           </Badge>
           <Badge variant={st.badge}>{st.label}</Badge>
+          {contract.scheduled_cancellation_date && (
+            <Badge variant="info" title="O aluno segue ativo até esta data">
+              Sai {formatDate(contract.scheduled_cancellation_date)}
+            </Badge>
+          )}
           <Badge variant={ps.badge}>{ps.label}</Badge>
           {student?.whatsapp && <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp}><MessageCircle className="w-4 h-4 mr-1" /> WhatsApp</Button>}
         </div>
@@ -1585,8 +1597,12 @@ export default function ContractDetail() {
                 variant="outline"
                 className="text-red-600 hover:bg-red-50"
                 onClick={openCancelModal}
+                title={contract.scheduled_cancellation_date
+                  ? `Já existe cancelamento agendado para ${formatDate(contract.scheduled_cancellation_date)}`
+                  : undefined}
               >
-                <XCircle className="w-4 h-4 mr-1.5" /> Cancelar contrato
+                <XCircle className="w-4 h-4 mr-1.5" />
+                {contract.scheduled_cancellation_date ? 'Alterar cancelamento' : 'Cancelar contrato'}
               </Button>
             ))}
           </CardContent>
@@ -2146,6 +2162,14 @@ export default function ContractDetail() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+
+            {contract.scheduled_cancellation_date && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-800">
+                Já existe cancelamento agendado para <b>{formatDate(contract.scheduled_cancellation_date)}</b>.
+                Salvar aqui <b>substitui</b> esse agendamento. Para cancelar o agendamento sem
+                encerrar o contrato, use o <b>Desfazer</b> na faixa azul do contrato.
+              </div>
+            )}
 
             {/* Data de cancelamento: passada/hoje cancela na hora, futura agenda */}
             <div>

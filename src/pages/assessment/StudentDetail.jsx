@@ -203,6 +203,11 @@ export default function StudentDetail() {
                         <span className="capitalize">{mod?.name}</span> · <span className="capitalize">{plan?.period}</span> · com {coach?.name || '—'}
                       </p>
                       <p className="text-xs text-muted-foreground">{formatDate(c.start_date)} → {formatDate(c.end_date)}</p>
+                      {c.scheduled_cancellation_date && (
+                        <p className="text-xs font-semibold text-blue-700 mt-0.5">
+                          📅 Cancelamento agendado para {formatDate(c.scheduled_cancellation_date)}
+                        </p>
+                      )}
                     </div>
                     <div className="text-right">
                       <p className="font-bold text-sm">{formatCurrency(plan?.price_total)}</p>
