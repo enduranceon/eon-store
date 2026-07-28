@@ -510,6 +510,66 @@ export async function completeAssessmentContractRefund(
   return response.data;
 }
 
+// ── Central de Estornos ─────────────────────────────────────────────────────
+
+export async function listRefunds({ status, from, to } = {}, options = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const query = params.toString();
+  const response = await apiRequest(`/refunds${query ? `?${query}` : ''}`, options);
+  return response.data;
+}
+
+// O arquivo vai direto do navegador para o Storage usando uma URL assinada que
+// a API gera. Assim o binário não passa pela edge function e o navegador
+// continua sem permissão de escrita própria no bucket.
+export async function uploadRefundReceipt(sourceType, sourceId, file) {
+  const { data: signed } = await apiRequest(
+    `/refunds/${sourceType}/${sourceId}/receipts/upload-url`,
+    {
+      method: 'POST',
+      body: { mime_type: file.type, size_bytes: file.size },
+    },
+  );
+
+  const { error } = await supabase.storage
+    .from('refund-receipts')
+    .uploadToSignedUrl(signed.path, signed.token, file);
+  if (error) {
+    throw new ApiError('Não foi possível enviar o arquivo', {
+      status: 500,
+      code: 'storage_upload_failed',
+      details: error.message,
+    });
+  }
+
+  const response = await apiRequest(`/refunds/${sourceType}/${sourceId}/receipts`, {
+    method: 'POST',
+    body: {
+      file_path: signed.path,
+      file_name: file.name,
+      mime_type: file.type,
+      size_bytes: file.size,
+    },
+  });
+  return response.data;
+}
+
+export async function getRefundReceiptUrl(receiptId, options = {}) {
+  const response = await apiRequest(`/refunds/receipts/${receiptId}/download`, options);
+  return response.data;
+}
+
+export async function deleteRefundReceipt(receiptId, options = {}) {
+  const response = await apiRequest(`/refunds/receipts/${receiptId}`, {
+    ...options,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
 export async function updateAssessmentContractDates(
   contractId,
   { startDate, endDate, expectedUpdatedAt },

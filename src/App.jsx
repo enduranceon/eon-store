@@ -36,6 +36,7 @@ import PublicStoreConfirmation from '@/pages/PublicStoreConfirmation';
 import Financial from '@/pages/Financial';
 import CashFlow from '@/pages/CashFlow';
 import Returns from '@/pages/Returns';
+import Refunds from '@/pages/Refunds';
 import Today from '@/pages/Today';
 import CommunicationCenter from '@/pages/CommunicationCenter';
 import CommunicationSettings from '@/pages/CommunicationSettings';
@@ -140,6 +141,7 @@ export default function App() {
           <Route path="/financeiro" element={<AdminLayout><Financial /></AdminLayout>} />
           <Route path="/financeiro/fluxo-caixa" element={<AdminLayout><CashFlow /></AdminLayout>} />
           <Route path="/devolucoes" element={<AdminLayout><Returns /></AdminLayout>} />
+          <Route path="/estornos" element={<AdminLayout><Refunds /></AdminLayout>} />
           <Route path="/cupons" element={<AdminLayout><Coupons /></AdminLayout>} />
           <Route path="/cupons/novo" element={<AdminLayout><CouponForm /></AdminLayout>} />
           <Route path="/cupons/:id" element={<AdminLayout><CouponForm /></AdminLayout>} />
