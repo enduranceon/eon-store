@@ -534,9 +534,14 @@ export async function uploadRefundReceipt(sourceType, sourceId, file) {
     },
   );
 
+  // contentType explícito: sem ele o supabase-js manda text/plain, que o
+  // bucket recusa por causa da allowed_mime_types — todo envio falharia.
   const { error } = await supabase.storage
     .from('refund-receipts')
-    .uploadToSignedUrl(signed.path, signed.token, file);
+    .uploadToSignedUrl(signed.path, signed.token, file, {
+      contentType: file.type,
+      upsert: false,
+    });
   if (error) {
     throw new ApiError('Não foi possível enviar o arquivo', {
       status: 500,
