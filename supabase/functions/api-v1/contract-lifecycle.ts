@@ -10,7 +10,9 @@ type LifecycleAction =
   | "coach"
   | "start_leave"
   | "finish_leave"
-  | "cancel";
+  | "cancel"
+  | "schedule_cancel"
+  | "unschedule_cancel";
 
 function isCalendarDate(value: unknown): value is string {
   if (typeof value !== "string" || !DATE_PATTERN.test(value)) return false;
@@ -69,7 +71,7 @@ export async function handleContractLifecycleRequest(
   actorId: string,
 ): Promise<Response | null> {
   const baseMatch = path.match(
-    /^\/orders\/contract\/([^/]+)\/(dates|coach|leaves|cancel)$/,
+    /^\/orders\/contract\/([^/]+)\/(dates|coach|leaves|cancel|cancellation-schedule)$/,
   );
   const finishMatch = path.match(
     /^\/orders\/contract\/([^/]+)\/leaves\/([^/]+)\/finish$/,
@@ -91,8 +93,15 @@ export async function handleContractLifecycleRequest(
     ? "finish_leave"
     : baseMatch![2] === "leaves"
     ? "start_leave"
+    : baseMatch![2] === "cancellation-schedule"
+    // Mesmo recurso, dois verbos: POST agenda, DELETE desfaz o agendamento.
+    ? (req.method === "DELETE" ? "unschedule_cancel" : "schedule_cancel")
     : baseMatch![2] as LifecycleAction;
-  const expectedMethod = ["dates", "coach"].includes(action) ? "PATCH" : "POST";
+  const expectedMethod = ["dates", "coach"].includes(action)
+    ? "PATCH"
+    : action === "unschedule_cancel"
+    ? "DELETE"
+    : "POST";
   if (req.method !== expectedMethod) {
     return jsonResponse({
       error: "Método não permitido",
@@ -176,7 +185,18 @@ export async function handleContractLifecycleRequest(
     }
     rpc = "finish_assessment_contract_leave";
     args = { p_leave_id: finishMatch![2] };
+  } else if (action === "unschedule_cancel") {
+    if (!exactKeys(body, ["expected_updated_at"])) {
+      return jsonResponse({
+        error: "Requisição inválida",
+        code: "invalid_request",
+      }, 400);
+    }
+    rpc = "unschedule_assessment_contract_cancellation";
+    args = {};
   } else {
+    // "cancel" e "schedule_cancel" recebem exatamente o mesmo payload; quem
+    // decide se a data pode ser futura é a RPC correspondente.
     if (
       !exactKeys(body, [
         "cancellation_date",
@@ -196,7 +216,9 @@ export async function handleContractLifecycleRequest(
         code: "invalid_request",
       }, 400);
     }
-    rpc = "cancel_assessment_contract";
+    rpc = action === "schedule_cancel"
+      ? "schedule_assessment_contract_cancellation"
+      : "cancel_assessment_contract";
     args = {
       p_cancellation_date: body.cancellation_date,
       p_cancellation_fee_pct: body.cancellation_fee_pct,

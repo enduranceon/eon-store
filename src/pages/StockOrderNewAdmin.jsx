@@ -65,10 +65,13 @@ export default function StockOrderNewAdmin() {
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return customers.slice(0, 20);
     const q = customerSearch.toLowerCase();
+    // includes('') é sempre true: sem a guarda de dígitos, buscar por nome
+    // devolveria todo cliente que tem whatsapp cadastrado.
+    const digits = customerSearch.replace(/\D/g, '');
     return customers
       .filter(c =>
         c.full_name?.toLowerCase().includes(q) ||
-        c.whatsapp?.includes(customerSearch.replace(/\D/g, '')) ||
+        (digits && c.whatsapp?.includes(digits)) ||
         c.email?.toLowerCase().includes(q)
       )
       .slice(0, 20);

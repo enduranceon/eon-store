@@ -599,6 +599,45 @@ export async function cancelAssessmentContract(
   return response.data;
 }
 
+export async function scheduleAssessmentContractCancellation(
+  contractId,
+  { cancellationDate, cancellationFeePct, reason = null, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/cancellation-schedule`,
+    {
+      ...options,
+      method: 'POST',
+      body: {
+        cancellation_date: cancellationDate,
+        cancellation_fee_pct: cancellationFeePct,
+        reason,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function unscheduleAssessmentContractCancellation(
+  contractId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/cancellation-schedule`,
+    {
+      ...options,
+      method: 'DELETE',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function createAssessmentContractRenewal(
   contractId,
   expectedUpdatedAt,

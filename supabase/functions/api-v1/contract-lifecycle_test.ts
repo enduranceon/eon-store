@@ -166,3 +166,83 @@ Deno.test("Concurrent contract changes surface as conflicts", async () => {
   const body = await response.json();
   assert(body.code === "invalid_transition", "conflict code changed");
 });
+
+Deno.test("Scheduling a cancellation uses the scheduling RPC", async () => {
+  const { fake, calls } = client();
+  const path = `/orders/contract/${CONTRACT_ID}/cancellation-schedule`;
+  const response = await handleContractLifecycleRequest(
+    request(path, "POST", {
+      cancellation_date: "2026-08-02",
+      cancellation_fee_pct: 0,
+      reason: "Instabilidade",
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "scheduling failed");
+  assert(
+    calls[0].name === "schedule_assessment_contract_cancellation",
+    "scheduling must not reuse the immediate cancellation RPC",
+  );
+  assert(calls[0].args.p_cancellation_date === "2026-08-02", "date changed");
+  assert(calls[0].args.p_cancellation_fee_pct === 0, "fee changed");
+  assert(calls[0].args.p_actor_id === ACTOR_ID, "actor was not recorded");
+  assert(
+    calls[0].args.p_expected_updated_at === UPDATED_AT,
+    "version was lost",
+  );
+});
+
+Deno.test("Removing a schedule sends only the contract version", async () => {
+  const { fake, calls } = client();
+  const path = `/orders/contract/${CONTRACT_ID}/cancellation-schedule`;
+  const response = await handleContractLifecycleRequest(
+    request(path, "DELETE", { expected_updated_at: UPDATED_AT }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "unscheduling failed");
+  assert(
+    calls[0].name === "unschedule_assessment_contract_cancellation",
+    "wrong RPC",
+  );
+  assert(
+    calls[0].args.p_cancellation_date === undefined,
+    "unscheduling must not carry cancellation data",
+  );
+});
+
+Deno.test("Scheduling rejects extra fields before database access", async () => {
+  const { fake, calls } = client();
+  const path = `/orders/contract/${CONTRACT_ID}/cancellation-schedule`;
+  const response = await handleContractLifecycleRequest(
+    request(path, "POST", {
+      cancellation_date: "2026-08-02",
+      cancellation_fee_pct: 0,
+      reason: null,
+      expected_updated_at: UPDATED_AT,
+      status: "cancelled",
+    }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(response?.status === 400, "unexpected field was accepted");
+  assert(calls.length === 0, "database was called for invalid input");
+});
+
+Deno.test("Scheduling rejects a wrong HTTP verb", async () => {
+  const { fake, calls } = client();
+  const path = `/orders/contract/${CONTRACT_ID}/cancellation-schedule`;
+  const response = await handleContractLifecycleRequest(
+    request(path, "PATCH", { expected_updated_at: UPDATED_AT }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(response?.status === 405, "wrong verb was accepted");
+  assert(calls.length === 0, "database was called for a wrong verb");
+});
