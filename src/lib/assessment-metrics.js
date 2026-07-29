@@ -40,6 +40,11 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
   // ── Movimentação do mês ─────────────────────────────────────────
   const novosContratos = lifecycleRows.filter(c => c.lifecycle.counts.entry);
   const renovacoesNoMes = lifecycleRows.filter(c => c.lifecycle.counts.renewal);
+  const retornosNoMes = lifecycleRows.filter(c =>
+    c.prospect_customer_relationship === 'former_student' &&
+    c.prospect_reactivated_at &&
+    utcToLocalDateStr(c.prospect_reactivated_at) >= monthStart
+  );
 
   const idsAntesDoMes = new Set(
     lifecycleRows
@@ -50,8 +55,15 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
       .map(c => c.customer_id)
   );
   const alunosNovosUnicos = new Set(
-    novosContratos.filter(c => !idsAntesDoMes.has(c.customer_id)).map(c => c.customer_id)
+    novosContratos
+      .filter(c =>
+        c.prospect_customer_relationship !== 'former_student' &&
+        c.prospect_customer_relationship !== 'active_student' &&
+        !idsAntesDoMes.has(c.customer_id)
+      )
+      .map(c => c.customer_id)
   );
+  const alunosRetornandoUnicos = new Set(retornosNoMes.map(c => c.customer_id));
 
   // Saídas reais: somente encerramento real do aluno, não troca de plano ou ajuste financeiro.
   const saidasNoMes = lifecycleRows.filter(c =>
@@ -76,8 +88,8 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
     c.lifecycle.counts.active && c.status === 'active' && c.end_date >= today && c.end_date <= in30days
   );
 
-  // ── Saldo de alunos (novos − saídas) ────────────────────────────
-  const saldoAlunos = alunosNovosUnicos.size - saidasNoMes.length;
+  // ── Saldo de alunos (novos + retornos − saídas) ─────────────────
+  const saldoAlunos = alunosNovosUnicos.size + alunosRetornandoUnicos.size - saidasNoMes.length;
 
   return {
     mrr,
@@ -90,6 +102,7 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
     avgMonths,
     novosNoMes: novosContratos.length,
     alunosNovos: alunosNovosUnicos.size,
+    retornosNoMes: alunosRetornandoUnicos.size,
     renovacoesNoMes: renovacoesNoMes.length,
     saidasNoMes: saidasNoMes.length,
     saldoAlunos,

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   ArchiveX, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
   Clock3, Copy, CreditCard, ExternalLink, Loader2, MessageCircle, Send,
-  TrendingUp, UserPlus,
+  TrendingUp, UserCheck, UserPlus, UserRoundCheck,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -40,6 +40,24 @@ const LOSS_REASONS = [
   ['other', 'Outro motivo'],
 ];
 
+const RELATIONSHIPS = {
+  new_customer: {
+    label: 'Cliente novo',
+    badge: 'bg-sky-100 text-sky-700',
+    description: 'Sem contrato anterior de assessoria',
+  },
+  former_student: {
+    label: 'Ex-aluno retornando',
+    badge: 'bg-orange-100 text-orange-800',
+    description: 'Possui contrato anterior de assessoria e está inativo',
+  },
+  active_student: {
+    label: 'Aluno atual',
+    badge: 'bg-indigo-100 text-indigo-700',
+    description: 'Já possui outro contrato ativo; revisar como novo serviço ou troca',
+  },
+};
+
 function contractTotal(contract) {
   const base = Number(contract.plan_snapshot?.price_total ?? 0);
   const enrollment = Number(contract.enrollment_fee || 0);
@@ -67,7 +85,9 @@ function buildMessage(contract, customer, coach, modality) {
   const paymentLink = paymentLinkFor(contract);
 
   let message = `Olá, ${firstName}! 👋\n\n`;
-  message += 'Recebemos seu cadastro para treinar com a *Endurance On*. Sua proposta está pronta:\n\n';
+  message += contract.prospect_customer_relationship === 'former_student'
+    ? 'Que bom ter você de volta à *Endurance On*! Sua nova proposta está pronta:\n\n'
+    : 'Recebemos seu cadastro para treinar com a *Endurance On*. Sua proposta está pronta:\n\n';
   if (modality) message += `🏃 Modalidade: *${modality.name}*\n`;
   message += `📅 Plano: *${planName}* (${months} ${months === 1 ? 'mês' : 'meses'})\n`;
   if (coach) message += `👤 Coach: *${coach.name}*\n`;
@@ -85,11 +105,34 @@ function buildMessage(contract, customer, coach, modality) {
   return message;
 }
 
-function CustomerData({ customer }) {
+function CustomerData({ customer, contract }) {
+  const relationship = RELATIONSHIPS[contract?.prospect_customer_relationship];
   return (
     <div className="border rounded-xl p-3 space-y-1.5">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Dados do prospect</p>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cliente vinculado</p>
+        {customer?.id && (
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-blue-600" asChild>
+            <Link to={`/clientes/${customer.id}`}>Abrir cliente <ChevronRight className="w-3.5 h-3.5 ml-1" /></Link>
+          </Button>
+        )}
+      </div>
+      {relationship && (
+        <div className="rounded-lg bg-gray-50 border p-2.5 mb-2">
+          <span className={`inline-flex text-[11px] px-2 py-0.5 rounded-full font-semibold ${relationship.badge}`}>
+            {relationship.label}
+          </span>
+          <p className="text-xs text-muted-foreground mt-1">{relationship.description}</p>
+          {contract?.prospect_previous_contract_id && (
+            <Link className="text-xs text-blue-600 hover:underline mt-1 inline-block"
+              to={`/assessoria/contratos/${contract.prospect_previous_contract_id}`}>
+              Ver contrato de referência →
+            </Link>
+          )}
+        </div>
+      )}
       {[
+        ['Código', customer?.customer_code],
         ['Nome', customer?.full_name],
         ['WhatsApp', customer?.whatsapp],
         ['E-mail', customer?.email],
@@ -193,7 +236,7 @@ function ProposalModal({ data, onClose, onDone }) {
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4 mt-2">
-          <CustomerData customer={customer} />
+          <CustomerData customer={customer} contract={contract} />
           <div className="bg-gray-50 rounded-xl p-4 text-sm grid grid-cols-2 gap-x-4 gap-y-1.5">
             <span className="text-muted-foreground">Modalidade</span>
             <span className="font-medium">{modality?.name || '—'}</span>
@@ -419,6 +462,7 @@ function LossModal({ data, onClose, onDone }) {
 
 function ProspectRow({ draft, customer, coach, modality, onProposal, onPayment, onLoss }) {
   const stage = STAGES[draft.prospect_stage] || STAGES.new;
+  const relationship = RELATIONSHIPS[draft.prospect_customer_relationship] || RELATIONSHIPS.new_customer;
   const total = contractTotal(draft);
   const installments = Number(draft.installments) || 1;
   const planName = draft.plan_snapshot?.name || 'Plano de assessoria';
@@ -432,10 +476,23 @@ function ProspectRow({ draft, customer, coach, modality, onProposal, onPayment, 
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm font-semibold text-gray-700">{draft.contract_number}</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${stage.badge}`}>{stage.label}</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${relationship.badge}`}>{relationship.label}</span>
               <span className="text-[11px] text-muted-foreground">Recebido em {formatDateTime(draft.created_at)}</span>
             </div>
             <p className="text-base font-semibold text-gray-900 mt-1">{customer?.full_name || '—'}</p>
             <p className="text-xs text-muted-foreground mt-0.5">{modality?.name || '—'} · {planName}</p>
+            <div className="flex items-center gap-3 mt-1.5 text-xs">
+              {customer?.id && (
+                <Link to={`/clientes/${customer.id}`} className="text-blue-600 hover:underline font-medium">
+                  Abrir cliente{customer.customer_code ? ` · ${customer.customer_code}` : ''} →
+                </Link>
+              )}
+              {draft.prospect_previous_contract_id && (
+                <Link to={`/assessoria/contratos/${draft.prospect_previous_contract_id}`} className="text-orange-700 hover:underline">
+                  Contrato anterior →
+                </Link>
+              )}
+            </div>
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{formatDate(draft.start_date)} → {formatDate(draft.end_date)}</span>
               {coach && <span>Coach: <b className="text-gray-700">{coach.name}</b></span>}
@@ -506,7 +563,7 @@ export default function Prospects() {
     try {
       const contractsResult = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes')
+        .select('id, contract_number, customer_id, coach_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at')
         .not('prospect_stage', 'is', null)
         .is('parent_contract_id', null)
         .order('created_at', { ascending: false });
@@ -518,7 +575,7 @@ export default function Prospects() {
       const coachIds = [...new Set(list.map(item => item.coach_id).filter(Boolean))];
       const modalityIds = [...new Set(list.map(item => item.plan_snapshot?.modality_id).filter(Boolean))];
       const [customerResult, coachResult, modalityResult] = await Promise.all([
-        customerIds.length ? supabase.from('presale_customers').select('id, full_name, whatsapp, email, cpf').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
+        customerIds.length ? supabase.from('presale_customers').select('id, customer_code, full_name, whatsapp, email, cpf').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
         coachIds.length ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds) : Promise.resolve({ data: [], error: null }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds) : Promise.resolve({ data: [], error: null }),
       ]);
@@ -542,16 +599,34 @@ export default function Prospects() {
   }, [load]);
 
   const counts = useMemo(() => {
-    const result = { all: prospects.length, open: 0, new: 0, proposal_ready: 0, payment_link_sent: 0, converted: 0, lost: 0 };
+    const result = {
+      all: prospects.length,
+      open: 0,
+      new: 0,
+      proposal_ready: 0,
+      payment_link_sent: 0,
+      converted: 0,
+      lost: 0,
+      returns: 0,
+      returns_open: 0,
+      returns_converted: 0,
+    };
     prospects.forEach(item => {
       if (result[item.prospect_stage] !== undefined) result[item.prospect_stage] += 1;
       if (['new', 'proposal_ready', 'payment_link_sent'].includes(item.prospect_stage)) result.open += 1;
+      if (item.prospect_customer_relationship === 'former_student') {
+        result.returns += 1;
+        if (['new', 'proposal_ready', 'payment_link_sent'].includes(item.prospect_stage)) result.returns_open += 1;
+        if (item.prospect_stage === 'converted' && item.prospect_reactivated_at) result.returns_converted += 1;
+      }
     });
     return result;
   }, [prospects]);
 
   const filtered = useMemo(() => prospects.filter(item => (
-    filter === 'all' || (filter === 'open'
+    filter === 'all' || (filter === 'returns'
+      ? item.prospect_customer_relationship === 'former_student'
+      : filter === 'open'
       ? ['new', 'proposal_ready', 'payment_link_sent'].includes(item.prospect_stage)
       : item.prospect_stage === filter)
   )), [prospects, filter]);
@@ -579,12 +654,14 @@ export default function Prospects() {
         <p className="text-sm text-muted-foreground mt-0.5">Do cadastro público à confirmação do pagamento, com histórico completo.</p>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
         {[
           ['Em negociação', counts.open, UserPlus, 'text-blue-700', 'bg-blue-50'],
           ['Valor potencial', formatCurrency(potentialValue), CircleDollarSign, 'text-amber-700', 'bg-amber-50'],
           ['Convertidos', counts.converted, CheckCheck, 'text-green-700', 'bg-green-50'],
           ['Conversão dos encerrados', `${conversionRate}%`, TrendingUp, 'text-violet-700', 'bg-violet-50'],
+          ['Retornos em negociação', counts.returns_open, UserRoundCheck, 'text-orange-700', 'bg-orange-50'],
+          ['Retornos confirmados', counts.returns_converted, UserCheck, 'text-emerald-700', 'bg-emerald-50'],
         ].map(([label, value, Icon, color, background]) => (
           <Card key={label}><CardContent className="p-4 flex items-center gap-3">
             <div className={`p-2 rounded-full shrink-0 ${background}`}><Icon className={`w-5 h-5 ${color}`} /></div>
@@ -596,7 +673,7 @@ export default function Prospects() {
       <div className="flex gap-2 flex-wrap">
         {[
           ['open', 'Em negociação'], ['new', 'Novos'], ['proposal_ready', 'Proposta pronta'],
-          ['payment_link_sent', 'Link enviado'], ['converted', 'Convertidos'], ['lost', 'Não convertidos'], ['all', 'Todos'],
+          ['payment_link_sent', 'Link enviado'], ['returns', 'Retornos'], ['converted', 'Convertidos'], ['lost', 'Não convertidos'], ['all', 'Todos'],
         ].map(([value, label]) => (
           <Button key={value} size="sm" variant={filter === value ? 'default' : 'outline'} onClick={() => setFilter(value)}>
             {label} <span className="ml-1.5 opacity-70">{counts[value]}</span>
