@@ -239,6 +239,103 @@ Deno.test("Prospect refusal forwards only the concurrency snapshot", async () =>
   );
 });
 
+Deno.test("Prospect proposal requires a safe link and complete commercial data", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = `/orders/contract/${CONTRACT_ID}/prospect-proposal`;
+  const invalid = await handleContractMembershipRequest(
+    request("prospect-proposal", {
+      enrollment_fee: 50,
+      manual_discount: 0,
+      external_payment_link: "http://unsafe.test/pay",
+      due_date: "2026-02-31",
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(invalid?.status === 400, "invalid proposal was accepted");
+  assert(calls.length === 0, "database was called for an invalid proposal");
+
+  const valid = await handleContractMembershipRequest(
+    request("prospect-proposal", {
+      enrollment_fee: 50,
+      manual_discount: 10,
+      external_payment_link: "https://payments.example.test/invoice/2",
+      due_date: "2026-07-30",
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(valid?.status === 200, "valid prospect proposal failed");
+  assert(
+    calls[0].name === "prepare_assessment_prospect_proposal",
+    "wrong proposal RPC",
+  );
+  assert(calls[0].args.p_due_date === "2026-07-30", "due date changed");
+  assert(
+    calls[0].args.p_external_payment_link ===
+      "https://payments.example.test/invoice/2",
+    "payment link changed",
+  );
+});
+
+Deno.test("Prospect message tracking forwards only the concurrency snapshot", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = `/orders/contract/${CONTRACT_ID}/prospect-message-sent`;
+  const response = await handleContractMembershipRequest(
+    request("prospect-message-sent", { expected_updated_at: UPDATED_AT }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "message tracking failed");
+  assert(
+    calls[0].name === "mark_assessment_prospect_message_sent",
+    "wrong message tracking RPC",
+  );
+  assert(Object.keys(calls[0].args).length === 3, "unexpected message fields");
+});
+
+Deno.test("Prospect loss validates the reason and cancellation confirmation", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = `/orders/contract/${CONTRACT_ID}/prospect-lost`;
+  const invalid = await handleContractMembershipRequest(
+    request("prospect-lost", {
+      reason_code: "churn",
+      reason_notes: null,
+      external_cancellation_confirmed: true,
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(invalid?.status === 400, "invalid loss reason was accepted");
+  assert(calls.length === 0, "database was called for an invalid loss reason");
+
+  const valid = await handleContractMembershipRequest(
+    request("prospect-lost", {
+      reason_code: "no_response",
+      reason_notes: "Sem retorno após duas tentativas",
+      external_cancellation_confirmed: false,
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(valid?.status === 200, "valid prospect loss failed");
+  assert(calls[0].name === "lose_assessment_prospect", "wrong loss RPC");
+  assert(calls[0].args.p_reason_code === "no_response", "reason changed");
+  assert(
+    calls[0].args.p_external_cancellation_confirmed === false,
+    "cancellation confirmation changed",
+  );
+});
+
 Deno.test("Database conflicts become HTTP 409", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const path = `/orders/contract/${CONTRACT_ID}/non-renewal`;
