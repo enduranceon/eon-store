@@ -112,7 +112,8 @@ export default function PublicPlanEnrollment() {
 
         const [{ data: mod }, { data: coachList }] = await Promise.all([
           supabase.from('assessment_modalities').select('id,name').eq('id', planData.modality_id).maybeSingle(),
-          supabase.from('assessment_coaches').select('id,name').eq('active', true).order('name'),
+          supabase.from('assessment_coaches').select('id,name,modality_ids')
+            .eq('active', true).eq('public_visible', true).contains('modality_ids', [planData.modality_id]).order('name'),
         ]);
         setModality(mod);
         setCoaches(coachList || []);

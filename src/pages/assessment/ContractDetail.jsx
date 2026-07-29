@@ -949,6 +949,7 @@ export default function ContractDetail() {
   // Quando modal de cancelamento está aberta, usa cancelDate; senão usa hoje
   const calc = cancelModal ? cancellationCalc(cancelDate) : cancellationCalc();
   const canCancel = !['cancelled', 'finished', 'voided'].includes(contract.status);
+  const compatibleCoaches = coaches.filter(c => (c.modality_ids || []).includes(plan?.modality_id));
   const canCreateRenewal = !contract.parent_contract_id
     && !contract.renewal_generated
     && !isNonRenewalReason(contract.cancellation_reason)
@@ -1762,7 +1763,7 @@ export default function ContractDetail() {
           <Select value={newCoachId} onValueChange={setNewCoachId}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              {coaches.map(c => <SelectItem key={c.id} value={c.id}>{c.name} ({c.role})</SelectItem>)}
+              {compatibleCoaches.map(c => <SelectItem key={c.id} value={c.id}>{c.name} ({c.role})</SelectItem>)}
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">A troca é registrada no histórico. No fechamento mensal cada coach recebe proporcional aos dias.</p>

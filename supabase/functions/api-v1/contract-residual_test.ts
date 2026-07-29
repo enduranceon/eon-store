@@ -36,6 +36,22 @@ function client(
   error: Record<string, unknown> | null = null,
 ): SupabaseClient {
   return {
+    from(table: string) {
+      const chain = {
+        select() { return chain; },
+        eq() { return chain; },
+        maybeSingle() {
+          if (table === "assessment_plans") {
+            return Promise.resolve({ data: { id: PLAN_ID, modality_id: "66666666-6666-4666-8666-666666666666" }, error: null });
+          }
+          if (table === "assessment_coaches") {
+            return Promise.resolve({ data: { id: COACH_ID, modality_ids: ["66666666-6666-4666-8666-666666666666"] }, error: null });
+          }
+          return Promise.resolve({ data: null, error: null });
+        },
+      };
+      return chain;
+    },
     rpc(name: string, args: Record<string, unknown>) {
       calls.push({ name, args });
       return Promise.resolve({ data: { ok: true }, error });

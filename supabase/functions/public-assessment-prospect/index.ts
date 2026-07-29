@@ -98,7 +98,8 @@ Deno.serve(async (req: Request) => {
         .select("id,name,period,period_months,price_monthly,price_total,enrollment_fee,max_installments,modality_id")
         .eq("active", true).eq("available_online", true).order("price_monthly"),
       supabase.from("assessment_modalities").select("id,name").eq("active", true).order("name"),
-      supabase.from("assessment_coaches").select("id,name").eq("active", true).order("name"),
+      supabase.from("assessment_coaches").select("id,name,modality_ids")
+        .eq("active", true).eq("public_visible", true).order("name"),
     ]);
     if (planError || modalityError || coachError) {
       console.error("public prospect catalog", planError || modalityError || coachError);

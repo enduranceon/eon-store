@@ -222,6 +222,9 @@ export default function ContractForm() {
 
   const selectedCustomer = customers.find(c => c.id === form.customer_id);
   const endDate = selectedPlan ? computeEndDate(form.start_date, selectedPlan) : '';
+  const eligibleCoaches = selectedPlan
+    ? coaches.filter(c => (c.modality_ids || []).includes(selectedPlan.modality_id))
+    : [];
 
   const pickPlan = (plan) => {
     setSelectedPlan(plan);
@@ -230,6 +233,9 @@ export default function ContractForm() {
     const defaultInstall = Math.min(months, plan.max_installments || months);
     setForm(f => ({
       ...f,
+      coach_id: (coaches.find(c => c.id === f.coach_id)?.modality_ids || []).includes(plan.modality_id)
+        ? f.coach_id
+        : '',
       installments:   defaultInstall,
       enrollment_fee: Number(plan.enrollment_fee) || 0,
     }));
@@ -320,6 +326,7 @@ export default function ContractForm() {
   const goToReview = async () => {
     if (!form.customer_id) return toast.error('Selecione um aluno');
     if (!form.coach_id) return toast.error('Selecione um coach');
+    if (!eligibleCoaches.some(c => c.id === form.coach_id)) return toast.error('Este coach não atende a modalidade do plano');
     if (!selectedPlan) return toast.error('Plano inválido');
     if (!form.start_date) return toast.error('Data de início obrigatória');
 
@@ -346,6 +353,7 @@ export default function ContractForm() {
   const save = async () => {
     if (!form.customer_id) return toast.error('Selecione um aluno');
     if (!form.coach_id) return toast.error('Selecione um coach');
+    if (!eligibleCoaches.some(c => c.id === form.coach_id)) return toast.error('Este coach não atende a modalidade do plano');
     if (!selectedPlan) return toast.error('Plano inválido');
     if (!form.start_date) return toast.error('Data de início obrigatória');
 
@@ -721,11 +729,14 @@ export default function ContractForm() {
             <Select value={form.coach_id} onValueChange={v => setForm(f => ({ ...f, coach_id: v }))}>
               <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione o coach" /></SelectTrigger>
               <SelectContent>
-                {coaches.map(c => (
+                {eligibleCoaches.map(c => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.name} <span className="text-xs text-muted-foreground capitalize">({c.role})</span>
                   </SelectItem>
                 ))}
+                {eligibleCoaches.length === 0 && (
+                  <div className="px-3 py-2 text-sm text-amber-700">Nenhum coach interno atende esta modalidade.</div>
+                )}
               </SelectContent>
             </Select>
           </div>
