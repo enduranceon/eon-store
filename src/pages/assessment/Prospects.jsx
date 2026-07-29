@@ -403,6 +403,7 @@ export default function Prospects() {
   const [loading,    setLoading]    = useState(true);
   const [busy,       setBusy]       = useState(null);
   const [modal,      setModal]      = useState(null); // { draft, customer, coach, modality }
+  const [refusal,    setRefusal]    = useState(null); // { draft, customer }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -452,14 +453,13 @@ export default function Prospects() {
     setModal({ draft, customer, coach, modality });
   };
 
-  const refuseEnrollment = async (draft, customer) => {
-    const name = customer?.full_name || draft.contract_number;
-    if (!confirm(`Recusar a adesão de ${name}?\n\nO registro será excluído permanentemente.`)) return;
+  const refuseEnrollment = async (draft) => {
     setBusy(draft.id);
     try {
       await refuseAssessmentContractEnrollment(draft.id, draft.updated_at);
       toast.success('Adesão recusada e removida');
-      load();
+      setRefusal(null);
+      await load();
     } catch (e) {
       toast.error('Erro ao recusar: ' + (e.message || ''));
     } finally {
@@ -534,7 +534,7 @@ export default function Prospects() {
               coach={coaches[draft.coach_id]}
               modality={modalities[draft.plan_snapshot?.modality_id]}
               onConfirm={openConfirm}
-              onRefuse={refuseEnrollment}
+              onRefuse={(selectedDraft, customer) => setRefusal({ draft: selectedDraft, customer })}
               busy={busy === draft.id}
             />
           ))}
@@ -550,6 +550,56 @@ export default function Prospects() {
               onClose={() => { setModal(null); load(); }}
               onDone={() => { setModal(null); load(); }}
             />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmação de recusa dentro do app — evita depender do diálogo nativo do navegador. */}
+      <Dialog
+        open={!!refusal}
+        onOpenChange={open => {
+          if (!open && busy !== refusal?.draft.id) setRefusal(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <Trash2 className="w-5 h-5" /> Recusar adesão
+            </DialogTitle>
+          </DialogHeader>
+
+          {refusal && (
+            <div className="space-y-4 mt-2">
+              <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+                <p className="text-sm text-gray-800">
+                  Tem certeza de que deseja recusar a adesão de{' '}
+                  <strong>{refusal.customer?.full_name || refusal.draft.contract_number}</strong>?
+                </p>
+                <p className="text-xs text-red-700 mt-2">
+                  O prospect será removido permanentemente. Esta ação não pode ser desfeita.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setRefusal(null)}
+                  disabled={busy === refusal.draft.id}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  className="bg-red-600 hover:bg-red-700"
+                  onClick={() => refuseEnrollment(refusal.draft)}
+                  disabled={busy === refusal.draft.id}
+                >
+                  {busy === refusal.draft.id
+                    ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                    : <Trash2 className="w-4 h-4 mr-1.5" />}
+                  {busy === refusal.draft.id ? 'Recusando...' : 'Recusar e excluir'}
+                </Button>
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>
