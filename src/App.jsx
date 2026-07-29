@@ -16,6 +16,7 @@ import OrderDetail from '@/pages/OrderDetail';
 import Customers from '@/pages/Customers';
 import CustomerDetail from '@/pages/CustomerDetail';
 import Reports from '@/pages/Reports';
+import Analytics from '@/pages/Analytics';
 import Suppliers from '@/pages/Suppliers';
 import SupplierForm from '@/pages/SupplierForm';
 import Categories from '@/pages/Categories';
@@ -138,6 +139,7 @@ export default function App() {
           <Route path="/fornecedores/novo" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/fornecedores/:id" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/relatorios" element={<AdminLayout><Reports /></AdminLayout>} />
+          <Route path="/analytics" element={<AdminLayout><Analytics /></AdminLayout>} />
           <Route path="/financeiro" element={<AdminLayout><Financial /></AdminLayout>} />
           <Route path="/financeiro/fluxo-caixa" element={<AdminLayout><CashFlow /></AdminLayout>} />
           <Route path="/devolucoes" element={<AdminLayout><Returns /></AdminLayout>} />

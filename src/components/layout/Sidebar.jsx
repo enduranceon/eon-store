@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Activity, FileText, Layers, CalendarClock, Award, DollarSign,
+  Activity, FileText, Layers, Award, DollarSign,
   Users, BarChart3, TrendingUp, Wallet, HandCoins,
   ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
@@ -34,6 +34,7 @@ const ASSESSORIA_ITEMS = [
 
 // FINANCEIRO — visão financeira unificada
 const FINANCEIRO_ITEMS = [
+  { label: 'Analytics',          icon: BarChart3,   to: '/analytics' },
   { label: 'Central Financeira', icon: Wallet,      to: '/assessoria/central-financeira' },
   { label: 'Repasse',            icon: DollarSign,  to: '/assessoria/repasse' },
   { label: 'Vendas em aberto',   icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' },
