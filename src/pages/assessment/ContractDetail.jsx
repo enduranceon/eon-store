@@ -110,6 +110,12 @@ function isNonRenewalReason(reason) {
     || text.includes('não vai renovar') || text.includes('nao vai renovar');
 }
 
+function leavePeriodLabel(leave) {
+  if (!leave) return '';
+  if (!leave.end_date) return `${formatDate(leave.start_date)} → sem data definida`;
+  return `${formatDate(leave.start_date)} → ${formatDate(leave.end_date)} (${leave.days} dia${leave.days !== 1 ? 's' : ''})`;
+}
+
 // ─── Timeline de eventos ─────────────────────────────────────────────────────
 const EVENT_META = {
   created:                  { icon: Plus,       color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Contrato criado' },
@@ -150,7 +156,7 @@ function formatEventSummary(ev) {
     case 'coach_changed':
       return `${p.from_coach_name || '—'} → ${p.to_coach_name || '—'}`;
     case 'leave_started':
-      return `${p.days} dia${p.days !== 1 ? 's' : ''}${p.reason ? ' · ' + p.reason : ''}`;
+      return `${p.open_ended || p.days == null ? 'Sem data definida' : `${p.days} dia${p.days !== 1 ? 's' : ''}`}${p.reason ? ' · ' + p.reason : ''}`;
     case 'leave_ended':
       return `Após ${p.days || '?'} dia(s)`;
     case 'charge_generated':
@@ -248,7 +254,7 @@ export default function ContractDetail() {
   const [changeCoachModal, setChangeCoachModal] = useState(false);
   const [newCoachId, setNewCoachId] = useState('');
   const [leaveModal, setLeaveModal] = useState(false);
-  const [leaveForm, setLeaveForm] = useState({ start_date: todayLocalStr(), end_date: todayLocalStr(), reason: '' });
+  const [leaveForm, setLeaveForm] = useState({ start_date: todayLocalStr(), end_date: todayLocalStr(), open_ended: false, reason: '' });
   const [cancelModal, setCancelModal]   = useState(false);
   const [voidModal, setVoidModal]       = useState(false);
   const [voiding, setVoiding]           = useState(false);
@@ -443,27 +449,33 @@ export default function ContractDetail() {
   };
 
   const addLeave = async () => {
-    if (!leaveForm.start_date || !leaveForm.end_date) return toast.error('Datas obrigatórias');
-    if (leaveForm.end_date < leaveForm.start_date) return toast.error('Fim antes do início');
+    if (!leaveForm.start_date) return toast.error('Data de início obrigatória');
+    if (!leaveForm.open_ended && !leaveForm.end_date) return toast.error('Informe o fim ou marque “Sem data definida”');
+    if (!leaveForm.open_ended && leaveForm.end_date < leaveForm.start_date) return toast.error('Fim antes do início');
     if (contract.status === 'on_leave') return toast.error('Contrato já está em licença');
     try {
       const result = await startAssessmentContractLeave(id, {
         startDate: leaveForm.start_date,
-        endDate: leaveForm.end_date,
+        endDate: leaveForm.open_ended ? null : leaveForm.end_date,
         reason: leaveForm.reason || null,
         expectedUpdatedAt: contract.updated_at,
       });
       const days = result.leave.days;
       const newEndStr = result.contract.end_date;
-      toast.success(`Licença registrada (${days} dias). Novo vencimento: ${formatDate(newEndStr)}.`);
+      toast.success(leaveForm.open_ended
+        ? 'Licença iniciada sem data definida. O vencimento será ajustado quando ela for encerrada.'
+        : `Licença registrada (${days} dias). Novo vencimento: ${formatDate(newEndStr)}.`);
       setLeaveModal(false);
-      setLeaveForm({ start_date: todayLocalStr(), end_date: todayLocalStr(), reason: '' });
+      setLeaveForm({ start_date: todayLocalStr(), end_date: todayLocalStr(), open_ended: false, reason: '' });
       load();
     } catch (e) { toast.error(e.message); }
   };
 
   const finishLeave = async (leave) => {
-    if (!confirm(`Encerrar licença de ${leave.days} dias? O aluno retorna ao plano.`)) return;
+    const message = leave.end_date
+      ? `Encerrar licença de ${leave.days} dias? O aluno retorna ao plano.`
+      : 'Encerrar esta licença sem data definida hoje? O vencimento será prorrogado pelos dias efetivamente transcorridos.';
+    if (!confirm(message)) return;
     try {
       const result = await finishAssessmentContractLeave(
         id,
@@ -1057,7 +1069,7 @@ export default function ContractDetail() {
               </p>
               {activeLeave && (
                 <p className="text-xs text-amber-700 mt-0.5">
-                  {formatDate(activeLeave.start_date)} → {formatDate(activeLeave.end_date)} ({activeLeave.days} dias)
+                  {leavePeriodLabel(activeLeave)}
                   {activeLeave.reason && ` · ${activeLeave.reason}`}
                 </p>
               )}
@@ -1530,7 +1542,7 @@ export default function ContractDetail() {
               {leaves.map(l => (
                 <div key={l.id} className="flex items-center justify-between py-2">
                   <div className="text-sm">
-                    <p className="font-medium">{formatDate(l.start_date)} → {formatDate(l.end_date)} <span className="text-xs text-muted-foreground">({l.days} dias)</span></p>
+                    <p className="font-medium">{leavePeriodLabel(l)}</p>
                     {l.reason && <p className="text-xs text-muted-foreground">{l.reason}</p>}
                   </div>
                   <div className="flex items-center gap-2">
@@ -1781,11 +1793,22 @@ export default function ContractDetail() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Início</Label><Input type="date" value={leaveForm.start_date} onChange={e => setLeaveForm(f => ({ ...f, start_date: e.target.value }))} /></div>
-              <div><Label>Fim</Label><Input type="date" value={leaveForm.end_date} onChange={e => setLeaveForm(f => ({ ...f, end_date: e.target.value }))} /></div>
+              <div><Label>Fim</Label><Input type="date" value={leaveForm.end_date} disabled={leaveForm.open_ended} onChange={e => setLeaveForm(f => ({ ...f, end_date: e.target.value }))} /></div>
             </div>
+            <label className="flex items-start gap-2.5 rounded-lg border bg-gray-50 px-3 py-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-blue-600"
+                checked={leaveForm.open_ended}
+                onChange={e => setLeaveForm(f => ({ ...f, open_ended: e.target.checked }))}
+              />
+              <span><span className="block text-sm font-medium">Sem data definida</span><span className="block text-xs text-muted-foreground">O fim e a prorrogação serão calculados quando o aluno retornar.</span></span>
+            </label>
             <div><Label>Motivo (opcional)</Label><Textarea rows={2} value={leaveForm.reason} onChange={e => setLeaveForm(f => ({ ...f, reason: e.target.value }))} /></div>
             <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-700">
-              O vencimento do contrato será estendido automaticamente pelos dias de licença.
+              {leaveForm.open_ended
+                ? 'O vencimento não muda agora. Ao encerrar, será estendido pelos dias efetivos da licença.'
+                : 'O vencimento do contrato será estendido automaticamente pelos dias de licença.'}
             </div>
             <div className="flex gap-2"><Button variant="outline" className="flex-1" onClick={() => setLeaveModal(false)}>Cancelar</Button><Button className="flex-1" onClick={addLeave}>Registrar</Button></div>
           </div>

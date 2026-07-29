@@ -92,6 +92,25 @@ Deno.test("Starting a leave preserves dates, reason, actor and version", async (
   assert(calls[0].args.p_reason === "Viagem", "reason changed");
 });
 
+Deno.test("Starting an open-ended leave sends a null end date", async () => {
+  const { fake, calls } = client();
+  const path = `/orders/contract/${CONTRACT_ID}/leaves`;
+  const response = await handleContractLifecycleRequest(
+    request(path, "POST", {
+      start_date: "2026-08-10",
+      end_date: null,
+      reason: "Retorno ainda indefinido",
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "open-ended leave start failed");
+  assert(calls[0].name === "start_assessment_contract_leave", "wrong RPC");
+  assert(calls[0].args.p_end_date === null, "null end date was not preserved");
+});
+
 Deno.test("Finishing a leave binds it to the contract", async () => {
   const { fake, calls } = client();
   const path = `/orders/contract/${CONTRACT_ID}/leaves/${LEAVE_ID}/finish`;

@@ -160,8 +160,9 @@ export async function handleContractLifecycleRequest(
         "reason",
         "expected_updated_at",
       ]) ||
-      !isCalendarDate(body.start_date) || !isCalendarDate(body.end_date) ||
-      body.end_date < body.start_date ||
+      !isCalendarDate(body.start_date) ||
+      !(body.end_date === null || isCalendarDate(body.end_date)) ||
+      (typeof body.end_date === "string" && body.end_date < body.start_date) ||
       !(body.reason === null || typeof body.reason === "string") ||
       (typeof body.reason === "string" && body.reason.length > 1000)
     ) {

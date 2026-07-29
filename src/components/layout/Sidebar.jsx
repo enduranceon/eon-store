@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Activity, FileText, Layers, Award, DollarSign,
+  Activity, FileText, Layers, Award, DollarSign, Pause,
   Users, BarChart3, TrendingUp, Wallet, HandCoins,
   ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
@@ -23,6 +23,7 @@ const COMMUNICATION_ITEM = { label: 'Comunicação', icon: MessageCircle, to: '/
 const ASSESSORIA_ITEMS = [
   { label: 'Painel',         icon: Activity,      to: '/assessoria',              exact: true },
   { label: 'Contratos',      icon: FileText,      to: '/assessoria/contratos',    badge: 'assessoria' },
+  { label: 'Licenças',       icon: Pause,         to: '/assessoria/licencas' },
   { label: 'Alunos',         icon: Users,         to: '/assessoria/alunos' },
   { label: 'Renovações',     icon: RefreshCcw,    to: '/assessoria/renovacoes',   badge: 'renewals' },
   { label: 'Prospects',      icon: UserPlus,      to: '/assessoria/prospects',    badge: 'prospects' },
