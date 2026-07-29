@@ -109,7 +109,8 @@ export default function PublicModalityPlans() {
         const [{ data: mod }, { data: planList }, { data: coachList }] = await Promise.all([
           supabase.from('assessment_modalities').select('id,name').eq('id', modalityId).eq('active', true).maybeSingle(),
           supabase.from('assessment_plans').select('*').eq('modality_id', modalityId).eq('active', true).eq('available_online', true).order('period_months'),
-          supabase.from('assessment_coaches').select('id,name').eq('active', true).order('name'),
+          supabase.from('assessment_coaches').select('id,name,modality_ids')
+            .eq('active', true).eq('public_visible', true).contains('modality_ids', [modalityId]).order('name'),
         ]);
 
         if (!mod) { setNotFound(true); setLoading(false); return; }

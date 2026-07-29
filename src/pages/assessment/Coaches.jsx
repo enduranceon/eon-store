@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { AssessmentCoach, AssessmentContract } from '@/api/entities';
+import { AssessmentCoach, AssessmentContract, AssessmentModality } from '@/api/entities';
 import { usePageData } from '@/hooks/usePageData';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { toast } from 'sonner';
@@ -18,12 +18,16 @@ const ROLE_COLOR = {
   senior: 'bg-amber-100 text-amber-700',
 };
 
-const emptyForm = { name: '', email: '', phone: '', role: 'junior', leader_id: null, co_leader_ids: [], active: true };
+const emptyForm = {
+  name: '', email: '', phone: '', role: 'junior', leader_id: null,
+  co_leader_ids: [], active: true, public_visible: false, modality_ids: [],
+};
 
 async function loadCoachesPage() {
-  const [coaches, contracts] = await Promise.all([
+  const [coaches, contracts, modalities] = await Promise.all([
     AssessmentCoach.list('name').catch(() => []),
     AssessmentContract.list('-created_at').catch(() => []),
+    AssessmentModality.filter({ active: true }, 'name').catch(() => []),
   ]);
   const counts = {};
   buildContractLifecycleRows(contracts)
@@ -31,18 +35,18 @@ async function loadCoachesPage() {
     .forEach(contract => {
       counts[contract.coach_id] = (counts[contract.coach_id] || 0) + 1;
     });
-  return { coaches, counts };
+  return { coaches, counts, modalities };
 }
 
 export default function Coaches() {
   const {
-    data: { coaches, counts },
+    data: { coaches, counts, modalities },
     refresh,
   } = usePageData({
     key: 'assessment-coaches:list',
     loader: loadCoachesPage,
-    initialData: { coaches: [], counts: {} },
-    tags: ['assessment_coaches', 'assessment_contracts'],
+    initialData: { coaches: [], counts: {}, modalities: [] },
+    tags: ['assessment_coaches', 'assessment_contracts', 'assessment_modalities'],
     onError: error => console.error('Erro ao carregar coaches:', error),
   });
   const [search, setSearch] = useState('');
@@ -52,7 +56,15 @@ export default function Coaches() {
   const [saving, setSaving] = useState(false);
 
   const open = (c) => {
-    if (c) { setEditing(c); setForm({ ...c, co_leader_ids: c.co_leader_ids || [] }); }
+    if (c) {
+      setEditing(c);
+      setForm({
+        ...c,
+        co_leader_ids: c.co_leader_ids || [],
+        modality_ids: c.modality_ids || [],
+        public_visible: !!c.public_visible,
+      });
+    }
     else   { setEditing(null); setForm(emptyForm); }
     setModal(true);
   };
@@ -61,6 +73,8 @@ export default function Coaches() {
     if (!form.name.trim()) return toast.error('Nome obrigatório');
     if (!form.email.trim()) return toast.error('Email obrigatório');
     if (!form.role) return toast.error('Papel obrigatório');
+    if (form.active && form.modality_ids.length === 0) return toast.error('Selecione ao menos uma modalidade');
+    if (form.public_visible && !form.active) return toast.error('Para aparecer no site, o coach precisa estar ativo internamente');
     setSaving(true);
     try {
       const payload = {
@@ -71,6 +85,8 @@ export default function Coaches() {
         leader_id: form.leader_id || null,
         co_leader_ids: form.co_leader_ids || [],
         active: !!form.active,
+        public_visible: !!form.active && !!form.public_visible,
+        modality_ids: form.modality_ids || [],
       };
       if (editing) await AssessmentCoach.update(editing.id, payload);
       else await AssessmentCoach.create(payload);
@@ -84,7 +100,10 @@ export default function Coaches() {
 
   const toggle = async (c) => {
     try {
-      await AssessmentCoach.update(c.id, { active: !c.active });
+      await AssessmentCoach.update(c.id, {
+        active: !c.active,
+        ...(!c.active ? {} : { public_visible: false }),
+      });
       await refresh({ force: true });
     }
     catch (e) { toast.error(e.message); }
@@ -97,6 +116,13 @@ export default function Coaches() {
   });
 
   const possibleLeaders = coaches.filter(c => c.id !== editing?.id && c.active);
+  const modalityName = id => modalities.find(m => m.id === id)?.name;
+  const toggleModality = id => setForm(f => ({
+    ...f,
+    modality_ids: f.modality_ids.includes(id)
+      ? f.modality_ids.filter(item => item !== id)
+      : [...f.modality_ids, id],
+  }));
 
   return (
     <div className="space-y-5">
@@ -127,8 +153,10 @@ export default function Coaches() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Nome</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Papel</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Líder</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Modalidades</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Atletas</th>
-                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Status</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Interno</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Site</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -146,11 +174,26 @@ export default function Coaches() {
                     </td>
                     <td className="px-4 py-3"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ROLE_COLOR[c.role]}`}>{ROLE_LABEL[c.role]}</span></td>
                     <td className="px-4 py-3 text-muted-foreground text-sm">{leader?.name || '—'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {(c.modality_ids || []).map(id => (
+                          <span key={id} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 capitalize">
+                            {modalityName(id) || 'Modalidade'}
+                          </span>
+                        ))}
+                        {(c.modality_ids || []).length === 0 && <span className="text-xs text-amber-600">Não definido</span>}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-center font-bold">{counts[c.id] || 0}</td>
                     <td className="px-4 py-3 text-center">
                       <button onClick={() => toggle(c)} className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                        {c.active ? 'Ativo' : 'Inativo'}
+                        {c.active ? 'Disponível' : 'Inativo'}
                       </button>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.active && c.public_visible ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {c.active && c.public_visible ? 'Visível' : 'Oculto'}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button onClick={() => open(c)} className="p-1.5 hover:bg-gray-100 rounded text-gray-500"><Pencil className="w-3.5 h-3.5" /></button>
@@ -164,7 +207,7 @@ export default function Coaches() {
       )}
 
       <Dialog open={modal} onOpenChange={setModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{editing ? 'Editar coach' : 'Novo coach'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label>Nome *</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
@@ -193,10 +236,27 @@ export default function Coaches() {
                 </SelectContent>
               </Select>
             </div>
-            <label className="flex items-center gap-2 pt-2">
-              <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} className="w-4 h-4 accent-blue-600" />
-              <span className="text-sm">Coach ativo</span>
-            </label>
+            <div>
+              <Label>Modalidades atendidas *</Label>
+              <div className="grid grid-cols-2 gap-2 mt-1.5">
+                {modalities.map(modality => (
+                  <label key={modality.id} className={`flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer ${form.modality_ids.includes(modality.id) ? 'border-blue-300 bg-blue-50' : 'border-gray-200'}`}>
+                    <input type="checkbox" checked={form.modality_ids.includes(modality.id)} onChange={() => toggleModality(modality.id)} className="w-4 h-4 accent-blue-600" />
+                    <span className="text-sm font-medium capitalize">{modality.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2 rounded-lg border bg-gray-50 p-3">
+              <label className="flex items-start gap-2">
+                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked, public_visible: e.target.checked ? f.public_visible : false }))} className="w-4 h-4 mt-0.5 accent-blue-600" />
+                <span className="text-sm"><strong>Disponível internamente</strong><br /><span className="text-xs text-muted-foreground">Pode ser escolhido ao criar ou trocar contratos na EON Store.</span></span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input type="checkbox" checked={form.public_visible} disabled={!form.active} onChange={e => setForm(f => ({ ...f, public_visible: e.target.checked }))} className="w-4 h-4 mt-0.5 accent-violet-600 disabled:opacity-50" />
+                <span className="text-sm"><strong>Exibir no site</strong><br /><span className="text-xs text-muted-foreground">Aparece no formulário público somente nos planos das modalidades marcadas.</span></span>
+              </label>
+            </div>
             <div className="flex gap-2 pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setModal(false)}>Cancelar</Button>
               <Button className="flex-1" onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button>

@@ -296,6 +296,30 @@ export async function handlePublicAssessmentRequest(
       code: "invalid_request",
     }, 400);
   }
+  const [{ data: publicPlan, error: planError }, { data: publicCoach, error: coachError }] = await Promise.all([
+    supabase.from("assessment_plans")
+      .select("id,modality_id")
+      .eq("id", body.plan_id)
+      .eq("active", true)
+      .eq("available_online", true)
+      .maybeSingle(),
+    supabase.from("assessment_coaches")
+      .select("id,modality_ids")
+      .eq("id", body.coach_id)
+      .eq("active", true)
+      .eq("public_visible", true)
+      .maybeSingle(),
+  ]);
+  if (planError) return databaseError(planError, "Não foi possível validar o plano");
+  if (coachError) return databaseError(coachError, "Não foi possível validar o treinador");
+  if (!publicPlan || !publicCoach ||
+      !Array.isArray(publicCoach.modality_ids) ||
+      !publicCoach.modality_ids.includes(publicPlan.modality_id)) {
+    return jsonResponse({
+      error: "Treinador indisponível para a modalidade deste plano",
+      code: "invalid_request",
+    }, 400);
+  }
   const { data, error } = await supabase.rpc(
     "create_public_assessment_enrollment",
     {
