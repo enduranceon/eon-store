@@ -4,7 +4,7 @@ import {
   Users, FileText, AlertTriangle, TrendingUp, RefreshCw,
   ChevronRight, CheckCircle2, Clock, XCircle, RotateCcw,
   UserPlus, UserMinus, Activity, Award, TrendingDown,
-  Cake,
+  Cake, UserRoundCheck,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -178,6 +178,11 @@ export default function Painel() {
   // ── Movimentação do mês ───────────────────────────────────────────────────
   const novosContratos  = lifecycleRows.filter(c => c.lifecycle.counts.entry);
   const renovacoesNoMes = lifecycleRows.filter(c => c.lifecycle.counts.renewal);
+  const retornosNoMes = lifecycleRows.filter(c =>
+    c.prospect_customer_relationship === 'former_student' &&
+    c.prospect_reactivated_at &&
+    toLocalDateStr(c.prospect_reactivated_at) >= monthStart
+  );
   const idsAntesDoMes = new Set(
     lifecycleRows
       .filter(c =>
@@ -186,10 +191,15 @@ export default function Painel() {
       )
       .map(c => c.customer_id)
   );
-  const contratosDeAlunosNovos = novosContratos.filter(c => !idsAntesDoMes.has(c.customer_id));
+  const contratosDeAlunosNovos = novosContratos.filter(c =>
+    c.prospect_customer_relationship !== 'former_student' &&
+    c.prospect_customer_relationship !== 'active_student' &&
+    !idsAntesDoMes.has(c.customer_id)
+  );
   const alunosNovosUnicos = new Set(
     contratosDeAlunosNovos.map(c => c.customer_id)
   );
+  const alunosRetornandoUnicos = new Set(retornosNoMes.map(c => c.customer_id));
 
   // Saídas reais: contratos efetivados que foram cancelados nesse mês.
   // Registros descartados antes do pagamento são ignorados nas métricas.
@@ -201,8 +211,8 @@ export default function Painel() {
   const churnDenom = active.length + saidasNoMes.length;
   const churnRate  = churnDenom > 0 ? (saidasNoMes.length / churnDenom) * 100 : 0;
 
-  // Saldo de alunos (entradas reais - saídas reais)
-  const saldoAlunos = alunosNovosUnicos.size - saidasNoMes.length;
+  // Saldo de alunos (novos + retornos - saídas reais)
+  const saldoAlunos = alunosNovosUnicos.size + alunosRetornandoUnicos.size - saidasNoMes.length;
 
   // ── Performance por coach ──────────────────────────────────────────────────
   const coachStats = coaches
@@ -212,7 +222,13 @@ export default function Painel() {
       const cAtivos    = cLifecycle.filter(c => c.lifecycle.counts.active);
       const cNovosContratos = cLifecycle.filter(c => c.lifecycle.counts.entry);
       const cNovos = new Set(
-        cNovosContratos.filter(c => !idsAntesDoMes.has(c.customer_id)).map(c => c.customer_id)
+        cNovosContratos
+          .filter(c =>
+            c.prospect_customer_relationship !== 'former_student' &&
+            c.prospect_customer_relationship !== 'active_student' &&
+            !idsAntesDoMes.has(c.customer_id)
+          )
+          .map(c => c.customer_id)
       );
       const cRenov     = cLifecycle.filter(c => c.lifecycle.counts.renewal);
       const cSaidas    = cLifecycle.filter(c => c.lifecycle.counts.exit && c.lifecycle.cancelDate >= monthStart);
@@ -474,7 +490,7 @@ export default function Painel() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
             {/* Entradas reais */}
             <div className="rounded-xl border border-green-200 bg-green-50/50 p-3">
               <div className="flex items-center gap-2 mb-1">
@@ -483,8 +499,18 @@ export default function Painel() {
               </div>
               <p className="text-2xl font-bold text-green-700">{alunosNovosUnicos.size}</p>
               <p className="text-xs text-green-600 mt-0.5">
-                {novosContratos.length} contrato{novosContratos.length !== 1 ? 's' : ''} {novosContratos.length !== 1 ? 'reais' : 'real'}
+                {contratosDeAlunosNovos.length} contrato{contratosDeAlunosNovos.length !== 1 ? 's' : ''} {contratosDeAlunosNovos.length !== 1 ? 'novos' : 'novo'}
               </p>
+            </div>
+
+            {/* Retornos confirmados */}
+            <div className="rounded-xl border border-orange-200 bg-orange-50/50 p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <UserRoundCheck className="w-4 h-4 text-orange-600" />
+                <p className="text-xs text-orange-700 font-medium">Retornos</p>
+              </div>
+              <p className="text-2xl font-bold text-orange-700">{alunosRetornandoUnicos.size}</p>
+              <p className="text-xs text-orange-600 mt-0.5">ex-alunos reativados</p>
             </div>
 
             {/* Renovações */}

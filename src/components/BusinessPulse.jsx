@@ -13,7 +13,7 @@ import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-tr
 async function loadPulseData() {
   const [contractsRes, plansRes] = await Promise.all([
     supabase.from('assessment_contracts')
-      .select('id, customer_id, plan_id, plan_snapshot, status, start_date, end_date, created_at, updated_at, cancellation_date, cancellation_reason, parent_contract_id, payment_status'),
+      .select('id, customer_id, plan_id, plan_snapshot, status, start_date, end_date, created_at, updated_at, cancellation_date, cancellation_reason, parent_contract_id, payment_status, prospect_customer_relationship, prospect_reactivated_at'),
     supabase.from('assessment_plans').select('id, price_monthly'),
   ]);
   const contracts = contractsRes.data || [];
@@ -79,9 +79,10 @@ export default function BusinessPulse() {
   // Sem contratos de assessoria ainda → não mostra a banda
   if (m.activeContracts === 0 && m.novosNoMes === 0) return null;
 
-  const novosLabel = m.alunosNovos > 0
-    ? `+${m.alunosNovos} aluno${m.alunosNovos !== 1 ? 's' : ''} este mês`
-    : 'sem novos este mês';
+  const movementParts = [];
+  if (m.alunosNovos > 0) movementParts.push(`+${m.alunosNovos} novo${m.alunosNovos !== 1 ? 's' : ''}`);
+  if (m.retornosNoMes > 0) movementParts.push(`+${m.retornosNoMes} retorno${m.retornosNoMes !== 1 ? 's' : ''}`);
+  const novosLabel = movementParts.length ? `${movementParts.join(' · ')} este mês` : 'sem entradas este mês';
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
