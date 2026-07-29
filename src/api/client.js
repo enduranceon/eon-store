@@ -510,6 +510,71 @@ export async function completeAssessmentContractRefund(
   return response.data;
 }
 
+// ── Central de Estornos ─────────────────────────────────────────────────────
+
+export async function listRefunds({ status, from, to } = {}, options = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const query = params.toString();
+  const response = await apiRequest(`/refunds${query ? `?${query}` : ''}`, options);
+  return response.data;
+}
+
+// O arquivo vai direto do navegador para o Storage usando uma URL assinada que
+// a API gera. Assim o binário não passa pela edge function e o navegador
+// continua sem permissão de escrita própria no bucket.
+export async function uploadRefundReceipt(sourceType, sourceId, file) {
+  const { data: signed } = await apiRequest(
+    `/refunds/${sourceType}/${sourceId}/receipts/upload-url`,
+    {
+      method: 'POST',
+      body: { mime_type: file.type, size_bytes: file.size },
+    },
+  );
+
+  // contentType explícito: sem ele o supabase-js manda text/plain, que o
+  // bucket recusa por causa da allowed_mime_types — todo envio falharia.
+  const { error } = await supabase.storage
+    .from('refund-receipts')
+    .uploadToSignedUrl(signed.path, signed.token, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+  if (error) {
+    throw new ApiError('Não foi possível enviar o arquivo', {
+      status: 500,
+      code: 'storage_upload_failed',
+      details: error.message,
+    });
+  }
+
+  const response = await apiRequest(`/refunds/${sourceType}/${sourceId}/receipts`, {
+    method: 'POST',
+    body: {
+      file_path: signed.path,
+      file_name: file.name,
+      mime_type: file.type,
+      size_bytes: file.size,
+    },
+  });
+  return response.data;
+}
+
+export async function getRefundReceiptUrl(receiptId, options = {}) {
+  const response = await apiRequest(`/refunds/receipts/${receiptId}/download`, options);
+  return response.data;
+}
+
+export async function deleteRefundReceipt(receiptId, options = {}) {
+  const response = await apiRequest(`/refunds/receipts/${receiptId}`, {
+    ...options,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
 export async function updateAssessmentContractDates(
   contractId,
   { startDate, endDate, expectedUpdatedAt },
@@ -596,6 +661,45 @@ export async function cancelAssessmentContract(
   });
   invalidateAssessmentContractLifecycle();
   invalidatePageCacheByTag('payout_pending_repasse');
+  return response.data;
+}
+
+export async function scheduleAssessmentContractCancellation(
+  contractId,
+  { cancellationDate, cancellationFeePct, reason = null, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/cancellation-schedule`,
+    {
+      ...options,
+      method: 'POST',
+      body: {
+        cancellation_date: cancellationDate,
+        cancellation_fee_pct: cancellationFeePct,
+        reason,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function unscheduleAssessmentContractCancellation(
+  contractId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/cancellation-schedule`,
+    {
+      ...options,
+      method: 'DELETE',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
   return response.data;
 }
 

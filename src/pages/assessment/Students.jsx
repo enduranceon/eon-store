@@ -193,11 +193,14 @@ export default function Students() {
     if (viewFilter === 'prospect' && row.situationKey !== 'prospect') return false;
     if (!search) return true;
     const q = search.toLowerCase();
+    // Só compara telefone/CPF quando o termo tem dígitos: includes('') é sempre
+    // true, e sem essa guarda a busca por nome casa com a base inteira.
+    const digits = search.replace(/\D/g, '');
     return c.full_name?.toLowerCase().includes(q) ||
            c.customer_code?.toLowerCase().includes(q) ||
            c.email?.toLowerCase().includes(q) ||
-           c.whatsapp?.includes(search.replace(/\D/g, '')) ||
-           c.cpf?.includes(search.replace(/\D/g, ''));
+           (digits && c.whatsapp?.includes(digits)) ||
+           (digits && c.cpf?.includes(digits));
   });
 
   return (

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   DollarSign, Calendar, CheckCircle2, Clock, AlertTriangle,
   ChevronRight, RefreshCw, Wallet, Receipt,
-  BarChart3, RotateCcw, CheckCheck, MessageCircle,
+  BarChart3, RotateCcw, MessageCircle,
 } from 'lucide-react';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { completeAssessmentContractRefund, updateOrderDueDate } from '@/api/client';
+import { updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
@@ -357,9 +357,6 @@ export default function Financial() {
   const [loadingRec, setLoadingRec]       = useState(false);
   const [fetchedAt, setFetchedAt]         = useState(null);
   const [pendingRefunds, setPendingRefunds] = useState(() => cachedFinancialData?.pendingRefunds || []);
-  const [refundDoneModal, setRefundDoneModal] = useState(null); // { contract } | null
-  const [refundDoneForm, setRefundDoneForm]   = useState({ date: '', notes: '' });
-  const [savingRefund, setSavingRefund]       = useState(false);
   const [dueDateModal, setDueDateModal]       = useState(null);
   const [dueDateForm, setDueDateForm]         = useState({ date: '', idempotencyKey: '' });
   const [savingDueDate, setSavingDueDate]     = useState(false);
@@ -682,30 +679,6 @@ export default function Financial() {
     }
   };
 
-  const openRefundDone = (contract) => {
-    setRefundDoneForm({ date: todayLocalStr(), notes: '' });
-    setRefundDoneModal(contract);
-  };
-
-  const markRefundDone = async () => {
-    if (!refundDoneForm.date) return toast.error('Informe a data do estorno');
-    setSavingRefund(true);
-    try {
-      await completeAssessmentContractRefund(refundDoneModal.id, {
-        refundDate: refundDoneForm.date,
-        refundNotes: refundDoneForm.notes || null,
-        expectedUpdatedAt: refundDoneModal.updated_at,
-      });
-      toast.success('Estorno marcado como realizado!');
-      setRefundDoneModal(null);
-      // Remove da lista local sem recarregar tudo
-      const nextPendingRefunds = pendingRefunds.filter(r => r.id !== refundDoneModal.id);
-      setPendingRefunds(nextPendingRefunds);
-      patchFinancialPageCache({ pendingRefunds: nextPendingRefunds });
-    } catch (e) { toast.error(e.message); }
-    finally { setSavingRefund(false); }
-  };
-
   const openDueDateEditor = (order) => {
     setDueDateForm({
       date: order.due_date || defaultPaymentDueDate(),
@@ -905,71 +878,26 @@ export default function Financial() {
         {/* ── Tab: Vendas em aberto ───────────────────────────── */}
         <TabsContent value="abertas" className="space-y-4 mt-4">
 
-          {/* ── Estornos pendentes ─────────────────────────────── */}
+          {/* Atalho para a Central de Estornos. A lista completa, o
+              historico e os comprovantes vivem la; aqui fica so o alerta. */}
           {pendingRefunds.length > 0 && (
             <Card className="border-orange-200">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2 text-orange-700">
-                    <RotateCcw className="w-4 h-4" />
-                    Estornos pendentes
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
-                      {pendingRefunds.length}
-                    </span>
-                  </CardTitle>
+              <CardContent className="p-4 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <RotateCcw className="w-4 h-4 text-orange-700" />
+                  <span className="text-sm font-semibold text-orange-800">
+                    {pendingRefunds.length} estorno{pendingRefunds.length !== 1 ? 's' : ''} a fazer
+                  </span>
                   <span className="font-bold text-sm text-orange-700">
                     {formatCurrency(pendingRefunds.reduce((s, r) => s + (r.refund_amount || 0), 0))}
                   </span>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Contratos cancelados aguardando estorno manual ao aluno
-                </p>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="divide-y">
-                  {pendingRefunds.map(r => {
-                    const pm = (r.payment_method || '').toLowerCase();
-                    const isCard = pm === 'credit_card' || (pm.startsWith('card_') && pm !== 'card_machine');
-                    const methodLabel = isCard ? '💳 Cartão (via Asaas)'
-                      : pm === 'pix' || pm === 'pix_manual' ? '⚡ PIX'
-                      : pm === 'boleto' ? '📄 Boleto'
-                      : pm === 'cash' ? '💵 Dinheiro'
-                      : pm === 'bank_transfer' ? '🏦 Transferência'
-                      : pm === 'card_machine' ? '🖥️ Maquininha'
-                      : '—';
-                    const daysPending = Math.round(
-                      (new Date() - new Date(r.updated_at)) / 86400000
-                    );
-                    return (
-                      <div key={r.id} className="flex items-center gap-3 px-3 py-3 hover:bg-orange-50 transition-colors">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <Link to={`/assessoria/contratos/${r.id}`}
-                              className="font-mono text-sm font-semibold text-blue-700 hover:underline">
-                              {r.contract_number}
-                            </Link>
-                            <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">🏃 Assessoria</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate">{r.customer_name}</p>
-                          <div className="flex items-center gap-3 mt-0.5">
-                            <span className="text-[11px] text-muted-foreground">{methodLabel}</span>
-                            <span className={`text-[11px] font-medium ${daysPending > 7 ? 'text-red-600' : daysPending > 3 ? 'text-orange-600' : 'text-gray-500'}`}>
-                              há {daysPending}d
-                            </span>
-                          </div>
-                        </div>
-                        <span className="font-bold text-orange-700 shrink-0">
-                          {formatCurrency(r.refund_amount)}
-                        </span>
-                        <Button size="sm" variant="outline"
-                          className="border-green-300 text-green-700 hover:bg-green-50 shrink-0"
-                          onClick={() => openRefundDone(r)}>
-                          <CheckCheck className="w-3.5 h-3.5 mr-1" /> Realizado
-                        </Button>
-                      </div>
-                    );
-                  })}
-                </div>
+                <Link
+                  to="/estornos"
+                  className="text-sm font-semibold text-orange-700 hover:underline"
+                >
+                  Abrir Central de Estornos →
+                </Link>
               </CardContent>
             </Card>
           )}
@@ -1172,53 +1100,6 @@ export default function Financial() {
       </Dialog>
 
       {/* ── Modal: confirmar estorno realizado ─────────────── */}
-      <Dialog open={!!refundDoneModal} onOpenChange={open => !open && setRefundDoneModal(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-green-700">
-              <CheckCheck className="w-5 h-5" /> Confirmar estorno realizado
-            </DialogTitle>
-          </DialogHeader>
-          {refundDoneModal && (
-            <div className="space-y-4">
-              <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Contrato</span>
-                  <span className="font-mono font-semibold">{refundDoneModal.contract_number}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Aluno</span>
-                  <span className="font-medium">{refundDoneModal.customer_name}</span>
-                </div>
-                <div className="flex justify-between border-t border-green-200 pt-1 mt-1">
-                  <span className="text-muted-foreground">Valor estornado</span>
-                  <span className="font-bold text-green-700">{formatCurrency(refundDoneModal.refund_amount)}</span>
-                </div>
-              </div>
-              <div>
-                <Label>Data do estorno</Label>
-                <Input type="date" className="mt-1"
-                  value={refundDoneForm.date} max={todayLocalStr()}
-                  onChange={e => setRefundDoneForm(f => ({ ...f, date: e.target.value }))} />
-              </div>
-              <div>
-                <Label>Observações (opcional)</Label>
-                <Textarea rows={2} className="mt-1"
-                  placeholder="ID da transação Asaas, comprovante PIX, etc."
-                  value={refundDoneForm.notes}
-                  onChange={e => setRefundDoneForm(f => ({ ...f, notes: e.target.value }))} />
-              </div>
-              <div className="flex gap-2 pt-1">
-                <Button variant="outline" className="flex-1" onClick={() => setRefundDoneModal(null)}>Cancelar</Button>
-                <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={markRefundDone} disabled={savingRefund}>
-                  <CheckCheck className="w-4 h-4 mr-1.5" />
-                  {savingRefund ? 'Salvando...' : 'Confirmar estorno'}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

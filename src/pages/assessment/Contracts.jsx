@@ -217,7 +217,17 @@ export default function Contracts() {
                     </td>
                     <td className="px-4 py-3 text-right font-semibold">{formatCurrency(c.plan_snapshot?.price_total ?? c.plan?.price_total)}</td>
                     <td className="px-4 py-3 text-right text-xs text-muted-foreground">{formatDate(c.end_date)}</td>
-                    <td className="px-4 py-3 text-center"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span></td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span>
+                      {c.scheduled_cancellation_date && (
+                        <span
+                          className="mt-1 block text-[10px] font-semibold text-blue-700"
+                          title="Cancelamento agendado: o aluno segue ativo até esta data"
+                        >
+                          sai {formatDate(c.scheduled_cancellation_date)}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-center"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${pa.cls}`}>{pa.label}</span></td>
                     <td className="px-4 py-3"><ChevronRight className="w-4 h-4 text-muted-foreground" /></td>
                   </tr>

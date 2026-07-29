@@ -20,6 +20,8 @@ import {
 import { supabase } from '@/api/db';
 import {
   cancelAssessmentContract,
+  scheduleAssessmentContractCancellation,
+  unscheduleAssessmentContractCancellation,
   cancelOrderCharge,
   changeAssessmentContractCoach,
   changeAssessmentContractPlan,
@@ -134,6 +136,8 @@ const EVENT_META = {
   renewal_declined:         { icon: Ban,        color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Não renovou' },
   auto_renewal_changed:     { icon: RotateCcw,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Auto-renovação alterada' },
   charge_cancelled:         { icon: XCircle,    color: 'text-red-500',    bg: 'bg-red-50',    label: 'Cobrança cancelada' },
+  cancellation_scheduled:       { icon: Clock,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Cancelamento agendado' },
+  cancellation_schedule_removed:{ icon: RotateCcw, color: 'text-gray-600', bg: 'bg-gray-50',  label: 'Agendamento desfeito' },
 };
 
 function formatEventSummary(ev) {
@@ -168,7 +172,11 @@ function formatEventSummary(ev) {
     case 'sale_replaced':
       return `Novo contrato ${p.new_contract_number || ''}`;
     case 'cancelled':
-      return `Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`;
+      return `${p.source === 'scheduled' ? 'Agendado · ' : ''}Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`;
+    case 'cancellation_scheduled':
+      return `Sai em ${formatDate(p.scheduled_cancellation_date)}${Number(p.cancellation_fee_pct) > 0 ? ` · multa ${p.cancellation_fee_pct}%` : ' · sem multa'}`;
+    case 'cancellation_schedule_removed':
+      return `Estava agendado para ${formatDate(p.previous_scheduled_cancellation_date)}`;
     case 'dates_changed':
       return `${formatDate(p.old_start)} → ${formatDate(p.new_start)} · fim: ${formatDate(p.new_end)}`;
     default:
@@ -256,9 +264,10 @@ export default function ContractDetail() {
   });
   const [reopenModal, setReopenModal]   = useState(false);
   const [reopenLoading, setReopenLoading] = useState(false);
-  const [cancelDate, setCancelDate] = useState(todayLocalStr());  // Data de cancelamento (pode ser retroativa)
+  const [cancelDate, setCancelDate] = useState(todayLocalStr());  // Retroativa cancela na hora; futura agenda
   const [cancelFeePct, setCancelFeePct] = useState(20);
   const [cancelReason, setCancelReason] = useState('');
+  const [cancelSaving, setCancelSaving] = useState(false);
   const [cancelInstData, setCancelInstData]         = useState(null);  // parcelas Asaas
   const [loadingCancelInst, setLoadingCancelInst]   = useState(false);
   const [chargeLoading, setChargeLoading] = useState(false);
@@ -488,6 +497,13 @@ export default function ContractDetail() {
   const openCancelModal = async () => {
     setCancelModal(true);
     setCancelInstData(null);
+    // Já existe agendamento? Abre com a data e a multa combinadas, para
+    // reagendar ser o caminho natural em vez de recomeçar do zero.
+    if (contract?.scheduled_cancellation_date) {
+      setCancelDate(contract.scheduled_cancellation_date);
+      setCancelFeePct(Number(contract.scheduled_cancellation_fee_pct) || 0);
+      setCancelReason(contract.scheduled_cancellation_reason || '');
+    }
     if (contract?.asaas_charge_id) {
       setLoadingCancelInst(true);
       try {
@@ -511,23 +527,46 @@ export default function ContractDetail() {
       return toast.error('Para fim de vigência sem renovação, use "Não renovar".');
     }
     const c = cancellationCalc(cancelDate);
+    const scheduling = cancelDate > todayLocalStr();
     const isRetroactive = cancelDate < todayLocalStr();
     const retroactiveNote = isRetroactive ? ` (retroativo de ${formatDate(cancelDate)})` : '';
-    if (!confirm(`Cancelar contrato com multa de ${formatCurrency(c.fee)} (${cancelFeePct}%)? Estorno: ${formatCurrency(c.refund)}.${retroactiveNote}`)) return;
+    const question = scheduling
+      ? `Agendar o cancelamento para ${formatDate(cancelDate)}? O aluno segue ativo até lá. Na data: multa de ${formatCurrency(c.fee)} (${cancelFeePct}%) e estorno de ${formatCurrency(c.refund)}.`
+      : `Cancelar contrato com multa de ${formatCurrency(c.fee)} (${cancelFeePct}%)? Estorno: ${formatCurrency(c.refund)}.${retroactiveNote}`;
+    if (!confirm(question)) return;
+    setCancelSaving(true);
     try {
-      const result = await cancelAssessmentContract(id, {
+      const payload = {
         cancellationDate: cancelDate,
         cancellationFeePct: Number(cancelFeePct),
         reason: cancelReason || null,
         expectedUpdatedAt: contract.updated_at,
-      });
-      toast.success(result.refund_amount > 0 ? 'Contrato cancelado. Estorno registrado como pendente.' : 'Contrato cancelado.');
+      };
+      if (scheduling) {
+        await scheduleAssessmentContractCancellation(id, payload);
+        toast.success(`Cancelamento agendado para ${formatDate(cancelDate)}.`);
+      } else {
+        const result = await cancelAssessmentContract(id, payload);
+        toast.success(result.refund_amount > 0 ? 'Contrato cancelado. Estorno registrado como pendente.' : 'Contrato cancelado.');
+      }
       setCancelModal(false);
       // Reset cancel form
       setCancelDate(todayLocalStr());
       setCancelReason('');
       load();
     } catch (e) { toast.error(e.message); }
+    finally { setCancelSaving(false); }
+  };
+
+  const removeCancellationSchedule = async () => {
+    if (!confirm('Desfazer o agendamento de cancelamento? O contrato volta a seguir normalmente.')) return;
+    setCancelSaving(true);
+    try {
+      await unscheduleAssessmentContractCancellation(id, contract.updated_at);
+      toast.success('Agendamento desfeito.');
+      load();
+    } catch (e) { toast.error(e.message); }
+    finally { setCancelSaving(false); }
   };
 
   const markNoRenewal = async () => {
@@ -931,6 +970,8 @@ export default function ContractDetail() {
     || ['draft', 'scheduled', 'active', 'overdue'].includes(contract.status)
   );
   const cancelDateAtOrAfterEnd = !!(contract.end_date && cancelDate >= contract.end_date);
+  // Data futura dentro da vigência não cancela agora: agenda.
+  const isScheduledCancellation = cancelDate > todayLocalStr() && !cancelDateAtOrAfterEnd;
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
@@ -946,6 +987,11 @@ export default function ContractDetail() {
             {getContractKindLabel(contract)}
           </Badge>
           <Badge variant={st.badge}>{st.label}</Badge>
+          {contract.scheduled_cancellation_date && (
+            <Badge variant="info" title="O aluno segue ativo até esta data">
+              Sai {formatDate(contract.scheduled_cancellation_date)}
+            </Badge>
+          )}
           <Badge variant={ps.badge}>{ps.label}</Badge>
           {student?.whatsapp && <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp}><MessageCircle className="w-4 h-4 mr-1" /> WhatsApp</Button>}
         </div>
@@ -1083,6 +1129,25 @@ export default function ContractDetail() {
               </button>
             </div>
           </div>
+
+          {contract.scheduled_cancellation_date && (
+            <div className="mt-3 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 flex items-center justify-between gap-3 flex-wrap">
+              <span className="text-sm text-blue-900">
+                <Calendar className="w-3.5 h-3.5 inline mr-1" />
+                Cancelamento agendado para <b>{formatDate(contract.scheduled_cancellation_date)}</b>
+                {Number(contract.scheduled_cancellation_fee_pct) > 0 && ` — multa de ${contract.scheduled_cancellation_fee_pct}%`}
+                {contract.scheduled_cancellation_reason && ` — ${contract.scheduled_cancellation_reason}`}
+                <span className="block text-xs text-blue-700 mt-0.5">O aluno segue ativo até lá e conta no repasse. O sistema cancela sozinho na data.</span>
+              </span>
+              <button
+                onClick={removeCancellationSchedule}
+                disabled={cancelSaving}
+                className="text-xs font-semibold px-2.5 py-1 rounded-full border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+              >
+                Desfazer
+              </button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1532,8 +1597,12 @@ export default function ContractDetail() {
                 variant="outline"
                 className="text-red-600 hover:bg-red-50"
                 onClick={openCancelModal}
+                title={contract.scheduled_cancellation_date
+                  ? `Já existe cancelamento agendado para ${formatDate(contract.scheduled_cancellation_date)}`
+                  : undefined}
               >
-                <XCircle className="w-4 h-4 mr-1.5" /> Cancelar contrato
+                <XCircle className="w-4 h-4 mr-1.5" />
+                {contract.scheduled_cancellation_date ? 'Alterar cancelamento' : 'Cancelar contrato'}
               </Button>
             ))}
           </CardContent>
@@ -2094,17 +2163,30 @@ export default function ContractDetail() {
           </DialogHeader>
           <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
 
-            {/* Data de cancelamento (pode ser retroativa) */}
+            {contract.scheduled_cancellation_date && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-800">
+                Já existe cancelamento agendado para <b>{formatDate(contract.scheduled_cancellation_date)}</b>.
+                Salvar aqui <b>substitui</b> esse agendamento. Para cancelar o agendamento sem
+                encerrar o contrato, use o <b>Desfazer</b> na faixa azul do contrato.
+              </div>
+            )}
+
+            {/* Data de cancelamento: passada/hoje cancela na hora, futura agenda */}
             <div>
-              <Label>Data do cancelamento (quando foi solicitado)</Label>
+              <Label>Data do cancelamento (quando o aluno sai)</Label>
               <Input type="date" className="mt-1"
                 min={contract.start_date}
-                max={todayLocalStr()}
+                max={contract.end_date}
                 value={cancelDate}
                 onChange={e => { setCancelDate(e.target.value); }}
               />
               {cancelDate < todayLocalStr() && (
                 <p className="text-xs text-amber-600 mt-1">⚠️ Cancelamento retroativo — ajusta cálculo e relatórios</p>
+              )}
+              {isScheduledCancellation && (
+                <p className="text-xs text-blue-700 mt-1">
+                  📅 Data futura: o cancelamento fica <b>agendado</b>. O aluno segue ativo até {formatDate(cancelDate)} — contando normalmente para o repasse do treinador — e o sistema cancela sozinho quando o dia chegar.
+                </p>
               )}
               {cancelDateAtOrAfterEnd && (
                 <p className="text-xs text-amber-700 mt-1">
@@ -2226,19 +2308,23 @@ export default function ContractDetail() {
 
             {calc.refund > 0 && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-800">
-                ℹ️ O estorno de <strong>{formatCurrency(calc.refund)}</strong> ficará como <strong>pendente</strong> no painel Financeiro até você confirmar que foi realizado.
+                {isScheduledCancellation ? (
+                  <>ℹ️ Projeção: o estorno de <strong>{formatCurrency(calc.refund)}</strong> só é registrado em {formatDate(cancelDate)}, quando o cancelamento executar. Até lá não aparece como pendente no Financeiro, e desfazer o agendamento não deixa resíduo.</>
+                ) : (
+                  <>ℹ️ O estorno de <strong>{formatCurrency(calc.refund)}</strong> ficará como <strong>pendente</strong> no painel Financeiro até você confirmar que foi realizado.</>
+                )}
               </div>
             )}
 
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" onClick={() => setCancelModal(false)}>Voltar</Button>
               <Button
-                className="flex-1 bg-red-500 hover:bg-red-600 text-white"
+                className={`flex-1 text-white ${isScheduledCancellation ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-500 hover:bg-red-600'}`}
                 onClick={cancelContract}
-                disabled={cancelDateAtOrAfterEnd}
+                disabled={cancelDateAtOrAfterEnd || cancelSaving}
                 title={cancelDateAtOrAfterEnd ? 'Use Não renovar para fim natural de vigência' : undefined}
               >
-                Confirmar cancelamento
+                {isScheduledCancellation ? 'Agendar cancelamento' : 'Confirmar cancelamento'}
               </Button>
             </div>
           </div>

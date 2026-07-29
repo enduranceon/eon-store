@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Activity, FileText, Layers, CalendarClock, Award, DollarSign,
-  Users, BarChart3, TrendingUp, Wallet,
+  Users, BarChart3, TrendingUp, Wallet, HandCoins,
   ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
   ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus, ListChecks,
@@ -37,6 +37,7 @@ const FINANCEIRO_ITEMS = [
   { label: 'Central Financeira', icon: Wallet,      to: '/assessoria/central-financeira' },
   { label: 'Repasse',            icon: DollarSign,  to: '/assessoria/repasse' },
   { label: 'Vendas em aberto',   icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' },
+  { label: 'Estornos',           icon: HandCoins,   to: '/estornos' },
   { label: 'Fluxo de caixa',     icon: TrendingUp,  to: '/financeiro/fluxo-caixa' },
   { label: 'Relatórios',         icon: BarChart3,   to: '/relatorios' },
   { label: 'Clientes',           icon: Users,       to: '/clientes',   badge: 'clients' },

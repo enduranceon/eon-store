@@ -20,6 +20,7 @@ import { handleOrdersRequest } from "./orders.ts";
 import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
+import { handleRefundsRequest } from "./refunds.ts";
 import { handleReturnsRequest } from "./returns.ts";
 
 function routePath(req: Request): string {
@@ -106,6 +107,14 @@ Deno.serve(async (req: Request) => {
 
   const returnsResponse = await handleReturnsRequest(req, path, serviceClient);
   if (returnsResponse) return returnsResponse;
+
+  const refundsResponse = await handleRefundsRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (refundsResponse) return refundsResponse;
 
   const inventoryResponse = await handleInventoryRequest(
     req,
