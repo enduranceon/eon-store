@@ -817,6 +817,79 @@ export async function refuseAssessmentContractEnrollment(
   return response.data;
 }
 
+export async function prepareAssessmentProspectProposal(
+  contractId,
+  {
+    enrollmentFee,
+    manualDiscount,
+    externalPaymentLink,
+    dueDate,
+    expectedUpdatedAt,
+  },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/prospect-proposal`,
+    {
+      ...options,
+      method: 'POST',
+      body: {
+        enrollment_fee: enrollmentFee,
+        manual_discount: manualDiscount,
+        external_payment_link: externalPaymentLink,
+        due_date: dueDate,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function markAssessmentProspectMessageSent(
+  contractId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/prospect-message-sent`,
+    {
+      ...options,
+      method: 'POST',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function loseAssessmentProspect(
+  contractId,
+  {
+    reasonCode,
+    reasonNotes = null,
+    externalCancellationConfirmed = false,
+    expectedUpdatedAt,
+  },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/prospect-lost`,
+    {
+      ...options,
+      method: 'POST',
+      body: {
+        reason_code: reasonCode,
+        reason_notes: reasonNotes,
+        external_cancellation_confirmed: externalCancellationConfirmed,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function saveAssessmentContractExternalCharge(
   contractId,
   {

@@ -5,7 +5,15 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
 const ACTION_PATH =
-  /^\/orders\/contract\/([^/]+)\/(renewal|renewal-activation|auto-renewal|non-renewal|enrollment-confirmation|enrollment-refusal)$/;
+  /^\/orders\/contract\/([^/]+)\/(renewal|renewal-activation|auto-renewal|non-renewal|enrollment-confirmation|enrollment-refusal|prospect-proposal|prospect-message-sent|prospect-lost)$/;
+const PROSPECT_LOSS_REASONS = new Set([
+  "price",
+  "no_response",
+  "changed_mind",
+  "chose_competitor",
+  "coach_availability",
+  "other",
+]);
 
 function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && value.length <= 50 &&
@@ -26,6 +34,14 @@ function isHttpsUrl(value: unknown): value is string {
 function isMoney(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) &&
     value >= 0 && value <= 1_000_000;
+}
+
+function isDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 async function readBody(req: Request): Promise<Record<string, unknown> | null> {
@@ -164,7 +180,7 @@ export async function handleContractMembershipRequest(
       p_manual_discount: body.manual_discount,
       p_external_payment_link: link,
     };
-  } else {
+  } else if (action === "enrollment-refusal") {
     if (!exactKeys(body, ["expected_updated_at"])) {
       return jsonResponse({
         error: "Requisição inválida",
@@ -172,6 +188,63 @@ export async function handleContractMembershipRequest(
       }, 400);
     }
     rpc = "refuse_assessment_contract_enrollment";
+  } else if (action === "prospect-proposal") {
+    if (
+      !exactKeys(body, [
+        "enrollment_fee",
+        "manual_discount",
+        "external_payment_link",
+        "due_date",
+        "expected_updated_at",
+      ]) || !isMoney(body.enrollment_fee) || !isMoney(body.manual_discount) ||
+      !isHttpsUrl(body.external_payment_link) || !isDate(body.due_date)
+    ) {
+      return jsonResponse({
+        error: "Dados da proposta são inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+    rpc = "prepare_assessment_prospect_proposal";
+    args = {
+      p_enrollment_fee: body.enrollment_fee,
+      p_manual_discount: body.manual_discount,
+      p_external_payment_link: body.external_payment_link,
+      p_due_date: body.due_date,
+    };
+  } else if (action === "prospect-message-sent") {
+    if (!exactKeys(body, ["expected_updated_at"])) {
+      return jsonResponse({
+        error: "Requisição inválida",
+        code: "invalid_request",
+      }, 400);
+    }
+    rpc = "mark_assessment_prospect_message_sent";
+  } else {
+    const reasonNotes = body.reason_notes;
+    if (
+      !exactKeys(body, [
+        "reason_code",
+        "reason_notes",
+        "external_cancellation_confirmed",
+        "expected_updated_at",
+      ]) || typeof body.reason_code !== "string" ||
+      !PROSPECT_LOSS_REASONS.has(body.reason_code) ||
+      !(reasonNotes === null ||
+        (typeof reasonNotes === "string" && reasonNotes.length <= 500)) ||
+      typeof body.external_cancellation_confirmed !== "boolean"
+    ) {
+      return jsonResponse({
+        error: "Dados do encerramento são inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+    rpc = "lose_assessment_prospect";
+    args = {
+      p_reason_code: body.reason_code,
+      p_reason_notes: reasonNotes,
+      p_external_cancellation_confirmed:
+        body.external_cancellation_confirmed,
+    };
   }
 
   const { data, error } = await supabase.rpc(rpc, {
