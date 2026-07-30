@@ -12,11 +12,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { isEffectiveOpenSale } from '@/lib/sales';
+import { isBillableProspectOpenSale, isOpenSaleForFinancial } from '@/lib/sales';
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
 import { DEFAULT_COMMUNICATION_RULES, loadCommunicationConfig } from '@/lib/communication-config';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
@@ -31,7 +30,7 @@ import { toast } from 'sonner';
 const RECEIVABLES_CACHE_KEY = 'asaas_receivables_cache_v1';
 const RECEIVABLES_CACHE_TTL = 5 * 60 * 1000;
 const FINANCIAL_PAGE_CACHE_TTL = 60 * 1000;
-const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview';
+const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview:v2';
 const ADJUSTABLE_DUE_DATE_STATUSES = new Set([
   'pending',
   'awaiting_charge',
@@ -212,7 +211,8 @@ function collectionTaskFor(order, rules = DEFAULT_COMMUNICATION_RULES) {
 
 
 function OrderRow({ o, onEditDueDate, onCollectPayment }) {
-  const link = o.type === 'stock'    ? `/estoque/pedidos/${o.id}`
+  const link = o.is_prospect         ? '/assessoria/prospects'
+             : o.type === 'stock'    ? `/estoque/pedidos/${o.id}`
              : o.type === 'contract' ? `/assessoria/contratos/${o.id}`
              : `/pedidos/${o.id}`;
   const hasUnsupportedInstallment = !!o.asaas_charge_id && getInstallmentN(o) > 1;
@@ -231,6 +231,9 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
           )}
           {o.type === 'contract' && (
             <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">🏃 Assessoria</span>
+          )}
+          {o.is_prospect && (
+            <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-medium">Prospect</span>
           )}
           <PaymentStageChip status={o.payment_status} hasAsaasCharge={!!o.asaas_charge_id} />
           {o.external_payment_link && !o.asaas_payment_link && (
@@ -434,8 +437,8 @@ export default function Financial() {
             .select('id, order_number, customer_name, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, manual_payment, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, credit_balance, status, installments, plan_snapshot')
-            .not('status', 'in', '("cancelled","draft","voided")').neq('payment_status', 'refunded'),
+            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, manual_payment, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, credit_balance, status, installments, plan_snapshot, prospect_stage')
+            .not('status', 'in', '("cancelled","voided")').neq('payment_status', 'refunded'),
           supabase.from('assessment_plans').select('id, price_total, price_monthly, name, revenue_center_id'),
           supabase.from('presale_customers').select('id, full_name, whatsapp'),
           supabase.from('revenue_centers').select('id, name, color'),
@@ -468,15 +471,16 @@ export default function Financial() {
         const contractRows = contractRes.data || [];
         await applyAssessmentContractTransitions(contractRows);
         const contracts = buildContractLifecycleRows(contractRows, { plansById: plansMap })
-          .filter(c =>
-            !['pending_sale', 'voided_sale'].includes(c.lifecycle?.type) &&
-            (
+          .filter(c => {
+            if (c.lifecycle?.type === 'voided_sale') return false;
+            if (c.lifecycle?.type === 'pending_sale') return isBillableProspectOpenSale(c);
+            return (
               c.lifecycle?.counts?.active ||
               c.payment_status === 'paid' ||
-              isEffectiveOpenSale(c) ||
+              isOpenSaleForFinancial(c) ||
               (c.status === 'scheduled' && !['paid', 'refunded', 'cancelled'].includes(c.payment_status))
-            )
-          )
+            );
+          })
           .map(c => {
             const plan = plansMap[c.plan_id];
             return {
@@ -494,6 +498,7 @@ export default function Financial() {
               payment_message_sent_at: c.payment_message_sent_at,
               updated_at: c.updated_at,
               status: c.status,
+              is_prospect: isBillableProspectOpenSale(c),
               type: 'contract',
               revenue_center_id: c.plan_snapshot?.revenue_center_id || plan?.revenue_center_id || null,
               installments: c.installments || 1,
@@ -580,7 +585,7 @@ export default function Financial() {
     o.status === 'scheduled' &&
     !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
   const activeOrders = orders.filter(o =>
-    (isEffectiveOpenSale(o) || isScheduledContractOpenPayment(o)) &&
+    (isOpenSaleForFinancial(o) || isScheduledContractOpenPayment(o)) &&
     !ordersWithAsaasCache.has(o.id)
   );
 

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { cn, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
-import { isEffectiveOpenSale } from '@/lib/sales';
+import { isOpenSaleForFinancial } from '@/lib/sales';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 // ─────────────────────────────────────────────────────────────────
@@ -183,8 +183,8 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('status', 'draft').is('parent_contract_id', null),
           supabase.from('assessment_contracts')
-            .select('id, status, payment_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
-            .not('status', 'in', '("cancelled","draft","voided")')
+            .select('id, status, payment_status, parent_contract_id, prospect_stage, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+            .not('status', 'in', '("cancelled","voided")')
             .neq('payment_status', 'paid').neq('payment_status', 'refunded'),
         ]);
 
@@ -193,13 +193,13 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           contract.status === 'scheduled' &&
           !['paid', 'refunded', 'cancelled'].includes(contract.payment_status);
         const openSalesCount =
-          allOrders.filter(isEffectiveOpenSale).length +
+          allOrders.filter(isOpenSaleForFinancial).length +
           (contractsOpenPayments.data || []).filter(contract =>
-            isEffectiveOpenSale(contract) || isScheduledContractOpenPayment(contract)
+            isOpenSaleForFinancial(contract) || isScheduledContractOpenPayment(contract)
           ).length;
         const todayCount =
           allOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status)).length +
-          allOrders.filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o)).length +
+          allOrders.filter(o => o.due_date && o.due_date < todayStr && isOpenSaleForFinancial(o)).length +
           (returnsRes.count || 0) +
           (pendingRefunds.count || 0);
 

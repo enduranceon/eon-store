@@ -1,5 +1,6 @@
 export const TERMINAL_PAYMENT_STATUSES = new Set(['cancelled', 'refunded']);
 export const PAID_PAYMENT_STATUSES = new Set(['paid', 'partially_paid']);
+export const BILLABLE_PROSPECT_STAGES = new Set(['proposal_ready', 'payment_link_sent']);
 
 export function isNonCancelledOrder(order) {
   return Boolean(
@@ -29,6 +30,21 @@ export function isEffectiveSale(order) {
 export function isEffectiveOpenSale(order) {
   if (!isEffectiveSale(order)) return false;
   return !PAID_PAYMENT_STATUSES.has(order.payment_status);
+}
+
+export function isBillableProspectOpenSale(order) {
+  return Boolean(
+    order &&
+    order.status === 'draft' &&
+    !order.parent_contract_id &&
+    BILLABLE_PROSPECT_STAGES.has(order.prospect_stage) &&
+    isEffectiveOpenSale(order)
+  );
+}
+
+export function isOpenSaleForFinancial(order) {
+  if (order?.status === 'draft') return isBillableProspectOpenSale(order);
+  return isEffectiveOpenSale(order);
 }
 
 export function isAwaitingCharge(order) {
