@@ -19,6 +19,7 @@ import {
 } from '@/api/client';
 import { supabase } from '@/api/db';
 import { createManualInstallments, loadActivePaymentMethods } from '@/lib/manual-payment';
+import { formatCustomerAddress } from '@/lib/br-address';
 import { formatCurrency, formatDate, formatDateTime, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { toast } from 'sonner';
@@ -107,6 +108,7 @@ function buildMessage(contract, customer, coach, modality) {
 
 function CustomerData({ customer, contract }) {
   const relationship = RELATIONSHIPS[contract?.prospect_customer_relationship];
+  const address = formatCustomerAddress(customer);
   return (
     <div className="border rounded-xl p-3 space-y-1.5">
       <div className="flex items-center justify-between gap-2 mb-2">
@@ -137,10 +139,11 @@ function CustomerData({ customer, contract }) {
         ['WhatsApp', customer?.whatsapp],
         ['E-mail', customer?.email],
         ['CPF', customer?.cpf],
+        ['Endereço', address],
       ].map(([label, value]) => value ? (
-        <div key={label} className="flex items-center justify-between gap-2 text-sm">
+        <div key={label} className="flex items-start justify-between gap-2 text-sm">
           <span className="text-muted-foreground text-xs w-20 shrink-0">{label}</span>
-          <span className="flex-1 font-medium truncate">{value}</span>
+          <span className={`flex-1 font-medium ${label === 'Endereço' ? 'break-words leading-snug' : 'truncate'}`}>{value}</span>
           <button
             type="button"
             onClick={() => navigator.clipboard.writeText(value).then(() => toast.success(`${label} copiado!`))}
@@ -575,7 +578,7 @@ export default function Prospects() {
       const coachIds = [...new Set(list.map(item => item.coach_id).filter(Boolean))];
       const modalityIds = [...new Set(list.map(item => item.plan_snapshot?.modality_id).filter(Boolean))];
       const [customerResult, coachResult, modalityResult] = await Promise.all([
-        customerIds.length ? supabase.from('presale_customers').select('id, customer_code, full_name, whatsapp, email, cpf').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
+        customerIds.length ? supabase.from('presale_customers').select('id, customer_code, full_name, whatsapp, email, cpf, address_zip, address_street, address_number, address_complement, address_neighborhood, address_city, address_state').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
         coachIds.length ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds) : Promise.resolve({ data: [], error: null }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds) : Promise.resolve({ data: [], error: null }),
       ]);
