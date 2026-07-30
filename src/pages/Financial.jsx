@@ -498,6 +498,8 @@ export default function Financial() {
               payment_message_sent_at: c.payment_message_sent_at,
               updated_at: c.updated_at,
               status: c.status,
+              parent_contract_id: c.parent_contract_id,
+              prospect_stage: c.prospect_stage,
               is_prospect: isBillableProspectOpenSale(c),
               type: 'contract',
               revenue_center_id: c.plan_snapshot?.revenue_center_id || plan?.revenue_center_id || null,
