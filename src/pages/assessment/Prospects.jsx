@@ -701,10 +701,14 @@ export default function Prospects() {
       )}
 
       <Dialog open={Boolean(proposal)} onOpenChange={open => { if (!open) setProposal(null); }}>
-        <DialogContent className="max-w-lg">{proposal && <ProposalModal data={proposal} onClose={() => setProposal(null)} onDone={finishModal} />}</DialogContent>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
+          {proposal && <ProposalModal data={proposal} onClose={() => setProposal(null)} onDone={finishModal} />}
+        </DialogContent>
       </Dialog>
       <Dialog open={Boolean(payment)} onOpenChange={open => { if (!open) setPayment(null); }}>
-        <DialogContent className="max-w-lg">{payment && <PaymentModal data={payment} onClose={() => setPayment(null)} onDone={finishModal} />}</DialogContent>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
+          {payment && <PaymentModal data={payment} onClose={() => setPayment(null)} onDone={finishModal} />}
+        </DialogContent>
       </Dialog>
       <Dialog open={Boolean(loss)} onOpenChange={open => { if (!open) setLoss(null); }}>
         <DialogContent className="max-w-md">{loss && <LossModal data={loss} onClose={() => setLoss(null)} onDone={finishModal} />}</DialogContent>
