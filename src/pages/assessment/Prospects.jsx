@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArchiveX, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
+  AlertTriangle, ArchiveX, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
   Clock3, Copy, CreditCard, ExternalLink, Loader2, MessageCircle, Send,
   TrendingUp, UserCheck, UserPlus, UserRoundCheck,
 } from 'lucide-react';
@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import {
+  changeAssessmentContractPlan,
   loseAssessmentProspect,
   markAssessmentProspectMessageSent,
   prepareAssessmentProspectProposal,
@@ -59,6 +60,8 @@ const RELATIONSHIPS = {
   },
 };
 
+const OPEN_PROSPECT_STAGES = new Set(['new', 'proposal_ready', 'payment_link_sent']);
+
 function contractTotal(contract) {
   const base = Number(contract.plan_snapshot?.price_total ?? 0);
   const enrollment = Number(contract.enrollment_fee || 0);
@@ -70,6 +73,19 @@ function tomorrowLocal() {
   const date = new Date(`${todayLocalStr()}T12:00:00`);
   date.setDate(date.getDate() + 1);
   return toLocalDateStr(date);
+}
+
+function getPlanMonths(plan) {
+  return Number(plan?.period_months)
+    || { mensal: 1, trimestral: 3, semestral: 6, anual: 12 }[plan?.period]
+    || 1;
+}
+
+function hasSubmissionChange(draft) {
+  const submission = draft?.latest_submission;
+  if (!submission) return false;
+  return (submission.plan_id && submission.plan_id !== draft.plan_id)
+    || (submission.coach_id && submission.coach_id !== draft.coach_id);
 }
 
 function paymentLinkFor(contract) {
@@ -161,7 +177,7 @@ function CustomerData({ customer, contract }) {
 function ProposalModal({ data, onClose, onDone }) {
   const { draft, customer, coach, modality } = data;
   const [contract, setContract] = useState(draft);
-  const [step, setStep] = useState(draft.prospect_stage === 'new' ? 'proposal' : 'message');
+  const [step, setStep] = useState(draft.prospect_stage === 'new' || !paymentLinkFor(draft) ? 'proposal' : 'message');
   const [enrollmentFee, setEnrollmentFee] = useState(Number(draft.enrollment_fee || 0));
   const [manualDiscount, setManualDiscount] = useState(Number(draft.manual_discount || 0));
   const [paymentLink, setPaymentLink] = useState(paymentLinkFor(draft));
@@ -463,13 +479,30 @@ function LossModal({ data, onClose, onDone }) {
   );
 }
 
-function ProspectRow({ draft, customer, coach, modality, onProposal, onPayment, onLoss }) {
+function ProspectRow({
+  draft,
+  customer,
+  coach,
+  modality,
+  onProposal,
+  onPayment,
+  onLoss,
+  onApplyLatestSubmission,
+  applyingSubmission,
+}) {
   const stage = STAGES[draft.prospect_stage] || STAGES.new;
   const relationship = RELATIONSHIPS[draft.prospect_customer_relationship] || RELATIONSHIPS.new_customer;
   const total = contractTotal(draft);
   const installments = Number(draft.installments) || 1;
   const planName = draft.plan_snapshot?.name || 'Plano de assessoria';
-  const isOpen = ['new', 'proposal_ready', 'payment_link_sent'].includes(draft.prospect_stage);
+  const isOpen = OPEN_PROSPECT_STAGES.has(draft.prospect_stage);
+  const hasPaymentLink = Boolean(paymentLinkFor(draft));
+  const latestSubmission = draft.latest_submission;
+  const submissionChanged = hasSubmissionChange(draft);
+  const submittedPlanName = latestSubmission?.plan?.name || 'plano informado';
+  const submittedCoachName = latestSubmission?.coach?.name;
+  const planChanged = latestSubmission?.plan_id && latestSubmission.plan_id !== draft.plan_id;
+  const coachChanged = latestSubmission?.coach_id && latestSubmission.coach_id !== draft.coach_id;
 
   return (
     <Card className={`${stage.border} transition-colors`}>
@@ -510,6 +543,40 @@ function ProspectRow({ draft, customer, coach, modality, onProposal, onPayment, 
                 {draft.prospect_loss_notes ? ` — ${draft.prospect_loss_notes}` : ''}
               </p>
             )}
+            {isOpen && submissionChanged && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold">Novo formulário recebido em {formatDateTime(latestSubmission.submitted_at)}</p>
+                    <p className="text-xs mt-1">
+                      {planChanged && <>Plano solicitado: <b>{submittedPlanName}</b>. Proposta atual: <b>{planName}</b>.</>}
+                      {planChanged && coachChanged ? ' ' : ''}
+                      {coachChanged && <>Coach solicitado: <b>{submittedCoachName || '—'}</b>. Coach atual: <b>{coach?.name || '—'}</b>.</>}
+                    </p>
+                    {(draft.external_payment_link || draft.asaas_payment_link) && (
+                      <p className="text-xs mt-1 text-amber-800">
+                        Ao atualizar o plano, o link/cobrança atual será limpo para você enviar a proposta correta.
+                      </p>
+                    )}
+                  </div>
+                  {planChanged && latestSubmission.plan?.active !== false && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="bg-white text-amber-900 border-amber-300 hover:bg-amber-100 shrink-0"
+                      onClick={() => onApplyLatestSubmission(draft)}
+                      disabled={applyingSubmission === draft.id}
+                    >
+                      {applyingSubmission === draft.id
+                        ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                        : <Check className="w-3.5 h-3.5 mr-1" />}
+                      Usar novo plano
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0">
             <span className="font-bold text-green-700 text-base">{formatCurrency(total)}</span>
@@ -532,7 +599,7 @@ function ProspectRow({ draft, customer, coach, modality, onProposal, onPayment, 
                   <Send className="w-3.5 h-3.5 mr-1" /> Enviar mensagem
                 </Button>
               )}
-              {draft.prospect_stage === 'payment_link_sent' && (
+              {draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
                 <>
                   <Button size="sm" variant="outline" className="text-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                     <MessageCircle className="w-3.5 h-3.5 mr-1" /> Reenviar
@@ -541,6 +608,11 @@ function ProspectRow({ draft, customer, coach, modality, onProposal, onPayment, 
                     <CheckCheck className="w-3.5 h-3.5 mr-1" /> Confirmar pagamento
                   </Button>
                 </>
+              )}
+              {draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
+                <Button size="sm" className="bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
+                  <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Refazer proposta
+                </Button>
               )}
             </div>
           </div>
@@ -560,33 +632,68 @@ export default function Prospects() {
   const [proposal, setProposal] = useState(null);
   const [payment, setPayment] = useState(null);
   const [loss, setLoss] = useState(null);
+  const [applyingSubmission, setApplyingSubmission] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const contractsResult = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at')
         .not('prospect_stage', 'is', null)
         .is('parent_contract_id', null)
         .order('created_at', { ascending: false });
       if (contractsResult.error) throw contractsResult.error;
-      const list = contractsResult.data || [];
-      setProspects(list);
+      let list = contractsResult.data || [];
 
+      const contractIds = list.map(item => item.id);
       const customerIds = [...new Set(list.map(item => item.customer_id).filter(Boolean))];
-      const coachIds = [...new Set(list.map(item => item.coach_id).filter(Boolean))];
       const modalityIds = [...new Set(list.map(item => item.plan_snapshot?.modality_id).filter(Boolean))];
-      const [customerResult, coachResult, modalityResult] = await Promise.all([
+      const submissionsResult = contractIds.length
+        ? await supabase
+          .from('assessment_prospect_submissions')
+          .select('id, contract_id, plan_id, coach_id, submitted_full_name, submitted_whatsapp, submitted_email, submitted_cpf, region, submitted_at, landing_page')
+          .in('contract_id', contractIds)
+          .order('submitted_at', { ascending: false })
+        : { data: [], error: null };
+      if (submissionsResult.error) throw submissionsResult.error;
+
+      const latestByContract = {};
+      (submissionsResult.data || []).forEach(submission => {
+        if (!latestByContract[submission.contract_id]) {
+          latestByContract[submission.contract_id] = submission;
+        }
+      });
+
+      const submittedPlanIds = [...new Set((submissionsResult.data || []).map(item => item.plan_id).filter(Boolean))];
+      const submittedCoachIds = [...new Set((submissionsResult.data || []).map(item => item.coach_id).filter(Boolean))];
+      const coachIds = [...new Set([...list.map(item => item.coach_id).filter(Boolean), ...submittedCoachIds])];
+      const [customerResult, coachResult, modalityResult, submittedPlanResult] = await Promise.all([
         customerIds.length ? supabase.from('presale_customers').select('id, customer_code, full_name, whatsapp, email, cpf, address_zip, address_street, address_number, address_complement, address_neighborhood, address_city, address_state').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
         coachIds.length ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds) : Promise.resolve({ data: [], error: null }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds) : Promise.resolve({ data: [], error: null }),
+        submittedPlanIds.length ? supabase.from('assessment_plans').select('id, name, period, period_months, modality_id, price_total, price_monthly, enrollment_fee, max_installments, active').in('id', submittedPlanIds) : Promise.resolve({ data: [], error: null }),
       ]);
       if (customerResult.error) throw customerResult.error;
       if (coachResult.error) throw coachResult.error;
       if (modalityResult.error) throw modalityResult.error;
+      if (submittedPlanResult.error) throw submittedPlanResult.error;
+      const coachMap = Object.fromEntries((coachResult.data || []).map(item => [item.id, item]));
+      const submittedPlanMap = Object.fromEntries((submittedPlanResult.data || []).map(item => [item.id, item]));
+      list = list.map(item => {
+        const latest = latestByContract[item.id];
+        return {
+          ...item,
+          latest_submission: latest ? {
+            ...latest,
+            plan: submittedPlanMap[latest.plan_id] || null,
+            coach: coachMap[latest.coach_id] || null,
+          } : null,
+        };
+      });
+      setProspects(list);
       setCustomers(Object.fromEntries((customerResult.data || []).map(item => [item.id, item])));
-      setCoaches(Object.fromEntries((coachResult.data || []).map(item => [item.id, item])));
+      setCoaches(coachMap);
       setModalities(Object.fromEntries((modalityResult.data || []).map(item => [item.id, item])));
     } catch (error) {
       console.error(error);
@@ -610,16 +717,18 @@ export default function Prospects() {
       payment_link_sent: 0,
       converted: 0,
       lost: 0,
+      needs_review: 0,
       returns: 0,
       returns_open: 0,
       returns_converted: 0,
     };
     prospects.forEach(item => {
       if (result[item.prospect_stage] !== undefined) result[item.prospect_stage] += 1;
-      if (['new', 'proposal_ready', 'payment_link_sent'].includes(item.prospect_stage)) result.open += 1;
+      if (OPEN_PROSPECT_STAGES.has(item.prospect_stage)) result.open += 1;
+      if (OPEN_PROSPECT_STAGES.has(item.prospect_stage) && hasSubmissionChange(item)) result.needs_review += 1;
       if (item.prospect_customer_relationship === 'former_student') {
         result.returns += 1;
-        if (['new', 'proposal_ready', 'payment_link_sent'].includes(item.prospect_stage)) result.returns_open += 1;
+        if (OPEN_PROSPECT_STAGES.has(item.prospect_stage)) result.returns_open += 1;
         if (item.prospect_stage === 'converted' && item.prospect_reactivated_at) result.returns_converted += 1;
       }
     });
@@ -629,12 +738,14 @@ export default function Prospects() {
   const filtered = useMemo(() => prospects.filter(item => (
     filter === 'all' || (filter === 'returns'
       ? item.prospect_customer_relationship === 'former_student'
+      : filter === 'needs_review'
+      ? OPEN_PROSPECT_STAGES.has(item.prospect_stage) && hasSubmissionChange(item)
       : filter === 'open'
-      ? ['new', 'proposal_ready', 'payment_link_sent'].includes(item.prospect_stage)
+      ? OPEN_PROSPECT_STAGES.has(item.prospect_stage)
       : item.prospect_stage === filter)
   )), [prospects, filter]);
   const potentialValue = prospects
-    .filter(item => ['new', 'proposal_ready', 'payment_link_sent'].includes(item.prospect_stage))
+    .filter(item => OPEN_PROSPECT_STAGES.has(item.prospect_stage))
     .reduce((sum, item) => sum + contractTotal(item), 0);
   const closed = counts.converted + counts.lost;
   const conversionRate = closed ? Math.round((counts.converted / closed) * 100) : 0;
@@ -646,6 +757,39 @@ export default function Prospects() {
   });
   const finishModal = () => {
     setProposal(null); setPayment(null); setLoss(null); load();
+  };
+  const applyLatestSubmission = async draft => {
+    const submission = draft.latest_submission;
+    const plan = submission?.plan;
+    if (!submission || !plan) return toast.error('Novo plano não encontrado');
+    if (!OPEN_PROSPECT_STAGES.has(draft.prospect_stage)) {
+      return toast.error('Este prospect já não está mais em negociação');
+    }
+    if (draft.payment_status && !['pending', 'awaiting_charge', 'charge_sent', 'overdue'].includes(draft.payment_status)) {
+      return toast.error('Só é possível trocar o plano antes do pagamento');
+    }
+    if ((draft.external_payment_link || draft.asaas_payment_link) && !window.confirm('Atualizar para o novo plano vai limpar o link/cobrança atual. Depois você precisa gerar e enviar uma nova proposta. Continuar?')) {
+      return;
+    }
+    const months = getPlanMonths(plan);
+    const installments = Math.max(1, Math.min(Number(plan.max_installments) || 1, months));
+    setApplyingSubmission(draft.id);
+    try {
+      await changeAssessmentContractPlan(draft.id, {
+        planId: plan.id,
+        startDate: draft.start_date || todayLocalStr(),
+        installments,
+        enrollmentFee: Number(plan.enrollment_fee || 0),
+        manualDiscount: 0,
+        discountReason: null,
+      });
+      toast.success(`Prospect atualizado para ${plan.name}. Monte e envie o novo link de pagamento.`);
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível atualizar o prospect');
+    } finally {
+      setApplyingSubmission(null);
+    }
   };
 
   return (
@@ -661,6 +805,7 @@ export default function Prospects() {
         {[
           ['Em negociação', counts.open, UserPlus, 'text-blue-700', 'bg-blue-50'],
           ['Valor potencial', formatCurrency(potentialValue), CircleDollarSign, 'text-amber-700', 'bg-amber-50'],
+          ['Novo envio', counts.needs_review, AlertTriangle, 'text-orange-700', 'bg-orange-50'],
           ['Convertidos', counts.converted, CheckCheck, 'text-green-700', 'bg-green-50'],
           ['Conversão dos encerrados', `${conversionRate}%`, TrendingUp, 'text-violet-700', 'bg-violet-50'],
           ['Retornos em negociação', counts.returns_open, UserRoundCheck, 'text-orange-700', 'bg-orange-50'],
@@ -676,7 +821,7 @@ export default function Prospects() {
       <div className="flex gap-2 flex-wrap">
         {[
           ['open', 'Em negociação'], ['new', 'Novos'], ['proposal_ready', 'Proposta pronta'],
-          ['payment_link_sent', 'Link enviado'], ['returns', 'Retornos'], ['converted', 'Convertidos'], ['lost', 'Não convertidos'], ['all', 'Todos'],
+          ['payment_link_sent', 'Link enviado'], ['needs_review', 'Novo envio'], ['returns', 'Retornos'], ['converted', 'Convertidos'], ['lost', 'Não convertidos'], ['all', 'Todos'],
         ].map(([value, label]) => (
           <Button key={value} size="sm" variant={filter === value ? 'default' : 'outline'} onClick={() => setFilter(value)}>
             {label} <span className="ml-1.5 opacity-70">{counts[value]}</span>
@@ -698,7 +843,9 @@ export default function Prospects() {
             <ProspectRow key={draft.id} {...modalData(draft)} draft={draft}
               onProposal={selected => setProposal(modalData(selected))}
               onPayment={selected => setPayment(modalData(selected))}
-              onLoss={selected => setLoss(modalData(selected))} />
+              onLoss={selected => setLoss(modalData(selected))}
+              onApplyLatestSubmission={applyLatestSubmission}
+              applyingSubmission={applyingSubmission} />
           ))}
         </div>
       )}
