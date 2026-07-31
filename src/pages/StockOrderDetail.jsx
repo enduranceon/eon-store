@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, User, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag, HandCoins, Calendar } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -55,22 +55,28 @@ const CANCEL_REASONS = [
   'Outro',
 ];
 
+const PAYMENT_METHOD_LABEL = {
+  pix_boleto: 'PIX ou Boleto', pix: 'PIX', pix_manual: 'PIX', boleto: 'Boleto',
+  cash: 'Dinheiro', bank_transfer: 'Transferência bancária',
+  card_1x: 'Cartão 1x', card_2x: 'Cartão 2x', card_3x: 'Cartão 3x',
+  card_4x: 'Cartão 4x', card_5x: 'Cartão 5x', card_6x: 'Cartão 6x',
+  card_7x: 'Cartão 7x', card_8x: 'Cartão 8x', card_9x: 'Cartão 9x',
+  card_10x: 'Cartão 10x', card_11x: 'Cartão 11x', card_12x: 'Cartão 12x',
+};
+
 export default function StockOrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [order, setOrder] = useState(null);
   const [saving, setSaving] = useState(false);
   const [whatsappModal, setWhatsappModal] = useState(false);
   const [whatsappMsg, setWhatsappMsg] = useState('');
   const [whatsappManualLink, setWhatsappManualLink] = useState('');
   const [copied, setCopied] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState('');
   const [deliveryStatus, setDeliveryStatus] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
-  const [paymentDate, setPaymentDate] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('');
-  const [cancellationReason, setCancellationReason] = useState('');
   const [asaasLoading, setAsaasLoading] = useState(false);
   const [asaasCpf, setAsaasCpf] = useState('');
   const [asaasBilling, setAsaasBilling] = useState('PIX');
@@ -101,17 +107,13 @@ export default function StockOrderDetail() {
   // Parcelas projetadas
   const [paymentInstallments, setPaymentInstallments] = useState([]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const o = await StockOrder.get(id);
       setOrder(o);
-      setPaymentStatus(o.payment_status || 'awaiting_charge');
       setDeliveryStatus(o.delivery_status || 'awaiting_delivery');
       setInternalNotes(o.internal_notes || '');
-      setPaymentDate(o.payment_date || '');
       setDeliveryDate(o.delivery_date || '');
-      setPaymentMethod(o.payment_method || '');
-      setCancellationReason(o.cancellation_reason || '');
       setAsaasCpf(o.customer_cpf || '');
       if (o.payment_method?.startsWith('card_')) {
         setAsaasBilling('CREDIT_CARD');
@@ -131,13 +133,18 @@ export default function StockOrderDetail() {
         .order('installment_number', { ascending: true })
         .then(({ data }) => setPaymentInstallments(data || []))
         .catch(() => setPaymentInstallments([]));
-    } catch (e) {
+    } catch {
       toast.error('Pedido não encontrado');
       navigate('/estoque/pedidos');
     }
-  };
+  }, [id, navigate]);
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
   // Salva apenas campos de entrega e observações. Pagamento muda só via ações.
   const handleSave = async () => {
@@ -286,16 +293,7 @@ export default function StockOrderDetail() {
     }
   };
 
-  const PAYMENT_METHOD_LABEL = {
-    pix_boleto: 'PIX ou Boleto', pix: 'PIX', pix_manual: 'PIX', boleto: 'Boleto',
-    cash: 'Dinheiro', bank_transfer: 'Transferência bancária',
-    card_1x: 'Cartão 1x', card_2x: 'Cartão 2x', card_3x: 'Cartão 3x',
-    card_4x: 'Cartão 4x', card_5x: 'Cartão 5x', card_6x: 'Cartão 6x',
-    card_7x: 'Cartão 7x', card_8x: 'Cartão 8x', card_9x: 'Cartão 9x',
-    card_10x: 'Cartão 10x', card_11x: 'Cartão 11x', card_12x: 'Cartão 12x',
-  };
-
-  const buildMessage = (manualLink = '') => {
+  const buildMessage = useCallback((manualLink = '') => {
     if (!order) return '';
     const itemLines = (order.items || []).filter(it => !it.cancelled).map(item => {
       const label = item.variation ? `${item.product_name} - ${item.variation}` : item.product_name;
@@ -358,17 +356,30 @@ export default function StockOrderDetail() {
       `Como você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 12x)` +
       trackingLine
     );
-  };
+  }, [order]);
 
-  const openWhatsApp = () => {
+  const openWhatsApp = useCallback(() => {
     const savedExternalLink = order.external_payment_link || '';
     setWhatsappManualLink(savedExternalLink);
     setWhatsappMsg(buildMessage(savedExternalLink));
     setCopied(false);
     setWhatsappModal(true);
-  };
+  }, [buildMessage, order]);
   const copyMessage = () => { navigator.clipboard.writeText(whatsappMsg).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
-  const openWhatsAppDirect = () => { window.open(`https://wa.me/${phoneDigitsForWhatsApp(order.customer_whatsapp)}?text=${encodeURIComponent(whatsappMsg)}`, '_blank'); };
+  const openWhatsAppDirect = () => {
+    const phone = phoneDigitsForWhatsApp(order.customer_whatsapp);
+    if (!phone || phone === '55') return toast.error('WhatsApp do cliente não cadastrado');
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
+  };
+
+  useEffect(() => {
+    if (!order || searchParams.get('cobrar') !== '1') return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('cobrar');
+    setSearchParams(nextParams, { replace: true });
+    const timer = window.setTimeout(openWhatsApp, 0);
+    return () => window.clearTimeout(timer);
+  }, [openWhatsApp, order, searchParams, setSearchParams]);
 
   const markMessageSent = async () => {
     try {

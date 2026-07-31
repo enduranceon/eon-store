@@ -136,7 +136,7 @@ export default function StockOrders() {
           <p className="text-sm text-muted-foreground">{filtered.length} de {orders.length} pedidos · {formatCurrency(totalFiltered)}</p>
         </div>
         <Button onClick={() => navigate('/estoque/pedidos/novo')}>
-          <Plus className="w-4 h-4 mr-1.5" /> Novo pedido
+          <Plus className="w-4 h-4 mr-1.5" /> Venda manual
         </Button>
       </div>
 

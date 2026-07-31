@@ -1,14 +1,15 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Search, Plus, Minus, X, ShoppingCart, Check, User, Package } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Minus, X, ShoppingCart, Check, User, Package, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { StockProduct, PreSaleCustomer } from '@/api/entities';
-import { createStockOrder } from '@/api/client';
+import { createOrderCharge, createStockOrder } from '@/api/client';
 import { formatCurrency } from '@/lib/utils';
+import { defaultAsaasDueDate } from '@/lib/payment-methods';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 
@@ -18,8 +19,8 @@ const PAYMENT_METHODS = [
   { value: 'cash',          label: 'Dinheiro',           description: 'Pagamento em espécie',                     paid: true  },
   { value: 'card_machine',  label: 'Máquina de cartão',  description: 'Cartão presencial (Cielo, Stone, etc.)',   paid: true  },
   { value: 'bank_transfer', label: 'Transferência',      description: 'TED, DOC bancário',                        paid: true  },
-  { value: 'pix',           label: 'PIX via Asaas',      description: 'Gera link/QR e marca como aguardando',     paid: false },
-  { value: 'boleto',        label: 'Boleto via Asaas',   description: 'Gera boleto e marca como aguardando',      paid: false },
+  { value: 'pix',           label: 'PIX via Asaas',      description: 'Cria o pedido e já gera link/QR para enviar', paid: false },
+  { value: 'boleto',        label: 'Boleto via Asaas',   description: 'Cria o pedido e já gera boleto para enviar',  paid: false },
 ];
 
 export default function StockOrderNewAdmin() {
@@ -37,7 +38,8 @@ export default function StockOrderNewAdmin() {
   const [productSearch, setProductSearch]   = useState('');
 
   const [cart, setCart]     = useState([]); // [{ product_id, quantity }]
-  const [paymentMethod, setPaymentMethod] = useState('pix_manual');
+  const [paymentMethod, setPaymentMethod] = useState('pix');
+  const [dueDate, setDueDate] = useState(defaultAsaasDueDate);
   const [notes, setNotes]   = useState('');
   const [discount, setDiscount] = useState({ value: 0, reason: '' });
 
@@ -48,7 +50,7 @@ export default function StockOrderNewAdmin() {
           StockProduct.list().catch(() => []),
           PreSaleCustomer.list('full_name').catch(() => []),
         ]);
-        setProducts(p.filter(x => x.status === 'active'));
+        setProducts(p.filter(x => x.status === 'active' && Number(x.quantity || 0) > 0));
         setCustomers(c);
       } catch (e) {
         console.error(e);
@@ -79,9 +81,10 @@ export default function StockOrderNewAdmin() {
 
   // Produtos filtrados
   const filteredProducts = useMemo(() => {
-    if (!productSearch) return products;
+    const inStock = products.filter(p => Number(p.quantity || 0) > 0);
+    if (!productSearch) return inStock;
     const q = productSearch.toLowerCase();
-    return products.filter(p => p.name?.toLowerCase().includes(q));
+    return inStock.filter(p => p.name?.toLowerCase().includes(q));
   }, [products, productSearch]);
 
   // Cart helpers
@@ -111,6 +114,11 @@ export default function StockOrderNewAdmin() {
     if (!customerId)     return toast.error('Selecione um cliente');
     if (cart.length === 0) return toast.error('Adicione pelo menos 1 produto');
     if (!selectedCustomer) return toast.error('Cliente inválido');
+    const shouldCreateAsaasCharge = ['pix', 'boleto'].includes(paymentMethod);
+    if (shouldCreateAsaasCharge && !String(selectedCustomer.cpf || '').replace(/\D/g, '')) {
+      return toast.error('CPF do cliente é obrigatório para gerar cobrança Asaas');
+    }
+    if (shouldCreateAsaasCharge && !dueDate) return toast.error('Informe o vencimento da cobrança');
 
     setSaving(true);
     try {
@@ -129,8 +137,23 @@ export default function StockOrderNewAdmin() {
       };
 
       const order = await createStockOrder(payload);
-      toast.success(`Pedido ${order.order_number} criado. Registre ou gere a cobrança para efetivar a venda.`);
-      navigate(`/estoque/pedidos/${order.id}`);
+      if (shouldCreateAsaasCharge) {
+        try {
+          await createOrderCharge('stock', order.id, {
+            billingType: paymentMethod === 'boleto' ? 'BOLETO' : 'PIX',
+            dueDate,
+            installments: 1,
+            cpf: selectedCustomer.cpf,
+          });
+          toast.success(`Pedido ${order.order_number} criado com link de pagamento.`);
+        } catch (chargeError) {
+          toast.warning(`Pedido ${order.order_number} criado, mas a cobrança não foi gerada: ${chargeError.message || 'erro no Asaas'}`);
+        }
+        navigate(`/estoque/pedidos/${order.id}?cobrar=1`);
+        return;
+      }
+      toast.success(`Pedido ${order.order_number} criado. Registre ou envie a cobrança para efetivar a venda.`);
+      navigate(`/estoque/pedidos/${order.id}?cobrar=1`);
     } catch (e) {
       toast.error(e.message || 'Erro ao criar pedido');
     } finally { setSaving(false); }
@@ -146,8 +169,8 @@ export default function StockOrderNewAdmin() {
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <div>
-          <h2 className="text-xl font-bold">Novo pedido da loja</h2>
-          <p className="text-sm text-muted-foreground">Fluxo administrativo — venda direta ao cliente</p>
+          <h2 className="text-xl font-bold">Venda manual da loja</h2>
+          <p className="text-sm text-muted-foreground">Crie o pedido com itens em estoque e envie o link ao cliente</p>
         </div>
       </div>
 
@@ -360,7 +383,7 @@ export default function StockOrderNewAdmin() {
                         <p className="text-sm font-medium">{m.label}</p>
                         {m.paid && (
                           <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold">
-                            já pago
+                            venda direta
                           </span>
                         )}
                       </div>
@@ -369,6 +392,16 @@ export default function StockOrderNewAdmin() {
                   ))}
                 </div>
               </div>
+              {['pix', 'boleto'].includes(paymentMethod) && (
+                <div>
+                  <Label>Vencimento da cobrança *</Label>
+                  <Input className="mt-1" type="date" value={dueDate}
+                    onChange={e => setDueDate(e.target.value)} />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    O sistema gera a cobrança Asaas assim que o pedido for criado.
+                  </p>
+                </div>
+              )}
 
               <div>
                 <Label>Observações (opcional)</Label>
@@ -380,8 +413,12 @@ export default function StockOrderNewAdmin() {
               <Button className="w-full" size="lg"
                 disabled={saving || !customerId || cart.length === 0}
                 onClick={save}>
-                <Check className="w-4 h-4 mr-2" />
-                {saving ? 'Criando...' : `Criar pedido · ${formatCurrency(subtotal)}`}
+                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
+                {saving
+                  ? 'Criando...'
+                  : ['pix', 'boleto'].includes(paymentMethod)
+                    ? `Criar e gerar link · ${formatCurrency(totalAfterDiscount)}`
+                    : `Criar pedido · ${formatCurrency(totalAfterDiscount)}`}
               </Button>
             </CardContent>
           </Card>

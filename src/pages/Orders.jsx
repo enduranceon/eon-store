@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ShoppingCart, Search, AlertTriangle, ArrowRight } from 'lucide-react';
+import { ShoppingCart, Search, AlertTriangle, ArrowRight, PackagePlus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -152,6 +152,9 @@ export default function Orders() {
           <h2 className="text-xl font-bold text-gray-900">Pedidos</h2>
           <p className="text-sm text-muted-foreground">{filtered.length} de {orders.length} pedidos · {formatCurrency(totalFiltered)}</p>
         </div>
+        <Button onClick={() => navigate('/estoque/pedidos/novo')}>
+          <PackagePlus className="w-4 h-4 mr-1.5" /> Venda manual
+        </Button>
       </div>
 
       {/* Filtros */}
