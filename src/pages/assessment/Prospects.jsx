@@ -100,11 +100,16 @@ function buildMessage(contract, customer, coach, modality) {
     || (modality ? `${modality.name} · ${months}m` : 'Assessoria');
   const firstName = customer?.full_name?.trim().split(' ')[0] || 'atleta';
   const paymentLink = paymentLinkFor(contract);
+  const isReminder = contract.prospect_stage === 'payment_link_sent' && Boolean(contract.prospect_message_sent_at);
 
   let message = `Olá, ${firstName}! 👋\n\n`;
-  message += contract.prospect_customer_relationship === 'former_student'
-    ? 'Que bom ter você de volta à *Endurance On*! Sua nova proposta está pronta:\n\n'
-    : 'Recebemos seu cadastro para treinar com a *Endurance On*. Sua proposta está pronta:\n\n';
+  if (isReminder) {
+    message += 'Passando só para lembrar que sua proposta para treinar com a *Endurance On* ficou reservada e o pagamento ainda está em aberto.\n\n';
+  } else {
+    message += contract.prospect_customer_relationship === 'former_student'
+      ? 'Que bom ter você de volta à *Endurance On*! Sua nova proposta está pronta:\n\n'
+      : 'Recebemos seu cadastro para treinar com a *Endurance On*. Sua proposta está pronta:\n\n';
+  }
   if (modality) message += `🏃 Modalidade: *${modality.name}*\n`;
   message += `📅 Plano: *${planName}* (${months} ${months === 1 ? 'mês' : 'meses'})\n`;
   if (coach) message += `👤 Coach: *${coach.name}*\n`;
@@ -117,8 +122,13 @@ function buildMessage(contract, customer, coach, modality) {
     message += `📌 Matrícula: ${formatCurrency(contract.enrollment_fee)}\n`;
   }
   message += `⏰ Vencimento: *${formatDate(contract.due_date)}*\n\n`;
-  message += `Para confirmar sua vaga, faça o pagamento pelo link:\n🔗 ${paymentLink}\n\n`;
-  message += `Assim que o pagamento for confirmado, ${coach?.name ? `o coach *${coach.name}*` : 'o coach escolhido'} entrará em contato para iniciar seu atendimento. 🏆`;
+  if (isReminder) {
+    message += `Para confirmar sua vaga, é só finalizar pelo link abaixo:\n🔗 ${paymentLink}\n\n`;
+    message += `Assim que o pagamento for confirmado, ${coach?.name ? `o coach *${coach.name}*` : 'o coach escolhido'} entra em contato para dar início ao atendimento. Qualquer dúvida, me chama por aqui.`;
+  } else {
+    message += `Para confirmar sua vaga, faça o pagamento pelo link:\n🔗 ${paymentLink}\n\n`;
+    message += `Assim que o pagamento for confirmado, ${coach?.name ? `o coach *${coach.name}*` : 'o coach escolhido'} entrará em contato para iniciar seu atendimento. 🏆`;
+  }
   return message;
 }
 
@@ -194,6 +204,7 @@ function ProposalModal({ data, onClose, onDone }) {
   };
   const total = contractTotal(effectiveContract);
   const message = buildMessage(effectiveContract, customer, coach, modality);
+  const isReminder = effectiveContract.prospect_stage === 'payment_link_sent' && Boolean(effectiveContract.prospect_message_sent_at);
 
   const saveProposal = async () => {
     if (!paymentLink.trim()) return toast.error('Cole o link de pagamento');
@@ -308,7 +319,8 @@ function ProposalModal({ data, onClose, onDone }) {
     <>
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
-          <MessageCircle className="w-5 h-5 text-green-600" /> Mensagem e link de pagamento
+          <MessageCircle className="w-5 h-5 text-green-600" />
+          {isReminder ? 'Lembrete de pagamento' : 'Mensagem e link de pagamento'}
         </DialogTitle>
       </DialogHeader>
       <div className="space-y-4 mt-2">
