@@ -19,7 +19,7 @@ import {
   prepareAssessmentProspectProposal,
 } from '@/api/client';
 import { supabase } from '@/api/db';
-import { createManualInstallments, loadActivePaymentMethods } from '@/lib/manual-payment';
+import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { formatCustomerAddress } from '@/lib/br-address';
 import { formatCurrency, formatDate, formatDateTime, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
@@ -379,11 +379,16 @@ function PaymentModal({ data, onClose, onDone }) {
   useEffect(() => {
     let active = true;
     loadActivePaymentMethods()
-      .then(groups => { if (active) setMethodGroups(groups); })
+      .then(groups => {
+        if (!active) return;
+        setMethodGroups(groups);
+        const defaultMethod = findPreferredPaymentMethod(groups, draft.payment_method);
+        setForm(current => ({ ...current, method_id: defaultMethod?.id || current.method_id }));
+      })
       .catch(error => toast.error(error.message || 'Erro ao carregar formas de pagamento'))
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [draft.payment_method]);
 
   const save = async () => {
     const method = methodGroups.flatMap(([, methods]) => methods).find(item => item.id === form.method_id);

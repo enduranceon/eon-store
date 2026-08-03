@@ -46,7 +46,14 @@ import {
   registerExternalAssessmentContractCharge,
 } from '@/lib/assessment-contract-operations';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
-import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel, reopenManualPayment } from '@/lib/manual-payment';
+import {
+  loadActivePaymentMethods,
+  createManualInstallments,
+  adjustManualInstallmentsValue,
+  getPaymentMethodLabel,
+  reopenManualPayment,
+  findPreferredPaymentMethod,
+} from '@/lib/manual-payment';
 import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
@@ -812,8 +819,7 @@ export default function ContractDetail() {
     try {
       const groups = await loadActivePaymentMethods();
       setMethodGroups(groups);
-      const allMethods = groups.flatMap(([, list]) => list);
-      const defaultMethod = allMethods.find(m => m.internal_code === 'pix_manual') || allMethods[0];
+      const defaultMethod = findPreferredPaymentMethod(groups, contract?.payment_method);
       setManualPayForm({
         method_id:    defaultMethod?.id || '',
         date:         todayLocalStr(),

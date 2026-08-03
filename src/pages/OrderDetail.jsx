@@ -12,7 +12,13 @@ import { Input } from '@/components/ui/input';
 import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer, PreSaleProduct } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, reopenManualPayment } from '@/lib/manual-payment';
+import {
+  loadActivePaymentMethods,
+  createManualInstallments,
+  adjustManualInstallmentsValue,
+  reopenManualPayment,
+  findPreferredPaymentMethod,
+} from '@/lib/manual-payment';
 import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
@@ -229,9 +235,10 @@ export default function OrderDetail() {
     try {
       const groups = await loadActivePaymentMethods();
       setMethodGroups(groups);
-      // Default: PIX manual se existir
-      const allMethods = groups.flatMap(([, list]) => list);
-      const defaultMethod = allMethods.find(m => m.internal_code === 'pix_manual') || allMethods[0];
+      const defaultMethod = findPreferredPaymentMethod(
+        groups,
+        order?.payment_method || order?.payment_preference,
+      );
       setManualPayForm({
         method_id: defaultMethod?.id || '',
         date:      todayLocalStr(),
