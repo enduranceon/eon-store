@@ -29,9 +29,32 @@ const STAGES = {
   new: { label: 'Novo', badge: 'bg-blue-100 text-blue-700', border: 'border-blue-200' },
   proposal_ready: { label: 'Proposta pronta', badge: 'bg-amber-100 text-amber-800', border: 'border-amber-200' },
   payment_link_sent: { label: 'Link enviado', badge: 'bg-violet-100 text-violet-700', border: 'border-violet-200' },
+  contract_active: { label: 'Já virou contrato', badge: 'bg-emerald-100 text-emerald-700', border: 'border-emerald-200' },
   converted: { label: 'Convertido', badge: 'bg-green-100 text-green-700', border: 'border-green-200' },
   lost: { label: 'Não convertido', badge: 'bg-gray-200 text-gray-700', border: 'border-gray-200' },
 };
+
+const BOARD_COLUMNS = [
+  { key: 'new', title: 'Novos', hint: 'Cadastros que ainda precisam de proposta.' },
+  { key: 'proposal_ready', title: 'Proposta pronta', hint: 'Link montado, falta enviar ou registrar envio.' },
+  { key: 'payment_link_sent', title: 'Link enviado', hint: 'Aguardando pagamento ou reenvio.' },
+  { key: 'contract_active', title: 'Já virou contrato', hint: 'Saiu do funil; seguir pelo contrato/financeiro.' },
+  { key: 'converted', title: 'Convertidos', hint: 'Pagamento confirmado.' },
+  { key: 'lost', title: 'Não convertidos', hint: 'Arquivados sem conversão.' },
+];
+
+const FILTERS = [
+  ['all', 'Todos'],
+  ['open', 'Em negociação'],
+  ['new', 'Novos'],
+  ['proposal_ready', 'Proposta pronta'],
+  ['payment_link_sent', 'Link enviado'],
+  ['contract_active', 'Já virou contrato'],
+  ['needs_review', 'Alterações'],
+  ['returns', 'Retornos'],
+  ['converted', 'Convertidos'],
+  ['lost', 'Não convertidos'],
+];
 
 const LOSS_REASONS = [
   ['price', 'Preço'],
@@ -98,6 +121,19 @@ function isOpenProspect(draft) {
 
 function needsContractReview(draft) {
   return !isDraftProspect(draft) && OPEN_PROSPECT_STAGES.has(draft?.prospect_stage);
+}
+
+function prospectVisualStage(draft) {
+  if (needsContractReview(draft)) return 'contract_active';
+  return draft?.prospect_stage || 'new';
+}
+
+function matchesProspectFilter(item, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'returns') return item.prospect_customer_relationship === 'former_student';
+  if (filter === 'needs_review') return isOpenProspect(item) && hasSubmissionChange(item);
+  if (filter === 'open') return isOpenProspect(item);
+  return prospectVisualStage(item) === filter;
 }
 
 function paymentLinkFor(contract) {
@@ -519,7 +555,8 @@ function ProspectRow({
   onApplyLatestSubmission,
   applyingSubmission,
 }) {
-  const stage = STAGES[draft.prospect_stage] || STAGES.new;
+  const visualStage = prospectVisualStage(draft);
+  const stage = STAGES[visualStage] || STAGES.new;
   const relationship = RELATIONSHIPS[draft.prospect_customer_relationship] || RELATIONSHIPS.new_customer;
   const total = contractTotal(draft);
   const installments = Number(draft.installments) || 1;
@@ -543,9 +580,9 @@ function ProspectRow({
               <span className="font-mono text-sm font-semibold text-gray-700">{draft.contract_number}</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${stage.badge}`}>{stage.label}</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${relationship.badge}`}>{relationship.label}</span>
-              {contractReview && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-700">
-                  Já virou contrato
+              {contractReview && draft.prospect_stage && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-gray-100 text-gray-600">
+                  antigo: {STAGES[draft.prospect_stage]?.label || draft.prospect_stage}
                 </span>
               )}
               <span className="text-[11px] text-muted-foreground">Recebido em {formatDateTime(draft.created_at)}</span>
@@ -672,12 +709,189 @@ function ProspectRow({
   );
 }
 
+function ProspectKanbanCard({
+  draft,
+  customer,
+  coach,
+  modality,
+  onProposal,
+  onPayment,
+  onLoss,
+  onApplyLatestSubmission,
+  applyingSubmission,
+}) {
+  const visualStage = prospectVisualStage(draft);
+  const stage = STAGES[visualStage] || STAGES.new;
+  const relationship = RELATIONSHIPS[draft.prospect_customer_relationship] || RELATIONSHIPS.new_customer;
+  const total = contractTotal(draft);
+  const installments = Number(draft.installments) || 1;
+  const planName = draft.plan_snapshot?.name || 'Plano de assessoria';
+  const isOpen = isOpenProspect(draft);
+  const contractReview = needsContractReview(draft);
+  const hasPaymentLink = Boolean(paymentLinkFor(draft));
+  const latestSubmission = draft.latest_submission;
+  const submissionChanged = isOpen && hasSubmissionChange(draft);
+  const planChanged = latestSubmission?.plan_id && latestSubmission.plan_id !== draft.plan_id;
+
+  return (
+    <Card className={`${stage.border} bg-white shadow-sm hover:shadow-md transition-shadow`}>
+      <CardContent className="p-3 space-y-3">
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-[11px] font-semibold text-gray-600">{draft.contract_number}</span>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${relationship.badge}`}>{relationship.label}</span>
+          </div>
+          <p className="text-sm font-semibold text-gray-950 leading-tight">{customer?.full_name || '—'}</p>
+          <p className="text-[11px] text-muted-foreground line-clamp-2">
+            {modality?.name || '—'} · {planName}
+          </p>
+        </div>
+
+        <div className="rounded-lg bg-gray-50 border px-2.5 py-2 text-[11px] text-gray-700 space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span>Total</span>
+            <b className="text-green-700">{formatCurrency(total)}</b>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span>Pagamento</span>
+            <span>{installments}x de {formatCurrency(total / installments)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span>Início</span>
+            <span>{formatDate(draft.start_date)}</span>
+          </div>
+        </div>
+
+        {contractReview && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[11px] text-emerald-950">
+            <p className="font-semibold">Seguir pelo contrato</p>
+            <p className="mt-0.5">Financeiro e cobrança já estão fora do funil de prospect.</p>
+            {draft.prospect_stage && (
+              <p className="mt-1 text-emerald-800">Estágio antigo: {STAGES[draft.prospect_stage]?.label || draft.prospect_stage}</p>
+            )}
+          </div>
+        )}
+
+        {submissionChanged && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-950">
+            <p className="font-semibold">Alteração solicitada</p>
+            <p className="mt-0.5">Novo formulário recebido em {formatDateTime(latestSubmission.submitted_at)}.</p>
+            {planChanged && latestSubmission.plan?.active !== false && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-2 h-7 bg-white text-amber-900 border-amber-300 hover:bg-amber-100"
+                onClick={() => onApplyLatestSubmission(draft)}
+                disabled={applyingSubmission === draft.id}
+              >
+                {applyingSubmission === draft.id
+                  ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                  : <Check className="w-3.5 h-3.5 mr-1" />}
+                Usar novo plano
+              </Button>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {isOpen && (
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => onLoss(draft, customer)}>
+              <ArchiveX className="w-3.5 h-3.5 mr-1" /> Perda
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="h-8 text-xs" asChild>
+            <Link to={`/assessoria/contratos/${draft.id}`}>
+              {contractReview ? 'Contrato' : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
+            </Link>
+          </Button>
+          {isOpen && draft.prospect_stage === 'new' && (
+            <Button size="sm" className="h-8 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
+              <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Proposta
+            </Button>
+          )}
+          {isOpen && draft.prospect_stage === 'proposal_ready' && (
+            <Button size="sm" className="h-8 text-xs bg-green-600 hover:bg-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
+              <Send className="w-3.5 h-3.5 mr-1" /> Enviar
+            </Button>
+          )}
+          {isOpen && draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
+            <>
+              <Button size="sm" variant="outline" className="h-8 text-xs text-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
+                <MessageCircle className="w-3.5 h-3.5 mr-1" /> Reenviar
+              </Button>
+              <Button size="sm" className="h-8 text-xs bg-green-600 hover:bg-green-700" onClick={() => onPayment(draft, customer, coach, modality)}>
+                <CheckCheck className="w-3.5 h-3.5 mr-1" /> Pago
+              </Button>
+            </>
+          )}
+          {isOpen && draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
+            <Button size="sm" className="h-8 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
+              <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Refazer
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ProspectsKanban({
+  groups,
+  modalData,
+  setProposal,
+  setPayment,
+  setLoss,
+  applyLatestSubmission,
+  applyingSubmission,
+}) {
+  return (
+    <div className="overflow-x-auto pb-2">
+      <div className="grid min-w-[1120px] grid-cols-6 gap-3">
+        {groups.map(column => (
+          <div key={column.key} className="rounded-2xl border bg-slate-50/70 p-3">
+            <div className="mb-3 flex items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold text-gray-900">{column.title}</p>
+                <p className="text-[11px] text-muted-foreground leading-snug">{column.hint}</p>
+              </div>
+              <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${STAGES[column.key]?.badge || 'bg-gray-100 text-gray-700'}`}>
+                {column.items.length}
+              </span>
+            </div>
+            {column.items.length === 0 ? (
+              <div className="rounded-xl border border-dashed bg-white/70 px-3 py-8 text-center text-xs text-muted-foreground">
+                Sem cards aqui.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {column.items.map(draft => (
+                  <ProspectKanbanCard
+                    key={draft.id}
+                    {...modalData(draft)}
+                    draft={draft}
+                    onProposal={selected => setProposal(modalData(selected))}
+                    onPayment={selected => setPayment(modalData(selected))}
+                    onLoss={selected => setLoss(modalData(selected))}
+                    onApplyLatestSubmission={applyLatestSubmission}
+                    applyingSubmission={applyingSubmission}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Prospects() {
   const [prospects, setProspects] = useState([]);
   const [customers, setCustomers] = useState({});
   const [coaches, setCoaches] = useState({});
   const [modalities, setModalities] = useState({});
-  const [filter, setFilter] = useState('open');
+  const [filter, setFilter] = useState('all');
+  const [viewMode, setViewMode] = useState('kanban');
   const [loading, setLoading] = useState(true);
   const [proposal, setProposal] = useState(null);
   const [payment, setPayment] = useState(null);
@@ -765,6 +979,7 @@ export default function Prospects() {
       new: 0,
       proposal_ready: 0,
       payment_link_sent: 0,
+      contract_active: 0,
       converted: 0,
       lost: 0,
       needs_review: 0,
@@ -773,9 +988,10 @@ export default function Prospects() {
       returns_converted: 0,
     };
     prospects.forEach(item => {
-      if (result[item.prospect_stage] !== undefined) result[item.prospect_stage] += 1;
+      const visualStage = prospectVisualStage(item);
+      if (result[visualStage] !== undefined) result[visualStage] += 1;
       if (isOpenProspect(item)) result.open += 1;
-      if ((isOpenProspect(item) && hasSubmissionChange(item)) || needsContractReview(item)) result.needs_review += 1;
+      if (isOpenProspect(item) && hasSubmissionChange(item)) result.needs_review += 1;
       if (item.prospect_customer_relationship === 'former_student') {
         result.returns += 1;
         if (isOpenProspect(item)) result.returns_open += 1;
@@ -785,15 +1001,11 @@ export default function Prospects() {
     return result;
   }, [prospects]);
 
-  const filtered = useMemo(() => prospects.filter(item => (
-    filter === 'all' || (filter === 'returns'
-      ? item.prospect_customer_relationship === 'former_student'
-      : filter === 'needs_review'
-      ? (isOpenProspect(item) && hasSubmissionChange(item)) || needsContractReview(item)
-      : filter === 'open'
-      ? isOpenProspect(item)
-      : item.prospect_stage === filter)
-  )), [prospects, filter]);
+  const filtered = useMemo(() => prospects.filter(item => matchesProspectFilter(item, filter)), [prospects, filter]);
+  const boardGroups = useMemo(() => BOARD_COLUMNS.map(column => ({
+    ...column,
+    items: filtered.filter(item => prospectVisualStage(item) === column.key),
+  })), [filtered]);
   const potentialValue = prospects
     .filter(item => isOpenProspect(item))
     .reduce((sum, item) => sum + contractTotal(item), 0);
@@ -847,18 +1059,40 @@ export default function Prospects() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-          <UserPlus className="w-5 h-5 text-green-600" /> Central de Prospects
-        </h2>
-        <p className="text-sm text-muted-foreground mt-0.5">Do cadastro público à confirmação do pagamento, com histórico completo.</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <UserPlus className="w-5 h-5 text-green-600" /> Central de Prospects
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Do cadastro público à confirmação do pagamento, agora separado entre funil comercial e contratos já ativados.
+          </p>
+        </div>
+        <div className="flex rounded-xl border bg-white p-1 shadow-sm">
+          {[
+            ['kanban', 'Kanban'],
+            ['list', 'Lista'],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setViewMode(value)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                viewMode === value ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3">
         {[
           ['Em negociação', counts.open, UserPlus, 'text-blue-700', 'bg-blue-50'],
           ['Valor potencial', formatCurrency(potentialValue), CircleDollarSign, 'text-amber-700', 'bg-amber-50'],
-          ['Alterações/revisão', counts.needs_review, AlertTriangle, 'text-orange-700', 'bg-orange-50'],
+          ['Alterações', counts.needs_review, AlertTriangle, 'text-orange-700', 'bg-orange-50'],
+          ['Já virou contrato', counts.contract_active, CheckCheck, 'text-emerald-700', 'bg-emerald-50'],
           ['Convertidos', counts.converted, CheckCheck, 'text-green-700', 'bg-green-50'],
           ['Conversão dos encerrados', `${conversionRate}%`, TrendingUp, 'text-violet-700', 'bg-violet-50'],
           ['Retornos em negociação', counts.returns_open, UserRoundCheck, 'text-orange-700', 'bg-orange-50'],
@@ -872,10 +1106,7 @@ export default function Prospects() {
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        {[
-          ['open', 'Em negociação'], ['new', 'Novos'], ['proposal_ready', 'Proposta pronta'],
-          ['payment_link_sent', 'Link enviado'], ['needs_review', 'Alterações/revisão'], ['returns', 'Retornos'], ['converted', 'Convertidos'], ['lost', 'Não convertidos'], ['all', 'Todos'],
-        ].map(([value, label]) => (
+        {FILTERS.map(([value, label]) => (
           <Button key={value} size="sm" variant={filter === value ? 'default' : 'outline'} onClick={() => setFilter(value)}>
             {label} <span className="ml-1.5 opacity-70">{counts[value]}</span>
           </Button>
@@ -891,16 +1122,28 @@ export default function Prospects() {
           <p className="text-sm text-muted-foreground mt-1">Os novos cadastros do site aparecerão automaticamente aqui.</p>
         </CardContent></Card>
       ) : (
-        <div className="space-y-3">
-          {filtered.map(draft => (
-            <ProspectRow key={draft.id} {...modalData(draft)} draft={draft}
-              onProposal={selected => setProposal(modalData(selected))}
-              onPayment={selected => setPayment(modalData(selected))}
-              onLoss={selected => setLoss(modalData(selected))}
-              onApplyLatestSubmission={applyLatestSubmission}
-              applyingSubmission={applyingSubmission} />
-          ))}
-        </div>
+        viewMode === 'kanban' ? (
+          <ProspectsKanban
+            groups={boardGroups}
+            modalData={modalData}
+            setProposal={setProposal}
+            setPayment={setPayment}
+            setLoss={setLoss}
+            applyLatestSubmission={applyLatestSubmission}
+            applyingSubmission={applyingSubmission}
+          />
+        ) : (
+          <div className="space-y-3">
+            {filtered.map(draft => (
+              <ProspectRow key={draft.id} {...modalData(draft)} draft={draft}
+                onProposal={selected => setProposal(modalData(selected))}
+                onPayment={selected => setPayment(modalData(selected))}
+                onLoss={selected => setLoss(modalData(selected))}
+                onApplyLatestSubmission={applyLatestSubmission}
+                applyingSubmission={applyingSubmission} />
+            ))}
+          </div>
+        )
       )}
 
       <Dialog open={Boolean(proposal)} onOpenChange={open => { if (!open) setProposal(null); }}>
