@@ -29,7 +29,6 @@ const STAGES = {
   new: { label: 'Novo', badge: 'bg-blue-100 text-blue-700', border: 'border-blue-200' },
   proposal_ready: { label: 'Proposta pronta', badge: 'bg-amber-100 text-amber-800', border: 'border-amber-200' },
   payment_link_sent: { label: 'Link enviado', badge: 'bg-violet-100 text-violet-700', border: 'border-violet-200' },
-  contract_active: { label: 'Já virou contrato', badge: 'bg-emerald-100 text-emerald-700', border: 'border-emerald-200' },
   converted: { label: 'Convertido', badge: 'bg-green-100 text-green-700', border: 'border-green-200' },
   lost: { label: 'Não convertido', badge: 'bg-gray-200 text-gray-700', border: 'border-gray-200' },
 };
@@ -38,7 +37,6 @@ const BOARD_COLUMNS = [
   { key: 'new', title: 'Novos', hint: 'Cadastros que ainda precisam de proposta.' },
   { key: 'proposal_ready', title: 'Proposta pronta', hint: 'Link montado, falta enviar ou registrar envio.' },
   { key: 'payment_link_sent', title: 'Link enviado', hint: 'Aguardando pagamento ou reenvio.' },
-  { key: 'contract_active', title: 'Já virou contrato', hint: 'Saiu do funil; seguir pelo contrato/financeiro.' },
   { key: 'converted', title: 'Convertidos', hint: 'Pagamento confirmado.' },
   { key: 'lost', title: 'Não convertidos', hint: 'Arquivados sem conversão.' },
 ];
@@ -49,7 +47,6 @@ const FILTERS = [
   ['new', 'Novos'],
   ['proposal_ready', 'Proposta pronta'],
   ['payment_link_sent', 'Link enviado'],
-  ['contract_active', 'Já virou contrato'],
   ['needs_review', 'Alterações'],
   ['returns', 'Retornos'],
   ['converted', 'Convertidos'],
@@ -84,6 +81,7 @@ const RELATIONSHIPS = {
 };
 
 const OPEN_PROSPECT_STAGES = new Set(['new', 'proposal_ready', 'payment_link_sent']);
+const OPEN_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid']);
 
 function contractTotal(contract) {
   const base = Number(contract.plan_snapshot?.price_total ?? 0);
@@ -115,16 +113,25 @@ function isDraftProspect(draft) {
   return draft?.status === 'draft';
 }
 
-function isOpenProspect(draft) {
-  return isDraftProspect(draft) && OPEN_PROSPECT_STAGES.has(draft?.prospect_stage);
+function hasOpenPayment(draft) {
+  return OPEN_PAYMENT_STATUSES.has(draft?.payment_status || 'pending') && !draft?.payment_date;
 }
 
-function needsContractReview(draft) {
-  return !isDraftProspect(draft) && OPEN_PROSPECT_STAGES.has(draft?.prospect_stage);
+function isOpenProspect(draft) {
+  if (['cancelled', 'voided'].includes(draft?.status)) return false;
+  return OPEN_PROSPECT_STAGES.has(draft?.prospect_stage) && hasOpenPayment(draft);
 }
 
 function prospectVisualStage(draft) {
-  if (needsContractReview(draft)) return 'contract_active';
+  if (draft?.prospect_stage === 'lost') return 'lost';
+  if (draft?.prospect_stage === 'converted' || draft?.payment_status === 'paid' || draft?.prospect_converted_at) return 'converted';
+  if (
+    isOpenProspect(draft)
+    && draft?.prospect_stage === 'new'
+    && (paymentLinkFor(draft) || draft?.payment_message_sent_at || draft?.prospect_message_sent_at || ['charge_sent', 'overdue'].includes(draft?.payment_status))
+  ) {
+    return 'payment_link_sent';
+  }
   return draft?.prospect_stage || 'new';
 }
 
@@ -562,7 +569,8 @@ function ProspectRow({
   const installments = Number(draft.installments) || 1;
   const planName = draft.plan_snapshot?.name || 'Plano de assessoria';
   const isOpen = isOpenProspect(draft);
-  const contractReview = needsContractReview(draft);
+  const canUseProspectActions = isDraftProspect(draft);
+  const managedInContract = isOpen && !canUseProspectActions;
   const hasPaymentLink = Boolean(paymentLinkFor(draft));
   const latestSubmission = draft.latest_submission;
   const submissionChanged = isOpen && hasSubmissionChange(draft);
@@ -580,9 +588,9 @@ function ProspectRow({
               <span className="font-mono text-sm font-semibold text-gray-700">{draft.contract_number}</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${stage.badge}`}>{stage.label}</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${relationship.badge}`}>{relationship.label}</span>
-              {contractReview && draft.prospect_stage && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-gray-100 text-gray-600">
-                  antigo: {STAGES[draft.prospect_stage]?.label || draft.prospect_stage}
+              {managedInContract && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-violet-50 text-violet-700 border border-violet-200">
+                  cobrança em aberto
                 </span>
               )}
               <span className="text-[11px] text-muted-foreground">Recebido em {formatDateTime(draft.created_at)}</span>
@@ -615,14 +623,14 @@ function ProspectRow({
                 {draft.prospect_loss_notes ? ` — ${draft.prospect_loss_notes}` : ''}
               </p>
             )}
-            {contractReview && (
-              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">
+            {managedInContract && (
+              <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-950">
                 <div className="flex items-start gap-2">
-                  <CheckCheck className="w-4 h-4 text-emerald-700 mt-0.5 shrink-0" />
+                  <MessageCircle className="w-4 h-4 text-violet-700 mt-0.5 shrink-0" />
                   <div>
-                    <p className="font-semibold">Este cadastro já foi ativado como contrato.</p>
+                    <p className="font-semibold">Link/cobrança enviada. Ainda está em negociação.</p>
                     <p className="text-xs mt-1">
-                      Ajustes de plano, cobrança ou pagamento agora devem ser feitos pelo contrato para manter financeiro e histórico no mesmo lugar.
+                      Só conte como convertido quando o pagamento for confirmado. Para reenviar, cancelar ou ajustar cobrança, abra o contrato.
                     </p>
                   </div>
                 </div>
@@ -666,27 +674,27 @@ function ProspectRow({
           <div className="flex flex-col items-end gap-2 shrink-0">
             <span className="font-bold text-green-700 text-base">{formatCurrency(total)}</span>
             <div className="flex gap-1.5 flex-wrap justify-end">
-              {isOpen && (
+              {isOpen && canUseProspectActions && (
                 <Button size="sm" variant="outline" className="text-gray-700" onClick={() => onLoss(draft, customer)}>
                   <ArchiveX className="w-3.5 h-3.5 mr-1" /> Não convertido
                 </Button>
               )}
               <Button size="sm" variant="outline" asChild>
                 <Link to={`/assessoria/contratos/${draft.id}`}>
-                  {contractReview ? 'Abrir contrato' : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                  {managedInContract ? 'Abrir contrato' : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
                 </Link>
               </Button>
-              {isOpen && draft.prospect_stage === 'new' && (
+              {isOpen && canUseProspectActions && draft.prospect_stage === 'new' && (
                 <Button size="sm" className="bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                   <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Preparar proposta
                 </Button>
               )}
-              {isOpen && draft.prospect_stage === 'proposal_ready' && (
+              {isOpen && canUseProspectActions && draft.prospect_stage === 'proposal_ready' && (
                 <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                   <Send className="w-3.5 h-3.5 mr-1" /> Enviar mensagem
                 </Button>
               )}
-              {isOpen && draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
+              {isOpen && canUseProspectActions && draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
                 <>
                   <Button size="sm" variant="outline" className="text-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                     <MessageCircle className="w-3.5 h-3.5 mr-1" /> Reenviar
@@ -696,7 +704,7 @@ function ProspectRow({
                   </Button>
                 </>
               )}
-              {isOpen && draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
+              {isOpen && canUseProspectActions && draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
                 <Button size="sm" className="bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                   <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Refazer proposta
                 </Button>
@@ -727,7 +735,8 @@ function ProspectKanbanCard({
   const installments = Number(draft.installments) || 1;
   const planName = draft.plan_snapshot?.name || 'Plano de assessoria';
   const isOpen = isOpenProspect(draft);
-  const contractReview = needsContractReview(draft);
+  const canUseProspectActions = isDraftProspect(draft);
+  const managedInContract = isOpen && !canUseProspectActions;
   const hasPaymentLink = Boolean(paymentLinkFor(draft));
   const latestSubmission = draft.latest_submission;
   const submissionChanged = isOpen && hasSubmissionChange(draft);
@@ -762,13 +771,10 @@ function ProspectKanbanCard({
           </div>
         </div>
 
-        {contractReview && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[11px] text-emerald-950">
-            <p className="font-semibold">Seguir pelo contrato</p>
-            <p className="mt-0.5">Financeiro e cobrança já estão fora do funil de prospect.</p>
-            {draft.prospect_stage && (
-              <p className="mt-1 text-emerald-800">Estágio antigo: {STAGES[draft.prospect_stage]?.label || draft.prospect_stage}</p>
-            )}
+        {managedInContract && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-2 text-[11px] text-violet-950">
+            <p className="font-semibold">Link/cobrança enviada</p>
+            <p className="mt-0.5">Ainda em negociação. Só vira convertido quando pagar.</p>
           </div>
         )}
 
@@ -794,27 +800,27 @@ function ProspectKanbanCard({
         )}
 
         <div className="flex flex-wrap gap-1.5 pt-1">
-          {isOpen && (
+          {isOpen && canUseProspectActions && (
             <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => onLoss(draft, customer)}>
               <ArchiveX className="w-3.5 h-3.5 mr-1" /> Perda
             </Button>
           )}
           <Button size="sm" variant="outline" className="h-8 text-xs" asChild>
             <Link to={`/assessoria/contratos/${draft.id}`}>
-              {contractReview ? 'Contrato' : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
+              {managedInContract ? 'Contrato' : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
             </Link>
           </Button>
-          {isOpen && draft.prospect_stage === 'new' && (
+          {isOpen && canUseProspectActions && draft.prospect_stage === 'new' && (
             <Button size="sm" className="h-8 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
               <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Proposta
             </Button>
           )}
-          {isOpen && draft.prospect_stage === 'proposal_ready' && (
+          {isOpen && canUseProspectActions && draft.prospect_stage === 'proposal_ready' && (
             <Button size="sm" className="h-8 text-xs bg-green-600 hover:bg-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
               <Send className="w-3.5 h-3.5 mr-1" /> Enviar
             </Button>
           )}
-          {isOpen && draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
+          {isOpen && canUseProspectActions && draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
             <>
               <Button size="sm" variant="outline" className="h-8 text-xs text-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                 <MessageCircle className="w-3.5 h-3.5 mr-1" /> Reenviar
@@ -824,7 +830,7 @@ function ProspectKanbanCard({
               </Button>
             </>
           )}
-          {isOpen && draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
+          {isOpen && canUseProspectActions && draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
             <Button size="sm" className="h-8 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
               <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Refazer
             </Button>
@@ -846,7 +852,7 @@ function ProspectsKanban({
 }) {
   return (
     <div className="overflow-x-auto pb-2">
-      <div className="grid min-w-[1120px] grid-cols-6 gap-3">
+      <div className="grid min-w-[940px] grid-cols-5 gap-3">
         {groups.map(column => (
           <div key={column.key} className="rounded-2xl border bg-slate-50/70 p-3">
             <div className="mb-3 flex items-start justify-between gap-2">
@@ -903,7 +909,7 @@ export default function Prospects() {
     try {
       const contractsResult = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at')
         .not('prospect_stage', 'is', null)
         .is('parent_contract_id', null)
         .order('created_at', { ascending: false });
@@ -979,7 +985,6 @@ export default function Prospects() {
       new: 0,
       proposal_ready: 0,
       payment_link_sent: 0,
-      contract_active: 0,
       converted: 0,
       lost: 0,
       needs_review: 0,
@@ -995,7 +1000,7 @@ export default function Prospects() {
       if (item.prospect_customer_relationship === 'former_student') {
         result.returns += 1;
         if (isOpenProspect(item)) result.returns_open += 1;
-        if (item.prospect_stage === 'converted' && item.prospect_reactivated_at) result.returns_converted += 1;
+        if (prospectVisualStage(item) === 'converted' && item.prospect_reactivated_at) result.returns_converted += 1;
       }
     });
     return result;
@@ -1025,7 +1030,7 @@ export default function Prospects() {
     const plan = submission?.plan;
     if (!submission || !plan) return toast.error('Novo plano não encontrado');
     if (!isDraftProspect(draft)) {
-      return toast.error('Este cadastro já virou contrato. Faça a alteração pela tela do contrato.');
+      return toast.error('Esta cobrança já saiu do rascunho. Faça a alteração pela tela do contrato.');
     }
     if (!isOpenProspect(draft)) {
       return toast.error('Este prospect já não está mais em negociação');
@@ -1065,7 +1070,7 @@ export default function Prospects() {
             <UserPlus className="w-5 h-5 text-green-600" /> Central de Prospects
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Do cadastro público à confirmação do pagamento, agora separado entre funil comercial e contratos já ativados.
+            Do cadastro público à confirmação do pagamento. Link enviado continua em negociação até o pagamento cair.
           </p>
         </div>
         <div className="flex rounded-xl border bg-white p-1 shadow-sm">
@@ -1087,12 +1092,11 @@ export default function Prospects() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
         {[
           ['Em negociação', counts.open, UserPlus, 'text-blue-700', 'bg-blue-50'],
           ['Valor potencial', formatCurrency(potentialValue), CircleDollarSign, 'text-amber-700', 'bg-amber-50'],
           ['Alterações', counts.needs_review, AlertTriangle, 'text-orange-700', 'bg-orange-50'],
-          ['Já virou contrato', counts.contract_active, CheckCheck, 'text-emerald-700', 'bg-emerald-50'],
           ['Convertidos', counts.converted, CheckCheck, 'text-green-700', 'bg-green-50'],
           ['Conversão dos encerrados', `${conversionRate}%`, TrendingUp, 'text-violet-700', 'bg-violet-50'],
           ['Retornos em negociação', counts.returns_open, UserRoundCheck, 'text-orange-700', 'bg-orange-50'],
