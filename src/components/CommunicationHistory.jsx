@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp, MessageCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { formatDateTime } from '@/lib/utils';
-import { COMMUNICATION_EVENT_META, summarizeCommunicationEvent } from '@/lib/communication-tasks';
+import { COMMUNICATION_EVENT_META, TASK_KIND, summarizeCommunicationEvent } from '@/lib/communication-tasks';
 
 function HistoryItem({ event, currentUserId }) {
   const [open, setOpen] = useState(false);
   const isSnoozed = event.event_type === 'communication_task_ignored' && event.payload?.action === 'snoozed';
   const meta = isSnoozed
     ? { label: 'Adiada', tone: 'info' }
+    : event.payload?.task_kind === TASK_KIND.REFUND_NOTICE
+    ? { label: 'Estorno enviado', tone: 'success' }
     : COMMUNICATION_EVENT_META[event.event_type] || { label: event.event_type, tone: 'secondary' };
   const summary = summarizeCommunicationEvent(event);
   const message = event.payload?.message || '';

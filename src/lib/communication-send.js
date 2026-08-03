@@ -10,6 +10,41 @@ export function hasNativePaymentInfo(task) {
   return Boolean(task?.asaasPaymentLink || task?.asaasPixCopy || task?.asaasChargeId);
 }
 
+function refundSourceType(row) {
+  if (row?.source_type === 'assessment_contract') return 'contract';
+  if (row?.source_type === 'stock_order') return 'stock';
+  if (row?.source_type === 'presale_order') return 'presale';
+  return null;
+}
+
+export async function registerRefundCommunicationSend(row, options = {}) {
+  const sourceType = refundSourceType(row);
+  const sourceId = row?.source_id;
+  const message = String(options.message || '').trim();
+  if (!sourceType || !sourceId) throw new Error('Estorno inválido para registrar mensagem');
+  if (!message) throw new Error('Mensagem de estorno vazia');
+
+  await recordCommunicationEvent({
+    source_type: sourceType,
+    source_id: sourceId,
+    event_type: taskEventType({ kind: TASK_KIND.REFUND_NOTICE }),
+    payload: {
+      source: 'refund_center',
+      task_kind: TASK_KIND.REFUND_NOTICE,
+      channel: options.channel || 'whatsapp',
+      message,
+      refund_amount: Number(row.amount || 0) || 0,
+      refund_date: options.refundDate || row.completed_on || null,
+      refund_reference: row.reference || null,
+      refund_reason: row.reason || null,
+      refund_notes: String(row.notes || '').trim() || null,
+      receipt_count: Array.isArray(row.receipts) ? row.receipts.length : 0,
+      receipt_file_names: Array.isArray(row.receipts) ? row.receipts.map(item => item.file_name).filter(Boolean) : [],
+    },
+    reason: 'Aviso de estorno enviado ao cliente',
+  });
+}
+
 // Persiste o envio de uma mensagem (cobrança, onboarding ou renovação):
 // atualiza o registro de origem quando for cobrança e grava o evento de
 // histórico. Compartilhado entre a Central de Comunicação e o perfil do aluno

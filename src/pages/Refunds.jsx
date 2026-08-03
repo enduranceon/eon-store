@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   HandCoins, Clock, CheckCircle2, Paperclip, Download, Trash2, Upload, Search,
+  Copy, MessageCircle, Send,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,9 @@ import {
   listRefunds, uploadRefundReceipt, getRefundReceiptUrl, deleteRefundReceipt,
   completeAssessmentContractRefund,
 } from '@/api/client';
+import { supabase } from '@/api/db';
+import { registerRefundCommunicationSend } from '@/lib/communication-send';
+import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { invalidatePageCacheByTag } from '@/lib/page-cache';
@@ -39,7 +43,46 @@ const SOURCE_LINK = {
 };
 
 async function loadRefundsPage() {
-  return listRefunds();
+  const rows = await listRefunds();
+  const customerIds = [...new Set((rows || []).map(row => row.customer_id).filter(Boolean))];
+  if (!customerIds.length) return rows || [];
+
+  const { data, error } = await supabase
+    .from('presale_customers')
+    .select('id, whatsapp, email')
+    .in('id', customerIds);
+  if (error) throw error;
+  const customerMap = Object.fromEntries((data || []).map(customer => [customer.id, customer]));
+  return (rows || []).map(row => ({
+    ...row,
+    customer_whatsapp: customerMap[row.customer_id]?.whatsapp || '',
+    customer_email: customerMap[row.customer_id]?.email || '',
+  }));
+}
+
+function firstName(name) {
+  return String(name || '').trim().split(/\s+/)[0] || 'cliente';
+}
+
+function latestReceipt(row) {
+  return Array.isArray(row?.receipts) && row.receipts.length ? row.receipts[0] : null;
+}
+
+function buildRefundMessage(row) {
+  const name = firstName(row.customer_name);
+  const source = SOURCE_LABEL[row.source_type] || 'registro';
+  const date = row.completed_on ? formatDate(row.completed_on) : '';
+  let message = `Olá, ${name}! Tudo bem?\n\n`;
+  message += `Passando para confirmar o estorno referente ao ${source.toLowerCase()} *${row.reference}*.\n\n`;
+  message += `Valor estornado: *${formatCurrency(row.amount)}*\n`;
+  if (date) message += `Data do estorno: *${date}*\n`;
+  if (row.reason) message += `Motivo: ${row.reason}\n`;
+  message += '\n';
+  if ((row.receipts || []).length > 0) {
+    message += 'Estou enviando o comprovante junto com esta mensagem para ficar registrado por aqui.\n\n';
+  }
+  message += 'Qualquer dúvida, me chama por aqui.';
+  return message;
 }
 
 export default function Refunds() {
@@ -57,6 +100,9 @@ export default function Refunds() {
   const [to, setTo] = useState('');
   const [doneModal, setDoneModal] = useState(null);
   const [doneForm, setDoneForm] = useState({ date: todayLocalStr(), notes: '' });
+  const [messageModal, setMessageModal] = useState(null);
+  const [messageCopied, setMessageCopied] = useState(false);
+  const [registeringMessage, setRegisteringMessage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyReceipt, setBusyReceipt] = useState(null);
   const fileInputs = useRef({});
@@ -139,6 +185,43 @@ export default function Refunds() {
       await refresh({ force: true });
     } catch (e) { toast.error(e.message); }
     finally { setBusyReceipt(null); }
+  };
+
+  const openMessage = row => {
+    setMessageCopied(false);
+    setMessageModal(row);
+  };
+
+  const copyMessage = async () => {
+    if (!messageModal) return;
+    await navigator.clipboard.writeText(buildRefundMessage(messageModal));
+    setMessageCopied(true);
+    toast.success('Mensagem de estorno copiada.');
+    window.setTimeout(() => setMessageCopied(false), 2000);
+  };
+
+  const openWhatsApp = () => {
+    if (!messageModal) return;
+    const phone = phoneDigitsForWhatsApp(messageModal.customer_whatsapp);
+    if (!phone || phone === '55') return toast.error('WhatsApp do cliente não cadastrado');
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(buildRefundMessage(messageModal))}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const registerMessage = async () => {
+    if (!messageModal) return;
+    setRegisteringMessage(true);
+    try {
+      await registerRefundCommunicationSend(messageModal, {
+        message: buildRefundMessage(messageModal),
+        refundDate: messageModal.completed_on,
+      });
+      toast.success('Mensagem registrada na Central de Comunicação.');
+      setMessageModal(null);
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível registrar a mensagem');
+    } finally {
+      setRegisteringMessage(false);
+    }
   };
 
   return (
@@ -321,6 +404,12 @@ export default function Refunds() {
                             Marcar como feito
                           </Button>
                         )}
+                        {row.status === 'done' && (
+                          <Button size="sm" className="bg-purple-600 hover:bg-purple-700 text-white" onClick={() => openMessage(row)}>
+                            <MessageCircle className="w-3.5 h-3.5 mr-1" />
+                            Mensagem ao cliente
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -389,6 +478,67 @@ export default function Refunds() {
                   disabled={saving}
                 >
                   {saving ? 'Salvando...' : 'Confirmar'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!messageModal} onOpenChange={open => !open && !registeringMessage && setMessageModal(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-purple-700">
+              <MessageCircle className="w-5 h-5" /> Mensagem de estorno
+            </DialogTitle>
+          </DialogHeader>
+          {messageModal && (
+            <div className="space-y-4">
+              <div className="bg-gray-50 border rounded-xl p-3 text-sm space-y-1">
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Cliente</span>
+                  <span className="font-medium text-right">{messageModal.customer_name || '—'}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Valor</span>
+                  <span className="font-bold text-green-700">{formatCurrency(messageModal.amount)}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Comprovante</span>
+                  <span className="text-right">{latestReceipt(messageModal)?.file_name || 'Sem anexo'}</span>
+                </div>
+              </div>
+
+              <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-purple-200 bg-purple-50 p-3 font-sans text-sm text-gray-800">
+                {buildRefundMessage(messageModal)}
+              </pre>
+
+              {latestReceipt(messageModal) ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  O WhatsApp abre com o texto pronto. Abra/baixe o comprovante e anexe manualmente na conversa antes de enviar.
+                </div>
+              ) : (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                  Ainda não há comprovante anexado. Você pode enviar só o texto ou voltar e anexar o arquivo antes.
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="outline" onClick={copyMessage}>
+                  <Copy className="w-4 h-4 mr-1.5" />
+                  {messageCopied ? 'Copiado!' : 'Copiar texto'}
+                </Button>
+                <Button variant="outline" onClick={() => latestReceipt(messageModal) && openReceipt(latestReceipt(messageModal))} disabled={!latestReceipt(messageModal)}>
+                  <Download className="w-4 h-4 mr-1.5" />
+                  Abrir comprovante
+                </Button>
+                <Button variant="outline" onClick={openWhatsApp}>
+                  <MessageCircle className="w-4 h-4 mr-1.5" />
+                  Abrir WhatsApp
+                </Button>
+                <Button className="bg-purple-600 hover:bg-purple-700 text-white" onClick={registerMessage} disabled={registeringMessage}>
+                  <Send className="w-4 h-4 mr-1.5" />
+                  {registeringMessage ? 'Registrando...' : 'Registrar histórico'}
                 </Button>
               </div>
             </div>

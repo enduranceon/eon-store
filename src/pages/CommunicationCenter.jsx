@@ -51,6 +51,7 @@ function historyPayload(event = {}) {
 }
 
 function bucketFromTaskKind(kind, eventType = '') {
+  if (kind === TASK_KIND.REFUND_NOTICE) return TASK_BUCKET.REFUNDS;
   if ([TASK_KIND.ONBOARDING_WELCOME, TASK_KIND.ONBOARDING_CHECKIN].includes(kind)) return TASK_BUCKET.ONBOARDING;
   if (kind === TASK_KIND.RENEWAL_REMINDER) return TASK_BUCKET.RENEWAL;
   if ([TASK_KIND.CHARGE_SEND, TASK_KIND.CHARGE_OVERDUE].includes(kind)) return TASK_BUCKET.CHARGES;
@@ -72,6 +73,7 @@ function historyStatus(event = {}) {
 function historyTitle(event = {}) {
   const payload = historyPayload(event);
   if (payload.rule_name) return payload.rule_name;
+  if (payload.task_kind === TASK_KIND.REFUND_NOTICE) return 'Aviso de estorno';
   if (payload.task_kind === TASK_KIND.CHARGE_OVERDUE) return 'Cobrança vencida';
   if (payload.task_kind === TASK_KIND.CHARGE_SEND) return 'Enviar cobrança';
   if (payload.task_kind === TASK_KIND.ONBOARDING_WELCOME) return 'Boas-vindas pós-pagamento';
@@ -345,6 +347,20 @@ function buildHistory(data) {
     .slice(0, 120);
 }
 
+function taskEligibleData(data) {
+  const openOrder = row => !['cancelled', 'refunded'].includes(row.payment_status);
+  const openContract = row => (
+    !['cancelled', 'draft', 'voided'].includes(row.status)
+    && row.payment_status !== 'refunded'
+  );
+  return {
+    ...data,
+    presaleOrders: (data.presaleOrders || []).filter(openOrder),
+    stockOrders: (data.stockOrders || []).filter(openOrder),
+    contracts: (data.contracts || []).filter(openContract),
+  };
+}
+
 async function fetchCommunicationData() {
   const [
     presaleOrders,
@@ -360,16 +376,13 @@ async function fetchCommunicationData() {
   ] = await Promise.all([
     supabase.from('presale_orders')
       .select('id, order_number, checkout_name, checkout_whatsapp, checkout_email, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, payment_preference, items, created_date, status_changed_at, delivery_status')
-      .neq('payment_status', 'cancelled')
-      .neq('payment_status', 'refunded'),
+      .neq('payment_status', 'cancelled'),
     supabase.from('stock_orders')
       .select('id, order_number, customer_name, customer_whatsapp, customer_email, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, payment_preference, items, created_date, status_changed_at, delivery_status')
-      .neq('payment_status', 'cancelled')
-      .neq('payment_status', 'refunded'),
+      .neq('payment_status', 'cancelled'),
     supabase.from('assessment_contracts')
       .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, discount_recurring, credit_balance, installments, plan_snapshot')
-      .not('status', 'in', '("cancelled","draft","voided")')
-      .neq('payment_status', 'refunded'),
+      .not('status', 'in', '("draft","voided")'),
     supabase.from('presale_customers').select('id, full_name, whatsapp, email'),
     supabase.from('assessment_plans').select('id, name, modality_id, period, period_months, price_total, price_monthly'),
     supabase.from('assessment_modalities').select('id, name'),
@@ -667,7 +680,7 @@ export default function CommunicationCenter() {
     return () => { active = false; };
   }, []);
 
-  const tasks = useMemo(() => data ? buildCommunicationTasks(data, { rules: data.communicationRules }) : [], [data]);
+  const tasks = useMemo(() => data ? buildCommunicationTasks(taskEligibleData(data), { rules: data.communicationRules }) : [], [data]);
   const history = useMemo(() => data ? buildHistory(data) : [], [data]);
 
   const counts = useMemo(() => ({

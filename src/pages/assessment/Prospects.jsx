@@ -88,6 +88,18 @@ function hasSubmissionChange(draft) {
     || (submission.coach_id && submission.coach_id !== draft.coach_id);
 }
 
+function isDraftProspect(draft) {
+  return draft?.status === 'draft';
+}
+
+function isOpenProspect(draft) {
+  return isDraftProspect(draft) && OPEN_PROSPECT_STAGES.has(draft?.prospect_stage);
+}
+
+function needsContractReview(draft) {
+  return !isDraftProspect(draft) && OPEN_PROSPECT_STAGES.has(draft?.prospect_stage);
+}
+
 function paymentLinkFor(contract) {
   return contract.external_payment_link || contract.asaas_payment_link || '';
 }
@@ -507,10 +519,11 @@ function ProspectRow({
   const total = contractTotal(draft);
   const installments = Number(draft.installments) || 1;
   const planName = draft.plan_snapshot?.name || 'Plano de assessoria';
-  const isOpen = OPEN_PROSPECT_STAGES.has(draft.prospect_stage);
+  const isOpen = isOpenProspect(draft);
+  const contractReview = needsContractReview(draft);
   const hasPaymentLink = Boolean(paymentLinkFor(draft));
   const latestSubmission = draft.latest_submission;
-  const submissionChanged = hasSubmissionChange(draft);
+  const submissionChanged = isOpen && hasSubmissionChange(draft);
   const submittedPlanName = latestSubmission?.plan?.name || 'plano informado';
   const submittedCoachName = latestSubmission?.coach?.name;
   const planChanged = latestSubmission?.plan_id && latestSubmission.plan_id !== draft.plan_id;
@@ -525,6 +538,11 @@ function ProspectRow({
               <span className="font-mono text-sm font-semibold text-gray-700">{draft.contract_number}</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${stage.badge}`}>{stage.label}</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${relationship.badge}`}>{relationship.label}</span>
+              {contractReview && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-700">
+                  Já virou contrato
+                </span>
+              )}
               <span className="text-[11px] text-muted-foreground">Recebido em {formatDateTime(draft.created_at)}</span>
             </div>
             <p className="text-base font-semibold text-gray-900 mt-1">{customer?.full_name || '—'}</p>
@@ -555,12 +573,25 @@ function ProspectRow({
                 {draft.prospect_loss_notes ? ` — ${draft.prospect_loss_notes}` : ''}
               </p>
             )}
+            {contractReview && (
+              <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">
+                <div className="flex items-start gap-2">
+                  <CheckCheck className="w-4 h-4 text-emerald-700 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-semibold">Este cadastro já foi ativado como contrato.</p>
+                    <p className="text-xs mt-1">
+                      Ajustes de plano, cobrança ou pagamento agora devem ser feitos pelo contrato para manter financeiro e histórico no mesmo lugar.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             {isOpen && submissionChanged && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <p className="font-semibold">Novo formulário recebido em {formatDateTime(latestSubmission.submitted_at)}</p>
+                    <p className="font-semibold">Alteração solicitada em {formatDateTime(latestSubmission.submitted_at)}</p>
                     <p className="text-xs mt-1">
                       {planChanged && <>Plano solicitado: <b>{submittedPlanName}</b>. Proposta atual: <b>{planName}</b>.</>}
                       {planChanged && coachChanged ? ' ' : ''}
@@ -599,19 +630,21 @@ function ProspectRow({
                 </Button>
               )}
               <Button size="sm" variant="outline" asChild>
-                <Link to={`/assessoria/contratos/${draft.id}`}>Ver <ChevronRight className="w-3.5 h-3.5 ml-1" /></Link>
+                <Link to={`/assessoria/contratos/${draft.id}`}>
+                  {contractReview ? 'Abrir contrato' : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                </Link>
               </Button>
-              {draft.prospect_stage === 'new' && (
+              {isOpen && draft.prospect_stage === 'new' && (
                 <Button size="sm" className="bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                   <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Preparar proposta
                 </Button>
               )}
-              {draft.prospect_stage === 'proposal_ready' && (
+              {isOpen && draft.prospect_stage === 'proposal_ready' && (
                 <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                   <Send className="w-3.5 h-3.5 mr-1" /> Enviar mensagem
                 </Button>
               )}
-              {draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
+              {isOpen && draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
                 <>
                   <Button size="sm" variant="outline" className="text-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                     <MessageCircle className="w-3.5 h-3.5 mr-1" /> Reenviar
@@ -621,7 +654,7 @@ function ProspectRow({
                   </Button>
                 </>
               )}
-              {draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
+              {isOpen && draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
                 <Button size="sm" className="bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
                   <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Refazer proposta
                 </Button>
@@ -651,7 +684,7 @@ export default function Prospects() {
     try {
       const contractsResult = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at')
+        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at')
         .not('prospect_stage', 'is', null)
         .is('parent_contract_id', null)
         .order('created_at', { ascending: false });
@@ -736,11 +769,11 @@ export default function Prospects() {
     };
     prospects.forEach(item => {
       if (result[item.prospect_stage] !== undefined) result[item.prospect_stage] += 1;
-      if (OPEN_PROSPECT_STAGES.has(item.prospect_stage)) result.open += 1;
-      if (OPEN_PROSPECT_STAGES.has(item.prospect_stage) && hasSubmissionChange(item)) result.needs_review += 1;
+      if (isOpenProspect(item)) result.open += 1;
+      if ((isOpenProspect(item) && hasSubmissionChange(item)) || needsContractReview(item)) result.needs_review += 1;
       if (item.prospect_customer_relationship === 'former_student') {
         result.returns += 1;
-        if (OPEN_PROSPECT_STAGES.has(item.prospect_stage)) result.returns_open += 1;
+        if (isOpenProspect(item)) result.returns_open += 1;
         if (item.prospect_stage === 'converted' && item.prospect_reactivated_at) result.returns_converted += 1;
       }
     });
@@ -751,13 +784,13 @@ export default function Prospects() {
     filter === 'all' || (filter === 'returns'
       ? item.prospect_customer_relationship === 'former_student'
       : filter === 'needs_review'
-      ? OPEN_PROSPECT_STAGES.has(item.prospect_stage) && hasSubmissionChange(item)
+      ? (isOpenProspect(item) && hasSubmissionChange(item)) || needsContractReview(item)
       : filter === 'open'
-      ? OPEN_PROSPECT_STAGES.has(item.prospect_stage)
+      ? isOpenProspect(item)
       : item.prospect_stage === filter)
   )), [prospects, filter]);
   const potentialValue = prospects
-    .filter(item => OPEN_PROSPECT_STAGES.has(item.prospect_stage))
+    .filter(item => isOpenProspect(item))
     .reduce((sum, item) => sum + contractTotal(item), 0);
   const closed = counts.converted + counts.lost;
   const conversionRate = closed ? Math.round((counts.converted / closed) * 100) : 0;
@@ -774,7 +807,10 @@ export default function Prospects() {
     const submission = draft.latest_submission;
     const plan = submission?.plan;
     if (!submission || !plan) return toast.error('Novo plano não encontrado');
-    if (!OPEN_PROSPECT_STAGES.has(draft.prospect_stage)) {
+    if (!isDraftProspect(draft)) {
+      return toast.error('Este cadastro já virou contrato. Faça a alteração pela tela do contrato.');
+    }
+    if (!isOpenProspect(draft)) {
       return toast.error('Este prospect já não está mais em negociação');
     }
     if (draft.payment_status && !['pending', 'awaiting_charge', 'charge_sent', 'overdue'].includes(draft.payment_status)) {
@@ -817,7 +853,7 @@ export default function Prospects() {
         {[
           ['Em negociação', counts.open, UserPlus, 'text-blue-700', 'bg-blue-50'],
           ['Valor potencial', formatCurrency(potentialValue), CircleDollarSign, 'text-amber-700', 'bg-amber-50'],
-          ['Novo envio', counts.needs_review, AlertTriangle, 'text-orange-700', 'bg-orange-50'],
+          ['Alterações/revisão', counts.needs_review, AlertTriangle, 'text-orange-700', 'bg-orange-50'],
           ['Convertidos', counts.converted, CheckCheck, 'text-green-700', 'bg-green-50'],
           ['Conversão dos encerrados', `${conversionRate}%`, TrendingUp, 'text-violet-700', 'bg-violet-50'],
           ['Retornos em negociação', counts.returns_open, UserRoundCheck, 'text-orange-700', 'bg-orange-50'],
@@ -833,7 +869,7 @@ export default function Prospects() {
       <div className="flex gap-2 flex-wrap">
         {[
           ['open', 'Em negociação'], ['new', 'Novos'], ['proposal_ready', 'Proposta pronta'],
-          ['payment_link_sent', 'Link enviado'], ['needs_review', 'Novo envio'], ['returns', 'Retornos'], ['converted', 'Convertidos'], ['lost', 'Não convertidos'], ['all', 'Todos'],
+          ['payment_link_sent', 'Link enviado'], ['needs_review', 'Alterações/revisão'], ['returns', 'Retornos'], ['converted', 'Convertidos'], ['lost', 'Não convertidos'], ['all', 'Todos'],
         ].map(([value, label]) => (
           <Button key={value} size="sm" variant={filter === value ? 'default' : 'outline'} onClick={() => setFilter(value)}>
             {label} <span className="ml-1.5 opacity-70">{counts[value]}</span>

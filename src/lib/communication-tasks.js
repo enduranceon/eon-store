@@ -14,6 +14,7 @@ export const COMMUNICATION_EVENT_TYPES = [
 export const TASK_KIND = {
   CHARGE_SEND: 'charge_send',
   CHARGE_OVERDUE: 'charge_overdue',
+  REFUND_NOTICE: 'refund_notice',
   ONBOARDING_WELCOME: 'onboarding_welcome',
   ONBOARDING_CHECKIN: 'onboarding_checkin',
   RENEWAL_REMINDER: 'renewal_reminder',
@@ -21,6 +22,7 @@ export const TASK_KIND = {
 
 export const TASK_BUCKET = {
   CHARGES: 'charges',
+  REFUNDS: 'refunds',
   ONBOARDING: 'onboarding',
   RENEWAL: 'renewal',
 };
@@ -658,6 +660,7 @@ export function buildTaskMessage(task, options = {}) {
 
 export function taskEventType(task) {
   if (!task) return null;
+  if (task.kind === TASK_KIND.REFUND_NOTICE) return 'payment_message_sent';
   if (task.kind === TASK_KIND.ONBOARDING_WELCOME) return 'onboarding_welcome_sent';
   if (task.kind === TASK_KIND.ONBOARDING_CHECKIN) return 'onboarding_checkin_sent';
   if (task.kind === TASK_KIND.RENEWAL_REMINDER) return 'renewal_message_sent';
@@ -667,6 +670,7 @@ export function taskEventType(task) {
 export function taskChannelLabel(task) {
   if (!task) return '';
   if (task.bucket === TASK_BUCKET.CHARGES) return 'Cobrança';
+  if (task.bucket === TASK_BUCKET.REFUNDS) return 'Estorno';
   if (task.bucket === TASK_BUCKET.ONBOARDING) return 'Onboarding';
   if (task.bucket === TASK_BUCKET.RENEWAL) return 'Renovação';
   return 'Comunicação';
@@ -691,6 +695,7 @@ export function summarizeCommunicationEvent(event) {
   const parts = [];
   if (channel) parts.push(`via ${channel}`);
   if (p.rule_name) parts.push(p.rule_name);
+  if (p.task_kind === TASK_KIND.REFUND_NOTICE) parts.push('aviso de estorno');
   if (p.action === 'snoozed' && p.snooze_until) parts.push(`adiada para ${formatDate(p.snooze_until)}`);
   if (p.reason) parts.push(p.reason);
   return parts.join(' · ');
