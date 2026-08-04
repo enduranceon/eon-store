@@ -16,6 +16,12 @@
 # connect-src inclui https://viacep.com.br: a busca de endereço por CEP
 # (src/lib/br-address.js) chama a API pública do ViaCEP direto do navegador.
 # Sem essa entrada o autocompletar de endereço para de funcionar em silêncio.
+#
+# frame-src inclui blob:: o extrato de repasse do treinador
+# (src/pages/assessment/CoachStatement.jsx) usa o PDFViewer do @react-pdf/renderer,
+# que monta um <iframe src="blob:...">. Sem essa entrada o iframe cai no
+# default-src 'self', o blob é bloqueado e a tela do extrato fica em branco —
+# o PDF continua sendo gerado, só não aparece (o "Baixar PDF" segue funcionando).
 [[headers]]
   for = "/*"
   [headers.values]
@@ -24,4 +30,4 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
     Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
-    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://bsiljrrodgtmtdilnuxr.supabase.co wss://bsiljrrodgtmtdilnuxr.supabase.co https://viacep.com.br; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; frame-src 'self' blob:; connect-src 'self' https://bsiljrrodgtmtdilnuxr.supabase.co wss://bsiljrrodgtmtdilnuxr.supabase.co https://viacep.com.br; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
