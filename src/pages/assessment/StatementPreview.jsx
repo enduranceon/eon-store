@@ -72,6 +72,12 @@ export default function StatementPreview({ view: v }) {
                       <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: '#c2410c',
                                      background: '#ffedd5', padding: '1px 5px', borderRadius: 6 }}>ref. {it.refLabel}</span>
                     )}
+                    {it.licenca && (
+                      <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: '#0369a1',
+                                     background: '#e0f2fe', padding: '1px 5px', borderRadius: 6 }}>
+                        em licença {it.licenca.ate ? `${it.licenca.desde} a ${it.licenca.ate}` : `desde ${it.licenca.desde}`}
+                      </span>
+                    )}
                     {it.source_type !== 'athlete_repasse' && (
                       <div style={{ fontSize: 11, color: '#94a3b8' }}>{it.tipoLabel}{it.sobre ? ` · sobre ${it.sobre}` : ''}</div>
                     )}

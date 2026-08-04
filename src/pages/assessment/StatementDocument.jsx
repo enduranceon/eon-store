@@ -60,6 +60,7 @@ const s = StyleSheet.create({
   chip: { fontSize: 6.5, fontFamily: 'Helvetica-Bold', textTransform: 'uppercase', letterSpacing: 0.4, paddingVertical: 2, paddingHorizontal: 5, borderRadius: 8, overflow: 'hidden', textAlign: 'center' },
 
   refTag: { fontSize: 6.5, fontFamily: 'Helvetica-Bold', color: '#c2410c', backgroundColor: '#ffedd5', paddingVertical: 1.5, paddingHorizontal: 4, borderRadius: 6, marginTop: 2, alignSelf: 'flex-start' },
+  leaveTag: { fontSize: 6.5, fontFamily: 'Helvetica-Bold', color: '#0369a1', backgroundColor: '#e0f2fe', paddingVertical: 1.5, paddingHorizontal: 4, borderRadius: 6, marginTop: 2, alignSelf: 'flex-start' },
 
   footer: { position: 'absolute', bottom: 22, left: 34, right: 34, textAlign: 'center', fontSize: 7.5, color: '#cbd5e1', borderTop: '0.5 solid #e2e8f0', paddingTop: 6 },
 });
@@ -70,6 +71,11 @@ function AthleteRow({ it }) {
       <View style={{ flex: 1, paddingRight: 6 }}>
         <Text style={s.cellPrimary}>{it.aluno}</Text>
         {it.refLabel && <Text style={s.refTag}>ref. {it.refLabel}</Text>}
+        {it.licenca && (
+          <Text style={s.leaveTag}>
+            em licença {it.licenca.ate ? `${it.licenca.desde} a ${it.licenca.ate}` : `desde ${it.licenca.desde}`}
+          </Text>
+        )}
       </View>
       <Text style={[s.cellMuted, { width: 88, textTransform: 'capitalize' }]}>{it.modalidade || '—'}</Text>
       <Text style={[s.cellSub, { width: 74, textAlign: 'right', marginTop: 0 }]}>

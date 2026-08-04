@@ -41,10 +41,12 @@ export default function CoachStatement() {
           const { data: cts } = await supabase.from('assessment_contracts').select('id, due_date').in('id', cids);
           dueByContract = Object.fromEntries((cts || []).map((c) => [c.id, c.due_date]));
         }
+        // Licenças: explicam no extrato por que um aluno rendeu menos no mês.
+        const { data: leaves } = await supabase.from('assessment_leaves').select('*');
         if (!alive) return;
         setData({
           closing, coach: (coaches || []).find((c) => c.id === coachId) || null,
-          items: items || [], pendings: pend || [], dueByContract,
+          items: items || [], pendings: pend || [], dueByContract, leaves: leaves || [],
           contractsById: Object.fromEntries((contracts || []).map((c) => [c.id, c])),
           customersById: Object.fromEntries((customers || []).map((c) => [c.id, c])),
           plansById: Object.fromEntries((plans || []).map((p) => [p.id, p])),
@@ -63,9 +65,28 @@ export default function CoachStatement() {
   // PDF (mesma fonte, então não há risco de divergirem).
   const view = useMemo(() => {
     if (!data || data.error || !data.closing) return null;
-    const { closing, coach, items, pendings, dueByContract, contractsById, customersById, plansById, modalitiesById } = data;
+    const { closing, coach, items, pendings, dueByContract, leaves = [], contractsById, customersById, plansById, modalitiesById } = data;
     const competence = closing.competence;
     const todayStr = new Date().toISOString().slice(0, 10);
+
+    // Licença que pega a competência. end_date nulo = licença em aberto (segue
+    // valendo). Serve só para explicar no extrato por que o aluno rendeu menos —
+    // o desconto de dias em si já vem calculado do fechamento (valid_days).
+    const mesIni = String(competence).slice(0, 10);
+    const mesFim = (() => {
+      const [y, m] = mesIni.split('-').map(Number);
+      return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    })();
+    const licencaDoContrato = (contractId) => {
+      const l = leaves.find((x) => x.contract_id === contractId
+        && String(x.start_date).slice(0, 10) <= mesFim
+        && (!x.end_date || String(x.end_date).slice(0, 10) >= mesIni));
+      if (!l) return null;
+      return {
+        desde: formatDate(String(l.start_date).slice(0, 10)),
+        ate: l.end_date ? formatDate(String(l.end_date).slice(0, 10)) : null,
+      };
+    };
 
     const enrich = (it) => {
       const contract = contractsById[it.contract_id];
@@ -78,6 +99,7 @@ export default function CoachStatement() {
         ...it,
         aluno: customer?.full_name || (it.description || '').split('—')[0].trim() || 'Aluno',
         modalidade: modality?.name || '',
+        licenca: licencaDoContrato(it.contract_id),
         sobre: over ? over[1] : null,
         tipoLabel: SOURCE_LABEL[it.source_type] || 'Repasse',
         refLabel: it.reference_competence && it.reference_competence !== competence ? formatCompetence(it.reference_competence, { short: true }) : null,

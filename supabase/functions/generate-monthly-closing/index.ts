@@ -63,8 +63,15 @@ function activeDayKeys(contract: any, leaves: any[], monthStart: Date, monthEndE
 
   for (const leave of leaves.filter((l: any) => l.contract_id === contract.id)) {
     const leaveStart = parseDateUTC(leave.start_date, monthStart);
-    const leaveEnd = parseDateUTC(leave.end_date, leaveStart);
-    const leaveEndExclusive = new Date(leaveEnd.getTime() + DAY_MS);
+    // end_date nulo = licença EM ABERTO (o constraint de assessment_leaves exige
+    // days nulo e status 'active' nesse caso). Ela vale até o fim da competência,
+    // e volta a valer nos meses seguintes enquanto o aluno não retornar.
+    // Antes isto caía no fallback = leaveStart e descontava um único dia: no mês
+    // em que a licença começava perdia-se só 1 dia, e nos meses seguintes o aluno
+    // voltava a contar integralmente mesmo seguindo afastado.
+    const leaveEndExclusive = leave.end_date
+      ? new Date(parseDateUTC(leave.end_date, leaveStart).getTime() + DAY_MS)
+      : new Date(monthEndExclusive);
     const leaveCurrent = leaveStart > monthStart ? new Date(leaveStart) : new Date(monthStart);
     const leaveLimit = leaveEndExclusive < monthEndExclusive ? leaveEndExclusive : monthEndExclusive;
 
