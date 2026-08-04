@@ -1,8 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Loader2 } from 'lucide-react';
-import { PDFViewer, PDFDownloadLink } from '@react-pdf/renderer';
+import { ArrowLeft, Download, Loader2, ExternalLink } from 'lucide-react';
+import { PDFDownloadLink, BlobProvider } from '@react-pdf/renderer';
 import StatementDocument from './StatementDocument';
+import StatementPreview from './StatementPreview';
 import {
   PayoutMonthlyClosing, PayoutMonthlyStatementItem, AssessmentCoach,
   AssessmentContract, PreSaleCustomer, AssessmentPlan, AssessmentModality,
@@ -58,7 +59,9 @@ export default function CoachStatement() {
     return () => { alive = false; };
   }, [id, coachId]);
 
-  const doc = useMemo(() => {
+  // Dados prontos do extrato. Alimentam TANTO a prévia em HTML na tela quanto o
+  // PDF (mesma fonte, então não há risco de divergirem).
+  const view = useMemo(() => {
     if (!data || data.error || !data.closing) return null;
     const { closing, coach, items, pendings, dueByContract, contractsById, customersById, plansById, modalitiesById } = data;
     const competence = closing.competence;
@@ -112,17 +115,17 @@ export default function CoachStatement() {
     }
     const porModalidade = Object.values(byMod).sort((a, b) => b.total - a.total);
 
-    return (
-      <StatementDocument
-        coach={coach}
-        mesLabel={formatCompetence(competence)}
-        generatedAt={formatDate(closing.generated_at?.split('T')[0])}
-        statusLabel={closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão'}
-        porModalidade={porModalidade}
-        alunos={alunos} liderancas={liderancas} resgatados={resgatados} ajustes={ajustes} pendings={pends} total={total}
-      />
-    );
+    return {
+      coach,
+      mesLabel: formatCompetence(competence),
+      generatedAt: formatDate(closing.generated_at?.split('T')[0]),
+      statusLabel: closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão',
+      porModalidade,
+      alunos, liderancas, resgatados, ajustes, pendings: pends, total,
+    };
   }, [data]);
+
+  const doc = useMemo(() => (view ? <StatementDocument {...view} /> : null), [view]);
 
   if (!data) {
     return (
@@ -137,23 +140,42 @@ export default function CoachStatement() {
 
   const fileName = `Extrato ${data.coach.name} - ${formatCompetence(data.closing.competence)}.pdf`;
 
+  const btn = {
+    display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600,
+    borderRadius: 8, padding: '9px 16px', textDecoration: 'none', border: 'none', cursor: 'pointer',
+  };
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#334155' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: '#1e293b' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '10px 16px', background: '#1e293b', flexWrap: 'wrap' }}>
         <button onClick={() => navigate(`/assessoria/fechamento/${id}`)}
           style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#cbd5e1', background: 'none', border: 'none', cursor: 'pointer' }}>
           <ArrowLeft style={{ width: 16, height: 16 }} /> Voltar ao fechamento
         </button>
-        <PDFDownloadLink document={doc} fileName={fileName}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#fff', background: '#2563eb', borderRadius: 8, padding: '9px 16px', textDecoration: 'none' }}>
-          {({ loading }) => <><Download style={{ width: 16, height: 16 }} /> {loading ? 'Preparando...' : 'Baixar PDF'}</>}
-        </PDFDownloadLink>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* Abrir em aba própria: navegação de topo usa o leitor de PDF completo do
+              navegador, que funciona em casos onde o preview embutido (iframe) não
+              desenha nada. Ver o bloco de aviso abaixo. */}
+          <BlobProvider document={doc}>
+            {({ url, loading: blobLoading }) => (
+              <a href={url || undefined} target="_blank" rel="noreferrer"
+                 style={{ ...btn, color: '#e2e8f0', background: '#334155',
+                          pointerEvents: blobLoading || !url ? 'none' : 'auto',
+                          opacity: blobLoading || !url ? 0.6 : 1 }}>
+                <ExternalLink style={{ width: 16, height: 16 }} />
+                {blobLoading ? 'Preparando...' : 'Abrir em nova aba'}
+              </a>
+            )}
+          </BlobProvider>
+          <PDFDownloadLink document={doc} fileName={fileName}
+            style={{ ...btn, color: '#fff', background: '#2563eb' }}>
+            {({ loading }) => <><Download style={{ width: 16, height: 16 }} /> {loading ? 'Preparando...' : 'Baixar PDF'}</>}
+          </PDFDownloadLink>
+        </div>
       </div>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <PDFViewer style={{ width: '100%', height: '100%', border: 'none' }} showToolbar>
-          {doc}
-        </PDFViewer>
-      </div>
+
+      <StatementPreview view={view} />
+
     </div>
   );
 }
