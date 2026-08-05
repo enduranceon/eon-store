@@ -9,6 +9,7 @@ import TopBar from '@/components/layout/TopBar';
 import Dashboard from '@/pages/Dashboard';
 import Campaigns from '@/pages/Campaigns';
 import CampaignDetail from '@/pages/CampaignDetail';
+import ProductLibrary from '@/pages/ProductLibrary';
 import Products from '@/pages/Products';
 import ProductForm from '@/pages/ProductForm';
 import Orders from '@/pages/Orders';
@@ -126,8 +127,9 @@ export default function App() {
           <Route path="/comunicacao/configuracoes" element={<AdminLayout><CommunicationSettings /></AdminLayout>} />
           <Route path="/campanhas" element={<AdminLayout><Campaigns /></AdminLayout>} />
           <Route path="/campanhas/:id" element={<AdminLayout><CampaignDetail /></AdminLayout>} />
-          <Route path="/campanhas/:id/relatorio" element={<AdminLayout><CampaignReport /></AdminLayout>} />
-          <Route path="/produtos" element={<AdminLayout><Products /></AdminLayout>} />
+	          <Route path="/campanhas/:id/relatorio" element={<AdminLayout><CampaignReport /></AdminLayout>} />
+	          <Route path="/biblioteca-produtos" element={<AdminLayout><ProductLibrary /></AdminLayout>} />
+	          <Route path="/produtos" element={<AdminLayout><Products /></AdminLayout>} />
           <Route path="/produtos/novo" element={<AdminLayout><ProductForm /></AdminLayout>} />
           <Route path="/produtos/:id" element={<AdminLayout><ProductForm /></AdminLayout>} />
           <Route path="/pedidos" element={<AdminLayout><Orders /></AdminLayout>} />

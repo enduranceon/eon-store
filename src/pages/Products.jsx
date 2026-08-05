@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Package, Search, Edit, Trash2, Copy } from 'lucide-react';
+import { Plus, Package, Search, Edit, Trash2, Copy, Link2, Link2Off } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { PreSaleProduct } from '@/api/entities';
 import { formatCurrency } from '@/lib/utils';
+import { getProductCampaignIds } from '@/lib/campaignLinks';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
@@ -20,7 +21,7 @@ async function loadProductsPage() {
 
 export default function Products() {
   const { data: products, refresh } = usePageData({
-    key: 'products:list',
+    key: 'presale-products:list',
     loader: loadProductsPage,
     initialData: [],
     tags: ['presale_products'],
@@ -32,6 +33,8 @@ export default function Products() {
   const navigate = useNavigate();
 
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))].sort();
+  const linkedCount = products.filter(p => p.product_id).length;
+  const withoutCampaignCount = products.filter(p => getProductCampaignIds(p).length === 0).length;
 
   const filtered = products.filter(p => {
     const matchSearch = p.name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -69,11 +72,14 @@ export default function Products() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Produtos</h2>
-          <p className="text-sm text-muted-foreground">{products.length} produtos cadastrados</p>
+          <h2 className="text-xl font-bold text-gray-900">Produtos de pré-venda</h2>
+          <p className="text-sm text-muted-foreground">
+            {products.length} itens de coleção · {linkedCount} vinculados à biblioteca
+            {withoutCampaignCount > 0 ? ` · ${withoutCampaignCount} sem coleção` : ''}
+          </p>
         </div>
         <Button onClick={() => navigate('/produtos/novo')}>
-          <Plus className="w-4 h-4" /> Novo Produto
+          <Plus className="w-4 h-4" /> Novo produto de pré-venda
         </Button>
       </div>
 
@@ -108,7 +114,7 @@ export default function Products() {
             <Package className="w-10 h-10 text-muted-foreground mb-3" />
             <p className="text-sm text-muted-foreground">Nenhum produto encontrado</p>
             <Button className="mt-4" onClick={() => navigate('/produtos/novo')}>
-              <Plus className="w-4 h-4" /> Cadastrar produto
+              <Plus className="w-4 h-4" /> Cadastrar produto de pré-venda
             </Button>
           </CardContent>
         </Card>
@@ -119,6 +125,7 @@ export default function Products() {
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Produto</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Fornecedor</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Biblioteca</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Preço venda</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Custo total</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Lucro/un.</th>
@@ -144,10 +151,26 @@ export default function Products() {
                             <Package className="w-5 h-5 text-gray-300" />
                           </div>
                         )}
-                        <span className="font-medium">{p.name}</span>
+                        <div className="min-w-0">
+                          <span className="font-medium">{p.name}</span>
+                          {p.product_number && (
+                            <p className="text-[11px] text-muted-foreground font-mono">#{String(p.product_number).padStart(4, '0')}</p>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{p.supplier || '-'}</td>
+                    <td className="px-4 py-3">
+                      {p.product_id ? (
+                        <Badge variant="outline" className="gap-1 text-green-700 border-green-200 bg-green-50">
+                          <Link2 className="w-3 h-3" /> Vinculado
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1 text-amber-700 border-amber-200 bg-amber-50">
+                          <Link2Off className="w-3 h-3" /> Avulso
+                        </Badge>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right font-medium">{formatCurrency(p.sale_price)}</td>
                     <td className="px-4 py-3 text-right text-red-600">{formatCurrency(totalCost)}</td>
                     <td className={`px-4 py-3 text-right font-medium ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(profit)}</td>

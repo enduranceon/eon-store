@@ -1,18 +1,19 @@
-import { Menu, Store } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 const titles = {
   '/': 'Dashboard',
-  '/campanhas': 'Campanhas',
-  '/produtos': 'Produtos',
+	  '/campanhas': 'Coleções',
+	  '/biblioteca-produtos': 'Biblioteca de produtos',
+	  '/produtos': 'Produtos de pré-venda',
   '/pedidos': 'Pedidos',
   '/clientes': 'Clientes',
   '/relatorios': 'Relatórios',
 };
 
 function getTitle(pathname) {
-  if (pathname.startsWith('/campanhas/')) return 'Detalhe da Campanha';
-  if (pathname.startsWith('/produtos/')) return 'Produto';
+  if (pathname.startsWith('/campanhas/')) return 'Detalhe da coleção';
+  if (pathname.startsWith('/produtos/')) return 'Produto de pré-venda';
   if (pathname.startsWith('/pedidos/')) return 'Pedido';
   if (pathname.startsWith('/clientes/')) return 'Cliente';
   return titles[pathname] ?? 'EON Store';

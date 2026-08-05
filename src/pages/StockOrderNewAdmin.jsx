@@ -12,6 +12,7 @@ import { createOrderCharge, createStockOrder } from '@/api/client';
 import { formatCurrency } from '@/lib/utils';
 import { normalizePhone } from '@/lib/phone';
 import { defaultAsaasDueDate } from '@/lib/payment-methods';
+import { formatProductNumber } from '@/lib/sku';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 
@@ -95,7 +96,13 @@ export default function StockOrderNewAdmin() {
     const inStock = products.filter(p => Number(p.quantity || 0) > 0);
     if (!productSearch) return inStock;
     const q = productSearch.toLowerCase();
-    return inStock.filter(p => p.name?.toLowerCase().includes(q));
+    return inStock.filter(p =>
+      p.name?.toLowerCase().includes(q) ||
+      p.category?.toLowerCase().includes(q) ||
+      p.subcategory?.toLowerCase().includes(q) ||
+      p.supplier?.toLowerCase().includes(q) ||
+      String(p.product_number || '').includes(q)
+    );
   }, [products, productSearch]);
 
   // Cart helpers
@@ -209,7 +216,7 @@ export default function StockOrderNewAdmin() {
         </Button>
         <div>
           <h2 className="text-xl font-bold">Venda manual da loja</h2>
-          <p className="text-sm text-muted-foreground">Crie o pedido com itens em estoque e envie o link ao cliente</p>
+          <p className="text-sm text-muted-foreground">Crie um pedido com produtos em estoque e envie ou registre a cobrança</p>
         </div>
       </div>
 
@@ -300,14 +307,14 @@ export default function StockOrderNewAdmin() {
           <Card>
             <CardContent className="p-5">
               <Label className="flex items-center gap-1.5 mb-2">
-                <Package className="w-4 h-4" /> Produtos
+                <Package className="w-4 h-4" /> Produtos em estoque
               </Label>
               <div className="relative mb-3">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input className="pl-9"
-                  placeholder="Buscar produto..."
-                  value={productSearch}
-                  onChange={e => setProductSearch(e.target.value)} />
+                  <Input className="pl-9"
+                    placeholder="Buscar produto, código, categoria ou fornecedor..."
+                    value={productSearch}
+                    onChange={e => setProductSearch(e.target.value)} />
               </div>
 
               {filteredProducts.length === 0 ? (
@@ -321,20 +328,23 @@ export default function StockOrderNewAdmin() {
                     return (
                       <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-lg border hover:border-blue-300 transition-colors">
                         {/* Foto */}
-                        {p.image_url ? (
-                          <img src={p.image_url} alt={p.name} className="w-12 h-12 rounded object-cover shrink-0" />
+                        {(p.images?.[0] || p.image_url) ? (
+                          <img src={p.images?.[0] || p.image_url} alt={p.name} className="w-12 h-12 rounded object-cover shrink-0" />
                         ) : (
                           <div className="w-12 h-12 rounded bg-gray-100 flex items-center justify-center shrink-0">
                             <Package className="w-5 h-5 text-gray-400" />
                           </div>
                         )}
 
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{p.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatCurrency(p.sale_price)} · estoque: {p.quantity}
-                          </p>
-                        </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">{p.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatCurrency(p.sale_price)} · estoque: {p.quantity}
+                              {p.product_number ? ` · ${formatProductNumber(p.product_number)}` : ''}
+                              {p.category ? ` · ${p.category}` : ''}
+                              {p.supplier ? ` · ${p.supplier}` : ''}
+                            </p>
+                          </div>
 
                         {qty > 0 ? (
                           <div className="flex items-center gap-1 shrink-0">

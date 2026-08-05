@@ -111,8 +111,8 @@ export default function Campaigns() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Campanhas de Pré-venda</h2>
-          <p className="text-sm text-muted-foreground">{campaigns.length} campanhas cadastradas</p>
+          <h2 className="text-xl font-bold text-gray-900">Coleções de pré-venda</h2>
+          <p className="text-sm text-muted-foreground">{campaigns.length} coleções cadastradas</p>
         </div>
         <Button onClick={() => { setEditingId(null); setForm(EMPTY_FORM); setOpen(true); }}>
           <Plus className="w-4 h-4" />

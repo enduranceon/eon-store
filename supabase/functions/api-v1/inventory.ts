@@ -11,6 +11,9 @@ const WRITABLE_FIELDS = new Set([
   "name",
   "description",
   "category",
+  "subcategory",
+  "supplier",
+  "supplier_id",
   "images",
   "sale_price",
   "regular_price",
@@ -19,7 +22,10 @@ const WRITABLE_FIELDS = new Set([
   "status",
   "notes",
   "product_id",
+  "product_number",
   "revenue_center_id",
+  "variations",
+  "extras",
 ]);
 
 export class InventoryInputError extends Error {
@@ -73,6 +79,26 @@ function optionalNumber(
   output[field] = Math.round(value * 100) / 100;
 }
 
+function optionalInteger(
+  input: ProductPayload,
+  output: ProductPayload,
+  field: string,
+  min: number,
+  max: number,
+): void {
+  if (!(field in input)) return;
+  const value = input[field];
+  if (value === null || value === "") {
+    output[field] = null;
+    return;
+  }
+  const numberValue = Number(value);
+  if (!Number.isInteger(numberValue) || numberValue < min || numberValue > max) {
+    throw new InventoryInputError(`Valor inválido: ${field}`);
+  }
+  output[field] = numberValue;
+}
+
 function optionalUuid(
   input: ProductPayload,
   output: ProductPayload,
@@ -86,6 +112,29 @@ function optionalUuid(
   }
   if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
     throw new InventoryInputError(`Identificador inválido: ${field}`);
+  }
+  output[field] = value;
+}
+
+function optionalJsonArray(
+  input: ProductPayload,
+  output: ProductPayload,
+  field: string,
+  maxItems: number,
+  maxBytes: number,
+): void {
+  if (!(field in input)) return;
+  const value = input[field];
+  if (value === null) {
+    output[field] = [];
+    return;
+  }
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw new InventoryInputError(`Campo inválido: ${field}`);
+  }
+  const encoded = JSON.stringify(value);
+  if (encoded.length > maxBytes) {
+    throw new InventoryInputError(`Campo muito longo: ${field}`);
   }
   output[field] = value;
 }
@@ -118,12 +167,18 @@ export function normalizeStockProductPayload(
 
   optionalText(payload, output, "description", 5_000);
   optionalText(payload, output, "category", 200);
+  optionalText(payload, output, "subcategory", 200);
+  optionalText(payload, output, "supplier", 200);
   optionalText(payload, output, "notes", 5_000);
   optionalNumber(payload, output, "sale_price");
   optionalNumber(payload, output, "regular_price");
   optionalNumber(payload, output, "cost_price");
   optionalUuid(payload, output, "product_id");
+  optionalUuid(payload, output, "supplier_id");
   optionalUuid(payload, output, "revenue_center_id");
+  optionalInteger(payload, output, "product_number", 1, 99_999_999);
+  optionalJsonArray(payload, output, "variations", 250, 250_000);
+  optionalJsonArray(payload, output, "extras", 100, 100_000);
 
   if ("quantity" in payload) {
     const quantity = Number(payload.quantity);

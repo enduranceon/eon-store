@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Edit2, Save, X, ExternalLink, Copy, Package, ShoppingCart, DollarSign, TrendingUp, LayoutGrid, GripVertical, Plus, Search, BarChart2 } from 'lucide-react';
+import { ArrowLeft, Edit2, Save, X, ExternalLink, Copy, Package, ShoppingCart, DollarSign, TrendingUp, LayoutGrid, GripVertical, Plus, Search, BarChart2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { PreSaleCampaign, PreSaleOrder, PreSaleProduct } from '@/api/entities';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveSale, isNonCancelledOrder } from '@/lib/sales';
+import {
+  addCampaignLink,
+  getCampaignLinkHealth,
+  getCampaignLinkStatus,
+  isProductLinkedToCampaign,
+  orderCampaignProducts,
+  removeCampaignLink,
+} from '@/lib/campaignLinks';
 import { toast } from 'sonner';
 
 const STATUS_LABEL = { active: 'Ativa', ended: 'Encerrada', archived: 'Arquivada' };
@@ -28,26 +36,21 @@ export default function CampaignDetail() {
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [savingOrder, setSavingOrder] = useState(false);
+    const [form, setForm] = useState({});
+    const [saving, setSaving] = useState(false);
+    const [savingOrder, setSavingOrder] = useState(false);
+    const [normalizingLinks, setNormalizingLinks] = useState(false);
 
   const load = async () => {
     try {
-    const [c, allOrders, allProds] = await Promise.all([PreSaleCampaign.get(id), PreSaleOrder.list(), PreSaleProduct.list()]);
-    setCampaign(c);
-    setForm({ ...c });
-    const campaignProducts = allProds.filter(p => (p.campaign_ids || []).includes(id) || p.campaign_id === id);
-    setOrders(allOrders.filter(o => o.campaign_id === id));
-    setAllProducts(allProds);
-    setProducts(campaignProducts);
-    // Inicializa a ordem: usa a ordem salva ou a ordem padrão (criação)
-    const savedOrder = c.product_order || [];
-    const orderedIds = [
-      ...savedOrder.filter(pid => campaignProducts.find(p => p.id === pid)),
-      ...campaignProducts.filter(p => !savedOrder.includes(p.id)).map(p => p.id),
-    ];
-    setProductOrder(orderedIds);
+      const [c, allOrders, allProds] = await Promise.all([PreSaleCampaign.get(id), PreSaleOrder.list(), PreSaleProduct.list()]);
+      setCampaign(c);
+      setForm({ ...c });
+      const campaignProducts = allProds.filter(p => isProductLinkedToCampaign(p, id));
+      setOrders(allOrders.filter(o => o.campaign_id === id));
+      setAllProducts(allProds);
+      setProducts(campaignProducts);
+      setProductOrder(orderCampaignProducts(c, campaignProducts));
     } catch { toast.error('Erro ao carregar campanha'); }
   };
 
@@ -83,29 +86,59 @@ export default function CampaignDetail() {
 
   const handleLinkProducts = async (productIds) => {
     try {
-      await Promise.all(productIds.map(async pid => {
-        const p = allProducts.find(x => x.id === pid);
-        const existing = p?.campaign_ids || [];
-        if (!existing.includes(id)) {
-          await PreSaleProduct.update(pid, { campaign_ids: [...existing, id] });
-        }
-      }));
+        await Promise.all(productIds.map(async pid => {
+          const p = allProducts.find(x => x.id === pid);
+          const campaignIds = addCampaignLink(p, id);
+          if (!getCampaignLinkStatus(p, id).primary) {
+            await PreSaleProduct.update(pid, { campaign_ids: campaignIds });
+          }
+        }));
       toast.success(`${productIds.length} produto(s) vinculado(s)!`);
       setShowLinkModal(false);
       load();
     } catch (e) { toast.error(e.message); }
   };
 
-  const handleUnlink = async (pid) => {
+    const handleUnlink = async (pid) => {
     if (!confirm('Desvincular este produto da campanha?')) return;
     try {
-      const p = allProducts.find(x => x.id === pid);
-      const existing = p?.campaign_ids || [];
-      await PreSaleProduct.update(pid, { campaign_ids: existing.filter(x => x !== id) });
+        const p = allProducts.find(x => x.id === pid);
+        const payload = { campaign_ids: removeCampaignLink(p, id) };
+        if (p?.campaign_id === id) payload.campaign_id = null;
+        await PreSaleProduct.update(pid, payload);
       toast.success('Produto desvinculado');
       load();
     } catch (e) { toast.error(e.message); }
-  };
+    };
+
+    const handleNormalizeLinks = async () => {
+      const health = getCampaignLinkHealth(campaign, products);
+      const productsToNormalize = [...health.legacyOnly, ...health.dualLinked];
+      const issueCount = productsToNormalize.length + health.orphanOrderIds.length;
+      if (issueCount === 0) return toast.info('Vínculos já estão consistentes');
+      if (!confirm(`Normalizar vínculos desta coleção?\n\n${productsToNormalize.length} produto(s) serão padronizados em campaign_ids e ${health.orphanOrderIds.length} item(ns) órfão(s) sairão da ordenação.`)) return;
+
+      setNormalizingLinks(true);
+      try {
+        await Promise.all(productsToNormalize.map(product =>
+          PreSaleProduct.update(product.id, {
+            campaign_id: null,
+            campaign_ids: addCampaignLink(product, id),
+          })
+        ));
+
+        if (health.orphanOrderIds.length > 0) {
+          await PreSaleCampaign.update(id, { product_order: orderCampaignProducts(campaign, products) });
+        }
+
+        toast.success('Vínculos normalizados');
+        load();
+      } catch (e) {
+        toast.error(e.message || 'Erro ao normalizar vínculos');
+      } finally {
+        setNormalizingLinks(false);
+      }
+    };
 
   const checkoutUrl = `${window.location.origin}/checkout/${campaign?.slug || id}`;
   const copyCheckout = () => { navigator.clipboard.writeText(checkoutUrl); toast.success('Link copiado!'); };
@@ -120,7 +153,8 @@ export default function CampaignDetail() {
   const totalCost = effectiveOrders.reduce((acc, o) => acc + (o.total_cost || 0), 0);
   const grossProfit = totalSold - totalCost;
   const margin = totalSold > 0 ? (grossProfit / totalSold) * 100 : 0;
-  const uniqueCustomers = new Set(activeOrders.map(o => o.customer_id || o.checkout_whatsapp)).size;
+    const uniqueCustomers = new Set(activeOrders.map(o => o.customer_id || o.checkout_whatsapp)).size;
+    const linkHealth = getCampaignLinkHealth(campaign, products);
 
   // Resumo operacional: considera todo pedido não cancelado, mesmo sem cobrança.
   const productQty = {};
@@ -204,12 +238,12 @@ export default function CampaignDetail() {
         ))}
       </div>
 
-      {/* Produtos da campanha */}
-      <Card>
+        {/* Produtos da coleção */}
+        <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base flex items-center gap-2">
-              <Package className="w-4 h-4" /> Produtos ({products.length})
+              <Package className="w-4 h-4" /> Produtos da coleção ({products.length})
             </CardTitle>
             <div className="flex gap-2">
               {products.length > 1 && (
@@ -218,18 +252,47 @@ export default function CampaignDetail() {
                 </Button>
               )}
               <Button size="sm" onClick={() => setShowLinkModal(true)}>
-                <Plus className="w-3.5 h-3.5" /> Vincular produto
+                <Plus className="w-3.5 h-3.5" /> Vincular produto de pré-venda
               </Button>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          {products.length === 0 ? (
+          <CardContent>
+            {linkHealth.hasIssues && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="font-semibold">Diagnóstico de vínculos da coleção</p>
+                    <p className="text-xs mt-0.5">
+                      {linkHealth.legacyOnly.length} só no vínculo antigo · {linkHealth.dualLinked.length} duplicados nos dois campos · {linkHealth.orphanOrderIds.length} ids órfãos na ordenação
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="bg-white border-amber-300 text-amber-900 hover:bg-amber-100"
+                    disabled={normalizingLinks}
+                    onClick={handleNormalizeLinks}
+                  >
+                    {normalizingLinks ? 'Normalizando...' : 'Normalizar'}
+                  </Button>
+                </div>
+              </div>
+            )}
+            {!linkHealth.hasIssues && products.length > 0 && (
+              <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4" />
+                Vínculos da coleção consistentes.
+              </div>
+            )}
+            {products.length === 0 ? (
             <div className="text-center py-10">
               <Package className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">Nenhum produto vinculado ainda</p>
+              <p className="text-sm text-muted-foreground">Nenhum produto vinculado a esta coleção</p>
               <Button size="sm" className="mt-3" onClick={() => setShowLinkModal(true)}>
-                <Plus className="w-3.5 h-3.5" /> Vincular produto
+                <Plus className="w-3.5 h-3.5" /> Vincular produto de pré-venda
               </Button>
             </div>
           ) : (
@@ -237,8 +300,9 @@ export default function CampaignDetail() {
               {productOrder.map((pid, idx) => {
                 const p = products.find(x => x.id === pid);
                 if (!p) return null;
-                const img = p.images?.[0];
-                return (
+                  const img = p.images?.[0];
+                  const linkStatus = getCampaignLinkStatus(p, id);
+                  return (
                   <div key={pid} className="group relative border rounded-xl overflow-hidden bg-white hover:shadow-md transition-shadow">
                     <div className="aspect-square bg-gray-100">
                       {img ? (
@@ -256,10 +320,12 @@ export default function CampaignDetail() {
                         <X className="w-3 h-3" />
                       </button>
                     </div>
-                    <div className="p-2">
-                      <p className="text-xs font-semibold text-gray-900 truncate">{p.name}</p>
-                      <p className="text-xs text-blue-600 font-medium">{p.sale_price ? `R$ ${Number(p.sale_price).toFixed(2).replace('.', ',')}` : '—'}</p>
-                    </div>
+                      <div className="p-2">
+                        <p className="text-xs font-semibold text-gray-900 truncate">{p.name}</p>
+                        <p className="text-xs text-blue-600 font-medium">{p.sale_price ? `R$ ${Number(p.sale_price).toFixed(2).replace('.', ',')}` : '—'}</p>
+                        {linkStatus.legacyOnly && <p className="text-[10px] text-amber-700 mt-0.5">vínculo antigo</p>}
+                        {linkStatus.dual && <p className="text-[10px] text-muted-foreground mt-0.5">vínculo duplicado</p>}
+                      </div>
                   </div>
                 );
               })}
@@ -398,11 +464,13 @@ function LinkProductsModal({ allProducts, linkedIds, onLink, onClose }) {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState([]);
 
-  const available = allProducts.filter(p =>
-    !linkedIds.includes(p.id) &&
-    (p.name.toLowerCase().includes(search.toLowerCase()) ||
-     (p.category || '').toLowerCase().includes(search.toLowerCase()))
-  );
+    const available = allProducts.filter(p =>
+      !linkedIds.includes(p.id) &&
+      (p.name.toLowerCase().includes(search.toLowerCase()) ||
+       (p.category || '').toLowerCase().includes(search.toLowerCase()) ||
+       (p.supplier || '').toLowerCase().includes(search.toLowerCase()) ||
+       String(p.product_number || '').includes(search))
+    );
 
   const toggle = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
@@ -411,8 +479,8 @@ function LinkProductsModal({ allProducts, linkedIds, onLink, onClose }) {
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-xl">
         <div className="px-5 py-4 border-b flex items-center justify-between">
           <div>
-            <h3 className="font-bold text-gray-900">Vincular produtos</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">{selected.length > 0 ? `${selected.length} selecionado(s)` : 'Selecione os produtos para adicionar à campanha'}</p>
+              <h3 className="font-bold text-gray-900">Vincular produtos</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">{selected.length > 0 ? `${selected.length} selecionado(s)` : 'Selecione os produtos para adicionar à coleção'}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X className="w-5 h-5" /></button>
         </div>
@@ -422,7 +490,7 @@ function LinkProductsModal({ allProducts, linkedIds, onLink, onClose }) {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               autoFocus
-              placeholder="Buscar produto..."
+                placeholder="Buscar produto, código ou fornecedor..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full pl-9 pr-4 h-9 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"

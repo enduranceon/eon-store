@@ -48,16 +48,17 @@ const FINANCEIRO_ITEMS = [
 // LOJA — módulo secundário (colapsável)
 const LOJA_ITEMS = [
   { label: 'Pedidos',        icon: ShoppingCart,  to: '/pedidos',         badge: 'orders' },
-  { label: 'Campanhas',      icon: Megaphone,     to: '/campanhas' },
+  { label: 'Coleções',       icon: Megaphone,     to: '/campanhas' },
   { label: 'Devoluções',     icon: Undo2,         to: '/devolucoes' },
-  { label: 'Estoque',        icon: Archive,       to: '/estoque',         exact: true },
+  { label: 'Produtos estoque', icon: Archive,     to: '/estoque',         exact: true },
   { label: 'Ped. estoque',   icon: ClipboardList, to: '/estoque/pedidos' },
 ];
 
 // CONFIGURAÇÕES (colapsável)
 const CONFIG_ITEMS = [
-  { label: 'Dashboard',         icon: LayoutDashboard, to: '/admin',                  exact: true },
-  { label: 'Produtos loja',     icon: Package,         to: '/produtos' },
+	  { label: 'Dashboard',         icon: LayoutDashboard, to: '/admin',                  exact: true },
+	  { label: 'Biblioteca produtos', icon: Package,       to: '/biblioteca-produtos' },
+	  { label: 'Produtos pré-venda', icon: Package,        to: '/produtos' },
   { label: 'Categorias',        icon: Tag,             to: '/categorias' },
   { label: 'Treinadores',       icon: UserCheck,       to: '/treinadores' },
   { label: 'Fornecedores',      icon: Truck,           to: '/fornecedores' },

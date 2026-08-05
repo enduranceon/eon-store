@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Search, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, Search, X, Link2, Link2Off } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,9 +10,28 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import ImageUpload from '@/components/shared/ImageUpload';
 import { StockProduct, Product } from '@/api/entities';
 import { formatCurrency } from '@/lib/utils';
+import { formatProductNumber } from '@/lib/sku';
 import { toast } from 'sonner';
 
-const empty = { name: '', description: '', category: '', sale_price: '', regular_price: '', cost_price: '', quantity: '', status: 'active', images: [], notes: '', product_id: null };
+const empty = {
+  name: '',
+  description: '',
+  category: '',
+  subcategory: '',
+  supplier: '',
+  supplier_id: null,
+  product_number: null,
+  sale_price: '',
+  regular_price: '',
+  cost_price: '',
+  quantity: '',
+  status: 'active',
+  images: [],
+  variations: [],
+  extras: [],
+  notes: '',
+  product_id: null,
+};
 
 export default function StockProductForm() {
   const { id } = useParams();
@@ -26,17 +45,21 @@ export default function StockProductForm() {
 
   useEffect(() => {
     if (isEdit) {
-      StockProduct.get(id).then(p => setForm({
-        ...p,
-        sale_price: p.sale_price ?? '',
-        regular_price: p.regular_price ?? '',
-        cost_price: p.cost_price ?? '',
-        quantity: p.quantity ?? '',
-        images: p.images || [],
-        product_id: p.product_id || null,
-      })).catch(() => toast.error('Produto não encontrado'));
+        StockProduct.get(id).then(p => setForm({
+          ...p,
+          sale_price: p.sale_price ?? '',
+          regular_price: p.regular_price ?? '',
+          cost_price: p.cost_price ?? '',
+          quantity: p.quantity ?? '',
+          images: p.images || [],
+          variations: Array.isArray(p.variations) ? p.variations : [],
+          extras: Array.isArray(p.extras) ? p.extras : [],
+          product_id: p.product_id || null,
+          supplier_id: p.supplier_id || null,
+          product_number: p.product_number || null,
+        })).catch(() => toast.error('Produto não encontrado'));
     }
-  }, [id]);
+  }, [id, isEdit]);
 
   const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
@@ -53,17 +76,23 @@ export default function StockProductForm() {
 
   const importFromLibrary = (p) => {
     setForm(f => ({
-      ...f,
-      product_id: p.id,
-      name: p.name || '',
-      description: p.description || '',
-      category: p.category || '',
-      images: p.images || [],
-      sale_price: p.sale_price ?? '',
-      regular_price: p.regular_price ?? '',
-      cost_price: p.cost_price ?? '',
-      notes: p.notes || '',
-    }));
+        ...f,
+        product_id: p.id,
+        name: p.name || '',
+        description: p.description || '',
+        category: p.category || '',
+        subcategory: p.subcategory || '',
+        supplier: p.supplier || '',
+        supplier_id: p.supplier_id || null,
+        product_number: p.product_number || null,
+        images: p.images || [],
+        sale_price: p.sale_price ?? '',
+        regular_price: p.regular_price ?? '',
+        cost_price: p.cost_price ?? '',
+        variations: Array.isArray(p.variations) ? p.variations : [],
+        extras: Array.isArray(p.extras) ? p.extras : [],
+        notes: p.notes || '',
+      }));
     setImportModal(false);
     toast.success(`"${p.name}" importado da biblioteca!`);
   };
@@ -74,12 +103,15 @@ export default function StockProductForm() {
     setSaving(true);
     try {
       const payload = {
-        ...form,
-        sale_price: parseFloat(form.sale_price) || 0,
-        regular_price: parseFloat(form.regular_price) || 0,
-        cost_price: parseFloat(form.cost_price) || 0,
-        quantity: parseInt(form.quantity) || 0,
-      };
+          ...form,
+          sale_price: parseFloat(form.sale_price) || 0,
+          regular_price: parseFloat(form.regular_price) || 0,
+          cost_price: parseFloat(form.cost_price) || 0,
+          quantity: parseInt(form.quantity) || 0,
+          product_number: form.product_number ? Number(form.product_number) : null,
+          variations: Array.isArray(form.variations) ? form.variations : [],
+          extras: Array.isArray(form.extras) ? form.extras : [],
+        };
       if (isEdit) {
         await StockProduct.update(id, payload);
         toast.success('Produto atualizado!');
@@ -95,10 +127,18 @@ export default function StockProductForm() {
     }
   };
 
-  const filteredLibrary = library.filter(p => {
-    const q = librarySearch.toLowerCase();
-    return !q || p.name?.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q);
-  });
+    const filteredLibrary = library.filter(p => {
+      const q = librarySearch.toLowerCase();
+      return !q ||
+        p.name?.toLowerCase().includes(q) ||
+        p.category?.toLowerCase().includes(q) ||
+        p.subcategory?.toLowerCase().includes(q) ||
+        p.supplier?.toLowerCase().includes(q) ||
+        String(p.product_number || '').includes(q);
+    });
+
+    const variationCount = Array.isArray(form.variations) ? form.variations.length : 0;
+    const extrasCount = Array.isArray(form.extras) ? form.extras.length : 0;
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
@@ -106,7 +146,7 @@ export default function StockProductForm() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/estoque')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
-        <h2 className="text-xl font-bold">{isEdit ? 'Editar produto' : 'Novo produto em estoque'}</h2>
+        <h2 className="text-xl font-bold">{isEdit ? 'Editar produto em estoque' : 'Novo produto em estoque'}</h2>
       </div>
 
       {!isEdit && (
@@ -122,29 +162,56 @@ export default function StockProductForm() {
         </div>
       )}
 
-      {form.product_id && (
-        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2 flex items-center justify-between text-sm">
-          <span className="text-green-800 font-medium">✓ Vinculado à biblioteca de produtos</span>
+        {form.product_id && (
+          <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2 flex items-center justify-between text-sm">
+            <span className="text-green-800 font-medium inline-flex items-center gap-1.5">
+              <Link2 className="w-3.5 h-3.5" /> Vinculado à biblioteca de produtos
+            </span>
           <button onClick={() => set('product_id', null)} className="text-green-600 hover:text-green-800 text-xs underline">Desvincular</button>
+        </div>
+      )}
+
+      {!form.product_id && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
+          <Link2Off className="w-4 h-4 shrink-0" />
+          Produto avulso de estoque. Ele não acompanha mudanças feitas na biblioteca.
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Informações</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label>Nome do produto *</Label>
-              <Input className="mt-1" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Ex: Camiseta EON Dry-Fit" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
+            <CardHeader className="pb-2"><CardTitle className="text-base">Informações do item em estoque</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
               <div>
-                <Label>Categoria</Label>
-                <Input className="mt-1" value={form.category} onChange={e => set('category', e.target.value)} placeholder="Ex: Camisetas" />
+                <Label>Nome do produto *</Label>
+                <Input className="mt-1" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Ex: Camiseta EON Dry-Fit" />
               </div>
-              <div>
-                <Label>Status</Label>
-                <Select value={form.status} onValueChange={v => set('status', v)}>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <Label>Código</Label>
+                  <Input
+                    readOnly
+                    className="mt-1 font-mono bg-gray-50 text-gray-600"
+                    value={form.product_number ? formatProductNumber(form.product_number) : '—'}
+                  />
+                </div>
+                <div>
+                  <Label>Categoria</Label>
+                  <Input className="mt-1" value={form.category} onChange={e => set('category', e.target.value)} placeholder="Ex: Camisetas" />
+                </div>
+                <div>
+                  <Label>Subcategoria</Label>
+                  <Input className="mt-1" value={form.subcategory || ''} onChange={e => set('subcategory', e.target.value)} placeholder="Ex: Regata" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label>Fornecedor</Label>
+                  <Input className="mt-1" value={form.supplier || ''} onChange={e => set('supplier', e.target.value)} placeholder="Ex: WOOM" />
+                </div>
+                <div>
+                  <Label>Status</Label>
+                  <Select value={form.status} onValueChange={v => set('status', v)}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="active">Ativo</SelectItem>
@@ -153,15 +220,27 @@ export default function StockProductForm() {
                 </Select>
               </div>
             </div>
-            <div>
-              <Label>Descrição</Label>
-              <Textarea className="mt-1" value={form.description} onChange={e => set('description', e.target.value)} rows={3} placeholder="Descrição do produto..." />
-            </div>
+              <div>
+                <Label>Descrição</Label>
+                <Textarea className="mt-1" value={form.description} onChange={e => set('description', e.target.value)} rows={3} placeholder="Descrição do produto..." />
+              </div>
+              {(variationCount > 0 || extrasCount > 0) && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border bg-gray-50 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">Variações da biblioteca</p>
+                    <p className="text-sm font-semibold">{variationCount}</p>
+                  </div>
+                  <div className="rounded-lg border bg-gray-50 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">Extras da biblioteca</p>
+                    <p className="text-sm font-semibold">{extrasCount}</p>
+                  </div>
+                </div>
+              )}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Preços e Estoque</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Preços e quantidade</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-3 gap-4">
               <div>
@@ -219,13 +298,13 @@ export default function StockProductForm() {
             <div className="px-5 py-3 border-b">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input placeholder="Buscar produto..." className="pl-9" value={librarySearch} onChange={e => setLibrarySearch(e.target.value)} autoFocus />
+                  <Input placeholder="Buscar nome, código, categoria ou fornecedor..." className="pl-9" value={librarySearch} onChange={e => setLibrarySearch(e.target.value)} autoFocus />
               </div>
             </div>
             <div className="overflow-y-auto flex-1 p-3 space-y-1">
               {filteredLibrary.length === 0 ? (
                 <div className="text-center py-12 text-gray-400 text-sm">
-                  {library.length === 0 ? 'Biblioteca vazia. Crie produtos em Produtos → Novo Produto.' : 'Nenhum produto encontrado.'}
+                  {library.length === 0 ? 'Biblioteca vazia. Crie produtos em Produtos de pré-venda → Novo produto.' : 'Nenhum produto encontrado.'}
                 </div>
               ) : filteredLibrary.map(p => (
                 <button
@@ -240,8 +319,11 @@ export default function StockProductForm() {
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm text-gray-900 truncate">{p.name}</p>
-                    {p.category && <p className="text-xs text-gray-500">{p.category}</p>}
-                    <p className="text-xs text-blue-600 font-medium mt-0.5">{formatCurrency(p.sale_price)}</p>
+                      <p className="text-xs text-gray-500">
+                        {p.product_number ? `${formatProductNumber(p.product_number)} · ` : ''}
+                        {[p.category, p.subcategory, p.supplier].filter(Boolean).join(' · ') || 'Sem classificação'}
+                      </p>
+                      <p className="text-xs text-blue-600 font-medium mt-0.5">{formatCurrency(p.sale_price)}</p>
                   </div>
                 </button>
               ))}

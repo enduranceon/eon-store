@@ -30,7 +30,13 @@ Deno.test("stock product payload keeps only validated writable fields", () => {
     quantity: "12",
     status: "active",
     images: ["data:image/jpeg;base64,abc"],
-    product_id: null,
+    product_id: crypto.randomUUID(),
+    product_number: "42",
+    supplier: "  Woom  ",
+    subcategory: "  Regata  ",
+    supplier_id: crypto.randomUUID(),
+    variations: [{ name: "M", sku: "0042-M" }],
+    extras: [{ name: "Bordado", price: 10 }],
   }, "create");
 
   assert(payload.name === "Camiseta EON", "name was not normalized");
@@ -41,6 +47,11 @@ Deno.test("stock product payload keeps only validated writable fields", () => {
   assert(payload.sale_price === 129.91, "price was not rounded");
   assert(payload.quantity === 12, "quantity was not normalized");
   assert(Array.isArray(payload.images), "images were not preserved");
+  assert(payload.product_number === 42, "product number was not normalized");
+  assert(payload.supplier === "Woom", "supplier was not normalized");
+  assert(payload.subcategory === "Regata", "subcategory was not normalized");
+  assert(Array.isArray(payload.variations), "variations were not preserved");
+  assert(Array.isArray(payload.extras), "extras were not preserved");
 });
 
 Deno.test("stock product payload rejects server fields and invalid inventory", () => {
@@ -54,6 +65,8 @@ Deno.test("stock product payload rejects server fields and invalid inventory", (
     "Status de produto inválido",
   );
   assertRejects({ name: "Produto", images: ["a", "b", "c", "d"] }, "Imagens");
+  assertRejects({ name: "Produto", product_number: 0 }, "Valor inválido");
+  assertRejects({ name: "Produto", variations: {} }, "Campo inválido");
 });
 
 Deno.test("stock product update requires at least one valid change", () => {

@@ -11,6 +11,7 @@ import ImageUpload from '@/components/shared/ImageUpload';
 import { formatSku, formatProductNumber } from '@/lib/sku';
 import { PreSaleProduct, PreSaleCampaign, PreSaleSupplier, PreSaleCategory, Product } from '@/api/entities';
 import { formatCurrency, cn } from '@/lib/utils';
+import { normalizeCampaignSelection } from '@/lib/campaignLinks';
 import { toast } from 'sonner';
 
 // ─── Opções pré-definidas ───────────────────────────────────────────────────
@@ -89,8 +90,8 @@ export default function ProductForm() {
           variations: Array.isArray(p.variations) ? p.variations : [],
           extras: Array.isArray(p.extras) ? p.extras : [],
           images,
-          campaign_ids: p.campaign_ids?.length ? p.campaign_ids : (p.campaign_id ? [p.campaign_id] : []),
-        });
+            campaign_ids: normalizeCampaignSelection(p),
+          });
       }).catch(e => {
         toast.error('Erro ao carregar produto: ' + e.message);
       }).finally(() => {
@@ -245,11 +246,12 @@ export default function ProductForm() {
       }
 
       // Salva / atualiza no presale_products (com product_id linkado)
-      const payload = {
-        ...form,
-        product_id: productId,
-        product_number: productNumber,
-        sale_price: salePrice, regular_price: regularPrice || null,
+        const payload = {
+          ...form,
+          product_id: productId,
+          product_number: productNumber,
+          campaign_id: null,
+          sale_price: salePrice, regular_price: regularPrice || null,
         cost_price: costPrice, extra_cost: extraCost,
         total_cost: totalCost, profit_per_unit: profit,
         margin_percent: margin, discount_percent: discount || null,
@@ -287,12 +289,12 @@ export default function ProductForm() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/produtos')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
-        <h2 className="text-xl font-bold">{isEdit ? 'Editar Produto' : 'Novo Produto'}</h2>
+        <h2 className="text-xl font-bold">{isEdit ? 'Editar produto de pré-venda' : 'Novo produto de pré-venda'}</h2>
       </div>
 
       {/* Informações básicas */}
       <Card>
-        <CardHeader><CardTitle>Informações básicas</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Informações básicas da pré-venda</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div>
             <Label>Fotos do produto <span className="text-xs text-muted-foreground font-normal">(até 3 · a primeira é a principal)</span></Label>
@@ -404,7 +406,7 @@ export default function ProductForm() {
               )}
             </div>
             <div>
-              <Label>Campanhas (opcional)</Label>
+              <Label>Coleções / campanhas (opcional)</Label>
               {campaigns.length === 0 ? (
                 <p className="text-xs text-muted-foreground mt-2">Nenhuma campanha cadastrada ainda.</p>
               ) : (
