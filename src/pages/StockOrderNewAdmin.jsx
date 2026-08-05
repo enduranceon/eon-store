@@ -1,17 +1,25 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Search, Plus, Minus, X, ShoppingCart, Check, User, Package, Loader2 } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Minus, X, ShoppingCart, Check, User, Package, Loader2, UserPlus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StockProduct, PreSaleCustomer } from '@/api/entities';
 import { createOrderCharge, createStockOrder } from '@/api/client';
 import { formatCurrency } from '@/lib/utils';
+import { normalizePhone } from '@/lib/phone';
 import { defaultAsaasDueDate } from '@/lib/payment-methods';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
+
+// Cadastro rápido de cliente, direto do pedido. Só o essencial para a venda:
+// o cadastro completo (endereço, nascimento, gênero) segue em /clientes.
+// CPF é opcional aqui, mas obrigatório se a cobrança for PIX/boleto no Asaas —
+// por isso o campo avisa em vez de bloquear.
+const EMPTY_NEW_CUSTOMER = { full_name: '', whatsapp: '', email: '', cpf: '' };
 
 // Métodos de pagamento aceitos no fluxo admin
 const PAYMENT_METHODS = [
@@ -35,6 +43,9 @@ export default function StockOrderNewAdmin() {
 
   const [customerId, setCustomerId] = useState(preselectedCustomerId);
   const [customerSearch, setCustomerSearch] = useState('');
+  const [newCustomerModal, setNewCustomerModal] = useState(false);
+  const [newCustomer, setNewCustomer] = useState(EMPTY_NEW_CUSTOMER);
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [productSearch, setProductSearch]   = useState('');
 
   const [cart, setCart]     = useState([]); // [{ product_id, quantity }]
@@ -109,6 +120,34 @@ export default function StockOrderNewAdmin() {
   const subtotal = cartItems.reduce((s, i) => s + (i.product.sale_price * i.quantity), 0);
   const totalAfterDiscount = Math.max(0, subtotal - (Number(discount.value) || 0));
 
+  // Cria o cliente e já o deixa selecionado, sem sair da tela do pedido.
+  // Passa pelo PreSaleCustomer.create (API JWT), mesmo caminho do ContractForm.
+  const createCustomer = async () => {
+    if (!newCustomer.full_name?.trim()) return toast.error('Nome é obrigatório');
+    setCreatingCustomer(true);
+    try {
+      const created = await PreSaleCustomer.create({
+        full_name: newCustomer.full_name.trim(),
+        whatsapp:  normalizePhone(newCustomer.whatsapp) || null,
+        email:     newCustomer.email?.trim().toLowerCase() || null,
+        cpf:       newCustomer.cpf?.replace(/\D/g, '') || null,
+      });
+      setCustomers(prev => [created, ...prev]);
+      setCustomerId(created.id);
+      setCustomerSearch('');
+      setNewCustomerModal(false);
+      setNewCustomer(EMPTY_NEW_CUSTOMER);
+      toast.success(`${created.full_name} cadastrado e selecionado!`);
+    } catch (e) {
+      // O índice único de CPF estoura aqui quando o cliente já existe.
+      if (e.message?.includes('uniq_presale_customers_cpf')) {
+        toast.error('Esse CPF já está cadastrado em outro cliente — busque pelo nome.');
+      } else {
+        toast.error(e.message || 'Erro ao criar cliente');
+      }
+    } finally { setCreatingCustomer(false); }
+  };
+
   // Submit
   const save = async () => {
     if (!customerId)     return toast.error('Selecione um cliente');
@@ -182,9 +221,17 @@ export default function StockOrderNewAdmin() {
           {/* Cliente */}
           <Card>
             <CardContent className="p-5">
-              <Label className="flex items-center gap-1.5 mb-2">
-                <User className="w-4 h-4" /> Cliente *
-              </Label>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <Label className="flex items-center gap-1.5">
+                  <User className="w-4 h-4" /> Cliente *
+                </Label>
+                {!selectedCustomer && (
+                  <button type="button" onClick={() => setNewCustomerModal(true)}
+                    className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1">
+                    <UserPlus className="w-3.5 h-3.5" /> Novo cliente
+                  </button>
+                )}
+              </div>
               {selectedCustomer ? (
                 <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl p-3">
                   <div>
@@ -210,7 +257,26 @@ export default function StockOrderNewAdmin() {
                   </div>
                   <div className="mt-2 max-h-60 overflow-y-auto rounded-lg border divide-y">
                     {filteredCustomers.length === 0 ? (
-                      <p className="text-sm text-muted-foreground p-3 text-center">Nenhum cliente</p>
+                      <div className="p-4 text-center space-y-2">
+                        <p className="text-sm text-muted-foreground">
+                          {customerSearch ? `Nenhum cliente para "${customerSearch}"` : 'Nenhum cliente'}
+                        </p>
+                        <Button type="button" size="sm" variant="outline"
+                          onClick={() => {
+                            // Aproveita o que já foi digitado: se parecer nome, pré-preenche.
+                            const q = customerSearch.trim();
+                            const pareceNome = q && !/^[\d\s()+-]+$/.test(q) && !q.includes('@');
+                            setNewCustomer({
+                              ...EMPTY_NEW_CUSTOMER,
+                              full_name: pareceNome ? q : '',
+                              whatsapp:  /^[\d\s()+-]+$/.test(q) ? q : '',
+                              email:     q.includes('@') ? q : '',
+                            });
+                            setNewCustomerModal(true);
+                          }}>
+                          <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Cadastrar novo cliente
+                        </Button>
+                      </div>
                     ) : filteredCustomers.map(c => (
                       <button key={c.id}
                         onClick={() => { setCustomerId(c.id); setCustomerSearch(''); }}
@@ -424,6 +490,61 @@ export default function StockOrderNewAdmin() {
           </Card>
         </div>
       </div>
+
+      {/* Cadastro rápido de cliente */}
+      <Dialog open={newCustomerModal} onOpenChange={o => !o && !creatingCustomer && setNewCustomerModal(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="w-5 h-5 text-blue-600" /> Novo cliente
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Nome completo *</Label>
+              <Input className="mt-1" autoFocus
+                value={newCustomer.full_name}
+                onChange={e => setNewCustomer(f => ({ ...f, full_name: e.target.value }))}
+                placeholder="Nome do cliente" />
+            </div>
+            <div>
+              <Label>WhatsApp</Label>
+              <Input className="mt-1"
+                value={newCustomer.whatsapp}
+                onChange={e => setNewCustomer(f => ({ ...f, whatsapp: e.target.value }))}
+                placeholder="(48) 99999-9999" />
+              <p className="text-[11px] text-muted-foreground mt-1">Usado para enviar o link de pagamento.</p>
+            </div>
+            <div>
+              <Label>E-mail</Label>
+              <Input className="mt-1" type="email"
+                value={newCustomer.email}
+                onChange={e => setNewCustomer(f => ({ ...f, email: e.target.value }))}
+                placeholder="email@exemplo.com" />
+            </div>
+            <div>
+              <Label>CPF</Label>
+              <Input className="mt-1" inputMode="numeric"
+                value={newCustomer.cpf}
+                onChange={e => setNewCustomer(f => ({ ...f, cpf: e.target.value }))}
+                placeholder="000.000.000-00" />
+              <p className="text-[11px] text-amber-700 mt-1">
+                Obrigatório se a cobrança for PIX ou boleto pelo Asaas. Dá para deixar em branco nas outras formas.
+              </p>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Endereço, nascimento e demais dados podem ser completados depois em Clientes.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" disabled={creatingCustomer}
+                onClick={() => setNewCustomerModal(false)}>Cancelar</Button>
+              <Button className="flex-1" onClick={createCustomer} disabled={creatingCustomer}>
+                {creatingCustomer ? 'Salvando...' : 'Cadastrar e usar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
