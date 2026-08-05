@@ -51,13 +51,13 @@ function Chip({ label, selected, onClick }) {
 export default function ProductForm() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const isEdit = Boolean(id);
   const [form, setForm] = useState(EMPTY);
   const [campaigns, setCampaigns] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [categories, setCategories] = useState([]);
   const [saving, setSaving] = useState(false);
-  const [loadingProduct, setLoadingProduct] = useState(false);
-  const isEdit = Boolean(id);
+  const [loadingProduct, setLoadingProduct] = useState(isEdit);
 
   // Estado do gerador rápido
   const [showGenerator, setShowGenerator] = useState(false);
@@ -71,7 +71,6 @@ export default function ProductForm() {
     PreSaleSupplier.list().then(setSuppliers);
     PreSaleCategory.list().then(setCategories);
     if (isEdit) {
-      setLoadingProduct(true);
       PreSaleProduct.get(id).then(async p => {
         const images = p.images || (p.image ? [p.image] : []);
         let supplier_id = p.supplier_id || '';
@@ -98,19 +97,7 @@ export default function ProductForm() {
         setLoadingProduct(false);
       });
     }
-  }, [id]);
-
-  // Re-gera SKU de cada variação sempre que product_number, size ou gender mudar
-  useEffect(() => {
-    if (!form.product_number || !form.variations?.length) return;
-    setForm(f => ({
-      ...f,
-      variations: f.variations.map(v => ({
-        ...v,
-        sku: formatSku(f.product_number, v.size || '', v.gender || ''),
-      })),
-    }));
-  }, [form.product_number]);
+  }, [id, isEdit]);
 
   const salePrice = parseFloat(form.sale_price) || 0;
   const regularPrice = parseFloat(form.regular_price) || 0;
@@ -264,7 +251,7 @@ export default function ProductForm() {
         await PreSaleProduct.create(payload);
         toast.success('Produto criado!');
       }
-      navigate('/produtos');
+      navigate('/produtos/pre-venda');
     } catch (e) {
       toast.error(e.message);
     } finally {
@@ -286,7 +273,7 @@ export default function ProductForm() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/produtos')}>
+        <Button variant="ghost" size="icon" onClick={() => navigate('/produtos/pre-venda')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <h2 className="text-xl font-bold">{isEdit ? 'Editar produto de pré-venda' : 'Novo produto de pré-venda'}</h2>
@@ -770,7 +757,7 @@ export default function ProductForm() {
       </div>
 
       <div className="flex justify-end gap-3 pb-6">
-        <Button variant="outline" onClick={() => navigate('/produtos')}>Cancelar</Button>
+        <Button variant="outline" onClick={() => navigate('/produtos/pre-venda')}>Cancelar</Button>
         <Button onClick={handleSave} disabled={saving}>
           {saving ? 'Salvando...' : isEdit ? 'Salvar alterações' : 'Criar produto'}
         </Button>

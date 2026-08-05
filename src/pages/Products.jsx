@@ -74,11 +74,11 @@ export default function Products() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">Produtos de pré-venda</h2>
           <p className="text-sm text-muted-foreground">
-            {products.length} itens de coleção · {linkedCount} vinculados à biblioteca
+            {products.length} itens de coleção · {linkedCount} vinculados ao cadastro base
             {withoutCampaignCount > 0 ? ` · ${withoutCampaignCount} sem coleção` : ''}
           </p>
         </div>
-        <Button onClick={() => navigate('/produtos/novo')}>
+        <Button onClick={() => navigate('/produtos/pre-venda/novo')}>
           <Plus className="w-4 h-4" /> Novo produto de pré-venda
         </Button>
       </div>
@@ -113,7 +113,7 @@ export default function Products() {
           <CardContent className="flex flex-col items-center py-16 text-center">
             <Package className="w-10 h-10 text-muted-foreground mb-3" />
             <p className="text-sm text-muted-foreground">Nenhum produto encontrado</p>
-            <Button className="mt-4" onClick={() => navigate('/produtos/novo')}>
+            <Button className="mt-4" onClick={() => navigate('/produtos/pre-venda/novo')}>
               <Plus className="w-4 h-4" /> Cadastrar produto de pré-venda
             </Button>
           </CardContent>
@@ -125,7 +125,7 @@ export default function Products() {
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Produto</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Fornecedor</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Biblioteca</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Cadastro base</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Preço venda</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Custo total</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Lucro/un.</th>
@@ -183,7 +183,7 @@ export default function Products() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
-                        <Button size="icon" variant="ghost" onClick={() => navigate(`/produtos/${p.id}`)}>
+                        <Button size="icon" variant="ghost" onClick={() => navigate(`/produtos/pre-venda/${p.id}`)}>
                           <Edit className="w-3.5 h-3.5" />
                         </Button>
                         <Button size="icon" variant="ghost" className="text-gray-400 hover:text-gray-700" onClick={() => handleDuplicate(p)} title="Duplicar produto">

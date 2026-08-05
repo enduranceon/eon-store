@@ -70,7 +70,7 @@ export default function StockProductForm() {
       setLibrarySearch('');
       setImportModal(true);
     } catch {
-      toast.error('Erro ao carregar biblioteca');
+      toast.error('Erro ao carregar produtos cadastrados');
     }
   };
 
@@ -94,7 +94,7 @@ export default function StockProductForm() {
         notes: p.notes || '',
       }));
     setImportModal(false);
-    toast.success(`"${p.name}" importado da biblioteca!`);
+    toast.success(`"${p.name}" importado dos produtos cadastrados!`);
   };
 
   const handleSubmit = async (e) => {
@@ -152,12 +152,12 @@ export default function StockProductForm() {
       {!isEdit && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex items-center justify-between">
           <div>
-            <p className="text-sm font-semibold text-blue-900">Tem esse produto na biblioteca?</p>
+            <p className="text-sm font-semibold text-blue-900">Esse produto já está cadastrado?</p>
             <p className="text-xs text-blue-700 mt-0.5">Importe e preencha tudo automaticamente.</p>
           </div>
           <Button variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-100 gap-2 shrink-0" onClick={openImport}>
             <BookOpen className="w-4 h-4" />
-            Escolher da biblioteca
+            Escolher produto
           </Button>
         </div>
       )}
@@ -165,7 +165,7 @@ export default function StockProductForm() {
         {form.product_id && (
           <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2 flex items-center justify-between text-sm">
             <span className="text-green-800 font-medium inline-flex items-center gap-1.5">
-              <Link2 className="w-3.5 h-3.5" /> Vinculado à biblioteca de produtos
+              <Link2 className="w-3.5 h-3.5" /> Vinculado ao cadastro principal
             </span>
           <button onClick={() => set('product_id', null)} className="text-green-600 hover:text-green-800 text-xs underline">Desvincular</button>
         </div>
@@ -174,7 +174,7 @@ export default function StockProductForm() {
       {!form.product_id && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 text-sm text-amber-800 flex items-center gap-2">
           <Link2Off className="w-4 h-4 shrink-0" />
-          Produto avulso de estoque. Ele não acompanha mudanças feitas na biblioteca.
+          Produto avulso de estoque. Ele não acompanha mudanças feitas no cadastro principal.
         </div>
       )}
 
@@ -227,11 +227,11 @@ export default function StockProductForm() {
               {(variationCount > 0 || extrasCount > 0) && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-lg border bg-gray-50 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">Variações da biblioteca</p>
+                    <p className="text-xs text-muted-foreground">Variações do cadastro base</p>
                     <p className="text-sm font-semibold">{variationCount}</p>
                   </div>
                   <div className="rounded-lg border bg-gray-50 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">Extras da biblioteca</p>
+                    <p className="text-xs text-muted-foreground">Extras do cadastro base</p>
                     <p className="text-sm font-semibold">{extrasCount}</p>
                   </div>
                 </div>
@@ -283,13 +283,13 @@ export default function StockProductForm() {
         </div>
       </form>
 
-      {/* Modal biblioteca */}
+      {/* Modal de produtos cadastrados */}
       {importModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-xl">
             <div className="flex items-center justify-between px-5 py-4 border-b">
               <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-blue-600" /> Biblioteca de produtos
+                <BookOpen className="w-4 h-4 text-blue-600" /> Produtos cadastrados
               </h3>
               <button onClick={() => setImportModal(false)} className="text-gray-400 hover:text-gray-700">
                 <X className="w-5 h-5" />
@@ -304,7 +304,7 @@ export default function StockProductForm() {
             <div className="overflow-y-auto flex-1 p-3 space-y-1">
               {filteredLibrary.length === 0 ? (
                 <div className="text-center py-12 text-gray-400 text-sm">
-                  {library.length === 0 ? 'Biblioteca vazia. Crie produtos em Produtos de pré-venda → Novo produto.' : 'Nenhum produto encontrado.'}
+                  {library.length === 0 ? 'Nenhum produto base cadastrado. Crie um produto de pré-venda ou um item em estoque.' : 'Nenhum produto encontrado.'}
                 </div>
               ) : filteredLibrary.map(p => (
                 <button

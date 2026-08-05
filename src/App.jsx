@@ -29,7 +29,6 @@ import PublicHome from '@/pages/PublicHome';
 import Migrate from '@/pages/Migrate';
 import CampaignReport from '@/pages/CampaignReport';
 import Login from '@/pages/Login';
-import StockProducts from '@/pages/StockProducts';
 import StockProductForm from '@/pages/StockProductForm';
 import StockOrders from '@/pages/StockOrders';
 import StockOrderDetail from '@/pages/StockOrderDetail';
@@ -128,8 +127,11 @@ export default function App() {
           <Route path="/campanhas" element={<AdminLayout><Campaigns /></AdminLayout>} />
           <Route path="/campanhas/:id" element={<AdminLayout><CampaignDetail /></AdminLayout>} />
 	          <Route path="/campanhas/:id/relatorio" element={<AdminLayout><CampaignReport /></AdminLayout>} />
-	          <Route path="/biblioteca-produtos" element={<AdminLayout><ProductLibrary /></AdminLayout>} />
-	          <Route path="/produtos" element={<AdminLayout><Products /></AdminLayout>} />
+	          <Route path="/biblioteca-produtos" element={<Navigate to="/produtos" replace />} />
+	          <Route path="/produtos" element={<AdminLayout><ProductLibrary /></AdminLayout>} />
+          <Route path="/produtos/pre-venda" element={<AdminLayout><Products /></AdminLayout>} />
+          <Route path="/produtos/pre-venda/novo" element={<AdminLayout><ProductForm /></AdminLayout>} />
+          <Route path="/produtos/pre-venda/:id" element={<AdminLayout><ProductForm /></AdminLayout>} />
           <Route path="/produtos/novo" element={<AdminLayout><ProductForm /></AdminLayout>} />
           <Route path="/produtos/:id" element={<AdminLayout><ProductForm /></AdminLayout>} />
           <Route path="/pedidos" element={<AdminLayout><Orders /></AdminLayout>} />
@@ -175,7 +177,7 @@ export default function App() {
           <Route path="/assessoria/fechamento"     element={<AdminLayout><AssMonthlyClosing /></AdminLayout>} />
           <Route path="/assessoria/fechamento/:id" element={<AdminLayout><AssClosingDetail /></AdminLayout>} />
           <Route path="/assessoria/fechamento/:id/extrato/:coachId" element={<Suspense fallback={<div style={{ padding: 48, textAlign: 'center', color: '#64748b' }}>Carregando extrato...</div>}><AssCoachStatement /></Suspense>} />
-          <Route path="/estoque" element={<AdminLayout><StockProducts /></AdminLayout>} />
+          <Route path="/estoque" element={<AdminLayout><ProductLibrary /></AdminLayout>} />
           <Route path="/estoque/novo" element={<AdminLayout><StockProductForm /></AdminLayout>} />
           <Route path="/estoque/pedidos" element={<AdminLayout><StockOrders /></AdminLayout>} />
           <Route path="/estoque/pedidos/novo" element={<AdminLayout><StockOrderNewAdmin /></AdminLayout>} />
