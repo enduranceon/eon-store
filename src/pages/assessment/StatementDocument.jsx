@@ -50,6 +50,11 @@ const s = StyleSheet.create({
   grandLabel: { fontSize: 10.5, fontFamily: 'Helvetica-Bold', color: '#166534' },
   grandValue: { fontSize: 17, fontFamily: 'Helvetica-Bold', color: '#16a34a' },
 
+  leaveBox: { backgroundColor: '#f0f9ff', border: '1 solid #bae6fd', borderRadius: 7, padding: 12, marginTop: 16 },
+  leaveTitle: { fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: '#075985' },
+  leaveNote: { fontSize: 8, color: '#0369a1', marginBottom: 4, lineHeight: 1.4 },
+  leaveRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 3.5, borderBottom: '0.5 solid #e0f2fe' },
+
   pendBox: { backgroundColor: '#fffbeb', border: '1 solid #fde68a', borderRadius: 7, padding: 12, marginTop: 16 },
   pendHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
   pendTitle: { fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: '#92400e' },
@@ -141,7 +146,7 @@ function Section({ accent, title, children }) {
   );
 }
 
-export default function StatementDocument({ coach, mesLabel, generatedAt, statusLabel, porModalidade = [], alunos, liderancas, resgatados, ajustes = [], pendings, total }) {
+export default function StatementDocument({ coach, mesLabel, generatedAt, statusLabel, porModalidade = [], alunos, liderancas, resgatados, ajustes = [], pendings, total, emLicencaIntegral = [] }) {
   const subAlunos = alunos.reduce((a, i) => a + Number(i.amount), 0);
   const subLideranca = liderancas.reduce((a, i) => a + Number(i.amount), 0);
   const subResgatado = resgatados.reduce((a, i) => a + Number(i.amount), 0);
@@ -249,6 +254,33 @@ export default function StatementDocument({ coach, mesLabel, generatedAt, status
           <Text style={s.grandLabel}>Total a receber neste fechamento</Text>
           <Text style={s.grandValue}>{money(total)}</Text>
         </View>
+
+        {emLicencaIntegral.length > 0 && (
+          <View style={s.leaveBox}>
+            <View style={s.pendHead}>
+              <Text style={s.leaveTitle}>Alunos em licença ({emLicencaIntegral.length})</Text>
+              <Text style={[s.pendTotal, { color: '#0369a1' }]}>{money(0)}</Text>
+            </View>
+            <Text style={s.leaveNote}>
+              Afastados durante todo o mês — não geram repasse nesta competência, mas continuam
+              na sua carteira. Quando voltarem, os dias voltam a contar automaticamente.
+            </Text>
+            {emLicencaIntegral.map((a) => (
+              <View key={a.id} style={s.leaveRow} wrap={false}>
+                <View style={{ flex: 1, paddingRight: 6 }}>
+                  <Text style={s.cellPrimary}>{a.aluno}</Text>
+                  {a.modalidade ? (
+                    <Text style={[s.cellSub, { textTransform: 'capitalize' }]}>{a.modalidade}</Text>
+                  ) : null}
+                </View>
+                <Text style={[s.cellSub, { width: 110, textAlign: 'right', marginTop: 0, color: '#0369a1' }]}>
+                  {a.licenca?.ate ? `${a.licenca.desde} a ${a.licenca.ate}` : `desde ${a.licenca?.desde || ''}`}
+                </Text>
+                <Text style={[s.cellMuted, { width: 60, textAlign: 'right' }]}>{money(0)}</Text>
+              </View>
+            ))}
+          </View>
+        )}
 
         {pendings.length > 0 && (
           <View style={s.pendBox}>

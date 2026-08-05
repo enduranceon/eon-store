@@ -125,6 +125,31 @@ export default function StatementPreview({ view: v }) {
         <strong style={{ color: '#16a34a', fontSize: 19 }}>{formatCurrency(v.total)}</strong>
       </div>
 
+      {v.emLicencaIntegral?.length > 0 && (
+        <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 8, padding: 14, marginTop: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong style={{ color: '#075985', fontSize: 13 }}>Alunos em licença ({v.emLicencaIntegral.length})</strong>
+            <strong style={{ color: '#0369a1' }}>{formatCurrency(0)}</strong>
+          </div>
+          <p style={{ fontSize: 11.5, color: '#0369a1', margin: '4px 0 8px' }}>
+            Afastados durante todo o mês — não geram repasse nesta competência, mas continuam
+            na sua carteira. Quando voltarem, os dias voltam a contar automaticamente.
+          </p>
+          {v.emLicencaIntegral.map((a) => (
+            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: '1px solid #e0f2fe' }}>
+              <span style={{ flex: 1, fontSize: 13 }}>
+                {a.aluno}
+                {a.modalidade && <span style={{ color: '#94a3b8', textTransform: 'capitalize' }}> · {a.modalidade}</span>}
+              </span>
+              <span style={{ fontSize: 11, color: '#0369a1', fontWeight: 700 }}>
+                {a.licenca?.ate ? `${a.licenca.desde} a ${a.licenca.ate}` : `desde ${a.licenca?.desde}`}
+              </span>
+              <span style={{ fontSize: 13, color: '#64748b', width: 70, textAlign: 'right' }}>{formatCurrency(0)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {v.pendings.length > 0 && (
         <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: 14, marginTop: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

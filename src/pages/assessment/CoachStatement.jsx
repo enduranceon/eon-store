@@ -137,15 +137,44 @@ export default function CoachStatement() {
     }
     const porModalidade = Object.values(byMod).sort((a, b) => b.total - a.total);
 
+    // Alunos afastados o mês INTEIRO. O fechamento não gera item pra eles (zero dias
+    // válidos é descartado), então some do extrato sem explicação e o treinador acha
+    // que perdeu o aluno. Detecta pelo avesso: contrato pago e vigente no mês, sem
+    // nenhum item gerado, e com licença cobrindo o período.
+    const mesIniDate = new Date(`${mesIni}T00:00:00Z`);
+    const mesFimDate = new Date(`${mesFim}T00:00:00Z`);
+    const comItem = new Set(items.map(i => i.contract_id).filter(Boolean));
+    const emLicencaIntegral = Object.values(contractsById)
+      .filter((ct) => {
+        if (ct.coach_id !== coachId) return false;
+        if (ct.payment_status !== 'paid') return false;
+        if (['cancelled', 'draft', 'voided'].includes(ct.status)) return false;
+        if (comItem.has(ct.id)) return false;
+        const ini = new Date(`${String(ct.start_date).slice(0, 10)}T00:00:00Z`);
+        const fim = ct.end_date ? new Date(`${String(ct.end_date).slice(0, 10)}T00:00:00Z`) : null;
+        if (ini > mesFimDate) return false;
+        if (fim && fim <= mesIniDate) return false;
+        return !!licencaDoContrato(ct.id);
+      })
+      .map((ct) => ({
+        id: ct.id,
+        aluno: customersById[ct.customer_id]?.full_name || ct.contract_number || 'Aluno',
+        contrato: ct.contract_number || '',
+        modalidade: modalitiesById[ct.plan_snapshot?.modality_id || plansById[ct.plan_id]?.modality_id]?.name || '',
+        licenca: licencaDoContrato(ct.id),
+      }))
+      .sort((a, b) => a.aluno.localeCompare(b.aluno));
+
     return {
       coach,
+      emLicencaIntegral,
       mesLabel: formatCompetence(competence),
       generatedAt: formatDate(closing.generated_at?.split('T')[0]),
       statusLabel: closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão',
       porModalidade,
       alunos, liderancas, resgatados, ajustes, pendings: pends, total,
     };
-  }, [data]);
+  }, [data, coachId]);
 
   const doc = useMemo(() => (view ? <StatementDocument {...view} /> : null), [view]);
 

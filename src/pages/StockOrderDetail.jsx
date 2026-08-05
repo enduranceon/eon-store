@@ -1023,6 +1023,15 @@ export default function StockOrderDetail() {
               <Button variant="outline" className="w-full gap-2 border-green-300 text-green-700 hover:bg-green-50" onClick={openManualPay}>
                 <HandCoins className="w-4 h-4" /> Registrar pagamento manual (sem Asaas)
               </Button>
+              {/* Mesma ação que já existia dentro do modal de WhatsApp (campo "Link de
+                  cobrança externo"), agora explícita aqui — como na tela de pré-venda.
+                  Sem isso o operador não encontrava: ficava escondida atrás de "Cobrar
+                  via WhatsApp" e parecia que a loja não suportava cobrança externa. */}
+              {order.customer_whatsapp && (
+                <Button variant="outline" className="w-full gap-2 border-amber-300 text-amber-700 hover:bg-amber-50" onClick={openWhatsApp}>
+                  <Link2 className="w-4 h-4" /> Cadastrar cobrança externa (Stone, PagSeguro…)
+                </Button>
+              )}
             </div>
           )}
         </CardContent>
