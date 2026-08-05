@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, ShoppingCart, Edit2, Save, X, AlertTriangle, GitMerge, FileText, ChevronRight, Plus, Trophy, ShoppingBag } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, ShoppingCart, Edit2, Save, X, AlertTriangle, GitMerge, FileText, ChevronRight, Plus, Trophy, ShoppingBag, Hash, Cake, MapPin, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,7 @@ import { mergeCustomers } from '@/api/client';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
+import { formatCep, formatCustomerAddress, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import { toast } from 'sonner';
 
 const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
@@ -31,6 +32,7 @@ export default function CustomerDetail() {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [sellModal, setSellModal] = useState(false);
+  const [cepLoading, setCepLoading] = useState(false);
 
   // Estado do modal de mesclagem
   const [mergeModal, setMergeModal] = useState(null); // { duplicate, duplicateOrders }
@@ -49,10 +51,19 @@ export default function CustomerDetail() {
       ]);
       setCustomer(c);
       setForm({
+        customer_code:   c.customer_code || '',
         full_name:      c.full_name,
         whatsapp:       c.whatsapp,
         email:          c.email,
         cpf:            c.cpf || '',
+        birth_date:     c.birth_date || '',
+        address_zip:    c.address_zip ? formatCep(c.address_zip) : '',
+        address_street: c.address_street || '',
+        address_number: c.address_number || '',
+        address_complement: c.address_complement || '',
+        address_neighborhood: c.address_neighborhood || '',
+        address_city:   c.address_city || '',
+        address_state:  c.address_state || '',
         internal_notes: c.internal_notes || '',
       });
       // Mescla pedidos da pré-venda + loja
@@ -94,9 +105,27 @@ export default function CustomerDetail() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        full_name: form.full_name?.trim(),
+        whatsapp: form.whatsapp?.trim() || null,
+        email: form.email?.trim().toLowerCase() || null,
+        trainer: form.trainer?.trim() || null,
+        cpf: form.cpf?.replace(/\D/g, '') || null,
+        birth_date: form.birth_date || null,
+        address_zip: normalizeCep(form.address_zip) || null,
+        address_street: form.address_street?.trim() || null,
+        address_number: form.address_number?.trim() || null,
+        address_complement: form.address_complement?.trim() || null,
+        address_neighborhood: form.address_neighborhood?.trim() || null,
+        address_city: form.address_city?.trim() || null,
+        address_state: form.address_state?.trim().toUpperCase() || null,
+        internal_notes: form.internal_notes?.trim() || null,
+      };
+
       // Verifica conflito de CPF
-      if (form.cpf && form.cpf !== customer.cpf) {
-        const conflict = await checkCpfConflict(form.cpf);
+      if (payload.cpf && payload.cpf !== customer.cpf) {
+        const conflict = await checkCpfConflict(payload.cpf);
         if (conflict) {
           // Busca pedidos do cliente duplicado
           const allOrders = await PreSaleOrder.list();
@@ -107,7 +136,7 @@ export default function CustomerDetail() {
         }
       }
 
-      await PreSaleCustomer.update(id, form);
+      await PreSaleCustomer.update(id, payload);
       toast.success('Cliente atualizado!');
       setEditing(false);
       load();
@@ -149,7 +178,23 @@ export default function CustomerDetail() {
     setMergeModal(null);
     setSaving(true);
     try {
-      await PreSaleCustomer.update(id, form);
+      await PreSaleCustomer.update(id, {
+        ...form,
+        full_name: form.full_name?.trim(),
+        whatsapp: form.whatsapp?.trim() || null,
+        email: form.email?.trim().toLowerCase() || null,
+        trainer: form.trainer?.trim() || null,
+        cpf: form.cpf?.replace(/\D/g, '') || null,
+        birth_date: form.birth_date || null,
+        address_zip: normalizeCep(form.address_zip) || null,
+        address_street: form.address_street?.trim() || null,
+        address_number: form.address_number?.trim() || null,
+        address_complement: form.address_complement?.trim() || null,
+        address_neighborhood: form.address_neighborhood?.trim() || null,
+        address_city: form.address_city?.trim() || null,
+        address_state: form.address_state?.trim().toUpperCase() || null,
+        internal_notes: form.internal_notes?.trim() || null,
+      });
       toast.success('Cliente atualizado!');
       setEditing(false);
       load();
@@ -160,6 +205,31 @@ export default function CustomerDetail() {
     }
   };
 
+  const fillAddressByCep = async () => {
+    const cep = normalizeCep(form.address_zip);
+    if (!cep) return;
+    if (cep.length !== 8) return toast.error('Informe um CEP com 8 dígitos');
+
+    setCepLoading(true);
+    try {
+      const address = await lookupCepAddress(cep);
+      setForm(f => ({
+        ...f,
+        address_zip: formatCep(address.zip),
+        address_street: address.street || f.address_street,
+        address_complement: f.address_complement || address.complement || '',
+        address_neighborhood: address.neighborhood || f.address_neighborhood,
+        address_city: address.city || f.address_city,
+        address_state: address.state || f.address_state,
+      }));
+      toast.success('Endereço preenchido pelo CEP');
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível buscar o CEP');
+    } finally {
+      setCepLoading(false);
+    }
+  };
+
   const plansById = useMemo(() => Object.fromEntries(plans.map(p => [p.id, p])), [plans]);
   const lifecycleRows = useMemo(
     () => buildContractLifecycleRows(contracts, { plansById }),
@@ -167,6 +237,7 @@ export default function CustomerDetail() {
   );
 
   if (!customer) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
+  const address = formatCustomerAddress(customer);
 
   const activeOrders   = orders.filter(o => o.payment_status !== 'cancelled');
   const effectiveOrders = activeOrders.filter(isEffectiveSale);
@@ -227,7 +298,14 @@ export default function CustomerDetail() {
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate(-1)}><ArrowLeft className="w-4 h-4" /></Button>
         <div className="flex-1">
-          <h2 className="text-xl font-bold">{customer.full_name}</h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            {customer.customer_code && (
+              <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
+                {customer.customer_code}
+              </span>
+            )}
+            <h2 className="text-xl font-bold">{customer.full_name}</h2>
+          </div>
           <p className="text-sm text-muted-foreground">Cliente desde {formatDate(customer.created_date)}</p>
         </div>
         {!editing ? (
@@ -424,6 +502,16 @@ export default function CustomerDetail() {
           {editing ? (
             <>
               <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Código</Label>
+                  <Input value={form.customer_code || ''} className="mt-1 font-mono" disabled />
+                </div>
+                <div>
+                  <Label>Nascimento</Label>
+                  <Input type="date" value={form.birth_date || ''} onChange={e => setForm(f => ({ ...f, birth_date: e.target.value }))} className="mt-1" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div><Label>Nome completo</Label><Input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} className="mt-1" /></div>
                 <div><Label>WhatsApp</Label><Input value={form.whatsapp || ''} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} className="mt-1" /></div>
               </div>
@@ -447,10 +535,44 @@ export default function CustomerDetail() {
                   </p>
                 </div>
               </div>
+              <div className="border-t pt-4 space-y-4">
+                <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5" /> Endereço
+                </p>
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <div>
+                    <Label>CEP</Label>
+                    <Input
+                      className="mt-1"
+                      value={form.address_zip || ''}
+                      onChange={e => setForm(f => ({ ...f, address_zip: formatCep(e.target.value) }))}
+                      onBlur={fillAddressByCep}
+                      placeholder="00000-000"
+                    />
+                  </div>
+                  <Button type="button" variant="outline" className="self-end" onClick={fillAddressByCep} disabled={cepLoading || normalizeCep(form.address_zip).length !== 8}>
+                    {cepLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Buscar'}
+                  </Button>
+                </div>
+                <div className="grid grid-cols-[1fr_96px] gap-4">
+                  <div><Label>Rua</Label><Input className="mt-1" value={form.address_street || ''} onChange={e => setForm(f => ({ ...f, address_street: e.target.value }))} /></div>
+                  <div><Label>Número</Label><Input className="mt-1" value={form.address_number || ''} onChange={e => setForm(f => ({ ...f, address_number: e.target.value }))} /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><Label>Complemento</Label><Input className="mt-1" value={form.address_complement || ''} onChange={e => setForm(f => ({ ...f, address_complement: e.target.value }))} /></div>
+                  <div><Label>Bairro</Label><Input className="mt-1" value={form.address_neighborhood || ''} onChange={e => setForm(f => ({ ...f, address_neighborhood: e.target.value }))} /></div>
+                </div>
+                <div className="grid grid-cols-[1fr_80px] gap-4">
+                  <div><Label>Cidade</Label><Input className="mt-1" value={form.address_city || ''} onChange={e => setForm(f => ({ ...f, address_city: e.target.value }))} /></div>
+                  <div><Label>UF</Label><Input className="mt-1 uppercase" maxLength={2} value={form.address_state || ''} onChange={e => setForm(f => ({ ...f, address_state: e.target.value.toUpperCase() }))} /></div>
+                </div>
+              </div>
               <div><Label>Observações internas</Label><Textarea value={form.internal_notes} onChange={e => setForm(f => ({ ...f, internal_notes: e.target.value }))} className="mt-1" rows={3} /></div>
             </>
           ) : (
             <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="flex items-center gap-2"><Hash className="w-4 h-4 text-muted-foreground" /><span className="font-mono">{customer.customer_code || '-'}</span></div>
+              <div className="flex items-center gap-2"><Cake className="w-4 h-4 text-muted-foreground" /><span>{customer.birth_date ? formatDate(customer.birth_date) : '-'}</span></div>
               <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-muted-foreground" /><span>{customer.whatsapp || '-'}</span></div>
               <div className="flex items-center gap-2"><Mail className="w-4 h-4 text-muted-foreground" /><span>{customer.email || '-'}</span></div>
               <div className="flex items-center gap-2">
@@ -462,6 +584,10 @@ export default function CustomerDetail() {
                     <AlertTriangle className="w-3.5 h-3.5" /> não cadastrado
                   </span>
                 )}
+              </div>
+              <div className="col-span-2 flex items-start gap-2">
+                <MapPin className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                <span>{address || '-'}</span>
               </div>
               {customer.internal_notes && (
                 <div className="col-span-2 bg-yellow-50 border border-yellow-200 rounded p-3 text-sm">{customer.internal_notes}</div>
