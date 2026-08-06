@@ -46,6 +46,7 @@ import {
   registerExternalAssessmentContractCharge,
 } from '@/lib/assessment-contract-operations';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
+import { studentProfilePath } from '@/lib/customer-profile';
 import {
   loadActivePaymentMethods,
   createManualInstallments,
@@ -1095,7 +1096,7 @@ export default function ContractDetail() {
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><User className="w-4 h-4" /> Aluno</CardTitle></CardHeader>
           <CardContent>
-            <Link to={`/clientes/${student?.id}`} className="font-semibold hover:underline">{student?.full_name}</Link>
+            <Link to={studentProfilePath(student?.id, 'contracts')} className="font-semibold hover:underline">{student?.full_name}</Link>
             <p className="text-xs text-muted-foreground">{student?.whatsapp} {student?.email && `· ${student.email}`}</p>
           </CardContent>
         </Card>

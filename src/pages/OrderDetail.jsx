@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer, PreSaleProduct } from '@/api/entities';
+import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import {
@@ -21,6 +21,7 @@ import {
 } from '@/lib/manual-payment';
 import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
+import { studentProfilePath } from '@/lib/customer-profile';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
@@ -103,7 +104,6 @@ export default function OrderDetail() {
   const [campaign, setCampaign] = useState(null);
   const [customer, setCustomer] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [saveConfirmModal, setSaveConfirmModal] = useState(false);
   const [manualPayModal, setManualPayModal] = useState(false);
   const [manualPayForm, setManualPayForm] = useState({ method_id: '', date: '', value: '' });
   const [methodGroups, setMethodGroups] = useState([]);  // [[group_name, [methods...]], ...]
@@ -121,13 +121,9 @@ export default function OrderDetail() {
   const [whatsappMsg, setWhatsappMsg] = useState('');
   const [whatsappManualLink, setWhatsappManualLink] = useState('');
   const [copied, setCopied] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState('');
   const [deliveryStatus, setDeliveryStatus] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
-  const [paymentDate, setPaymentDate] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('');
-  const [cancellationReason, setCancellationReason] = useState('');
   const [asaasLoading, setAsaasLoading] = useState(false);
   const [asaasCpf, setAsaasCpf] = useState('');
   const [asaasBilling, setAsaasBilling] = useState('PIX');
@@ -174,16 +170,12 @@ export default function OrderDetail() {
   const [addItemExtras, setAddItemExtras] = useState([]);
   const [addItemLoading, setAddItemLoading] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const o = await PreSaleOrder.get(id);
     setOrder(o);
-    setPaymentStatus(o.payment_status || 'awaiting_charge');
     setDeliveryStatus(o.delivery_status || 'awaiting_supplier');
     setInternalNotes(o.internal_notes || '');
-    setPaymentDate(o.payment_date || '');
     setDeliveryDate(o.delivery_date || '');
-    setPaymentMethod(o.payment_method || '');
-    setCancellationReason(o.cancellation_reason || '');
     if (o.payment_method?.startsWith('card_')) {
       setAsaasBilling('CREDIT_CARD');
       const m = o.payment_method.match(/card_(\d+)x/);
@@ -226,9 +218,12 @@ export default function OrderDetail() {
       .order('created_at', { ascending: false })
       .then(({ data }) => setSaleEvents(data || []))
       .catch(() => setSaleEvents([]));
-  };
+  }, [id]);
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 0);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   const openManualPay = async () => {
     const total = order?.total_value ? Number(order.total_value).toFixed(2) : '';
@@ -782,8 +777,8 @@ export default function OrderDetail() {
               </p>
             )}
             {customer && (
-              <Link to={`/clientes/${customer.id}`} className="text-xs text-blue-600 hover:underline block mt-1">
-                Ver perfil do cliente →
+              <Link to={studentProfilePath(customer.id, 'products')} className="text-xs text-blue-600 hover:underline block mt-1">
+                Ver perfil do aluno →
               </Link>
             )}
           </CardContent>

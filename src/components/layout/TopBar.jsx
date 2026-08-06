@@ -11,6 +11,7 @@ const titles = {
   '/estoque/pedidos': 'Pedidos de estoque',
   '/pedidos': 'Pedidos',
   '/clientes': 'Clientes',
+  '/assessoria/alunos': 'Alunos',
   '/relatorios': 'Relatórios',
 };
 
@@ -21,6 +22,7 @@ function getTitle(pathname) {
   if (pathname.startsWith('/estoque/pedidos/')) return 'Pedido de estoque';
   if (pathname.startsWith('/estoque/')) return 'Produto em estoque';
   if (pathname.startsWith('/pedidos/')) return 'Pedido';
+  if (pathname.startsWith('/assessoria/alunos/')) return 'Aluno';
   if (pathname.startsWith('/clientes/')) return 'Cliente';
   return titles[pathname] ?? 'EON Store';
 }

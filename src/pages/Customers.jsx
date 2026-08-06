@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { buildContractLifecycleRows, isContractPaymentOverdue } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
+import { studentProfilePath } from '@/lib/customer-profile';
 
 async function loadCustomersPage() {
   const [customers, orders, contracts, plans] = await Promise.all([
@@ -264,7 +265,7 @@ export default function Customers() {
                 const d = c._data;
                 return (
                   <tr key={c.id} className="hover:bg-gray-50 cursor-pointer"
-                    onClick={() => navigate(`/clientes/${c.id}`)}>
+                    onClick={() => navigate(studentProfilePath(c.id))}>
 
                     <td className="px-4 py-3">
                       <p className="font-semibold">{c.full_name}</p>

@@ -150,7 +150,6 @@ export default function Sidebar({ open, onClose, onSignOut }) {
 
   const isActive = (to, exact) => {
     if (exact) return location.pathname === to;
-    if (to === '/clientes' && location.pathname.startsWith('/assessoria/alunos')) return true;
     return location.pathname.startsWith(to);
   };
 

@@ -15,6 +15,7 @@ import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { formatCep, formatCustomerAddress, lookupCepAddress, normalizeCep } from '@/lib/br-address';
+import { studentProfilePath } from '@/lib/customer-profile';
 import { toast } from 'sonner';
 
 const PAYMENT_BADGE = { paid: 'success', partially_paid: 'warning', awaiting_charge: 'secondary', charge_sent: 'info', cancelled: 'destructive', refunded: 'outline' };
@@ -310,6 +311,9 @@ export default function CustomerDetail() {
         </div>
         {!editing ? (
           <div className="flex gap-2">
+            <Button variant="outline" asChild>
+              <Link to={studentProfilePath(id)}><User className="w-4 h-4" /> Perfil do aluno</Link>
+            </Button>
             <Button variant="outline" onClick={() => setEditing(true)}><Edit2 className="w-4 h-4" /> Editar</Button>
             <Button onClick={() => setSellModal(true)} className="bg-blue-600 hover:bg-blue-700">
               <Plus className="w-4 h-4" /> Venda
