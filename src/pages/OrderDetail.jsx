@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { PreSaleOrder, PreSaleCampaign, PreSaleCustomer } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { cn, formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import {
   loadActivePaymentMethods,
   createManualInstallments,
@@ -97,8 +97,9 @@ function SALE_EVENT_META(ev) {
       || { label: ev.reason || ev.new_status || 'Atualização', dot: 'bg-gray-400' };
 }
 
-export default function OrderDetail() {
-  const { id } = useParams();
+export default function OrderDetail({ orderId, embedded = false, onChanged }) {
+  const params = useParams();
+  const id = orderId || params.id;
   const navigate = useNavigate();
   const [order, setOrder] = useState(null);
   const [campaign, setCampaign] = useState(null);
@@ -314,6 +315,7 @@ export default function OrderDetail() {
         internalNotes,
       });
       toast.success('Atualizações salvas!');
+      onChanged?.();
       load();
     } catch (e) {
       toast.error(e.message);
@@ -727,11 +729,13 @@ export default function OrderDetail() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className={cn(embedded ? 'space-y-5 pb-6' : 'max-w-3xl mx-auto space-y-6')}>
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
+        {!embedded && (
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+        )}
         <div>
           <h2 className="text-xl font-bold font-mono">{order.order_number}</h2>
           <p className="text-sm text-muted-foreground">{formatDate(order.created_date)}</p>

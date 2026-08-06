@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { cn, formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import {
   loadActivePaymentMethods,
@@ -70,8 +70,9 @@ const PAYMENT_METHOD_LABEL = {
   card_10x: 'Cartão 10x', card_11x: 'Cartão 11x', card_12x: 'Cartão 12x',
 };
 
-export default function StockOrderDetail() {
-  const { id } = useParams();
+export default function StockOrderDetail({ orderId, embedded = false, onChanged }) {
+  const params = useParams();
+  const id = orderId || params.id;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [order, setOrder] = useState(null);
@@ -141,9 +142,9 @@ export default function StockOrderDetail() {
         .catch(() => setPaymentInstallments([]));
     } catch {
       toast.error('Pedido não encontrado');
-      navigate('/estoque/pedidos');
+      if (!embedded) navigate('/estoque/pedidos');
     }
-  }, [id, navigate]);
+  }, [embedded, id, navigate]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -162,6 +163,7 @@ export default function StockOrderDetail() {
         internalNotes,
       });
       toast.success('Atualizações salvas!');
+      onChanged?.();
       load();
     } catch (e) {
       toast.error(e.message);
@@ -482,11 +484,13 @@ export default function StockOrderDetail() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className={cn(embedded ? 'space-y-5 pb-6' : 'max-w-3xl mx-auto space-y-6')}>
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/estoque/pedidos')}>
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
+        {!embedded && (
+          <Button variant="ghost" size="icon" onClick={() => navigate('/estoque/pedidos')}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+        )}
         <div>
           <h2 className="text-xl font-bold font-mono">{order.order_number}</h2>
           <p className="text-sm text-muted-foreground">{formatDate(order.created_date)}</p>

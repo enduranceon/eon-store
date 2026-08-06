@@ -10,6 +10,7 @@ import { updateOrderFulfillment } from '@/api/client';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
+import OrderDetailPanel from '@/components/OrderDetailPanel';
 import { toast } from 'sonner';
 
 const PAYMENT_STATUS = {
@@ -95,6 +96,7 @@ export default function StockOrders() {
   const [search, setSearch] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [deliveryFilter, setDeliveryFilter] = useState('all');
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
   const navigate = useNavigate();
 
   const commitUpdate = async (orderId, field, value, extras = {}) => {
@@ -127,6 +129,15 @@ export default function StockOrders() {
   });
 
   const totalFiltered = filtered.reduce((acc, o) => acc + (o.total_value || 0), 0);
+  const selectedOrderIndex = filtered.findIndex(o => o.id === selectedOrderId);
+  const selectedOrder = selectedOrderIndex >= 0
+    ? filtered[selectedOrderIndex]
+    : orders.find(o => o.id === selectedOrderId);
+  const selectedPositionLabel = selectedOrderIndex >= 0 ? `${selectedOrderIndex + 1} de ${filtered.length}` : '';
+  const closeOrderPanel = () => {
+    setSelectedOrderId(null);
+    refresh({ force: true }).catch(() => {});
+  };
 
   return (
     <div className="space-y-5">
@@ -183,7 +194,11 @@ export default function StockOrders() {
             </thead>
             <tbody className="divide-y">
               {filtered.map(o => (
-                <tr key={o.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/estoque/pedidos/${o.id}`)}>
+                <tr
+                  key={o.id}
+                  className={`${selectedOrderId === o.id ? 'bg-blue-50/70' : 'hover:bg-gray-50'} cursor-pointer`}
+                  onClick={() => setSelectedOrderId(o.id)}
+                >
                   <td className="px-4 py-3 font-mono font-semibold text-blue-700">{o.order_number}</td>
                   <td className="px-4 py-3">
                     <p className="font-medium">{o.customer_name}</p>
@@ -192,7 +207,7 @@ export default function StockOrders() {
                   <td className="px-4 py-3 text-muted-foreground">{formatDate(o.created_date)}</td>
                   <td className="px-4 py-3 text-right font-semibold">{formatCurrency(o.total_value)}</td>
                   <td className="px-4 py-3 text-center">
-                    <PaymentStatusCell order={o} onOpen={() => navigate(`/estoque/pedidos/${o.id}`)} />
+                    <PaymentStatusCell order={o} onOpen={() => setSelectedOrderId(o.id)} />
                   </td>
                   <td className="px-4 py-3 text-center">
                     <StatusSelect
@@ -207,6 +222,16 @@ export default function StockOrders() {
           </table>
         </div>
       )}
+      <OrderDetailPanel
+        type="stock"
+        orderId={selectedOrder?.id || selectedOrderId}
+        orderNumber={selectedOrder?.order_number}
+        positionLabel={selectedPositionLabel}
+        onClose={closeOrderPanel}
+        onPrevious={selectedOrderIndex > 0 ? () => setSelectedOrderId(filtered[selectedOrderIndex - 1].id) : null}
+        onNext={selectedOrderIndex >= 0 && selectedOrderIndex < filtered.length - 1 ? () => setSelectedOrderId(filtered[selectedOrderIndex + 1].id) : null}
+        onChanged={() => refresh({ force: true }).catch(() => {})}
+      />
     </div>
   );
 }
