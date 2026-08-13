@@ -11,6 +11,7 @@ export function usePageData({
   initialData,
   maxAge = 30_000,
   tags = [],
+  forceOnMount = false,
   onError,
 }) {
   const [initialEntry] = useState(() => readPageCache(key));
@@ -64,13 +65,13 @@ export function usePageData({
   useEffect(() => {
     mountedRef.current = true;
     const timer = setTimeout(() => {
-      refresh().catch(() => {});
+      refresh({ force: forceOnMount }).catch(() => {});
     }, 0);
     return () => {
       clearTimeout(timer);
       mountedRef.current = false;
     };
-  }, [refresh]);
+  }, [forceOnMount, refresh]);
 
   return { data, setData, loading, refreshing, refresh };
 }

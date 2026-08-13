@@ -1,17 +1,36 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Search, Plus, Minus, X, ShoppingCart, Check, User, Package, Loader2 } from 'lucide-react';
+import { ArrowLeft, Search, Plus, Minus, X, ShoppingCart, Check, User, Package, Loader2, UserPlus } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StockProduct, PreSaleCustomer } from '@/api/entities';
 import { createOrderCharge, createStockOrder } from '@/api/client';
 import { formatCurrency } from '@/lib/utils';
+import { normalizePhone } from '@/lib/phone';
 import { defaultAsaasDueDate } from '@/lib/payment-methods';
+import { formatProductNumber } from '@/lib/sku';
+import {
+  findStockVariation,
+  hasStockVariations,
+  stockCartKey,
+  stockItemQuantity,
+  stockItemSalePrice,
+  stockProductQuantity,
+  stockProductVariations,
+  stockVariationLabel,
+} from '@/lib/stock-variations';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
+
+// Cadastro rápido de cliente, direto do pedido. Só o essencial para a venda:
+// o cadastro completo (endereço, nascimento, gênero) segue em /clientes.
+// CPF é opcional aqui, mas obrigatório se a cobrança for PIX/boleto no Asaas —
+// por isso o campo avisa em vez de bloquear.
+const EMPTY_NEW_CUSTOMER = { full_name: '', whatsapp: '', email: '', cpf: '' };
 
 // Métodos de pagamento aceitos no fluxo admin
 const PAYMENT_METHODS = [
@@ -35,9 +54,13 @@ export default function StockOrderNewAdmin() {
 
   const [customerId, setCustomerId] = useState(preselectedCustomerId);
   const [customerSearch, setCustomerSearch] = useState('');
+  const [newCustomerModal, setNewCustomerModal] = useState(false);
+  const [newCustomer, setNewCustomer] = useState(EMPTY_NEW_CUSTOMER);
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [productSearch, setProductSearch]   = useState('');
+  const [selectedVariations, setSelectedVariations] = useState({});
 
-  const [cart, setCart]     = useState([]); // [{ product_id, quantity }]
+  const [cart, setCart]     = useState([]); // [{ key, product_id, variation, quantity }]
   const [paymentMethod, setPaymentMethod] = useState('pix');
   const [dueDate, setDueDate] = useState(defaultAsaasDueDate);
   const [notes, setNotes]   = useState('');
@@ -50,7 +73,7 @@ export default function StockOrderNewAdmin() {
           StockProduct.list().catch(() => []),
           PreSaleCustomer.list('full_name').catch(() => []),
         ]);
-        setProducts(p.filter(x => x.status === 'active' && Number(x.quantity || 0) > 0));
+        setProducts(p.filter(x => x.status === 'active' && stockProductQuantity(x) > 0));
         setCustomers(c);
       } catch (e) {
         console.error(e);
@@ -81,33 +104,108 @@ export default function StockOrderNewAdmin() {
 
   // Produtos filtrados
   const filteredProducts = useMemo(() => {
-    const inStock = products.filter(p => Number(p.quantity || 0) > 0);
+    const inStock = products.filter(p => stockProductQuantity(p) > 0);
     if (!productSearch) return inStock;
     const q = productSearch.toLowerCase();
-    return inStock.filter(p => p.name?.toLowerCase().includes(q));
+    return inStock.filter(p =>
+      p.name?.toLowerCase().includes(q) ||
+      p.category?.toLowerCase().includes(q) ||
+      p.subcategory?.toLowerCase().includes(q) ||
+      p.supplier?.toLowerCase().includes(q) ||
+      String(p.product_number || '').includes(q)
+    );
   }, [products, productSearch]);
 
   // Cart helpers
-  const getQty = (productId) => cart.find(i => i.product_id === productId)?.quantity || 0;
-  const setQty = (productId, qty) => {
+  const defaultVariationName = (product) => {
+    const available = stockProductVariations(product)
+      .find(variation => stockItemQuantity(product, stockVariationLabel(variation)) > 0);
+    return available ? stockVariationLabel(available) : '';
+  };
+
+  const currentVariationName = (product) => {
+    if (!hasStockVariations(product)) return null;
+    return selectedVariations[product.id] || defaultVariationName(product);
+  };
+
+  const getQty = (key) => cart.find(i => i.key === key)?.quantity || 0;
+  const setQty = (key, productId, variation, qty) => {
     setCart(prev => {
-      const existing = prev.find(i => i.product_id === productId);
-      if (qty <= 0) return prev.filter(i => i.product_id !== productId);
-      if (existing)  return prev.map(i => i.product_id === productId ? { ...i, quantity: qty } : i);
-      return [...prev, { product_id: productId, quantity: qty }];
+      const existing = prev.find(i => i.key === key);
+      if (qty <= 0) return prev.filter(i => i.key !== key);
+      if (existing) return prev.map(i => i.key === key ? { ...i, quantity: qty } : i);
+      return [...prev, { key, product_id: productId, variation, quantity: qty }];
     });
   };
-  const addOne    = (productId) => setQty(productId, getQty(productId) + 1);
-  const removeOne = (productId) => setQty(productId, getQty(productId) - 1);
+  const addOne = (product) => {
+    const variationName = currentVariationName(product);
+    const selectedVariation = variationName ? findStockVariation(product, variationName) : null;
+    if (hasStockVariations(product) && !selectedVariation) {
+      toast.error('Selecione o tamanho');
+      return;
+    }
+    const availableQuantity = stockItemQuantity(product, variationName);
+    const key = stockCartKey(product.id, variationName);
+    const qty = getQty(key);
+    if (availableQuantity <= 0) {
+      toast.error('Produto esgotado nessa opção');
+      return;
+    }
+    if (qty >= availableQuantity) {
+      toast.error('Quantidade máxima atingida');
+      return;
+    }
+    setQty(key, product.id, variationName, qty + 1);
+  };
+  const removeOne = (key) => {
+    const item = cart.find(i => i.key === key);
+    if (!item) return;
+    setQty(key, item.product_id, item.variation, item.quantity - 1);
+  };
 
   // Cart items com dados do produto
   const cartItems = cart.map(i => {
     const prod = products.find(p => p.id === i.product_id);
-    return { ...i, product: prod };
+    const variation = prod && i.variation ? findStockVariation(prod, i.variation) : null;
+    return {
+      ...i,
+      product: prod,
+      variationData: variation,
+      sale_price: prod ? stockItemSalePrice(prod, variation) : 0,
+      available_quantity: prod ? stockItemQuantity(prod, i.variation) : 0,
+    };
   }).filter(i => i.product);
 
-  const subtotal = cartItems.reduce((s, i) => s + (i.product.sale_price * i.quantity), 0);
+  const subtotal = cartItems.reduce((s, i) => s + (i.sale_price * i.quantity), 0);
   const totalAfterDiscount = Math.max(0, subtotal - (Number(discount.value) || 0));
+
+  // Cria o cliente e já o deixa selecionado, sem sair da tela do pedido.
+  // Passa pelo PreSaleCustomer.create (API JWT), mesmo caminho do ContractForm.
+  const createCustomer = async () => {
+    if (!newCustomer.full_name?.trim()) return toast.error('Nome é obrigatório');
+    setCreatingCustomer(true);
+    try {
+      const created = await PreSaleCustomer.create({
+        full_name: newCustomer.full_name.trim(),
+        whatsapp:  normalizePhone(newCustomer.whatsapp) || null,
+        email:     newCustomer.email?.trim().toLowerCase() || null,
+        cpf:       newCustomer.cpf?.replace(/\D/g, '') || null,
+      });
+      setCustomers(prev => [created, ...prev]);
+      setCustomerId(created.id);
+      setCustomerSearch('');
+      setNewCustomerModal(false);
+      setNewCustomer(EMPTY_NEW_CUSTOMER);
+      toast.success(`${created.full_name} cadastrado e selecionado!`);
+    } catch (e) {
+      // O índice único de CPF estoura aqui quando o cliente já existe.
+      if (e.message?.includes('uniq_presale_customers_cpf')) {
+        toast.error('Esse CPF já está cadastrado em outro cliente — busque pelo nome.');
+      } else {
+        toast.error(e.message || 'Erro ao criar cliente');
+      }
+    } finally { setCreatingCustomer(false); }
+  };
 
   // Submit
   const save = async () => {
@@ -124,6 +222,7 @@ export default function StockOrderNewAdmin() {
     try {
       const validatedItems = cartItems.map(i => ({
         product_id: i.product.id,
+        variation: i.variation || null,
         quantity: i.quantity,
       }));
 
@@ -170,7 +269,7 @@ export default function StockOrderNewAdmin() {
         </Button>
         <div>
           <h2 className="text-xl font-bold">Venda manual da loja</h2>
-          <p className="text-sm text-muted-foreground">Crie o pedido com itens em estoque e envie o link ao cliente</p>
+          <p className="text-sm text-muted-foreground">Crie um pedido com produtos em estoque e envie ou registre a cobrança</p>
         </div>
       </div>
 
@@ -182,9 +281,17 @@ export default function StockOrderNewAdmin() {
           {/* Cliente */}
           <Card>
             <CardContent className="p-5">
-              <Label className="flex items-center gap-1.5 mb-2">
-                <User className="w-4 h-4" /> Cliente *
-              </Label>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <Label className="flex items-center gap-1.5">
+                  <User className="w-4 h-4" /> Cliente *
+                </Label>
+                {!selectedCustomer && (
+                  <button type="button" onClick={() => setNewCustomerModal(true)}
+                    className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1">
+                    <UserPlus className="w-3.5 h-3.5" /> Novo cliente
+                  </button>
+                )}
+              </div>
               {selectedCustomer ? (
                 <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl p-3">
                   <div>
@@ -210,7 +317,26 @@ export default function StockOrderNewAdmin() {
                   </div>
                   <div className="mt-2 max-h-60 overflow-y-auto rounded-lg border divide-y">
                     {filteredCustomers.length === 0 ? (
-                      <p className="text-sm text-muted-foreground p-3 text-center">Nenhum cliente</p>
+                      <div className="p-4 text-center space-y-2">
+                        <p className="text-sm text-muted-foreground">
+                          {customerSearch ? `Nenhum cliente para "${customerSearch}"` : 'Nenhum cliente'}
+                        </p>
+                        <Button type="button" size="sm" variant="outline"
+                          onClick={() => {
+                            // Aproveita o que já foi digitado: se parecer nome, pré-preenche.
+                            const q = customerSearch.trim();
+                            const pareceNome = q && !/^[\d\s()+-]+$/.test(q) && !q.includes('@');
+                            setNewCustomer({
+                              ...EMPTY_NEW_CUSTOMER,
+                              full_name: pareceNome ? q : '',
+                              whatsapp:  /^[\d\s()+-]+$/.test(q) ? q : '',
+                              email:     q.includes('@') ? q : '',
+                            });
+                            setNewCustomerModal(true);
+                          }}>
+                          <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Cadastrar novo cliente
+                        </Button>
+                      </div>
                     ) : filteredCustomers.map(c => (
                       <button key={c.id}
                         onClick={() => { setCustomerId(c.id); setCustomerSearch(''); }}
@@ -234,14 +360,14 @@ export default function StockOrderNewAdmin() {
           <Card>
             <CardContent className="p-5">
               <Label className="flex items-center gap-1.5 mb-2">
-                <Package className="w-4 h-4" /> Produtos
+                <Package className="w-4 h-4" /> Produtos em estoque
               </Label>
               <div className="relative mb-3">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input className="pl-9"
-                  placeholder="Buscar produto..."
-                  value={productSearch}
-                  onChange={e => setProductSearch(e.target.value)} />
+                  <Input className="pl-9"
+                    placeholder="Buscar produto, código, categoria ou fornecedor..."
+                    value={productSearch}
+                    onChange={e => setProductSearch(e.target.value)} />
               </div>
 
               {filteredProducts.length === 0 ? (
@@ -251,42 +377,73 @@ export default function StockOrderNewAdmin() {
               ) : (
                 <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                   {filteredProducts.map(p => {
-                    const qty = getQty(p.id);
+                    const variations = stockProductVariations(p);
+                    const hasVariations = variations.length > 0;
+                    const variationName = currentVariationName(p);
+                    const selectedVariation = variationName ? findStockVariation(p, variationName) : null;
+                    const availableQuantity = hasVariations
+                      ? stockItemQuantity(p, variationName)
+                      : stockProductQuantity(p);
+                    const key = stockCartKey(p.id, variationName);
+                    const qty = getQty(key);
+                    const salePrice = stockItemSalePrice(p, selectedVariation);
                     return (
                       <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-lg border hover:border-blue-300 transition-colors">
                         {/* Foto */}
-                        {p.image_url ? (
-                          <img src={p.image_url} alt={p.name} className="w-12 h-12 rounded object-cover shrink-0" />
+                        {(p.images?.[0] || p.image_url) ? (
+                          <img src={p.images?.[0] || p.image_url} alt={p.name} className="w-12 h-12 rounded object-cover shrink-0" />
                         ) : (
                           <div className="w-12 h-12 rounded bg-gray-100 flex items-center justify-center shrink-0">
                             <Package className="w-5 h-5 text-gray-400" />
                           </div>
                         )}
 
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{p.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatCurrency(p.sale_price)} · estoque: {p.quantity}
-                          </p>
-                        </div>
+                          <div className="flex-1 min-w-0 space-y-1.5">
+                            <p className="font-medium text-sm truncate">{p.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatCurrency(salePrice)} · estoque: {availableQuantity}
+                              {hasVariations && variationName ? ` em ${variationName}` : ''}
+                              {p.product_number ? ` · ${formatProductNumber(p.product_number)}` : ''}
+                              {p.category ? ` · ${p.category}` : ''}
+                              {p.supplier ? ` · ${p.supplier}` : ''}
+                            </p>
+                            {hasVariations && (
+                              <select
+                                value={variationName || ''}
+                                onChange={event => setSelectedVariations(prev => ({ ...prev, [p.id]: event.target.value }))}
+                                className="h-8 max-w-56 rounded-md border border-gray-200 bg-white px-2 text-xs font-medium text-gray-700"
+                              >
+                                {!variationName && <option value="">Sem estoque</option>}
+                                {variations.map(variation => {
+                                  const label = stockVariationLabel(variation);
+                                  const variationQuantity = stockItemQuantity(p, label);
+                                  return (
+                                    <option key={label} value={label} disabled={variationQuantity <= 0}>
+                                      {label} · {variationQuantity} un.
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            )}
+                          </div>
 
                         {qty > 0 ? (
                           <div className="flex items-center gap-1 shrink-0">
-                            <button onClick={() => removeOne(p.id)}
+                            <button onClick={() => removeOne(key)}
                               className="w-7 h-7 rounded-full border border-gray-200 hover:bg-gray-100 flex items-center justify-center">
                               <Minus className="w-3 h-3" />
                             </button>
                             <span className="font-semibold w-6 text-center text-sm">{qty}</span>
-                            <button onClick={() => addOne(p.id)}
-                              disabled={qty >= p.quantity}
+                            <button onClick={() => addOne(p)}
+                              disabled={qty >= availableQuantity}
                               className="w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white flex items-center justify-center">
                               <Plus className="w-3 h-3" />
                             </button>
                           </div>
                         ) : (
                           <Button size="sm" variant="outline"
-                            disabled={p.quantity <= 0}
-                            onClick={() => addOne(p.id)}>
+                            disabled={availableQuantity <= 0}
+                            onClick={() => addOne(p)}>
                             <Plus className="w-3 h-3 mr-1" /> Adicionar
                           </Button>
                         )}
@@ -317,15 +474,16 @@ export default function StockOrderNewAdmin() {
               ) : (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {cartItems.map(i => (
-                    <div key={i.product_id} className="flex items-center gap-2 text-sm">
+                    <div key={i.key} className="flex items-center gap-2 text-sm">
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{i.product.name}</p>
+                        {i.variation && <p className="text-xs text-blue-600 font-medium truncate">{i.variation}</p>}
                         <p className="text-xs text-muted-foreground">
-                          {i.quantity}× {formatCurrency(i.product.sale_price)}
+                          {i.quantity}× {formatCurrency(i.sale_price)}
                         </p>
                       </div>
-                      <p className="font-semibold shrink-0">{formatCurrency(i.quantity * i.product.sale_price)}</p>
-                      <button onClick={() => setQty(i.product_id, 0)}
+                      <p className="font-semibold shrink-0">{formatCurrency(i.quantity * i.sale_price)}</p>
+                      <button onClick={() => setQty(i.key, i.product_id, i.variation, 0)}
                         className="text-gray-400 hover:text-red-500">
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -424,6 +582,61 @@ export default function StockOrderNewAdmin() {
           </Card>
         </div>
       </div>
+
+      {/* Cadastro rápido de cliente */}
+      <Dialog open={newCustomerModal} onOpenChange={o => !o && !creatingCustomer && setNewCustomerModal(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="w-5 h-5 text-blue-600" /> Novo cliente
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Nome completo *</Label>
+              <Input className="mt-1" autoFocus
+                value={newCustomer.full_name}
+                onChange={e => setNewCustomer(f => ({ ...f, full_name: e.target.value }))}
+                placeholder="Nome do cliente" />
+            </div>
+            <div>
+              <Label>WhatsApp</Label>
+              <Input className="mt-1"
+                value={newCustomer.whatsapp}
+                onChange={e => setNewCustomer(f => ({ ...f, whatsapp: e.target.value }))}
+                placeholder="(48) 99999-9999" />
+              <p className="text-[11px] text-muted-foreground mt-1">Usado para enviar o link de pagamento.</p>
+            </div>
+            <div>
+              <Label>E-mail</Label>
+              <Input className="mt-1" type="email"
+                value={newCustomer.email}
+                onChange={e => setNewCustomer(f => ({ ...f, email: e.target.value }))}
+                placeholder="email@exemplo.com" />
+            </div>
+            <div>
+              <Label>CPF</Label>
+              <Input className="mt-1" inputMode="numeric"
+                value={newCustomer.cpf}
+                onChange={e => setNewCustomer(f => ({ ...f, cpf: e.target.value }))}
+                placeholder="000.000.000-00" />
+              <p className="text-[11px] text-amber-700 mt-1">
+                Obrigatório se a cobrança for PIX ou boleto pelo Asaas. Dá para deixar em branco nas outras formas.
+              </p>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Endereço, nascimento e demais dados podem ser completados depois em Clientes.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" disabled={creatingCustomer}
+                onClick={() => setNewCustomerModal(false)}>Cancelar</Button>
+              <Button className="flex-1" onClick={createCustomer} disabled={creatingCustomer}>
+                {creatingCustomer ? 'Salvando...' : 'Cadastrar e usar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
