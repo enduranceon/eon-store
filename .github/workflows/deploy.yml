@@ -54,7 +54,10 @@ jobs:
           path: dist
 
       - name: Publish preview
-        run: npx netlify-cli@latest deploy --dir=dist --no-build --site=9a9edc3b-04e4-431f-8927-f946900b0b27 --message "PR #${{ github.event.pull_request.number }} · ${{ github.sha }}"
+        run: >-
+          npx netlify-cli@latest deploy --dir=dist --no-build
+          --site=9a9edc3b-04e4-431f-8927-f946900b0b27
+          --message "PR #${{ github.event.pull_request.number }} · ${{ github.sha }}"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
 
@@ -70,6 +73,9 @@ jobs:
           path: dist
 
       - name: Publish production
-        run: npx netlify-cli@latest deploy --prod --dir=dist --no-build --site=9a9edc3b-04e4-431f-8927-f946900b0b27 --message "GitHub ${{ github.ref_name }} · ${{ github.sha }}"
+        run: >-
+          npx netlify-cli@latest deploy --prod --dir=dist --no-build
+          --site=9a9edc3b-04e4-431f-8927-f946900b0b27
+          --message "GitHub ${{ github.ref_name }} · ${{ github.sha }}"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
