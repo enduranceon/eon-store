@@ -12,18 +12,11 @@ import BusinessPulse from '@/components/BusinessPulse';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
+import { fulfillmentStatus } from '@/lib/order-fulfillment';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────
-const DELIVERY_LABEL = {
-  awaiting_supplier: 'Aguardando fornecedor',
-  supplier_ordered:  'Pedido ao fornecedor',
-  received:          'Produto recebido',
-  separated:         'Separado p/ entrega',
-  awaiting_delivery: 'Aguardando entrega',
-};
-
 function daysSince(iso) {
   if (!iso) return 0;
   return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
@@ -423,7 +416,7 @@ export default function Today() {
           >
             {awaitingDelivery.map(o => (
               <ItemRow key={o.id + o.type} item={o}
-                badge={DELIVERY_LABEL[o.delivery_status] || o.delivery_status}
+                badge={fulfillmentStatus(o.type, o.delivery_status).label}
                 badgeColor="bg-purple-100 text-purple-700" />
             ))}
           </Section>
