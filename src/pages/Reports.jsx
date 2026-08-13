@@ -19,6 +19,7 @@ import { toast } from 'sonner';
 import { PAYMENT_METHOD_LABELS } from '@/lib/payment-methods';
 import { isEffectiveSale, isNonCancelledOrder } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
+import { fulfillmentStatus } from '@/lib/order-fulfillment';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -864,7 +865,7 @@ function StoreReportsTab() {
         <TabsContent value="entrega" className="space-y-6">
           <div>
             <h3 className="font-semibold text-base mb-3 text-yellow-700">
-              Aguardando entrega ({deliveryReport.length})
+              Pendentes no fluxo de entrega ({deliveryReport.length})
             </h3>
             <div className="overflow-x-auto rounded-lg border bg-white">
               <table className="w-full text-sm">
@@ -874,6 +875,7 @@ function StoreReportsTab() {
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Cliente</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">WhatsApp</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Produto(s)</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Etapa</th>
                     <th className="text-right px-4 py-3 font-medium text-muted-foreground">Total</th>
                   </tr>
                 </thead>
@@ -886,6 +888,7 @@ function StoreReportsTab() {
                       <td className="px-4 py-3 text-muted-foreground text-xs">
                         {(o.items || []).filter(i => !i.cancelled).map(i => `${i.product_name}${i.variation ? ' ' + i.variation : ''} x${i.quantity}`).join(', ')}
                       </td>
+                      <td className="px-4 py-3 text-xs font-medium text-blue-700">{fulfillmentStatus('presale', o.delivery_status).label}</td>
                       <td className="px-4 py-3 text-right font-semibold">{formatCurrency(o.total_value)}</td>
                     </tr>
                   ))}
@@ -906,6 +909,7 @@ function StoreReportsTab() {
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Cliente</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">WhatsApp</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Produto(s)</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Etapa</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -917,6 +921,7 @@ function StoreReportsTab() {
                       <td className="px-4 py-3 text-muted-foreground text-xs">
                         {(o.items || []).filter(i => !i.cancelled).map(i => `${i.product_name}${i.variation ? ' ' + i.variation : ''} x${i.quantity}`).join(', ')}
                       </td>
+                      <td className="px-4 py-3 text-xs font-medium text-green-700">{fulfillmentStatus('presale', o.delivery_status).label}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -1405,6 +1405,19 @@ export async function replacePresaleOrderItems(orderId, items, options = {}) {
   return response.data;
 }
 
+export async function replaceStockOrderItems(orderId, items, options = {}) {
+  const response = await apiRequest(`/orders/stock/${orderId}/items`, {
+    ...options,
+    method: 'PUT',
+    body: { items },
+  });
+  invalidatePageCacheByTag('stock_orders');
+  invalidatePageCacheByTag('stock_products');
+  invalidatePageCacheByTag('stock_movements');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
 export async function saveCommunityLinkSetting(url, options = {}) {
   const response = await apiRequest('/communications/settings/community-link', {
     ...options,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, User, UserPlus, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag, HandCoins, Calendar, Search, Loader2 } from 'lucide-react';
+import { ArrowLeft, User, UserPlus, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag, HandCoins, Calendar, Search, Loader2, Plus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +31,7 @@ import {
 } from '@/lib/order-fulfillment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
+import StockOrderItemEditorDialog from '@/components/StockOrderItemEditorDialog';
 import { toast } from 'sonner';
 import {
   cancelOrderCharge,
@@ -111,6 +112,7 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
   const [cancelItemDelivered, setCancelItemDelivered] = useState(false);
   const [cancelItemReason, setCancelItemReason] = useState('');
   const [cancelItemLoading, setCancelItemLoading] = useState(false);
+  const [adjustItemsModal, setAdjustItemsModal] = useState(false);
 
   // Pagamento manual
   const [manualPayModal, setManualPayModal] = useState(false);
@@ -546,6 +548,20 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
     customer.whatsapp,
     customer.email,
   ].some(value => value?.toLowerCase().includes(customerQuery))).slice(0, 30);
+  const activeItems = items.filter(item => !item.cancelled);
+  const paymentOrChargeStarted = !['pending', 'awaiting_charge'].includes(order.payment_status)
+    || Boolean(order.manual_payment)
+    || Boolean(order.asaas_charge_id || order.asaas_payment_link || order.asaas_pix_copy || order.external_payment_link || order.payment_message_sent_at);
+  const fulfillmentStarted = ['separated', 'delivered', 'cancelled'].includes(order.delivery_status);
+  const hasUntrackedStockReservation = activeItems.some(item => item.stock_reserved !== true);
+  const canAdjustItems = activeItems.length > 0 && !paymentOrChargeStarted && !fulfillmentStarted && !hasUntrackedStockReservation;
+  const itemAdjustmentHint = hasUntrackedStockReservation
+    ? 'Este pedido antigo não tem a reserva por item necessária para ajuste automático; confira o estoque antes de alterar ou cancelar.'
+    : paymentOrChargeStarted
+      ? 'Já existe cobrança ou pagamento neste pedido. Para remover, use “Remover item”; para incluir, faça uma nova venda para o cliente.'
+      : fulfillmentStarted
+        ? 'Os itens não podem ser alterados depois que o pedido entrou em separação.'
+        : 'Antes da cobrança, você pode incluir, retirar ou alterar quantidades com o estoque atualizado.';
 
   const openCancelItem = (index) => {
     setCancelItemIndex(index);
@@ -692,9 +708,9 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
                       <td className="py-2 text-right">{formatCurrency(item.sale_price)}</td>
                       <td className="py-2 text-right font-semibold">{formatCurrency((item.sale_price || 0) * item.quantity)}</td>
                       <td className="py-2 text-right">
-                        {!item.cancelled && !['cancelled', 'refunded'].includes(order.payment_status) && (
+                        {!item.cancelled && !canAdjustItems && !hasUntrackedStockReservation && !['cancelled', 'refunded'].includes(order.payment_status) && (
                           <button onClick={() => openCancelItem(i)} className="text-xs text-red-500 hover:text-red-700 hover:underline whitespace-nowrap">
-                            Cancelar peça
+                            Remover item
                           </button>
                         )}
                       </td>
@@ -704,6 +720,19 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
               </table>
             </div>
           )}
+          <div className="mt-4 pt-3 border-t flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground max-w-lg">{itemAdjustmentHint}</p>
+            <div className="flex gap-2">
+              {!canAdjustItems && paymentOrChargeStarted && order.customer_id && (
+                <Button size="sm" variant="outline" onClick={() => navigate(`/estoque/pedidos/novo?customer_id=${order.customer_id}`)}>
+                  <Plus className="w-3.5 h-3.5 mr-1" /> Nova venda
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => setAdjustItemsModal(true)} disabled={!canAdjustItems}>
+                <Package className="w-3.5 h-3.5 mr-1" /> Ajustar itens
+              </Button>
+            </div>
+          </div>
           {order.coupon_code && (
             <div className="border-t mt-4 pt-3 flex items-center justify-between text-sm bg-amber-50 -mx-6 px-6 py-2">
               <span className="flex items-center gap-2 text-amber-800">
@@ -930,11 +959,11 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
         </DialogContent>
       </Dialog>
 
-      {/* Modal cancelar peça individual */}
+      {/* Modal remover item individual */}
       <Dialog open={cancelItemModal} onOpenChange={setCancelItemModal}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600"><X className="w-5 h-5" /> Cancelar peça</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-red-600"><X className="w-5 h-5" /> Remover item</DialogTitle>
           </DialogHeader>
           {cancelItemIndex !== null && items[cancelItemIndex] && (
             <div className="space-y-4">
@@ -1435,6 +1464,16 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
           </div>
         </DialogContent>
       </Dialog>
+
+      <StockOrderItemEditorDialog
+        open={adjustItemsModal}
+        onOpenChange={setAdjustItemsModal}
+        order={order}
+        onSaved={() => {
+          onChanged?.();
+          load();
+        }}
+      />
     </div>
   );
 }

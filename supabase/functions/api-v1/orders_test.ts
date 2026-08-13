@@ -2,6 +2,7 @@ import { AsaasApiError } from "../_shared/asaas.ts";
 import {
   executeExternalRefund,
   handleOrdersRequest,
+  normalizeStockOrderItemReplacement,
   normalizeStockOrderCreationPayload,
   OrderInputError,
   requireIdempotencyKey,
@@ -44,6 +45,52 @@ Deno.test("stock order creation validates identity, items and idempotency", () =
     if (error instanceof OrderInputError) rejected += 1;
   }
   assert(rejected === 3, "invalid stock creation input was accepted");
+});
+
+Deno.test("stock item adjustment accepts only a normalized cart and calls the protected RPC", async () => {
+  const orderId = crypto.randomUUID();
+  const productId = crypto.randomUUID();
+  const actorId = crypto.randomUUID();
+  const payload = normalizeStockOrderItemReplacement({
+    items: [{ product_id: productId, variation: 'M', quantity: 2 }],
+  });
+  assert(payload.items[0].variation === 'M', "variation was not preserved");
+
+  let rejected = false;
+  try {
+    normalizeStockOrderItemReplacement({
+      items: [
+        { product_id: productId, variation: 'M', quantity: 1 },
+        { product_id: productId, variation: 'M', quantity: 1 },
+      ],
+    });
+  } catch (error) {
+    rejected = error instanceof OrderInputError;
+  }
+  assert(rejected, "duplicate size was accepted");
+
+  let rpcName = "";
+  let rpcArgs: Record<string, unknown> = {};
+  const supabase = {
+    rpc(name: string, args: Record<string, unknown>) {
+      rpcName = name;
+      rpcArgs = args;
+      return Promise.resolve({ data: { changed: true }, error: null });
+    },
+  };
+  const response = await handleOrdersRequest(
+    new Request(`https://example.test/orders/stock/${orderId}/items`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: [{ product_id: productId, variation: 'M', quantity: 2 }] }),
+    }),
+    `/orders/stock/${orderId}/items`,
+    supabase as never,
+    actorId,
+  );
+  assert(response?.status === 200, "item adjustment request was rejected");
+  assert(rpcName === "replace_stock_order_items_from_api", "wrong item adjustment RPC");
+  assert(rpcArgs.p_actor_id === actorId, "actor did not reach item adjustment RPC");
 });
 
 Deno.test("fulfillment forwards its interruption reason to the protected RPC", async () => {

@@ -60,6 +60,60 @@ export function normalizeStockOrderCreationPayload(
   return payload;
 }
 
+export function normalizeStockOrderItemReplacement(
+  value: unknown,
+): { items: Array<{ product_id: string; variation: string | null; quantity: number }> } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new OrderInputError("Corpo JSON inválido", "invalid_json");
+  }
+  const payload = value as Record<string, unknown>;
+  if (
+    Object.keys(payload).length !== 1 ||
+    !Array.isArray(payload.items) ||
+    payload.items.length < 1 ||
+    payload.items.length > 100
+  ) {
+    throw new OrderInputError("Informe entre 1 e 100 itens");
+  }
+
+  const seen = new Set<string>();
+  const items = payload.items.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new OrderInputError("Item inválido");
+    }
+    const input = item as Record<string, unknown>;
+    const quantity = input.quantity;
+    const variation = input.variation === undefined || input.variation === null
+      ? null
+      : input.variation;
+    if (
+      typeof input.product_id !== "string" ||
+      !UUID_PATTERN.test(input.product_id) ||
+      typeof quantity !== "number" ||
+      !Number.isInteger(quantity) ||
+      quantity < 1 ||
+      quantity > 100_000 ||
+      (variation !== null &&
+        (typeof variation !== "string" || variation.trim().length > 150))
+    ) {
+      throw new OrderInputError("Item inválido");
+    }
+    const normalizedVariation = variation?.trim() || null;
+    const key = `${input.product_id}:${normalizedVariation || ""}`;
+    if (seen.has(key)) {
+      throw new OrderInputError("O mesmo produto e tamanho aparecem mais de uma vez");
+    }
+    seen.add(key);
+    return {
+      product_id: input.product_id,
+      variation: normalizedVariation,
+      quantity,
+    };
+  });
+
+  return { items };
+}
+
 interface PreparedCancellation {
   operation_id: string;
   status: "prepared" | "completed" | "reconciliation_required";
@@ -465,6 +519,41 @@ export async function handleOrdersRequest(
       p_actor_id: actorId,
     });
     if (error) return databaseError(error, "update discount");
+    return jsonResponse({ data });
+  }
+
+  const stockItemsMatch = path.match(/^\/orders\/stock\/([^/]+)\/items$/);
+  if (req.method === "PUT" && stockItemsMatch) {
+    const [, orderId] = stockItemsMatch;
+    if (!UUID_PATTERN.test(orderId)) {
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
+    }
+
+    let payload: { items: Array<{ product_id: string; variation: string | null; quantity: number }> };
+    try {
+      payload = normalizeStockOrderItemReplacement(await req.json());
+    } catch (error) {
+      if (error instanceof OrderInputError) {
+        return jsonResponse({ error: error.message, code: error.code }, 400);
+      }
+      return jsonResponse({
+        error: "Corpo JSON inválido",
+        code: "invalid_json",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc(
+      "replace_stock_order_items_from_api",
+      {
+        p_order_id: orderId,
+        p_items: payload.items,
+        p_actor_id: actorId,
+      },
+    );
+    if (error) return databaseError(error, "replace stock order items");
     return jsonResponse({ data });
   }
 
