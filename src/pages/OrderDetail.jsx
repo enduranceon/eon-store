@@ -18,6 +18,13 @@ import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
+import {
+  fulfillmentDefinition,
+  fulfillmentFlowText,
+  fulfillmentStatus,
+  fulfillmentStatusOptions,
+  LEGACY_DELIVERY_STATUS,
+} from '@/lib/order-fulfillment';
 import { toast } from 'sonner';
 import {
   cancelOrder as cancelOrderViaApi,
@@ -41,33 +48,6 @@ const PAYMENT_STATUS = {
   cancelled: { label: 'Cancelado', badge: 'destructive' },
   refunded: { label: 'Reembolsado', badge: 'outline' },
 };
-
-const DELIVERY_STATUS = {
-  awaiting_supplier: { label: 'Aguardando fornecedor', badge: 'secondary' },
-  supplier_ordered: { label: 'Pedido ao fornecedor', badge: 'info' },
-  received: { label: 'Produto recebido', badge: 'info' },
-  separated: { label: 'Separado p/ entrega', badge: 'warning' },
-  delivered: { label: 'Entregue', badge: 'success' },
-  cancelled: { label: 'Entrega interrompida', badge: 'destructive' },
-};
-
-const LEGACY_DELIVERY_STATUS = '__legacy_unset__';
-const DELIVERY_TRANSITIONS = {
-  awaiting_supplier: ['supplier_ordered', 'cancelled'],
-  supplier_ordered: ['received', 'cancelled'],
-  received: ['separated', 'cancelled'],
-  separated: ['delivered', 'cancelled'],
-  delivered: [],
-  cancelled: [],
-};
-
-function deliveryStatusOptions(currentStatus) {
-  const current = currentStatus || 'awaiting_supplier';
-  return [...new Set([
-    ...(currentStatus ? [currentStatus] : []),
-    ...(currentStatus ? DELIVERY_TRANSITIONS[current] || [] : [current, ...(DELIVERY_TRANSITIONS[current] || [])]),
-  ])];
-}
 
 const CANCEL_REASONS = [
   'Desistência do cliente',
@@ -634,7 +614,7 @@ export default function OrderDetail() {
   if (!order) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const ps = PAYMENT_STATUS[order.payment_status] || { label: order.payment_status, badge: 'secondary' };
-  const ds = DELIVERY_STATUS[order.delivery_status] || { label: order.delivery_status, badge: 'secondary' };
+  const ds = fulfillmentStatus('presale', order.delivery_status);
   const items = order.items || [];
   const totalCost = order.total_cost || 0;
   const grossProfit = (order.total_value || 0) - totalCost;
@@ -2011,17 +1991,18 @@ export default function OrderDetail() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>Status de Entrega</Label>
+              <Label>Etapa do pedido</Label>
               <Select value={deliveryStatus || LEGACY_DELIVERY_STATUS} onValueChange={handleDeliveryStatusChange}>
                 <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione a etapa" /></SelectTrigger>
                 <SelectContent>
                   {!order.delivery_status && <SelectItem value={LEGACY_DELIVERY_STATUS} disabled>Sem etapa definida (legado)</SelectItem>}
-                  {deliveryStatusOptions(order.delivery_status).map(status => (
-                    <SelectItem key={status} value={status}>{DELIVERY_STATUS[status]?.label || status}</SelectItem>
+                  {fulfillmentStatusOptions('presale', order.delivery_status).map(status => (
+                    <SelectItem key={status} value={status}>{fulfillmentStatus('presale', status).label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <p className="mt-1 text-[11px] text-muted-foreground">Mostra só a etapa atual e os próximos passos. Pagamento é controlado separadamente.</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">{fulfillmentDefinition('presale').flowHint} Mostra a etapa atual e os próximos passos; pagamento é separado.</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">Fluxo: {fulfillmentFlowText('presale')}</p>
             </div>
             <div>
               <Label>Data de Entrega</Label>

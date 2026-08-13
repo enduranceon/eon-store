@@ -353,12 +353,24 @@ export async function handleOrdersRequest(
       }, 400);
     }
     const body = await parseObject(req);
+    const fulfillmentFields = new Set([
+      "delivery_status",
+      "delivery_date",
+      "internal_notes",
+      "fulfillment_reason",
+    ]);
     if (
-      !body || typeof body.delivery_status !== "string" ||
+      !body ||
+      Object.keys(body).length === 0 ||
+      Object.keys(body).some((field) => !fulfillmentFields.has(field)) ||
+      (body.delivery_status !== null && body.delivery_status !== undefined &&
+        typeof body.delivery_status !== "string") ||
       (body.delivery_date !== null && body.delivery_date !== undefined &&
         typeof body.delivery_date !== "string") ||
       (body.internal_notes !== null && body.internal_notes !== undefined &&
-        typeof body.internal_notes !== "string")
+        typeof body.internal_notes !== "string") ||
+      (body.fulfillment_reason !== null && body.fulfillment_reason !== undefined &&
+        typeof body.fulfillment_reason !== "string")
     ) {
       return jsonResponse({
         error: "Dados de entrega inválidos",
@@ -368,9 +380,10 @@ export async function handleOrdersRequest(
     const { data, error } = await supabase.rpc("update_order_fulfillment", {
       p_order_type: orderType,
       p_order_id: orderId,
-      p_delivery_status: body.delivery_status,
+      p_delivery_status: body.delivery_status ?? null,
       p_delivery_date: body.delivery_date ?? null,
       p_internal_notes: body.internal_notes ?? null,
+      p_fulfillment_reason: body.fulfillment_reason ?? null,
       p_actor_id: actorId,
     });
     if (error) return databaseError(error, "update fulfillment");

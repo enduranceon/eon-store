@@ -17,6 +17,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PreSaleCampaign, PreSaleCustomer, PreSaleOrder, StockOrder } from '@/api/entities';
+import { fulfillmentStatus } from '@/lib/order-fulfillment';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
@@ -146,11 +147,15 @@ function firstText(...values) {
 
 function normalizeOrder(order, type, customersById, campaignsById) {
   const customer = order.customer_id ? customersById[order.customer_id] : null;
-  const delivery = DELIVERY_STATUS[type][order.delivery_status] || {
+  const deliveryVisual = DELIVERY_STATUS[type][order.delivery_status] || {
     label: 'Sem etapa definida',
     hint: 'Pedido legado sem etapa física registrada. Nenhum status será alterado automaticamente.',
     color: 'bg-gray-100 text-gray-700 ring-gray-200',
     icon: Clock3,
+  };
+  const delivery = {
+    ...deliveryVisual,
+    ...fulfillmentStatus(type, order.delivery_status),
   };
 
   return {

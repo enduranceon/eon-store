@@ -1,6 +1,7 @@
 import { AsaasApiError } from "../_shared/asaas.ts";
 import {
   executeExternalRefund,
+  handleOrdersRequest,
   normalizeStockOrderCreationPayload,
   OrderInputError,
   requireIdempotencyKey,
@@ -43,6 +44,41 @@ Deno.test("stock order creation validates identity, items and idempotency", () =
     if (error instanceof OrderInputError) rejected += 1;
   }
   assert(rejected === 3, "invalid stock creation input was accepted");
+});
+
+Deno.test("fulfillment forwards its interruption reason to the protected RPC", async () => {
+  const orderId = crypto.randomUUID();
+  const actorId = crypto.randomUUID();
+  let rpcName = "";
+  let rpcArgs: Record<string, unknown> = {};
+  const supabase = {
+    rpc(name: string, args: Record<string, unknown>) {
+      rpcName = name;
+      rpcArgs = args;
+      return Promise.resolve({ data: { id: orderId }, error: null });
+    },
+  };
+
+  const response = await handleOrdersRequest(
+    new Request(`https://example.test/orders/stock/${orderId}/fulfillment`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        delivery_status: "cancelled",
+        fulfillment_reason: "Produto indisponível",
+      }),
+    }),
+    `/orders/stock/${orderId}/fulfillment`,
+    supabase as never,
+    actorId,
+  );
+
+  assert(response?.status === 200, "fulfillment request was rejected");
+  assert(rpcName === "update_order_fulfillment", "wrong fulfillment RPC");
+  assert(
+    rpcArgs.p_fulfillment_reason === "Produto indisponível",
+    "interruption reason did not reach the RPC",
+  );
 });
 
 Deno.test("Asaas refund is marker-idempotent and validates remaining value", async () => {
