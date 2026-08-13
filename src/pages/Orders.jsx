@@ -23,12 +23,12 @@ const PAYMENT_STATUS = {
 };
 
 const DELIVERY_STATUS = {
-  awaiting_supplier: { label: 'Ag. fornecedor',     color: 'bg-gray-100 text-gray-700' },
-  supplier_ordered:  { label: 'Pedido ao forn.',    color: 'bg-blue-100 text-blue-700' },
-  received:          { label: 'Produto recebido',   color: 'bg-sky-100 text-sky-700' },
-  separated:         { label: 'Separado p/ entrega',color: 'bg-amber-100 text-amber-700' },
-  delivered:         { label: 'Entregue',           color: 'bg-green-100 text-green-700' },
-  cancelled:         { label: 'Cancelado',          color: 'bg-red-100 text-red-700' },
+  awaiting_supplier: { label: 'Aguardando fornecedor', color: 'bg-gray-100 text-gray-700' },
+  supplier_ordered:  { label: 'Pedido ao fornecedor',  color: 'bg-blue-100 text-blue-700' },
+  received:          { label: 'Disponível para separar', color: 'bg-sky-100 text-sky-700' },
+  separated:         { label: 'Separado para entrega', color: 'bg-amber-100 text-amber-700' },
+  delivered:         { label: 'Entregue',              color: 'bg-green-100 text-green-700' },
+  cancelled:         { label: 'Entrega interrompida',  color: 'bg-red-100 text-red-700' },
 };
 
 function StatusSelect({ value, options, onChange, allowedKeys = null }) {
