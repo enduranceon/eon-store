@@ -1,8 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, Loader2 } from 'lucide-react';
-import { PDFViewer, PDFDownloadLink } from '@react-pdf/renderer';
-import StatementDocument from './StatementDocument';
+import StatementPreview from './StatementPreview';
 import {
   PayoutMonthlyClosing, PayoutMonthlyStatementItem, AssessmentCoach,
   AssessmentContract, PreSaleCustomer, AssessmentPlan, AssessmentModality,
@@ -10,13 +9,22 @@ import {
 import { supabase } from '@/api/db';
 import { formatCompetence, formatDate } from '@/lib/utils';
 import { expenseCategoryLabel } from '@/lib/payout-expenses';
+import { toast } from 'sonner';
 
 const SOURCE_LABEL = { direct_leadership: 'Liderança', co_leadership: 'Co-liderança', manual_adjustment: 'Ajuste' };
+
+const safeFilePart = (value) => String(value || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[\\/:*?"<>|]+/g, '')
+  .replace(/\s+/g, ' ')
+  .trim();
 
 export default function CoachStatement() {
   const { id, coachId } = useParams();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -40,10 +48,12 @@ export default function CoachStatement() {
           const { data: cts } = await supabase.from('assessment_contracts').select('id, due_date').in('id', cids);
           dueByContract = Object.fromEntries((cts || []).map((c) => [c.id, c.due_date]));
         }
+        // Licenças: explicam no extrato por que um aluno rendeu menos no mês.
+        const { data: leaves } = await supabase.from('assessment_leaves').select('*');
         if (!alive) return;
         setData({
           closing, coach: (coaches || []).find((c) => c.id === coachId) || null,
-          items: items || [], pendings: pend || [], dueByContract,
+          items: items || [], pendings: pend || [], dueByContract, leaves: leaves || [],
           contractsById: Object.fromEntries((contracts || []).map((c) => [c.id, c])),
           customersById: Object.fromEntries((customers || []).map((c) => [c.id, c])),
           plansById: Object.fromEntries((plans || []).map((p) => [p.id, p])),
@@ -58,11 +68,32 @@ export default function CoachStatement() {
     return () => { alive = false; };
   }, [id, coachId]);
 
-  const doc = useMemo(() => {
+  // Dados prontos do extrato. Alimentam TANTO a prévia em HTML na tela quanto o
+  // PDF (mesma fonte, então não há risco de divergirem).
+  const view = useMemo(() => {
     if (!data || data.error || !data.closing) return null;
-    const { closing, coach, items, pendings, dueByContract, contractsById, customersById, plansById, modalitiesById } = data;
+    const { closing, coach, items, pendings, dueByContract, leaves = [], contractsById, customersById, plansById, modalitiesById } = data;
     const competence = closing.competence;
     const todayStr = new Date().toISOString().slice(0, 10);
+
+    // Licença que pega a competência. end_date nulo = licença em aberto (segue
+    // valendo). Serve só para explicar no extrato por que o aluno rendeu menos —
+    // o desconto de dias em si já vem calculado do fechamento (valid_days).
+    const mesIni = String(competence).slice(0, 10);
+    const mesFim = (() => {
+      const [y, m] = mesIni.split('-').map(Number);
+      return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    })();
+    const licencaDoContrato = (contractId) => {
+      const l = leaves.find((x) => x.contract_id === contractId
+        && String(x.start_date).slice(0, 10) <= mesFim
+        && (!x.end_date || String(x.end_date).slice(0, 10) >= mesIni));
+      if (!l) return null;
+      return {
+        desde: formatDate(String(l.start_date).slice(0, 10)),
+        ate: l.end_date ? formatDate(String(l.end_date).slice(0, 10)) : null,
+      };
+    };
 
     const enrich = (it) => {
       const contract = contractsById[it.contract_id];
@@ -75,6 +106,7 @@ export default function CoachStatement() {
         ...it,
         aluno: customer?.full_name || (it.description || '').split('—')[0].trim() || 'Aluno',
         modalidade: modality?.name || '',
+        licenca: licencaDoContrato(it.contract_id),
         sobre: over ? over[1] : null,
         tipoLabel: SOURCE_LABEL[it.source_type] || 'Repasse',
         refLabel: it.reference_competence && it.reference_competence !== competence ? formatCompetence(it.reference_competence, { short: true }) : null,
@@ -112,17 +144,44 @@ export default function CoachStatement() {
     }
     const porModalidade = Object.values(byMod).sort((a, b) => b.total - a.total);
 
-    return (
-      <StatementDocument
-        coach={coach}
-        mesLabel={formatCompetence(competence)}
-        generatedAt={formatDate(closing.generated_at?.split('T')[0])}
-        statusLabel={closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão'}
-        porModalidade={porModalidade}
-        alunos={alunos} liderancas={liderancas} resgatados={resgatados} ajustes={ajustes} pendings={pends} total={total}
-      />
-    );
-  }, [data]);
+    // Alunos afastados o mês INTEIRO. O fechamento não gera item pra eles (zero dias
+    // válidos é descartado), então some do extrato sem explicação e o treinador acha
+    // que perdeu o aluno. Detecta pelo avesso: contrato pago e vigente no mês, sem
+    // nenhum item gerado, e com licença cobrindo o período.
+    const mesIniDate = new Date(`${mesIni}T00:00:00Z`);
+    const mesFimDate = new Date(`${mesFim}T00:00:00Z`);
+    const comItem = new Set(items.map(i => i.contract_id).filter(Boolean));
+    const emLicencaIntegral = Object.values(contractsById)
+      .filter((ct) => {
+        if (ct.coach_id !== coachId) return false;
+        if (ct.payment_status !== 'paid') return false;
+        if (['cancelled', 'draft', 'voided'].includes(ct.status)) return false;
+        if (comItem.has(ct.id)) return false;
+        const ini = new Date(`${String(ct.start_date).slice(0, 10)}T00:00:00Z`);
+        const fim = ct.end_date ? new Date(`${String(ct.end_date).slice(0, 10)}T00:00:00Z`) : null;
+        if (ini > mesFimDate) return false;
+        if (fim && fim <= mesIniDate) return false;
+        return !!licencaDoContrato(ct.id);
+      })
+      .map((ct) => ({
+        id: ct.id,
+        aluno: customersById[ct.customer_id]?.full_name || ct.contract_number || 'Aluno',
+        contrato: ct.contract_number || '',
+        modalidade: modalitiesById[ct.plan_snapshot?.modality_id || plansById[ct.plan_id]?.modality_id]?.name || '',
+        licenca: licencaDoContrato(ct.id),
+      }))
+      .sort((a, b) => a.aluno.localeCompare(b.aluno));
+
+    return {
+      coach,
+      emLicencaIntegral,
+      mesLabel: formatCompetence(competence),
+      generatedAt: formatDate(closing.generated_at?.split('T')[0]),
+      statusLabel: closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão',
+      porModalidade,
+      alunos, liderancas, resgatados, ajustes, pendings: pends, total,
+    };
+  }, [data, coachId]);
 
   if (!data) {
     return (
@@ -135,25 +194,45 @@ export default function CoachStatement() {
     return <div style={{ padding: 48, textAlign: 'center', color: '#94a3b8' }}>Extrato não encontrado.</div>;
   }
 
-  const fileName = `Extrato ${data.coach.name} - ${formatCompetence(data.closing.competence)}.pdf`;
+  const statementTitle = `Extrato - ${data.coach.name} - ${formatCompetence(data.closing.competence)}`;
+  const fileName = `${safeFilePart(statementTitle)}.pdf`;
+  const downloadPdf = async () => {
+    if (!view) return;
+    setDownloading(true);
+    try {
+      const { downloadCoachStatementPdf } = await import('@/lib/coach-statement-pdf');
+      downloadCoachStatementPdf(view, fileName, statementTitle);
+    } catch (e) {
+      console.error('Erro ao gerar PDF do extrato:', e);
+      toast.error('Não consegui gerar o PDF do extrato.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const btn = {
+    display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600,
+    borderRadius: 8, padding: '9px 16px', textDecoration: 'none', border: 'none', cursor: 'pointer',
+  };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#334155' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: '#1e293b' }}>
+    <div className="coach-statement-page" style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#334155' }}>
+      <div className="coach-statement-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '10px 16px', background: '#1e293b', flexWrap: 'wrap' }}>
         <button onClick={() => navigate(`/assessoria/fechamento/${id}`)}
           style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#cbd5e1', background: 'none', border: 'none', cursor: 'pointer' }}>
           <ArrowLeft style={{ width: 16, height: 16 }} /> Voltar ao fechamento
         </button>
-        <PDFDownloadLink document={doc} fileName={fileName}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#fff', background: '#2563eb', borderRadius: 8, padding: '9px 16px', textDecoration: 'none' }}>
-          {({ loading }) => <><Download style={{ width: 16, height: 16 }} /> {loading ? 'Preparando...' : 'Baixar PDF'}</>}
-        </PDFDownloadLink>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" onClick={downloadPdf} disabled={downloading}
+            style={{ ...btn, color: '#fff', background: '#2563eb', opacity: downloading ? 0.65 : 1 }}>
+            <Download style={{ width: 16, height: 16 }} />
+            {downloading ? 'Preparando...' : 'Baixar PDF'}
+          </button>
+        </div>
       </div>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <PDFViewer style={{ width: '100%', height: '100%', border: 'none' }} showToolbar>
-          {doc}
-        </PDFViewer>
-      </div>
+
+      <StatementPreview view={view} />
+
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   Activity, FileText, Layers, Award, DollarSign, Pause,
   Users, BarChart3, TrendingUp, Wallet, HandCoins,
-  ShoppingCart, Megaphone, Undo2, Archive, ClipboardList,
+  ShoppingCart, Megaphone, Undo2,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
   ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus, ListChecks,
   MessageCircle,
@@ -47,17 +47,16 @@ const FINANCEIRO_ITEMS = [
 
 // LOJA — módulo secundário (colapsável)
 const LOJA_ITEMS = [
-  { label: 'Pedidos',        icon: ShoppingCart,  to: '/pedidos',         badge: 'orders' },
-  { label: 'Campanhas',      icon: Megaphone,     to: '/campanhas' },
+  { label: 'Produtos',       icon: Package,       to: '/produtos',                exact: true },
+  { label: 'Pedidos',        icon: ShoppingCart,  to: '/pedidos',                 exact: true, badge: 'orders' },
+  { label: 'Coleções',       icon: Megaphone,     to: '/campanhas' },
+  { label: 'Pré-venda',      icon: Megaphone,     to: '/produtos/pre-venda' },
   { label: 'Devoluções',     icon: Undo2,         to: '/devolucoes' },
-  { label: 'Estoque',        icon: Archive,       to: '/estoque',         exact: true },
-  { label: 'Ped. estoque',   icon: ClipboardList, to: '/estoque/pedidos' },
 ];
 
 // CONFIGURAÇÕES (colapsável)
 const CONFIG_ITEMS = [
   { label: 'Dashboard',         icon: LayoutDashboard, to: '/admin',                  exact: true },
-  { label: 'Produtos loja',     icon: Package,         to: '/produtos' },
   { label: 'Categorias',        icon: Tag,             to: '/categorias' },
   { label: 'Treinadores',       icon: UserCheck,       to: '/treinadores' },
   { label: 'Fornecedores',      icon: Truck,           to: '/fornecedores' },

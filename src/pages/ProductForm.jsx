@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Wand2, ChevronDown, ChevronUp, Hash } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,14 +7,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ImageUpload from '@/components/shared/ImageUpload';
+import ProductStockProfile from '@/components/shared/ProductStockProfile';
 import { formatSku, formatProductNumber } from '@/lib/sku';
-import { PreSaleProduct, PreSaleCampaign, PreSaleSupplier, PreSaleCategory, Product } from '@/api/entities';
+import { normalizeStockVariations, stockProductQuantity, stockVariationLabel, stockVariationQuantity } from '@/lib/stock-variations';
+import { PreSaleProduct, PreSaleCampaign, PreSaleSupplier, PreSaleCategory, Product, StockProduct } from '@/api/entities';
 import { formatCurrency, cn } from '@/lib/utils';
+import { normalizeCampaignSelection } from '@/lib/campaignLinks';
 import { toast } from 'sonner';
 
 // ─── Opções pré-definidas ───────────────────────────────────────────────────
-const SIZES_LETTER = ['PP', 'P', 'M', 'G', 'GG', 'XG', '2XG', '3XG'];
+const SIZES_LETTER = ['PP', 'P', 'M', 'G', 'GG', 'XGG', '2XG', '3XG'];
 const SIZES_NUMERIC = ['34', '36', '38', '40', '42', '44', '46', '48'];
 const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
 
@@ -25,9 +29,75 @@ const GENDERS = ['Masculino', 'Feminino', 'Unissex'];
 const EMPTY = {
   name: '', product_number: null, supplier: '', sale_price: '', regular_price: '', cost_price: '',
   extra_cost: '', extra_cost_description: '',
-  category: '', subcategory: '',
+  category: '', subcategory: '', description: '', images: [], supplier_id: '', product_id: null,
   status: 'active', campaign_ids: [], variations: [], extras: [], notes: '',
 };
+
+function presaleFormFromCatalogProduct(current, product) {
+  return {
+    ...current,
+    product_id: product.id,
+    product_number: product.product_number || null,
+    name: product.name || '',
+    description: product.description || '',
+    category: product.category || '',
+    subcategory: product.subcategory || '',
+    supplier: product.supplier || '',
+    supplier_id: product.supplier_id || '',
+    images: Array.isArray(product.images) ? product.images : [],
+    sale_price: String(product.sale_price ?? ''),
+    regular_price: String(product.regular_price ?? ''),
+    cost_price: String(product.cost_price ?? ''),
+    extra_cost: String(product.extra_cost ?? ''),
+    variations: Array.isArray(product.variations) ? product.variations : [],
+    extras: Array.isArray(product.extras) ? product.extras : [],
+  };
+}
+
+async function syncLinkedStockProduct(productId, product) {
+  const stockProduct = (await StockProduct.list()).find(item => item.product_id === productId);
+  if (!stockProduct) return { needsStockReconciliation: false };
+
+  const payload = {
+    name: product.name,
+    description: product.description || null,
+    category: product.category || null,
+    subcategory: product.subcategory || null,
+    images: product.images || [],
+    sale_price: product.sale_price,
+    cost_price: product.cost_price,
+    supplier: product.supplier || null,
+    supplier_id: product.supplier_id || null,
+    notes: product.notes || null,
+    status: product.status,
+    extras: product.extras || [],
+  };
+
+  payload.regular_price = product.regular_price ?? null;
+  if (product.product_number) payload.product_number = product.product_number;
+
+  const catalogVariations = normalizeStockVariations(product.variations);
+  const stockVariations = normalizeStockVariations(stockProduct.variations);
+  const stockVariationsByKey = new Map(
+    stockVariations.map(variation => [variation.sku || stockVariationLabel(variation), variation])
+  );
+  const hasSameVariationSchema = catalogVariations.length === stockVariations.length &&
+    catalogVariations.every(variation => stockVariationsByKey.has(variation.sku || stockVariationLabel(variation)));
+
+  if (hasSameVariationSchema) {
+    payload.variations = catalogVariations.map(variation => {
+      const stockVariation = stockVariationsByKey.get(variation.sku || stockVariationLabel(variation));
+      return { ...variation, quantity: stockVariationQuantity(stockVariation) };
+    });
+  } else if (stockProductQuantity(stockProduct) === 0) {
+    payload.variations = catalogVariations;
+  } else {
+    return { needsStockReconciliation: true };
+  }
+
+  await StockProduct.update(stockProduct.id, payload);
+  return { needsStockReconciliation: false };
+}
 
 // ─── Chip de seleção múltipla ────────────────────────────────────────────────
 function Chip({ label, selected, onClick }) {
@@ -47,16 +117,22 @@ function Chip({ label, selected, onClick }) {
   );
 }
 
-export default function ProductForm() {
+export default function ProductForm({ mode = 'presale' }) {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isPresale = mode === 'presale';
+  const isEdit = Boolean(id);
+  const sourceProductId = searchParams.get('produto') || searchParams.get('product_id');
+  const stockTabRequested = searchParams.get('aba') === 'estoque';
   const [form, setForm] = useState(EMPTY);
   const [campaigns, setCampaigns] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [catalogProducts, setCatalogProducts] = useState([]);
   const [saving, setSaving] = useState(false);
-  const [loadingProduct, setLoadingProduct] = useState(false);
-  const isEdit = Boolean(id);
+  const [loadingProduct, setLoadingProduct] = useState(isEdit);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Estado do gerador rápido
   const [showGenerator, setShowGenerator] = useState(false);
@@ -70,8 +146,8 @@ export default function ProductForm() {
     PreSaleSupplier.list().then(setSuppliers);
     PreSaleCategory.list().then(setCategories);
     if (isEdit) {
-      setLoadingProduct(true);
-      PreSaleProduct.get(id).then(async p => {
+      const entity = isPresale ? PreSaleProduct : Product;
+      entity.get(id).then(async p => {
         const images = p.images || (p.image ? [p.image] : []);
         let supplier_id = p.supplier_id || '';
         if (!supplier_id && p.supplier) {
@@ -89,27 +165,30 @@ export default function ProductForm() {
           variations: Array.isArray(p.variations) ? p.variations : [],
           extras: Array.isArray(p.extras) ? p.extras : [],
           images,
-          campaign_ids: p.campaign_ids?.length ? p.campaign_ids : (p.campaign_id ? [p.campaign_id] : []),
+          campaign_ids: isPresale ? normalizeCampaignSelection(p) : [],
         });
+        setHasUnsavedChanges(false);
       }).catch(e => {
         toast.error('Erro ao carregar produto: ' + e.message);
       }).finally(() => {
         setLoadingProduct(false);
       });
     }
-  }, [id]);
+  }, [id, isEdit, isPresale]);
 
-  // Re-gera SKU de cada variação sempre que product_number, size ou gender mudar
   useEffect(() => {
-    if (!form.product_number || !form.variations?.length) return;
-    setForm(f => ({
-      ...f,
-      variations: f.variations.map(v => ({
-        ...v,
-        sku: formatSku(f.product_number, v.size || '', v.gender || ''),
-      })),
-    }));
-  }, [form.product_number]);
+    if (!isPresale || isEdit) return;
+    Product.list()
+      .then(setCatalogProducts)
+      .catch(error => toast.error('Erro ao carregar produtos cadastrados: ' + error.message));
+  }, [isEdit, isPresale]);
+
+  useEffect(() => {
+    if (!isPresale || isEdit || !sourceProductId) return;
+    Product.get(sourceProductId)
+      .then(product => setForm(current => presaleFormFromCatalogProduct(current, product)))
+      .catch(() => toast.error('Produto base não encontrado para criar a pré-venda'));
+  }, [isEdit, isPresale, sourceProductId]);
 
   const salePrice = parseFloat(form.sale_price) || 0;
   const regularPrice = parseFloat(form.regular_price) || 0;
@@ -120,7 +199,10 @@ export default function ProductForm() {
   const margin = salePrice > 0 ? (profit / salePrice) * 100 : 0;
   const discount = regularPrice > salePrice ? Math.round((1 - salePrice / regularPrice) * 100) : 0;
 
-  const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const setField = (k, v) => {
+    setHasUnsavedChanges(true);
+    setForm(f => ({ ...f, [k]: v }));
+  };
 
   // Gerador: cria variações a partir de tamanho + gênero
   const generateVariations = () => {
@@ -161,6 +243,7 @@ export default function ProductForm() {
     }
 
     if (toAdd.length === 0) return toast.info('Essas variações já existem');
+    setHasUnsavedChanges(true);
     setForm(f => ({ ...f, variations: [...(f.variations || []), ...toAdd] }));
     toast.success(`${toAdd.length} variações adicionadas!`);
     setGenSizes([]);
@@ -171,34 +254,52 @@ export default function ProductForm() {
   const toggleSize = (s) => setGenSizes(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
   const toggleGender = (g) => setGenGenders(prev => prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g]);
 
-  const addVariation = () => setForm(f => ({
-    ...f,
-    variations: [...(f.variations || []), { name: '', sku: formatSku(f.product_number, '', ''), gender: '', size: '', sale_price: '', regular_price: '', cost_price: '' }],
-  }));
+  const addVariation = () => {
+    setHasUnsavedChanges(true);
+    setForm(f => ({
+      ...f,
+      variations: [...(f.variations || []), { name: '', sku: formatSku(f.product_number, '', ''), gender: '', size: '', sale_price: '', regular_price: '', cost_price: '' }],
+    }));
+  };
 
-  const updateVariation = (i, k, v) => setForm(f => {
-    const vars = [...(f.variations || [])];
-    vars[i] = { ...vars[i], [k]: v };
-    // Atualiza nome automaticamente se veio do gerador
-    if ((k === 'gender' || k === 'size') && vars[i].gender !== undefined) {
-      const g = vars[i].gender;
-      const s = vars[i].size;
-      if (g && s) vars[i].name = `${g} - ${s}`;
-      else if (g) vars[i].name = g;
-      else if (s) vars[i].name = s;
-    }
-    // Re-gera SKU automaticamente quando size/gender mudam (não editável manualmente)
-    if (k === 'gender' || k === 'size') {
-      vars[i].sku = formatSku(f.product_number, vars[i].size || '', vars[i].gender || '');
-    }
-    return { ...f, variations: vars };
-  });
+  const updateVariation = (i, k, v) => {
+    setHasUnsavedChanges(true);
+    setForm(f => {
+      const vars = [...(f.variations || [])];
+      vars[i] = { ...vars[i], [k]: v };
+      // Atualiza nome automaticamente se veio do gerador
+      if ((k === 'gender' || k === 'size') && vars[i].gender !== undefined) {
+        const g = vars[i].gender;
+        const s = vars[i].size;
+        if (g && s) vars[i].name = `${g} - ${s}`;
+        else if (g) vars[i].name = g;
+        else if (s) vars[i].name = s;
+      }
+      // Re-gera SKU automaticamente quando size/gender mudam (não editável manualmente)
+      if (k === 'gender' || k === 'size') {
+        vars[i].sku = formatSku(f.product_number, vars[i].size || '', vars[i].gender || '');
+      }
+      return { ...f, variations: vars };
+    });
+  };
 
-  const removeVariation = (i) => setForm(f => ({ ...f, variations: f.variations.filter((_, idx) => idx !== i) }));
+  const removeVariation = (i) => {
+    setHasUnsavedChanges(true);
+    setForm(f => ({ ...f, variations: f.variations.filter((_, idx) => idx !== i) }));
+  };
 
-  const addExtra = () => setForm(f => ({ ...f, extras: [...(f.extras || []), { name: '', price: '', required: false }] }));
-  const updateExtra = (i, k, v) => setForm(f => { const ex = [...(f.extras || [])]; ex[i] = { ...ex[i], [k]: v }; return { ...f, extras: ex }; });
-  const removeExtra = (i) => setForm(f => ({ ...f, extras: f.extras.filter((_, idx) => idx !== i) }));
+  const addExtra = () => {
+    setHasUnsavedChanges(true);
+    setForm(f => ({ ...f, extras: [...(f.extras || []), { name: '', price: '', required: false }] }));
+  };
+  const updateExtra = (i, k, v) => {
+    setHasUnsavedChanges(true);
+    setForm(f => { const ex = [...(f.extras || [])]; ex[i] = { ...ex[i], [k]: v }; return { ...f, extras: ex }; });
+  };
+  const removeExtra = (i) => {
+    setHasUnsavedChanges(true);
+    setForm(f => ({ ...f, extras: f.extras.filter((_, idx) => idx !== i) }));
+  };
 
   const handleSave = async () => {
     if (!form.name.trim()) return toast.error('Nome é obrigatório');
@@ -207,48 +308,66 @@ export default function ProductForm() {
     try {
       let variations = (form.variations || []).map(v => ({
         ...v,
-        sale_price: parseFloat(v.sale_price) || null,
-        regular_price: parseFloat(v.regular_price) || null,
-        cost_price: parseFloat(v.cost_price) || null,
+        sale_price: isPresale ? parseFloat(v.sale_price) || null : null,
+        regular_price: isPresale ? parseFloat(v.regular_price) || null : null,
+        cost_price: isPresale ? parseFloat(v.cost_price) || null : null,
       }));
       const extras = (form.extras || [])
         .filter(e => e.name?.trim())
         .map(e => ({ name: e.name.trim(), price: parseFloat(e.price) || 0, required: Boolean(e.required) }));
 
-      // Salva / atualiza na biblioteca central
+      // Produto-base é independente de estoque e pré-venda.
       const libraryPayload = {
         name: form.name, description: form.description,
         category: form.category, subcategory: form.subcategory,
         images: form.images || [],
-        sale_price: salePrice, regular_price: regularPrice || null,
+        sale_price: salePrice, regular_price: null,
         cost_price: costPrice, extra_cost: extraCost,
         supplier: form.supplier, supplier_id: form.supplier_id || null,
         notes: form.notes, status: form.status,
         variations, extras,
       };
-      let productId = form.product_id || null;
-      let productNumber = form.product_number || null;
-      if (productId) {
-        await Product.update(productId, libraryPayload);
-      } else {
-        const lib = await Product.create(libraryPayload);
-        productId     = lib.id;
-        productNumber = lib.product_number;
-        // Re-gera SKUs com o product_number REAL (gerado pelo banco) e re-salva
-        if (productNumber && variations.length > 0) {
-          variations = variations.map(v => ({
-            ...v,
-            sku: formatSku(productNumber, v.size || '', v.gender || ''),
-          }));
-          await Product.update(productId, { variations });
+      if (!isPresale) {
+        let savedProduct;
+        if (isEdit) {
+          savedProduct = await Product.update(id, libraryPayload);
+          try {
+            const stockSync = await syncLinkedStockProduct(savedProduct.id, savedProduct);
+            if (stockSync.needsStockReconciliation) {
+              toast.warning('Dados salvos. Há saldo nos tamanhos antigos; ajuste esse saldo antes de trocar os tamanhos no estoque.');
+            }
+          } catch (syncError) {
+            console.error('Não foi possível espelhar os dados no estoque', syncError);
+            toast.warning('Produto salvo, mas a loja ainda não recebeu as alterações. Tente salvar novamente.');
+          }
+        } else {
+          const product = await Product.create(libraryPayload);
+          savedProduct = product;
+          if (product.product_number && variations.length > 0) {
+            variations = variations.map(v => ({
+              ...v,
+              sku: formatSku(product.product_number, v.size || '', v.gender || ''),
+            }));
+            await Product.update(product.id, { variations });
+          }
         }
+        setHasUnsavedChanges(false);
+        toast.success(isEdit ? 'Produto atualizado!' : 'Produto criado!');
+        navigate(`/produtos/${savedProduct.id}${isEdit ? '' : '?aba=estoque'}`);
+        return;
       }
 
-      // Salva / atualiza no presale_products (com product_id linkado)
+      if (!form.product_id) {
+        toast.error('Escolha o produto base desta pré-venda');
+        return;
+      }
+
+      // Pré-venda é uma oferta vinculada a um produto-base já existente.
       const payload = {
         ...form,
-        product_id: productId,
-        product_number: productNumber,
+        product_id: form.product_id,
+        product_number: form.product_number,
+        campaign_id: null,
         sale_price: salePrice, regular_price: regularPrice || null,
         cost_price: costPrice, extra_cost: extraCost,
         total_cost: totalCost, profit_per_unit: profit,
@@ -262,7 +381,7 @@ export default function ProductForm() {
         await PreSaleProduct.create(payload);
         toast.success('Produto criado!');
       }
-      navigate('/produtos');
+      navigate('/produtos/pre-venda');
     } catch (e) {
       toast.error(e.message);
     } finally {
@@ -271,6 +390,21 @@ export default function ProductForm() {
   };
 
   const variations = form.variations || [];
+  const showProductProfile = !isPresale && isEdit;
+  const activeSection = stockTabRequested ? 'stock' : 'details';
+
+  const selectProfileSection = value => {
+    if (value === 'stock' && hasUnsavedChanges) {
+      toast.error('Salve as alterações dos tamanhos antes de abrir o estoque');
+      return;
+    }
+    setSearchParams(current => {
+      const next = new URLSearchParams(current);
+      if (value === 'stock') next.set('aba', 'estoque');
+      else next.delete('aba');
+      return next;
+    });
+  };
 
   if (isEdit && loadingProduct) {
     return (
@@ -282,17 +416,61 @@ export default function ProductForm() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/produtos')}>
+        <Button variant="ghost" size="icon" onClick={() => navigate(isPresale ? '/produtos/pre-venda' : '/produtos')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
-        <h2 className="text-xl font-bold">{isEdit ? 'Editar Produto' : 'Novo Produto'}</h2>
+        <div>
+          <h2 className="text-xl font-bold">
+            {isPresale
+              ? (isEdit ? 'Editar pré-venda' : 'Criar pré-venda')
+              : (isEdit ? (form.name || 'Produto') : 'Novo produto')}
+          </h2>
+          {showProductProfile && <p className="text-sm text-muted-foreground">Perfil do produto</p>}
+        </div>
       </div>
+
+      {showProductProfile && (
+        <Tabs value={activeSection} onValueChange={selectProfileSection}>
+          <TabsList>
+            <TabsTrigger value="details">Dados</TabsTrigger>
+            <TabsTrigger value="stock">Estoque e loja</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+
+      {showProductProfile && activeSection === 'stock' && <ProductStockProfile productId={id} />}
+
+      {(!showProductProfile || activeSection === 'details') && <>
+
+      {isPresale && !isEdit && (
+        <Card>
+          <CardHeader><CardTitle>Produto base</CardTitle></CardHeader>
+          <CardContent>
+            <Select
+              value={form.product_id || ''}
+              onValueChange={productId => {
+                const product = catalogProducts.find(item => item.id === productId);
+                if (product) setForm(current => presaleFormFromCatalogProduct(current, product));
+              }}
+            >
+              <SelectTrigger><SelectValue placeholder="Escolha um produto cadastrado" /></SelectTrigger>
+              <SelectContent>
+                {catalogProducts.map(product => (
+                  <SelectItem key={product.id} value={product.id}>
+                    {product.product_number ? `${formatProductNumber(product.product_number)} · ` : ''}{product.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Informações básicas */}
       <Card>
-        <CardHeader><CardTitle>Informações básicas</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{isPresale ? 'Informações da pré-venda' : 'Informações do produto'}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div>
             <Label>Fotos do produto <span className="text-xs text-muted-foreground font-normal">(até 3 · a primeira é a principal)</span></Label>
@@ -326,7 +504,7 @@ export default function ProductForm() {
               </p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className={cn('grid gap-4', isPresale ? 'grid-cols-2' : 'grid-cols-1')}>
             <div>
               <Label>Categoria</Label>
               <Select
@@ -371,7 +549,7 @@ export default function ProductForm() {
               })()}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className={cn('grid gap-4', isPresale ? 'grid-cols-2' : 'grid-cols-1')}>
             <div>
               <Label>Fornecedor</Label>
               <Select
@@ -403,8 +581,8 @@ export default function ProductForm() {
                 </a>
               )}
             </div>
-            <div>
-              <Label>Campanhas (opcional)</Label>
+            {isPresale && <div>
+              <Label>Coleções / campanhas (opcional)</Label>
               {campaigns.length === 0 ? (
                 <p className="text-xs text-muted-foreground mt-2">Nenhuma campanha cadastrada ainda.</p>
               ) : (
@@ -429,7 +607,7 @@ export default function ProductForm() {
                   })}
                 </div>
               )}
-            </div>
+            </div>}
           </div>
           <div>
             <Label>Status</Label>
@@ -438,7 +616,7 @@ export default function ProductForm() {
               <SelectContent>
                 <SelectItem value="active">Ativo</SelectItem>
                 <SelectItem value="inactive">Inativo</SelectItem>
-                <SelectItem value="pre_sale_closed">Pré-venda encerrada</SelectItem>
+                {isPresale && <SelectItem value="pre_sale_closed">Pré-venda encerrada</SelectItem>}
               </SelectContent>
             </Select>
           </div>
@@ -447,22 +625,22 @@ export default function ProductForm() {
 
       {/* Preços e custos */}
       <Card>
-        <CardHeader><CardTitle>Preços e custos padrão</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{isPresale ? 'Preço e custos da pré-venda' : 'Preço e custos'}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className={cn('grid gap-4', isPresale ? 'grid-cols-2' : 'max-w-xs')}>
             <div>
-              <Label>Preço pré-venda (R$) *</Label>
+              <Label>{isPresale ? 'Preço pré-venda (R$) *' : 'Preço de venda (R$) *'}</Label>
               <Input type="number" step="0.01" min="0" placeholder="0,00" value={form.sale_price} onChange={e => setField('sale_price', e.target.value)} className="mt-1" />
-              <p className="text-xs text-muted-foreground mt-1">O que o cliente paga na pré-venda</p>
+              <p className="text-xs text-muted-foreground mt-1">{isPresale ? 'O que o cliente paga na pré-venda' : 'Preço padrão para as vendas'}</p>
             </div>
-            <div>
-              <Label>Preço regular em estoque (R$)</Label>
+            {isPresale && <div>
+              <Label>Preço normal depois da pré-venda (R$)</Label>
               <Input type="number" step="0.01" min="0" placeholder="0,00" value={form.regular_price} onChange={e => setField('regular_price', e.target.value)} className="mt-1" />
-              <p className="text-xs text-muted-foreground mt-1">Preço cheio quando disponível normalmente</p>
-            </div>
+              <p className="text-xs text-muted-foreground mt-1">Preço praticado quando a pré-venda terminar</p>
+            </div>}
           </div>
 
-          {discount > 0 && (
+          {isPresale && discount > 0 && (
             <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-4 py-2.5">
               <span className="text-green-700 font-semibold text-sm">{discount}% OFF na pré-venda</span>
               <span className="text-green-600 text-xs">· cliente economiza {formatCurrency(regularPrice - salePrice)}</span>
@@ -623,19 +801,27 @@ export default function ProductForm() {
           {variations.length > 0 && (
             <div className="space-y-2">
               {/* Cabeçalho da tabela */}
-              <div className="grid grid-cols-[1fr,90px,90px,80px,80px,80px,80px,36px] gap-2 text-xs font-medium text-muted-foreground px-1">
+              <div className={cn(
+                'grid gap-2 text-xs font-medium text-muted-foreground px-1',
+                isPresale ? 'grid-cols-[1fr,90px,90px,80px,80px,80px,80px,36px]' : 'grid-cols-[1fr,90px,90px,80px,36px]'
+              )}>
                 <span>Nome / Variação</span>
                 <span>SKU</span>
                 <span>Gênero</span>
                 <span>Tam.</span>
-                <span className="text-right">Pré-venda</span>
-                <span className="text-right">Regular</span>
-                <span className="text-right">Custo</span>
+                {isPresale && <>
+                  <span className="text-right">Pré-venda</span>
+                  <span className="text-right">Normal</span>
+                  <span className="text-right">Custo</span>
+                </>}
                 <span />
               </div>
 
               {variations.map((v, i) => (
-                <div key={i} className="grid grid-cols-[1fr,90px,90px,80px,80px,80px,80px,36px] gap-2 items-center p-2 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200">
+                <div key={i} className={cn(
+                  'grid gap-2 items-center p-2 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-200',
+                  isPresale ? 'grid-cols-[1fr,90px,90px,80px,80px,80px,80px,36px]' : 'grid-cols-[1fr,90px,90px,80px,36px]'
+                )}>
                   <Input
                     placeholder="Ex: Fem. - M, Azul GG..."
                     value={v.name}
@@ -666,24 +852,26 @@ export default function ProductForm() {
                       {SIZES_NUMERIC.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <Input
-                    type="number" step="0.01" placeholder="Padrão"
-                    value={v.sale_price ?? ''}
-                    onChange={e => updateVariation(i, 'sale_price', e.target.value)}
-                    className="h-8 text-sm text-right"
-                  />
-                  <Input
-                    type="number" step="0.01" placeholder="Padrão"
-                    value={v.regular_price ?? ''}
-                    onChange={e => updateVariation(i, 'regular_price', e.target.value)}
-                    className="h-8 text-sm text-right"
-                  />
-                  <Input
-                    type="number" step="0.01" placeholder="Padrão"
-                    value={v.cost_price ?? ''}
-                    onChange={e => updateVariation(i, 'cost_price', e.target.value)}
-                    className="h-8 text-sm text-right"
-                  />
+                  {isPresale && <>
+                    <Input
+                      type="number" step="0.01" placeholder="Padrão"
+                      value={v.sale_price ?? ''}
+                      onChange={e => updateVariation(i, 'sale_price', e.target.value)}
+                      className="h-8 text-sm text-right"
+                    />
+                    <Input
+                      type="number" step="0.01" placeholder="Padrão"
+                      value={v.regular_price ?? ''}
+                      onChange={e => updateVariation(i, 'regular_price', e.target.value)}
+                      className="h-8 text-sm text-right"
+                    />
+                    <Input
+                      type="number" step="0.01" placeholder="Padrão"
+                      value={v.cost_price ?? ''}
+                      onChange={e => updateVariation(i, 'cost_price', e.target.value)}
+                      className="h-8 text-sm text-right"
+                    />
+                  </>}
                   <Button size="icon" variant="ghost" onClick={() => removeVariation(i)} className="h-8 w-8 text-red-400 hover:text-red-700">
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
@@ -692,7 +880,9 @@ export default function ProductForm() {
 
               <p className="text-xs text-muted-foreground px-1 pt-1">
                 {variations.length} variação{variations.length !== 1 ? 'ões' : ''} cadastrada{variations.length !== 1 ? 's' : ''}.
-                Preço/custo em branco = usa o padrão do produto.
+                {isPresale
+                  ? 'Preço/custo em branco = usa o padrão da pré-venda.'
+                  : 'O preço e o custo definidos acima valem para todas as variações.'}
               </p>
             </div>
           )}
@@ -768,11 +958,12 @@ export default function ProductForm() {
       </div>
 
       <div className="flex justify-end gap-3 pb-6">
-        <Button variant="outline" onClick={() => navigate('/produtos')}>Cancelar</Button>
+        <Button variant="outline" onClick={() => navigate(isPresale ? '/produtos/pre-venda' : '/produtos')}>Cancelar</Button>
         <Button onClick={handleSave} disabled={saving}>
-          {saving ? 'Salvando...' : isEdit ? 'Salvar alterações' : 'Criar produto'}
+          {saving ? 'Salvando...' : isEdit ? 'Salvar alterações' : isPresale ? 'Criar pré-venda' : 'Criar produto'}
         </Button>
       </div>
+      </>}
     </div>
   );
 }

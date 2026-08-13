@@ -61,6 +61,46 @@ export async function loadActivePaymentMethods() {
   });
 }
 
+function normalizedPaymentCode(code) {
+  const value = String(code || '').trim().toLowerCase();
+  const gatewayAliases = {
+    pix_asaas: 'pix',
+    boleto_asaas: 'boleto',
+    card_asaas_3x: 'card_3x',
+    card_asaas_12x: 'card_12x',
+  };
+  if (gatewayAliases[value]) return gatewayAliases[value];
+  if (value === 'card' || value === 'credit') return 'credit_card';
+  if (value === 'pix_boleto') return 'pix';
+  return value;
+}
+
+function candidatePaymentCodes(code) {
+  const normalized = normalizedPaymentCode(code);
+  if (!normalized) return [];
+  const candidates = [normalized];
+  const cardMatch = normalized.match(/^card_(\d+)x$/);
+  if (cardMatch && cardMatch[1] === '1') candidates.push('credit_card');
+  if (normalized === 'credit_card') candidates.push('card_1x');
+  if (normalized === 'pix') candidates.push('pix_asaas');
+  if (normalized === 'boleto') candidates.push('boleto_asaas');
+  return [...new Set(candidates)];
+}
+
+export function findPreferredPaymentMethod(methodGroups, preferredCode, fallbackCode = 'pix_manual') {
+  const allMethods = (methodGroups || []).flatMap(([, list]) => list || []);
+  const byInternalCode = code => allMethods.find(method => normalizedPaymentCode(method.internal_code) === code);
+
+  for (const candidate of candidatePaymentCodes(preferredCode)) {
+    const exact = allMethods.find(method => method.internal_code === candidate);
+    if (exact) return exact;
+    const normalized = byInternalCode(candidate);
+    if (normalized) return normalized;
+  }
+
+  return byInternalCode(fallbackCode) || allMethods[0] || null;
+}
+
 // Preview usado pelo formulário. O backend recalcula a mesma projeção e é a
 // fonte de verdade no momento da gravação.
 function addDaysLocal(yyyymmdd, days) {

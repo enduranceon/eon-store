@@ -1,9 +1,8 @@
-import { useParams, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { CheckCircle2, Phone, Mail, Store } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 
 export default function PublicStoreConfirmation() {
-  const { orderId } = useParams();
   const location = useLocation();
   const order = location.state?.order;
 
@@ -72,8 +71,14 @@ export default function PublicStoreConfirmation() {
             <p className="text-xs text-muted-foreground mb-2">Itens do pedido</p>
             <div className="space-y-2">
               {(order.items || []).map((item, i) => (
-                <div key={i} className="flex items-center justify-between text-sm">
-                  <span>{item.product_name} <span className="text-muted-foreground">x{item.quantity}</span></span>
+                <div key={i} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="min-w-0">
+                    <span className="font-medium">{item.product_name}</span>
+                    {item.variation && (
+                      <span className="block text-xs text-blue-600 truncate">{item.variation}</span>
+                    )}
+                    <span className="text-muted-foreground">x{item.quantity}</span>
+                  </span>
                   <span className="font-semibold">{formatCurrency(item.sale_price * item.quantity)}</span>
                 </div>
               ))}

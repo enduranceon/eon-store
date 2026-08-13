@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag, HandCoins, Calendar } from 'lucide-react';
+import { ArrowLeft, User, UserPlus, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag, HandCoins, Calendar, Search, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,18 +9,24 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { StockOrder } from '@/api/entities';
+import { PreSaleCustomer, StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { cn, formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
-import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, reopenManualPayment } from '@/lib/manual-payment';
+import {
+  loadActivePaymentMethods,
+  createManualInstallments,
+  adjustManualInstallmentsValue,
+  reopenManualPayment,
+  findPreferredPaymentMethod,
+} from '@/lib/manual-payment';
 import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 import {
-  cancelOrder as cancelOrderViaApi,
+  cancelOrderCharge,
   cancelOrderItem,
   createOrderCharge,
   markOrderPaymentMessageSent,
@@ -28,6 +34,7 @@ import {
   syncOrderChargeStatus,
   updateOrderDiscount,
   updateOrderFulfillment,
+  linkStockOrderCustomer,
 } from '@/api/client';
 
 const PAYMENT_STATUS = {
@@ -44,8 +51,24 @@ const DELIVERY_STATUS = {
   awaiting_delivery: { label: 'Aguardando entrega', badge: 'secondary' },
   separated:         { label: 'Separado',            badge: 'warning' },
   delivered:         { label: 'Entregue',            badge: 'success' },
-  cancelled:         { label: 'Cancelado',           badge: 'destructive' },
+  cancelled:         { label: 'Entrega interrompida', badge: 'destructive' },
 };
+
+const LEGACY_DELIVERY_STATUS = '__legacy_unset__';
+const DELIVERY_TRANSITIONS = {
+  awaiting_delivery: ['separated', 'cancelled'],
+  separated: ['delivered', 'cancelled'],
+  delivered: [],
+  cancelled: [],
+};
+
+function deliveryStatusOptions(currentStatus) {
+  const current = currentStatus || 'awaiting_delivery';
+  return [...new Set([
+    ...(currentStatus ? [currentStatus] : []),
+    ...(currentStatus ? DELIVERY_TRANSITIONS[current] || [] : [current, ...(DELIVERY_TRANSITIONS[current] || [])]),
+  ])];
+}
 
 const CANCEL_REASONS = [
   'Desistência do cliente',
@@ -64,8 +87,9 @@ const PAYMENT_METHOD_LABEL = {
   card_10x: 'Cartão 10x', card_11x: 'Cartão 11x', card_12x: 'Cartão 12x',
 };
 
-export default function StockOrderDetail() {
-  const { id } = useParams();
+export default function StockOrderDetail({ orderId, embedded = false, onChanged }) {
+  const params = useParams();
+  const id = orderId || params.id;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [order, setOrder] = useState(null);
@@ -77,12 +101,20 @@ export default function StockOrderDetail() {
   const [deliveryStatus, setDeliveryStatus] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
+  const [fulfillmentReason, setFulfillmentReason] = useState('');
   const [asaasLoading, setAsaasLoading] = useState(false);
   const [asaasCpf, setAsaasCpf] = useState('');
   const [asaasBilling, setAsaasBilling] = useState('PIX');
   const [asaasInstallments, setAsaasInstallments] = useState(1);
   const [asaasStatus, setAsaasStatus] = useState(null);
   const [asaasDueDate, setAsaasDueDate] = useState(defaultAsaasDueDate);
+
+  const [customerModal, setCustomerModal] = useState(null);
+  const [customers, setCustomers] = useState([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerSaving, setCustomerSaving] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ full_name: '', whatsapp: '', email: '' });
 
   const [cancelModal, setCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
@@ -111,9 +143,10 @@ export default function StockOrderDetail() {
     try {
       const o = await StockOrder.get(id);
       setOrder(o);
-      setDeliveryStatus(o.delivery_status || 'awaiting_delivery');
+      setDeliveryStatus(o.delivery_status || '');
       setInternalNotes(o.internal_notes || '');
       setDeliveryDate(o.delivery_date || '');
+      setFulfillmentReason('');
       setAsaasCpf(o.customer_cpf || '');
       if (o.payment_method?.startsWith('card_')) {
         setAsaasBilling('CREDIT_CARD');
@@ -135,9 +168,9 @@ export default function StockOrderDetail() {
         .catch(() => setPaymentInstallments([]));
     } catch {
       toast.error('Pedido não encontrado');
-      navigate('/estoque/pedidos');
+      if (!embedded) navigate('/estoque/pedidos');
     }
-  }, [id, navigate]);
+  }, [embedded, id, navigate]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -147,15 +180,34 @@ export default function StockOrderDetail() {
   }, [load]);
 
   // Salva apenas campos de entrega e observações. Pagamento muda só via ações.
+  const handleDeliveryStatusChange = nextStatus => {
+    if (nextStatus === LEGACY_DELIVERY_STATUS) return;
+    setDeliveryStatus(nextStatus);
+    if (nextStatus !== 'cancelled') setFulfillmentReason('');
+    if (nextStatus === 'delivered' && !deliveryDate) setDeliveryDate(todayLocalStr());
+  };
+
   const handleSave = async () => {
+    const previousStatus = order?.delivery_status || null;
+    const nextStatus = deliveryStatus || null;
+    if (nextStatus === 'delivered' && previousStatus !== 'delivered' && !deliveryDate) {
+      toast.error('Informe a data ao marcar o pedido como entregue');
+      return;
+    }
+    if (nextStatus === 'cancelled' && previousStatus !== 'cancelled' && !fulfillmentReason.trim()) {
+      toast.error('Informe o motivo para interromper a entrega');
+      return;
+    }
     setSaving(true);
     try {
       await updateOrderFulfillment('stock', id, {
-        deliveryStatus,
+        deliveryStatus: nextStatus,
         deliveryDate: deliveryDate || null,
         internalNotes,
+        fulfillmentReason: fulfillmentReason.trim() || null,
       });
       toast.success('Atualizações salvas!');
+      onChanged?.();
       load();
     } catch (e) {
       toast.error(e.message);
@@ -169,8 +221,10 @@ export default function StockOrderDetail() {
     try {
       const groups = await loadActivePaymentMethods();
       setMethodGroups(groups);
-      const allMethods = groups.flatMap(([, list]) => list);
-      const defaultMethod = allMethods.find(m => m.internal_code === 'pix_manual') || allMethods[0];
+      const defaultMethod = findPreferredPaymentMethod(
+        groups,
+        order?.payment_method || order?.payment_preference,
+      );
       setManualPayForm({
         method_id: defaultMethod?.id || '',
         date:      todayLocalStr(),
@@ -262,10 +316,10 @@ export default function StockOrderDetail() {
 
     setAsaasLoading(true);
     try {
-      await cancelOrderViaApi('stock', id, reason);
+      await cancelOrderCharge('stock', id, reason);
       setCancelModal(false);
       setAsaasStatus(null);
-      toast.success('Pedido e cobrança cancelados.');
+      toast.success('Cobrança cancelada. O pedido continua aguardando uma nova cobrança.');
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao cancelar');
@@ -434,11 +488,80 @@ export default function StockOrderDetail() {
     }
   };
 
+  const openCustomerLink = async () => {
+    setCustomerSearch('');
+    setCustomerModal('link');
+    if (customers.length > 0) return;
+
+    setCustomersLoading(true);
+    try {
+      setCustomers(await PreSaleCustomer.list('full_name'));
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível carregar os clientes');
+      setCustomerModal(null);
+    } finally {
+      setCustomersLoading(false);
+    }
+  };
+
+  const openNewCustomer = () => {
+    setNewCustomer({
+      full_name: order.customer_name || '',
+      whatsapp: order.customer_whatsapp || '',
+      email: order.customer_email || '',
+    });
+    setCustomerModal('create');
+  };
+
+  const linkCustomer = async (customerId) => {
+    setCustomerSaving(true);
+    try {
+      await linkStockOrderCustomer(id, customerId);
+      toast.success('Cliente vinculado ao pedido');
+      setCustomerModal(null);
+      onChanged?.();
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível vincular o cliente');
+    } finally {
+      setCustomerSaving(false);
+    }
+  };
+
+  const createAndLinkCustomer = async () => {
+    const fullName = newCustomer.full_name.trim();
+    if (fullName.length < 3) return toast.error('Informe o nome completo do cliente');
+
+    setCustomerSaving(true);
+    try {
+      const customer = await PreSaleCustomer.create({
+        full_name: fullName,
+        whatsapp: newCustomer.whatsapp.trim() || null,
+        email: newCustomer.email.trim().toLowerCase() || null,
+      });
+      await linkStockOrderCustomer(id, customer.id);
+      toast.success('Cliente criado e vinculado ao pedido');
+      setCustomerModal(null);
+      onChanged?.();
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível criar o cliente');
+    } finally {
+      setCustomerSaving(false);
+    }
+  };
+
   if (!order) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   const ps = PAYMENT_STATUS[order.payment_status] || { label: order.payment_status, badge: 'secondary' };
   const ds = DELIVERY_STATUS[order.delivery_status] || { label: order.delivery_status, badge: 'secondary' };
   const items = order.items || [];
+  const customerQuery = customerSearch.trim().toLowerCase();
+  const matchingCustomers = customers.filter(customer => !customerQuery || [
+    customer.full_name,
+    customer.whatsapp,
+    customer.email,
+  ].some(value => value?.toLowerCase().includes(customerQuery))).slice(0, 30);
 
   const openCancelItem = (index) => {
     setCancelItemIndex(index);
@@ -474,11 +597,13 @@ export default function StockOrderDetail() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className={cn(embedded ? 'space-y-5 pb-6' : 'max-w-3xl mx-auto space-y-6')}>
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/estoque/pedidos')}>
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
+        {!embedded && (
+          <Button variant="ghost" size="icon" onClick={() => navigate('/estoque/pedidos')}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+        )}
         <div>
           <h2 className="text-xl font-bold font-mono">{order.order_number}</h2>
           <p className="text-sm text-muted-foreground">{formatDate(order.created_date)}</p>
@@ -507,7 +632,19 @@ export default function StockOrderDetail() {
 
       {/* Cliente */}
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><User className="w-4 h-4" /> Cliente</CardTitle></CardHeader>
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base flex items-center gap-2"><User className="w-4 h-4" /> Cliente</CardTitle>
+            {order.customer_id ? (
+              <div className="flex items-center gap-2">
+                <Badge variant="success">Vinculado</Badge>
+                <Button size="sm" variant="outline" onClick={openCustomerLink}>Trocar vínculo</Button>
+              </div>
+            ) : (
+              <Badge variant="warning">A confirmar</Badge>
+            )}
+          </div>
+        </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p className="font-semibold text-base">{order.customer_name}</p>
           {order.customer_whatsapp && <p className="flex items-center gap-2 text-muted-foreground"><Phone className="w-3.5 h-3.5" />{order.customer_whatsapp}</p>}
@@ -523,6 +660,22 @@ export default function StockOrderDetail() {
               Preferência: {PAYMENT_METHOD_LABEL[order.payment_preference || order.payment_method] || order.payment_preference || order.payment_method}
             </p>
           )}
+          <div className="pt-3 mt-3 border-t flex flex-wrap gap-2">
+            {order.customer_id ? (
+              <Button size="sm" variant="outline" onClick={() => navigate(`/clientes/${order.customer_id}`)}>
+                Abrir perfil do cliente
+              </Button>
+            ) : (
+              <>
+                <Button size="sm" onClick={openCustomerLink}>
+                  <Search className="w-3.5 h-3.5" /> Vincular cliente existente
+                </Button>
+                <Button size="sm" variant="outline" onClick={openNewCustomer}>
+                  <UserPlus className="w-3.5 h-3.5" /> Criar novo cliente
+                </Button>
+              </>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -738,7 +891,7 @@ export default function StockOrderDetail() {
             <DialogTitle className="flex items-center gap-2 text-red-600"><X className="w-5 h-5" /> Cancelar cobrança</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Selecione o motivo do cancelamento:</p>
+            <p className="text-sm text-muted-foreground">Selecione o motivo do cancelamento. O pedido e o estoque serão mantidos para você gerar uma nova cobrança depois.</p>
             <div className="space-y-1.5">
               {CANCEL_REASONS.map(r => (
                 <button key={r} type="button" onClick={() => setCancelReason(r)}
@@ -1015,6 +1168,15 @@ export default function StockOrderDetail() {
               <Button variant="outline" className="w-full gap-2 border-green-300 text-green-700 hover:bg-green-50" onClick={openManualPay}>
                 <HandCoins className="w-4 h-4" /> Registrar pagamento manual (sem Asaas)
               </Button>
+              {/* Mesma ação que já existia dentro do modal de WhatsApp (campo "Link de
+                  cobrança externo"), agora explícita aqui — como na tela de pré-venda.
+                  Sem isso o operador não encontrava: ficava escondida atrás de "Cobrar
+                  via WhatsApp" e parecia que a loja não suportava cobrança externa. */}
+              {order.customer_whatsapp && (
+                <Button variant="outline" className="w-full gap-2 border-amber-300 text-amber-700 hover:bg-amber-50" onClick={openWhatsApp}>
+                  <Link2 className="w-4 h-4" /> Cadastrar cobrança externa (Stone, PagSeguro…)
+                </Button>
+              )}
             </div>
           )}
         </CardContent>
@@ -1164,18 +1326,28 @@ export default function StockOrderDetail() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Status de Entrega</Label>
-              <Select value={deliveryStatus} onValueChange={setDeliveryStatus}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <Select value={deliveryStatus || LEGACY_DELIVERY_STATUS} onValueChange={handleDeliveryStatusChange}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione a etapa" /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(DELIVERY_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+                  {!order.delivery_status && <SelectItem value={LEGACY_DELIVERY_STATUS} disabled>Sem etapa definida (legado)</SelectItem>}
+                  {deliveryStatusOptions(order.delivery_status).map(status => (
+                    <SelectItem key={status} value={status}>{DELIVERY_STATUS[status]?.label || status}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">Mostra só a etapa atual e os próximos passos. Pagamento é controlado separadamente.</p>
             </div>
             <div>
               <Label>Data de Entrega</Label>
               <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="mt-1" />
             </div>
           </div>
+          {deliveryStatus === 'cancelled' && order.delivery_status !== 'cancelled' && (
+            <div>
+              <Label>Motivo da interrupção da entrega</Label>
+              <Textarea value={fulfillmentReason} onChange={e => setFulfillmentReason(e.target.value)} className="mt-1" rows={2} maxLength={500} placeholder="Explique por que esta entrega não seguirá..." />
+            </div>
+          )}
           <div>
             <Label>Observações internas</Label>
             <Textarea value={internalNotes} onChange={e => setInternalNotes(e.target.value)} className="mt-1" rows={3} placeholder="Anotações internas..." />
@@ -1185,6 +1357,68 @@ export default function StockOrderDetail() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={customerModal === 'link'} onOpenChange={open => !open && !customerSaving && setCustomerModal(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Vincular cliente existente</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Escolha o cadastro que pertence a este pedido. Os dados informados no pedido continuam preservados no histórico.</p>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 w-4 h-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="pl-9" autoFocus placeholder="Nome, WhatsApp ou e-mail" value={customerSearch} onChange={event => setCustomerSearch(event.target.value)} />
+            </div>
+            {customersLoading ? (
+              <div className="py-8 flex justify-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>
+            ) : (
+              <div className="max-h-72 overflow-y-auto border rounded-lg divide-y">
+                {matchingCustomers.length === 0 ? (
+                  <p className="p-4 text-sm text-muted-foreground">Nenhum cliente encontrado.</p>
+                ) : matchingCustomers.map(customer => (
+                  <div key={customer.id} className="p-3 flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium truncate">{customer.full_name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{[customer.whatsapp, customer.email].filter(Boolean).join(' · ') || 'Sem contato cadastrado'}</p>
+                    </div>
+                    <Button size="sm" variant="outline" disabled={customerSaving} onClick={() => linkCustomer(customer.id)}>Vincular</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end">
+              <Button variant="ghost" onClick={() => setCustomerModal(null)} disabled={customerSaving}>Cancelar</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={customerModal === 'create'} onOpenChange={open => !open && !customerSaving && setCustomerModal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Criar e vincular cliente</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">Confira os dados antes de criar o cadastro. Este pedido será ligado ao novo cliente.</p>
+            <div>
+              <Label>Nome completo</Label>
+              <Input className="mt-1" value={newCustomer.full_name} onChange={event => setNewCustomer(current => ({ ...current, full_name: event.target.value }))} />
+            </div>
+            <div>
+              <Label>WhatsApp</Label>
+              <Input className="mt-1" value={newCustomer.whatsapp} onChange={event => setNewCustomer(current => ({ ...current, whatsapp: event.target.value }))} />
+            </div>
+            <div>
+              <Label>E-mail</Label>
+              <Input className="mt-1" type="email" value={newCustomer.email} onChange={event => setNewCustomer(current => ({ ...current, email: event.target.value }))} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setCustomerModal(null)} disabled={customerSaving}>Cancelar</Button>
+              <Button onClick={createAndLinkCustomer} disabled={customerSaving}>{customerSaving ? 'Criando...' : 'Criar e vincular'}</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal de reabrir pagamento */}
       <Dialog open={reopenModal} onOpenChange={open => !open && !reopenLoading && setReopenModal(false)}>

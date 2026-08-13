@@ -1,19 +1,29 @@
-import { Menu, Store } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 const titles = {
   '/': 'Dashboard',
-  '/campanhas': 'Campanhas',
-  '/produtos': 'Produtos',
+	  '/campanhas': 'Coleções',
+	  '/biblioteca-produtos': 'Produtos',
+	  '/produtos': 'Produtos',
+	  '/produtos/pre-venda': 'Produtos de pré-venda',
+  '/estoque': 'Produtos',
+  '/estoque/pedidos': 'Pedidos de estoque',
   '/pedidos': 'Pedidos',
   '/clientes': 'Clientes',
+  '/assessoria/alunos': 'Alunos',
   '/relatorios': 'Relatórios',
 };
 
 function getTitle(pathname) {
-  if (pathname.startsWith('/campanhas/')) return 'Detalhe da Campanha';
+  if (pathname.startsWith('/campanhas/')) return 'Detalhe da coleção';
+  if (pathname.startsWith('/produtos/pre-venda/')) return 'Produto de pré-venda';
+  if (pathname.startsWith('/produtos/estoque/')) return 'Estoque do produto';
   if (pathname.startsWith('/produtos/')) return 'Produto';
+  if (pathname.startsWith('/estoque/pedidos/')) return 'Pedido de estoque';
+  if (pathname.startsWith('/estoque/')) return 'Produto em estoque';
   if (pathname.startsWith('/pedidos/')) return 'Pedido';
+  if (pathname.startsWith('/assessoria/alunos/')) return 'Aluno';
   if (pathname.startsWith('/clientes/')) return 'Cliente';
   return titles[pathname] ?? 'EON Store';
 }
