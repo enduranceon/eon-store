@@ -522,6 +522,35 @@ export async function handleOrdersRequest(
     return jsonResponse({ data });
   }
 
+  const customerMatch = path.match(/^\/orders\/stock\/([^/]+)\/customer$/);
+  if (req.method === "PATCH" && customerMatch) {
+    const [, orderId] = customerMatch;
+    if (!UUID_PATTERN.test(orderId)) {
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
+    }
+    const body = await parseObject(req);
+    if (
+      !body || Object.keys(body).length !== 1 ||
+      typeof body.customer_id !== "string" ||
+      !UUID_PATTERN.test(body.customer_id)
+    ) {
+      return jsonResponse({
+        error: "Cliente inválido",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc("link_stock_order_customer", {
+      p_order_id: orderId,
+      p_customer_id: body.customer_id,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "link stock order customer");
+    return jsonResponse({ data });
+  }
+
   const stockItemsMatch = path.match(/^\/orders\/stock\/([^/]+)\/items$/);
   if (req.method === "PUT" && stockItemsMatch) {
     const [, orderId] = stockItemsMatch;
