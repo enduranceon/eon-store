@@ -120,6 +120,7 @@ Deno.serve(async (req: Request) => {
     req,
     path,
     serviceClient,
+    gate.userId!,
   );
   if (inventoryResponse) return inventoryResponse;
 

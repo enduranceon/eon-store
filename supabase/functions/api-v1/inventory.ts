@@ -3,10 +3,26 @@ import { jsonResponse } from "../_shared/http.ts";
 
 type ProductPayload = Record<string, unknown>;
 type ProductMode = "create" | "update";
+type StockEntryPayload = {
+  quantity: number;
+  variation: string | null;
+  reason: string | null;
+};
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PRODUCT_STATUSES = new Set(["active", "inactive"]);
+const STOCK_MOVEMENT_TYPES = new Set([
+  "opening_balance",
+  "stock_entry",
+  "stock_withdrawal",
+  "inventory_adjustment",
+  "order_reserved",
+  "order_cancelled",
+  "order_refunded",
+  "order_item_cancelled",
+  "order_returned",
+]);
 const WRITABLE_FIELDS = new Set([
   "name",
   "description",
@@ -206,6 +222,50 @@ function inputError(error: unknown): Response {
   );
 }
 
+export function normalizeStockEntryPayload(payload: unknown): StockEntryPayload {
+  if (!isPlainObject(payload)) {
+    throw new InventoryInputError("Corpo JSON inválido", "invalid_json");
+  }
+  for (const field of Object.keys(payload)) {
+    if (!["quantity", "variation", "reason"].includes(field)) {
+      throw new InventoryInputError(`Campo não permitido: ${field}`);
+    }
+  }
+
+  const quantity = Number(payload.quantity);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10_000_000) {
+    throw new InventoryInputError("Quantidade de entrada inválida");
+  }
+
+  const normalizeOptionalText = (
+    field: "variation" | "reason",
+    maxLength: number,
+  ) => {
+    const value = payload[field];
+    if (value === undefined || value === null || value === "") return null;
+    if (typeof value !== "string" || value.trim().length > maxLength) {
+      throw new InventoryInputError(`Campo inválido: ${field}`);
+    }
+    return value.trim() || null;
+  };
+
+  return {
+    quantity,
+    variation: normalizeOptionalText("variation", 200),
+    reason: normalizeOptionalText("reason", 500),
+  };
+}
+
+export function normalizeStockWithdrawalPayload(
+  payload: unknown,
+): StockEntryPayload {
+  const normalized = normalizeStockEntryPayload(payload);
+  if (!normalized.reason) {
+    throw new InventoryInputError("Informe o motivo da retirada");
+  }
+  return normalized;
+}
+
 function notFoundResponse(): Response {
   return jsonResponse(
     { error: "Produto não encontrado", code: "not_found" },
@@ -217,7 +277,140 @@ export async function handleInventoryRequest(
   req: Request,
   path: string,
   supabase: SupabaseClient,
+  actorId: string | null = null,
 ): Promise<Response | null> {
+  if (path === "/inventory/movements") {
+    if (req.method !== "GET") {
+      return jsonResponse({
+        error: "Método não permitido",
+        code: "method_not_allowed",
+      }, 405);
+    }
+
+    const url = new URL(req.url);
+    const stockProductId = url.searchParams.get("stock_product_id");
+    const variation = url.searchParams.get("variation");
+    const movementType = url.searchParams.get("type");
+    const dateFrom = url.searchParams.get("date_from");
+    const dateTo = url.searchParams.get("date_to");
+    const requestedLimit = Number(url.searchParams.get("limit") || "250");
+
+    if (stockProductId && !UUID_PATTERN.test(stockProductId)) {
+      return jsonResponse({
+        error: "Identificador de produto inválido",
+        code: "invalid_product_id",
+      }, 400);
+    }
+    if (variation && variation.length > 200) {
+      return jsonResponse({
+        error: "Variação inválida",
+        code: "invalid_variation",
+      }, 400);
+    }
+    if (movementType && !STOCK_MOVEMENT_TYPES.has(movementType)) {
+      return jsonResponse({
+        error: "Tipo de movimentação inválido",
+        code: "invalid_movement_type",
+      }, 400);
+    }
+    if (
+      (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) ||
+      (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) ||
+      !Number.isInteger(requestedLimit) || requestedLimit < 1 ||
+      requestedLimit > 500
+    ) {
+      return jsonResponse({
+        error: "Filtro de movimentação inválido",
+        code: "invalid_movement_filter",
+      }, 400);
+    }
+
+    let query = supabase
+      .from("stock_movements")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(requestedLimit);
+    if (stockProductId) query = query.eq("stock_product_id", stockProductId);
+    if (variation) query = query.eq("variation", variation);
+    if (movementType) query = query.eq("movement_type", movementType);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
+    if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999`);
+
+    const { data, error } = await query;
+    if (error) return databaseError(error, "list movements");
+    return jsonResponse({ data: data ?? [] });
+  }
+
+  const entryMatch = path.match(/^\/inventory\/products\/([^/]+)\/entry$/);
+  if (entryMatch) {
+    const productId = entryMatch[1];
+    if (!UUID_PATTERN.test(productId)) {
+      return jsonResponse({
+        error: "Identificador de produto inválido",
+        code: "invalid_product_id",
+      }, 400);
+    }
+    if (req.method !== "POST") {
+      return jsonResponse({
+        error: "Método não permitido",
+        code: "method_not_allowed",
+      }, 405);
+    }
+
+    let payload: StockEntryPayload;
+    try {
+      payload = normalizeStockEntryPayload(await requestPayload(req));
+    } catch (error) {
+      return inputError(error);
+    }
+
+    const { data, error } = await supabase.rpc("apply_stock_entry", {
+      p_stock_product_id: productId,
+      p_quantity: payload.quantity,
+      p_variation: payload.variation,
+      p_reason: payload.reason,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "add stock entry");
+    return jsonResponse({ data });
+  }
+
+  const withdrawalMatch = path.match(
+    /^\/inventory\/products\/([^/]+)\/withdrawal$/,
+  );
+  if (withdrawalMatch) {
+    const productId = withdrawalMatch[1];
+    if (!UUID_PATTERN.test(productId)) {
+      return jsonResponse({
+        error: "Identificador de produto inválido",
+        code: "invalid_product_id",
+      }, 400);
+    }
+    if (req.method !== "POST") {
+      return jsonResponse({
+        error: "Método não permitido",
+        code: "method_not_allowed",
+      }, 405);
+    }
+
+    let payload: StockEntryPayload;
+    try {
+      payload = normalizeStockWithdrawalPayload(await requestPayload(req));
+    } catch (error) {
+      return inputError(error);
+    }
+
+    const { data, error } = await supabase.rpc("apply_stock_withdrawal", {
+      p_stock_product_id: productId,
+      p_quantity: payload.quantity,
+      p_variation: payload.variation,
+      p_reason: payload.reason,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "remove stock");
+    return jsonResponse({ data });
+  }
+
   const match = path.match(/^\/inventory\/products(?:\/([^/]+))?$/);
   if (!match) return null;
   const productId = match[1];
