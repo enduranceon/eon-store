@@ -12,8 +12,8 @@ import CampaignDetail from '@/pages/CampaignDetail';
 import ProductLibrary from '@/pages/ProductLibrary';
 import Products from '@/pages/Products';
 import ProductForm from '@/pages/ProductForm';
-import Orders from '@/pages/Orders';
 import OrderDetail from '@/pages/OrderDetail';
+import OrderCenter from '@/pages/OrderCenter';
 import Customers from '@/pages/Customers';
 import CustomerDetail from '@/pages/CustomerDetail';
 import Reports from '@/pages/Reports';
@@ -29,8 +29,9 @@ import PublicHome from '@/pages/PublicHome';
 import Migrate from '@/pages/Migrate';
 import CampaignReport from '@/pages/CampaignReport';
 import Login from '@/pages/Login';
-import StockProductForm from '@/pages/StockProductForm';
-import StockOrders from '@/pages/StockOrders';
+import StockMovements from '@/pages/StockMovements';
+import ProductStockManager from '@/pages/ProductStockManager';
+import ProductStockSetup from '@/pages/ProductStockSetup';
 import StockOrderDetail from '@/pages/StockOrderDetail';
 import PublicStore from '@/pages/PublicStore';
 import PublicStoreConfirmation from '@/pages/PublicStoreConfirmation';
@@ -99,6 +100,14 @@ function AdminLayout({ children }) {
   );
 }
 
+function LegacyOrderListRedirect({ origin }) {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  params.set('origem', origin);
+
+  return <Navigate to={`/pedidos?${params.toString()}${location.hash}`} replace />;
+}
+
 export default function App() {
   useEffect(() => { seedTrainers(); }, []);
 
@@ -130,11 +139,14 @@ export default function App() {
 	          <Route path="/biblioteca-produtos" element={<Navigate to="/produtos" replace />} />
 	          <Route path="/produtos" element={<AdminLayout><ProductLibrary /></AdminLayout>} />
           <Route path="/produtos/pre-venda" element={<AdminLayout><Products /></AdminLayout>} />
-          <Route path="/produtos/pre-venda/novo" element={<AdminLayout><ProductForm /></AdminLayout>} />
-          <Route path="/produtos/pre-venda/:id" element={<AdminLayout><ProductForm /></AdminLayout>} />
-          <Route path="/produtos/novo" element={<AdminLayout><ProductForm /></AdminLayout>} />
-          <Route path="/produtos/:id" element={<AdminLayout><ProductForm /></AdminLayout>} />
-          <Route path="/pedidos" element={<AdminLayout><Orders /></AdminLayout>} />
+          <Route path="/produtos/pre-venda/novo" element={<AdminLayout><ProductForm mode="presale" /></AdminLayout>} />
+          <Route path="/produtos/pre-venda/:id" element={<AdminLayout><ProductForm mode="presale" /></AdminLayout>} />
+          <Route path="/produtos/estoque/:stockId" element={<AdminLayout><ProductStockManager /></AdminLayout>} />
+          <Route path="/produtos/:productId/estoque/configurar" element={<AdminLayout><ProductStockSetup /></AdminLayout>} />
+          <Route path="/produtos/novo" element={<AdminLayout><ProductForm mode="catalog" /></AdminLayout>} />
+          <Route path="/produtos/:id" element={<AdminLayout><ProductForm mode="catalog" /></AdminLayout>} />
+          <Route path="/pedidos" element={<AdminLayout><OrderCenter /></AdminLayout>} />
+          <Route path="/pedidos/pre-venda" element={<LegacyOrderListRedirect origin="presale" />} />
           <Route path="/pedidos/:id" element={<AdminLayout><OrderDetail /></AdminLayout>} />
           <Route path="/clientes" element={<AdminLayout><Customers /></AdminLayout>} />
           <Route path="/clientes/:id" element={<AdminLayout><CustomerDetail /></AdminLayout>} />
@@ -177,12 +189,14 @@ export default function App() {
           <Route path="/assessoria/fechamento"     element={<AdminLayout><AssMonthlyClosing /></AdminLayout>} />
           <Route path="/assessoria/fechamento/:id" element={<AdminLayout><AssClosingDetail /></AdminLayout>} />
           <Route path="/assessoria/fechamento/:id/extrato/:coachId" element={<Suspense fallback={<div style={{ padding: 48, textAlign: 'center', color: '#64748b' }}>Carregando extrato...</div>}><AssCoachStatement /></Suspense>} />
-          <Route path="/estoque" element={<AdminLayout><ProductLibrary /></AdminLayout>} />
-          <Route path="/estoque/novo" element={<AdminLayout><StockProductForm /></AdminLayout>} />
-          <Route path="/estoque/pedidos" element={<AdminLayout><StockOrders /></AdminLayout>} />
+          <Route path="/estoque" element={<Navigate to="/produtos?visao=needs_stock" replace />} />
+          <Route path="/estoque/novo" element={<Navigate to="/produtos/novo" replace />} />
+          <Route path="/estoque/entrada" element={<Navigate to="/produtos" replace />} />
+          <Route path="/estoque/movimentacoes" element={<AdminLayout><StockMovements /></AdminLayout>} />
+          <Route path="/estoque/pedidos" element={<LegacyOrderListRedirect origin="stock" />} />
           <Route path="/estoque/pedidos/novo" element={<AdminLayout><StockOrderNewAdmin /></AdminLayout>} />
           <Route path="/estoque/pedidos/:id" element={<AdminLayout><StockOrderDetail /></AdminLayout>} />
-          <Route path="/estoque/:id" element={<AdminLayout><StockProductForm /></AdminLayout>} />
+          <Route path="/estoque/:id" element={<AdminLayout><ProductStockManager /></AdminLayout>} />
           <Route path="*" element={<Navigate to="/hoje" replace />} />
         </Routes>
       </BrowserRouter>

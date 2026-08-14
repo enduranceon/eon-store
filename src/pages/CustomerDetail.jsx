@@ -12,7 +12,7 @@ import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan, Asse
 import { supabase } from '@/api/db';
 import { mergeCustomers } from '@/api/client';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
+import { isEffectiveSale, isOpenSaleForFinancial } from '@/lib/sales';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { formatCep, formatCustomerAddress, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import { studentProfilePath } from '@/lib/customer-profile';
@@ -274,7 +274,7 @@ export default function CustomerDetail() {
   // ── Pagamentos em aberto (contratos + pedidos não pagos) ────────────────────
   const todayStr = new Date().toISOString().slice(0, 10);
   const openContracts = lifecycleRows
-    .filter(isEffectiveOpenSale)
+    .filter(isOpenSaleForFinancial)
     .map(c => {
       const daysOverdue = c.due_date && c.due_date < todayStr
         ? Math.round((new Date(todayStr) - new Date(c.due_date)) / 86400000)
@@ -283,7 +283,7 @@ export default function CustomerDetail() {
     });
 
   const openOrders = orders
-    .filter(isEffectiveOpenSale)
+    .filter(isOpenSaleForFinancial)
     .map(o => ({
       ...o,
       _value: Number(o.total_value) || 0,

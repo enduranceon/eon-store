@@ -514,8 +514,8 @@ export default function Renewals() {
       const activatedStatus = result.contract?.status || nextStatus;
 
       toast.success(activatedStatus === 'scheduled'
-        ? `Renovação ${draft.contract_number} agendada!`
-        : `Renovação ${draft.contract_number} ativada!`);
+        ? `Renovação ${draft.contract_number} agendada e enviada para vendas em aberto!`
+        : `Renovação ${draft.contract_number} ativada e enviada para vendas em aberto.`);
       setActivationModal(null);
       load();
     } catch (e) {
@@ -1098,14 +1098,14 @@ export default function Renewals() {
 
               {activationStartsLater ? (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-                  A renovação ficará aprovada e a cobrança pode ser tratada agora. Ela só entra como contrato ativo em <b>{formatDate(activationDraft.start_date)}</b>.
+                  A renovação ficará aprovada e será registrada em <b>Vendas em aberto</b>, para cobrança e acompanhamento. Ela só entra como contrato ativo em <b>{formatDate(activationDraft.start_date)}</b>.
                   {activationParent && (
                     <span> O contrato anterior <b>{activationParent.contract_number}</b> permanece ativo até a virada da vigência.</span>
                   )}
                 </div>
               ) : (
                 <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
-                  A renovação entra em vigor agora.
+                  A renovação entra em vigor agora e será registrada em <b>Vendas em aberto</b>, aguardando a cobrança e a confirmação do pagamento.
                   {activationParent && (
                     <span> O contrato anterior <b>{activationParent.contract_number}</b> será marcado como concluído.</span>
                   )}

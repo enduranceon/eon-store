@@ -135,6 +135,9 @@ export async function completeOrderReturn(returnId, options = {}) {
     ...options,
     method: 'POST',
   });
+  invalidatePageCacheByTag('order_returns');
+  invalidatePageCacheByTag('stock_products');
+  invalidatePageCacheByTag('stock_movements');
   return response.data;
 }
 
@@ -144,6 +147,12 @@ export async function cancelOrder(orderType, orderId, reason, options = {}) {
     method: 'POST',
     body: { reason },
   });
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('order_returns');
+  if (orderType === 'stock') {
+    invalidatePageCacheByTag('stock_products');
+    invalidatePageCacheByTag('stock_movements');
+  }
   return response.data;
 }
 
@@ -156,13 +165,19 @@ export async function createStockOrder(payload, options = {}) {
   });
   invalidatePageCacheByTag('stock_orders');
   invalidatePageCacheByTag('stock_products');
+  invalidatePageCacheByTag('stock_movements');
   return response.data;
 }
 
 export async function updateOrderFulfillment(
   orderType,
   orderId,
-  { deliveryStatus, deliveryDate = null, internalNotes = null },
+  {
+    deliveryStatus,
+    deliveryDate = null,
+    internalNotes = null,
+    fulfillmentReason = null,
+  },
   options = {},
 ) {
   const response = await apiRequest(`/orders/${orderType}/${orderId}/fulfillment`, {
@@ -172,9 +187,22 @@ export async function updateOrderFulfillment(
       delivery_status: deliveryStatus,
       delivery_date: deliveryDate,
       internal_notes: internalNotes,
+      fulfillment_reason: fulfillmentReason,
     },
   });
   invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
+export async function linkStockOrderCustomer(orderId, customerId, options = {}) {
+  const response = await apiRequest(`/orders/stock/${orderId}/customer`, {
+    ...options,
+    method: 'PATCH',
+    body: { customer_id: customerId },
+  });
+  invalidatePageCacheByTag('stock_orders');
+  invalidatePageCacheByTag('presale_customers');
   return response.data;
 }
 
@@ -422,6 +450,39 @@ export async function createAssessmentContract(
     },
   });
   invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function createManualAssessmentProspect(
+  {
+    fullName,
+    whatsapp,
+    email = null,
+    cpf = null,
+    planId,
+    coachId,
+    installments = 1,
+    notes = null,
+  },
+  options = {},
+) {
+  const response = await apiRequest('/assessment/prospects/manual', {
+    ...options,
+    method: 'POST',
+    idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+    body: {
+      full_name: fullName,
+      whatsapp,
+      email: email?.trim() || null,
+      cpf: cpf?.trim() || null,
+      plan_id: planId,
+      coach_id: coachId,
+      installments,
+      notes: notes?.trim() || null,
+    },
+  });
+  invalidateAssessmentContractLifecycle();
+  invalidatePageCacheByTag('presale_customers');
   return response.data;
 }
 
@@ -1015,6 +1076,12 @@ export async function refundOrder(orderType, orderId, reason, options = {}) {
     method: 'POST',
     body: { reason },
   });
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('order_returns');
+  if (orderType === 'stock') {
+    invalidatePageCacheByTag('stock_products');
+    invalidatePageCacheByTag('stock_movements');
+  }
   return response.data;
 }
 
@@ -1030,6 +1097,12 @@ export async function cancelOrderItem(
     method: 'POST',
     body: { reason, was_delivered: wasDelivered },
   });
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('order_returns');
+  if (orderType === 'stock') {
+    invalidatePageCacheByTag('stock_products');
+    invalidatePageCacheByTag('stock_movements');
+  }
   return response.data;
 }
 
@@ -1088,6 +1161,25 @@ function inventoryProductPath(id) {
   return id ? `${base}/${encodeURIComponent(id)}` : base;
 }
 
+function inventoryMovementsPath(filters = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== null && value !== undefined && value !== '') {
+      params.set(key, String(value));
+    }
+  }
+  const query = params.toString();
+  return `/inventory/movements${query ? `?${query}` : ''}`;
+}
+
+function inventoryEntryPath(id) {
+  return `${inventoryProductPath(id)}/entry`;
+}
+
+function inventoryWithdrawalPath(id) {
+  return `${inventoryProductPath(id)}/withdrawal`;
+}
+
 function inventoryWritePayload(data) {
   const payload = { ...data };
   delete payload.id;
@@ -1114,12 +1206,38 @@ export const StockProductApi = {
     return response.data;
   },
 
+  async movements(filters = {}) {
+    const response = await apiRequest(inventoryMovementsPath(filters));
+    return response.data;
+  },
+
+  async entry(id, { quantity, variation = null, reason = null }) {
+    const response = await apiRequest(inventoryEntryPath(id), {
+      method: 'POST',
+      body: { quantity, variation, reason },
+    });
+    invalidatePageCacheByTag('stock_products');
+    invalidatePageCacheByTag('stock_movements');
+    return response.data;
+  },
+
+  async withdraw(id, { quantity, variation = null, reason }) {
+    const response = await apiRequest(inventoryWithdrawalPath(id), {
+      method: 'POST',
+      body: { quantity, variation, reason },
+    });
+    invalidatePageCacheByTag('stock_products');
+    invalidatePageCacheByTag('stock_movements');
+    return response.data;
+  },
+
   async create(data) {
     const response = await apiRequest(inventoryProductPath(), {
       method: 'POST',
       body: inventoryWritePayload(data),
     });
     invalidatePageCacheByTag('stock_products');
+    invalidatePageCacheByTag('stock_movements');
     return response.data;
   },
 
@@ -1129,6 +1247,7 @@ export const StockProductApi = {
       body: inventoryWritePayload(data),
     });
     invalidatePageCacheByTag('stock_products');
+    invalidatePageCacheByTag('stock_movements');
     return response.data;
   },
 

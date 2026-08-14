@@ -87,6 +87,9 @@ function databaseError(
   if (error.code === "22023") {
     return jsonResponse({ error: error.message, code: "invalid_request" }, 400);
   }
+  if (["22007", "22P02"].includes(error.code ?? "")) {
+    return jsonResponse({ error: "Dados inválidos", code: "invalid_request" }, 400);
+  }
   if (error.code === "P0001" || error.code === "23505") {
     return jsonResponse(
       { error: error.message, code: "invalid_transition" },
@@ -353,12 +356,24 @@ export async function handleOrdersRequest(
       }, 400);
     }
     const body = await parseObject(req);
+    const fulfillmentFields = new Set([
+      "delivery_status",
+      "delivery_date",
+      "internal_notes",
+      "fulfillment_reason",
+    ]);
     if (
-      !body || typeof body.delivery_status !== "string" ||
+      !body ||
+      Object.keys(body).length === 0 ||
+      Object.keys(body).some((field) => !fulfillmentFields.has(field)) ||
+      (body.delivery_status !== null && body.delivery_status !== undefined &&
+        typeof body.delivery_status !== "string") ||
       (body.delivery_date !== null && body.delivery_date !== undefined &&
         typeof body.delivery_date !== "string") ||
       (body.internal_notes !== null && body.internal_notes !== undefined &&
-        typeof body.internal_notes !== "string")
+        typeof body.internal_notes !== "string") ||
+      (body.fulfillment_reason !== null && body.fulfillment_reason !== undefined &&
+        typeof body.fulfillment_reason !== "string")
     ) {
       return jsonResponse({
         error: "Dados de entrega inválidos",
@@ -368,12 +383,42 @@ export async function handleOrdersRequest(
     const { data, error } = await supabase.rpc("update_order_fulfillment", {
       p_order_type: orderType,
       p_order_id: orderId,
-      p_delivery_status: body.delivery_status,
+      p_delivery_status: body.delivery_status ?? null,
       p_delivery_date: body.delivery_date ?? null,
       p_internal_notes: body.internal_notes ?? null,
+      p_fulfillment_reason: body.fulfillment_reason ?? null,
       p_actor_id: actorId,
     });
     if (error) return databaseError(error, "update fulfillment");
+    return jsonResponse({ data });
+  }
+
+  const customerMatch = path.match(/^\/orders\/stock\/([^/]+)\/customer$/);
+  if (req.method === "PATCH" && customerMatch) {
+    const [, orderId] = customerMatch;
+    if (!UUID_PATTERN.test(orderId)) {
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
+    }
+    const body = await parseObject(req);
+    if (
+      !body || Object.keys(body).length !== 1 ||
+      typeof body.customer_id !== "string" ||
+      !UUID_PATTERN.test(body.customer_id)
+    ) {
+      return jsonResponse({
+        error: "Cliente inválido",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc("link_stock_order_customer", {
+      p_order_id: orderId,
+      p_customer_id: body.customer_id,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "link stock order customer");
     return jsonResponse({ data });
   }
 

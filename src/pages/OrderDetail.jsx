@@ -55,8 +55,26 @@ const DELIVERY_STATUS = {
   received: { label: 'Produto recebido', badge: 'info' },
   separated: { label: 'Separado p/ entrega', badge: 'warning' },
   delivered: { label: 'Entregue', badge: 'success' },
-  cancelled: { label: 'Cancelado', badge: 'destructive' },
+  cancelled: { label: 'Entrega interrompida', badge: 'destructive' },
 };
+
+const LEGACY_DELIVERY_STATUS = '__legacy_unset__';
+const DELIVERY_TRANSITIONS = {
+  awaiting_supplier: ['supplier_ordered', 'cancelled'],
+  supplier_ordered: ['received', 'cancelled'],
+  received: ['separated', 'cancelled'],
+  separated: ['delivered', 'cancelled'],
+  delivered: [],
+  cancelled: [],
+};
+
+function deliveryStatusOptions(currentStatus) {
+  const current = currentStatus || 'awaiting_supplier';
+  return [...new Set([
+    ...(currentStatus ? [currentStatus] : []),
+    ...(currentStatus ? DELIVERY_TRANSITIONS[current] || [] : [current, ...(DELIVERY_TRANSITIONS[current] || [])]),
+  ])];
+}
 
 const CANCEL_REASONS = [
   'Desistência do cliente',
@@ -84,6 +102,7 @@ function SALE_EVENT_META(ev) {
     charge_cancelled:     { label: 'Cobrança cancelada',     dot: 'bg-red-500' },
     order_cancelled:      { label: 'Pedido cancelado',       dot: 'bg-red-600' },
     refunded:             { label: 'Pagamento estornado',    dot: 'bg-purple-500' },
+    fulfillment_status_changed: { label: 'Etapa de entrega atualizada', dot: 'bg-amber-500' },
   };
   const byStatus = {
     awaiting_charge: { label: 'Aguardando cobrança', dot: 'bg-gray-400' },
@@ -125,6 +144,7 @@ export default function OrderDetail({ orderId, embedded = false, onChanged }) {
   const [deliveryStatus, setDeliveryStatus] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
+  const [fulfillmentReason, setFulfillmentReason] = useState('');
   const [asaasLoading, setAsaasLoading] = useState(false);
   const [asaasCpf, setAsaasCpf] = useState('');
   const [asaasBilling, setAsaasBilling] = useState('PIX');
@@ -174,9 +194,10 @@ export default function OrderDetail({ orderId, embedded = false, onChanged }) {
   const load = useCallback(async () => {
     const o = await PreSaleOrder.get(id);
     setOrder(o);
-    setDeliveryStatus(o.delivery_status || 'awaiting_supplier');
+    setDeliveryStatus(o.delivery_status || '');
     setInternalNotes(o.internal_notes || '');
     setDeliveryDate(o.delivery_date || '');
+    setFulfillmentReason('');
     if (o.payment_method?.startsWith('card_')) {
       setAsaasBilling('CREDIT_CARD');
       const m = o.payment_method.match(/card_(\d+)x/);
@@ -306,13 +327,31 @@ export default function OrderDetail({ orderId, embedded = false, onChanged }) {
   //   - Cancelar Asaas / Estornar
   //   - Reabrir pagamento
   const handleSaveClick = () => handleSave();
+  const handleDeliveryStatusChange = nextStatus => {
+    if (nextStatus === LEGACY_DELIVERY_STATUS) return;
+    setDeliveryStatus(nextStatus);
+    if (nextStatus !== 'cancelled') setFulfillmentReason('');
+    if (nextStatus === 'delivered' && !deliveryDate) setDeliveryDate(todayLocalStr());
+  };
+
   const handleSave = async () => {
+    const previousStatus = order?.delivery_status || null;
+    const nextStatus = deliveryStatus || null;
+    if (nextStatus === 'delivered' && previousStatus !== 'delivered' && !deliveryDate) {
+      toast.error('Informe a data ao marcar o pedido como entregue');
+      return;
+    }
+    if (nextStatus === 'cancelled' && previousStatus !== 'cancelled' && !fulfillmentReason.trim()) {
+      toast.error('Informe o motivo para interromper a entrega');
+      return;
+    }
     setSaving(true);
     try {
       await updateOrderFulfillment('presale', id, {
-        deliveryStatus,
+        deliveryStatus: nextStatus,
         deliveryDate: deliveryDate || null,
         internalNotes,
+        fulfillmentReason: fulfillmentReason.trim() || null,
       });
       toast.success('Atualizações salvas!');
       onChanged?.();
@@ -1979,18 +2018,28 @@ export default function OrderDetail({ orderId, embedded = false, onChanged }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Status de Entrega</Label>
-              <Select value={deliveryStatus} onValueChange={setDeliveryStatus}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <Select value={deliveryStatus || LEGACY_DELIVERY_STATUS} onValueChange={handleDeliveryStatusChange}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione a etapa" /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(DELIVERY_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+                  {!order.delivery_status && <SelectItem value={LEGACY_DELIVERY_STATUS} disabled>Sem etapa definida (legado)</SelectItem>}
+                  {deliveryStatusOptions(order.delivery_status).map(status => (
+                    <SelectItem key={status} value={status}>{DELIVERY_STATUS[status]?.label || status}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">Mostra só a etapa atual e os próximos passos. Pagamento é controlado separadamente.</p>
             </div>
             <div>
               <Label>Data de Entrega</Label>
               <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="mt-1" />
             </div>
           </div>
+          {deliveryStatus === 'cancelled' && order.delivery_status !== 'cancelled' && (
+            <div>
+              <Label>Motivo da interrupção da entrega</Label>
+              <Textarea value={fulfillmentReason} onChange={e => setFulfillmentReason(e.target.value)} className="mt-1" rows={2} maxLength={500} placeholder="Explique por que esta entrega não seguirá..." />
+            </div>
+          )}
           <div>
             <Label>Observações internas</Label>
             <Textarea value={internalNotes} onChange={e => setInternalNotes(e.target.value)} className="mt-1" rows={3} placeholder="Anotações internas sobre o pedido..." />

@@ -1,8 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Loader2, ExternalLink } from 'lucide-react';
-import { PDFDownloadLink, BlobProvider } from '@react-pdf/renderer';
-import StatementDocument from './StatementDocument';
+import { ArrowLeft, Download, Loader2 } from 'lucide-react';
 import StatementPreview from './StatementPreview';
 import {
   PayoutMonthlyClosing, PayoutMonthlyStatementItem, AssessmentCoach,
@@ -11,13 +9,22 @@ import {
 import { supabase } from '@/api/db';
 import { formatCompetence, formatDate } from '@/lib/utils';
 import { expenseCategoryLabel } from '@/lib/payout-expenses';
+import { toast } from 'sonner';
 
 const SOURCE_LABEL = { direct_leadership: 'Liderança', co_leadership: 'Co-liderança', manual_adjustment: 'Ajuste' };
+
+const safeFilePart = (value) => String(value || '')
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[\\/:*?"<>|]+/g, '')
+  .replace(/\s+/g, ' ')
+  .trim();
 
 export default function CoachStatement() {
   const { id, coachId } = useParams();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -176,8 +183,6 @@ export default function CoachStatement() {
     };
   }, [data, coachId]);
 
-  const doc = useMemo(() => (view ? <StatementDocument {...view} /> : null), [view]);
-
   if (!data) {
     return (
       <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#64748b' }}>
@@ -189,7 +194,21 @@ export default function CoachStatement() {
     return <div style={{ padding: 48, textAlign: 'center', color: '#94a3b8' }}>Extrato não encontrado.</div>;
   }
 
-  const fileName = `Extrato ${data.coach.name} - ${formatCompetence(data.closing.competence)}.pdf`;
+  const statementTitle = `Extrato - ${data.coach.name} - ${formatCompetence(data.closing.competence)}`;
+  const fileName = `${safeFilePart(statementTitle)}.pdf`;
+  const downloadPdf = async () => {
+    if (!view) return;
+    setDownloading(true);
+    try {
+      const { downloadCoachStatementPdf } = await import('@/lib/coach-statement-pdf');
+      downloadCoachStatementPdf(view, fileName, statementTitle);
+    } catch (e) {
+      console.error('Erro ao gerar PDF do extrato:', e);
+      toast.error('Não consegui gerar o PDF do extrato.');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const btn = {
     display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600,
@@ -197,31 +216,18 @@ export default function CoachStatement() {
   };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#334155' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '10px 16px', background: '#1e293b', flexWrap: 'wrap' }}>
+    <div className="coach-statement-page" style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#334155' }}>
+      <div className="coach-statement-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '10px 16px', background: '#1e293b', flexWrap: 'wrap' }}>
         <button onClick={() => navigate(`/assessoria/fechamento/${id}`)}
           style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#cbd5e1', background: 'none', border: 'none', cursor: 'pointer' }}>
           <ArrowLeft style={{ width: 16, height: 16 }} /> Voltar ao fechamento
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {/* Abrir em aba própria: navegação de topo usa o leitor de PDF completo do
-              navegador, que funciona em casos onde o preview embutido (iframe) não
-              desenha nada. Ver o bloco de aviso abaixo. */}
-          <BlobProvider document={doc}>
-            {({ url, loading: blobLoading }) => (
-              <a href={url || undefined} target="_blank" rel="noreferrer"
-                 style={{ ...btn, color: '#e2e8f0', background: '#334155',
-                          pointerEvents: blobLoading || !url ? 'none' : 'auto',
-                          opacity: blobLoading || !url ? 0.6 : 1 }}>
-                <ExternalLink style={{ width: 16, height: 16 }} />
-                {blobLoading ? 'Preparando...' : 'Abrir em nova aba'}
-              </a>
-            )}
-          </BlobProvider>
-          <PDFDownloadLink document={doc} fileName={fileName}
-            style={{ ...btn, color: '#fff', background: '#2563eb' }}>
-            {({ loading }) => <><Download style={{ width: 16, height: 16 }} /> {loading ? 'Preparando...' : 'Baixar PDF'}</>}
-          </PDFDownloadLink>
+          <button type="button" onClick={downloadPdf} disabled={downloading}
+            style={{ ...btn, color: '#fff', background: '#2563eb', opacity: downloading ? 0.65 : 1 }}>
+            <Download style={{ width: 16, height: 16 }} />
+            {downloading ? 'Preparando...' : 'Baixar PDF'}
+          </button>
         </div>
       </div>
 

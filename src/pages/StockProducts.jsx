@@ -36,6 +36,7 @@ export default function StockProducts() {
   const unlinkedCount = products.filter(p => !p.product_id).length;
   const withoutCategoryCount = products.filter(p => !p.category).length;
   const withoutImageCount = products.filter(p => !(p.images?.[0])).length;
+  const hiddenFromStoreCount = products.filter(p => p.show_in_store === false).length;
 
   const handleDelete = async (id, name) => {
     if (!confirm(`Excluir "${name}"?`)) return;
@@ -82,6 +83,7 @@ export default function StockProducts() {
           <h2 className="text-xl font-bold text-gray-900">Produtos em estoque</h2>
           <p className="text-sm text-muted-foreground">
             {products.length} cadastrados · {unlinkedCount} sem vínculo · {withoutCategoryCount} sem categoria · {withoutImageCount} sem foto
+            {hiddenFromStoreCount > 0 ? ` · ${hiddenFromStoreCount} ocultos da loja` : ''}
           </p>
         </div>
         <Button onClick={() => navigate('/estoque/novo')}>
@@ -147,6 +149,7 @@ export default function StockProducts() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Biblioteca</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Preço</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Estoque</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Loja</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Status</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -208,6 +211,15 @@ export default function StockProducts() {
                     <span className={cn('text-xs font-bold px-2.5 py-1 rounded-full', qtyColor(p.quantity))}>
                       {p.quantity} un.
                     </span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <Badge variant="outline" className={cn(
+                      p.show_in_store === false
+                        ? 'text-gray-600 border-gray-200 bg-gray-50'
+                        : 'text-blue-700 border-blue-200 bg-blue-50'
+                    )}>
+                      {p.show_in_store === false ? 'Oculto' : 'No site'}
+                    </Badge>
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full',

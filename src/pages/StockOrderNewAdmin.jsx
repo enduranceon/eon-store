@@ -13,6 +13,16 @@ import { formatCurrency } from '@/lib/utils';
 import { normalizePhone } from '@/lib/phone';
 import { defaultAsaasDueDate } from '@/lib/payment-methods';
 import { formatProductNumber } from '@/lib/sku';
+import {
+  findStockVariation,
+  hasStockVariations,
+  stockCartKey,
+  stockItemQuantity,
+  stockItemSalePrice,
+  stockProductQuantity,
+  stockProductVariations,
+  stockVariationLabel,
+} from '@/lib/stock-variations';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 
@@ -48,8 +58,9 @@ export default function StockOrderNewAdmin() {
   const [newCustomer, setNewCustomer] = useState(EMPTY_NEW_CUSTOMER);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [productSearch, setProductSearch]   = useState('');
+  const [selectedVariations, setSelectedVariations] = useState({});
 
-  const [cart, setCart]     = useState([]); // [{ product_id, quantity }]
+  const [cart, setCart]     = useState([]); // [{ key, product_id, variation, quantity }]
   const [paymentMethod, setPaymentMethod] = useState('pix');
   const [dueDate, setDueDate] = useState(defaultAsaasDueDate);
   const [notes, setNotes]   = useState('');
@@ -62,7 +73,7 @@ export default function StockOrderNewAdmin() {
           StockProduct.list().catch(() => []),
           PreSaleCustomer.list('full_name').catch(() => []),
         ]);
-        setProducts(p.filter(x => x.status === 'active' && Number(x.quantity || 0) > 0));
+        setProducts(p.filter(x => x.status === 'active' && stockProductQuantity(x) > 0));
         setCustomers(c);
       } catch (e) {
         console.error(e);
@@ -93,7 +104,7 @@ export default function StockOrderNewAdmin() {
 
   // Produtos filtrados
   const filteredProducts = useMemo(() => {
-    const inStock = products.filter(p => Number(p.quantity || 0) > 0);
+    const inStock = products.filter(p => stockProductQuantity(p) > 0);
     if (!productSearch) return inStock;
     const q = productSearch.toLowerCase();
     return inStock.filter(p =>
@@ -106,25 +117,66 @@ export default function StockOrderNewAdmin() {
   }, [products, productSearch]);
 
   // Cart helpers
-  const getQty = (productId) => cart.find(i => i.product_id === productId)?.quantity || 0;
-  const setQty = (productId, qty) => {
+  const defaultVariationName = (product) => {
+    const available = stockProductVariations(product)
+      .find(variation => stockItemQuantity(product, stockVariationLabel(variation)) > 0);
+    return available ? stockVariationLabel(available) : '';
+  };
+
+  const currentVariationName = (product) => {
+    if (!hasStockVariations(product)) return null;
+    return selectedVariations[product.id] || defaultVariationName(product);
+  };
+
+  const getQty = (key) => cart.find(i => i.key === key)?.quantity || 0;
+  const setQty = (key, productId, variation, qty) => {
     setCart(prev => {
-      const existing = prev.find(i => i.product_id === productId);
-      if (qty <= 0) return prev.filter(i => i.product_id !== productId);
-      if (existing)  return prev.map(i => i.product_id === productId ? { ...i, quantity: qty } : i);
-      return [...prev, { product_id: productId, quantity: qty }];
+      const existing = prev.find(i => i.key === key);
+      if (qty <= 0) return prev.filter(i => i.key !== key);
+      if (existing) return prev.map(i => i.key === key ? { ...i, quantity: qty } : i);
+      return [...prev, { key, product_id: productId, variation, quantity: qty }];
     });
   };
-  const addOne    = (productId) => setQty(productId, getQty(productId) + 1);
-  const removeOne = (productId) => setQty(productId, getQty(productId) - 1);
+  const addOne = (product) => {
+    const variationName = currentVariationName(product);
+    const selectedVariation = variationName ? findStockVariation(product, variationName) : null;
+    if (hasStockVariations(product) && !selectedVariation) {
+      toast.error('Selecione o tamanho');
+      return;
+    }
+    const availableQuantity = stockItemQuantity(product, variationName);
+    const key = stockCartKey(product.id, variationName);
+    const qty = getQty(key);
+    if (availableQuantity <= 0) {
+      toast.error('Produto esgotado nessa opção');
+      return;
+    }
+    if (qty >= availableQuantity) {
+      toast.error('Quantidade máxima atingida');
+      return;
+    }
+    setQty(key, product.id, variationName, qty + 1);
+  };
+  const removeOne = (key) => {
+    const item = cart.find(i => i.key === key);
+    if (!item) return;
+    setQty(key, item.product_id, item.variation, item.quantity - 1);
+  };
 
   // Cart items com dados do produto
   const cartItems = cart.map(i => {
     const prod = products.find(p => p.id === i.product_id);
-    return { ...i, product: prod };
+    const variation = prod && i.variation ? findStockVariation(prod, i.variation) : null;
+    return {
+      ...i,
+      product: prod,
+      variationData: variation,
+      sale_price: prod ? stockItemSalePrice(prod, variation) : 0,
+      available_quantity: prod ? stockItemQuantity(prod, i.variation) : 0,
+    };
   }).filter(i => i.product);
 
-  const subtotal = cartItems.reduce((s, i) => s + (i.product.sale_price * i.quantity), 0);
+  const subtotal = cartItems.reduce((s, i) => s + (i.sale_price * i.quantity), 0);
   const totalAfterDiscount = Math.max(0, subtotal - (Number(discount.value) || 0));
 
   // Cria o cliente e já o deixa selecionado, sem sair da tela do pedido.
@@ -170,6 +222,7 @@ export default function StockOrderNewAdmin() {
     try {
       const validatedItems = cartItems.map(i => ({
         product_id: i.product.id,
+        variation: i.variation || null,
         quantity: i.quantity,
       }));
 
@@ -324,7 +377,16 @@ export default function StockOrderNewAdmin() {
               ) : (
                 <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                   {filteredProducts.map(p => {
-                    const qty = getQty(p.id);
+                    const variations = stockProductVariations(p);
+                    const hasVariations = variations.length > 0;
+                    const variationName = currentVariationName(p);
+                    const selectedVariation = variationName ? findStockVariation(p, variationName) : null;
+                    const availableQuantity = hasVariations
+                      ? stockItemQuantity(p, variationName)
+                      : stockProductQuantity(p);
+                    const key = stockCartKey(p.id, variationName);
+                    const qty = getQty(key);
+                    const salePrice = stockItemSalePrice(p, selectedVariation);
                     return (
                       <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-lg border hover:border-blue-300 transition-colors">
                         {/* Foto */}
@@ -336,33 +398,52 @@ export default function StockOrderNewAdmin() {
                           </div>
                         )}
 
-                          <div className="flex-1 min-w-0">
+                          <div className="flex-1 min-w-0 space-y-1.5">
                             <p className="font-medium text-sm truncate">{p.name}</p>
                             <p className="text-xs text-muted-foreground">
-                              {formatCurrency(p.sale_price)} · estoque: {p.quantity}
+                              {formatCurrency(salePrice)} · estoque: {availableQuantity}
+                              {hasVariations && variationName ? ` em ${variationName}` : ''}
                               {p.product_number ? ` · ${formatProductNumber(p.product_number)}` : ''}
                               {p.category ? ` · ${p.category}` : ''}
                               {p.supplier ? ` · ${p.supplier}` : ''}
                             </p>
+                            {hasVariations && (
+                              <select
+                                value={variationName || ''}
+                                onChange={event => setSelectedVariations(prev => ({ ...prev, [p.id]: event.target.value }))}
+                                className="h-8 max-w-56 rounded-md border border-gray-200 bg-white px-2 text-xs font-medium text-gray-700"
+                              >
+                                {!variationName && <option value="">Sem estoque</option>}
+                                {variations.map(variation => {
+                                  const label = stockVariationLabel(variation);
+                                  const variationQuantity = stockItemQuantity(p, label);
+                                  return (
+                                    <option key={label} value={label} disabled={variationQuantity <= 0}>
+                                      {label} · {variationQuantity} un.
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            )}
                           </div>
 
                         {qty > 0 ? (
                           <div className="flex items-center gap-1 shrink-0">
-                            <button onClick={() => removeOne(p.id)}
+                            <button onClick={() => removeOne(key)}
                               className="w-7 h-7 rounded-full border border-gray-200 hover:bg-gray-100 flex items-center justify-center">
                               <Minus className="w-3 h-3" />
                             </button>
                             <span className="font-semibold w-6 text-center text-sm">{qty}</span>
-                            <button onClick={() => addOne(p.id)}
-                              disabled={qty >= p.quantity}
+                            <button onClick={() => addOne(p)}
+                              disabled={qty >= availableQuantity}
                               className="w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white flex items-center justify-center">
                               <Plus className="w-3 h-3" />
                             </button>
                           </div>
                         ) : (
                           <Button size="sm" variant="outline"
-                            disabled={p.quantity <= 0}
-                            onClick={() => addOne(p.id)}>
+                            disabled={availableQuantity <= 0}
+                            onClick={() => addOne(p)}>
                             <Plus className="w-3 h-3 mr-1" /> Adicionar
                           </Button>
                         )}
@@ -393,15 +474,16 @@ export default function StockOrderNewAdmin() {
               ) : (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {cartItems.map(i => (
-                    <div key={i.product_id} className="flex items-center gap-2 text-sm">
+                    <div key={i.key} className="flex items-center gap-2 text-sm">
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{i.product.name}</p>
+                        {i.variation && <p className="text-xs text-blue-600 font-medium truncate">{i.variation}</p>}
                         <p className="text-xs text-muted-foreground">
-                          {i.quantity}× {formatCurrency(i.product.sale_price)}
+                          {i.quantity}× {formatCurrency(i.sale_price)}
                         </p>
                       </div>
-                      <p className="font-semibold shrink-0">{formatCurrency(i.quantity * i.product.sale_price)}</p>
-                      <button onClick={() => setQty(i.product_id, 0)}
+                      <p className="font-semibold shrink-0">{formatCurrency(i.quantity * i.sale_price)}</p>
+                      <button onClick={() => setQty(i.key, i.product_id, i.variation, 0)}
                         className="text-gray-400 hover:text-red-500">
                         <X className="w-3.5 h-3.5" />
                       </button>

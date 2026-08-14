@@ -160,7 +160,7 @@ export default function Orders() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Pedidos</h2>
+          <h2 className="text-xl font-bold text-gray-900">Pedidos de pré-venda</h2>
           <p className="text-sm text-muted-foreground">{filtered.length} de {orders.length} pedidos · {formatCurrency(totalFiltered)}</p>
         </div>
         <Button onClick={() => navigate('/estoque/pedidos/novo')}>

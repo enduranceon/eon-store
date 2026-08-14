@@ -1,6 +1,6 @@
 // Padrão de SKU: NNNN-SIZE-GENDER
 // - NNNN: product_number sequencial (4 dígitos zero-padded)
-// - SIZE:  PP/P/M/G/GG/XG ou 34..48 (opcional)
+// - SIZE:  PP/P/M/G/GG/XGG ou 34..48 (opcional)
 // - GENDER: M=Masculino, F=Feminino, U=Unissex (opcional)
 //
 // Exemplos:

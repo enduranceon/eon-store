@@ -6,7 +6,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { isEffectiveOpenSale } from '@/lib/sales';
+import { isOpenSaleForFinancial } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
 import BusinessPulse from '@/components/BusinessPulse';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
@@ -236,7 +236,7 @@ export default function Today() {
 
   // 1. Em atraso — store + assessoria
   const overdue = allItems
-    .filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o))
+    .filter(o => o.due_date && o.due_date < todayStr && isOpenSaleForFinancial(o))
     .sort((a, b) => a.due_date.localeCompare(b.due_date));
 
   // 2. Para cobrar — store (awaiting_charge) + contratos sem cobrança

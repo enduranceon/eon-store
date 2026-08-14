@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   Activity, FileText, Layers, Award, DollarSign, Pause,
   Users, BarChart3, TrendingUp, Wallet, HandCoins,
-  ShoppingCart, Megaphone, Undo2, ClipboardList,
+  ShoppingCart, Megaphone, Undo2,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
   ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus, ListChecks,
   MessageCircle,
@@ -47,12 +47,11 @@ const FINANCEIRO_ITEMS = [
 
 // LOJA — módulo secundário (colapsável)
 const LOJA_ITEMS = [
-  { label: 'Produtos',       icon: Package,       to: '/produtos',        exact: true },
-  { label: 'Pedidos',        icon: ShoppingCart,  to: '/pedidos',         badge: 'orders' },
+  { label: 'Produtos',       icon: Package,       to: '/produtos',                exact: true },
+  { label: 'Pedidos',        icon: ShoppingCart,  to: '/pedidos',                 exact: true, badge: 'orders' },
   { label: 'Coleções',       icon: Megaphone,     to: '/campanhas' },
   { label: 'Pré-venda',      icon: Megaphone,     to: '/produtos/pre-venda' },
   { label: 'Devoluções',     icon: Undo2,         to: '/devolucoes' },
-  { label: 'Ped. estoque',   icon: ClipboardList, to: '/estoque/pedidos' },
 ];
 
 // CONFIGURAÇÕES (colapsável)
@@ -182,7 +181,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('status', 'draft').is('parent_contract_id', null),
           supabase.from('assessment_contracts')
-            .select('id, status, payment_status, parent_contract_id, prospect_stage, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+            .select('id, contract_number, status, payment_status, parent_contract_id, prospect_stage, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
             .not('status', 'in', '("cancelled","voided")')
             .neq('payment_status', 'paid').neq('payment_status', 'refunded'),
         ]);

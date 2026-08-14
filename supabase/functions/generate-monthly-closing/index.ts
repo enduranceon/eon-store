@@ -45,12 +45,29 @@ function dateKeyUTC(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-function activeDayKeys(contract: any, leaves: any[], monthStart: Date, monthEndExclusive: Date) {
-  const start = parseDateUTC(contract.start_date, monthStart);
-  let endExclusive = parseDateUTC(contract.end_date, monthEndExclusive);
+function effectiveEndExclusive(contract: any, fallback: Date) {
+  const start = parseDateUTC(contract.start_date, fallback);
+  let endExclusive = parseDateUTC(contract.end_date, fallback);
+
   if (contract.end_date && endExclusive.getTime() === start.getTime()) {
     endExclusive = new Date(endExclusive.getTime() + DAY_MS);
   }
+
+  if (contract.status === "cancelled" && contract.cancellation_date) {
+    const cancellationEndExclusive = new Date(
+      parseDateUTC(contract.cancellation_date, fallback).getTime() + DAY_MS,
+    );
+    if (cancellationEndExclusive < endExclusive) {
+      endExclusive = cancellationEndExclusive;
+    }
+  }
+
+  return endExclusive;
+}
+
+function activeDayKeys(contract: any, leaves: any[], monthStart: Date, monthEndExclusive: Date) {
+  const start = parseDateUTC(contract.start_date, monthStart);
+  const endExclusive = effectiveEndExclusive(contract, monthEndExclusive);
 
   const current = start > monthStart ? new Date(start) : new Date(monthStart);
   const end = endExclusive < monthEndExclusive ? endExclusive : monthEndExclusive;
@@ -225,14 +242,14 @@ Deno.serve(async (req: Request) => {
     // Contrato tem vigência (dias) dentro da competência?
     const overlapsMonth = (c: any) => {
       const cStart = parseDateUTC(c.start_date, monthStart);
-      let cEnd = parseDateUTC(c.end_date, monthEndExclusive);
-      if (c.end_date && cEnd.getTime() === cStart.getTime()) cEnd = new Date(cEnd.getTime() + DAY_MS);
+      const cEnd = effectiveEndExclusive(c, monthEndExclusive);
       return cStart < monthEndExclusive && cEnd > monthStart;
     };
 
-    // Pagos e vigentes no mês (base do repasse e do tier).
+    // Pagos e vigentes no mês (base do repasse e do tier). Contratos
+    // cancelados contam até a cancellation_date; draft/voided nunca contam.
     const paidContracts = contracts.filter((c: any) =>
-      !["cancelled", "draft", "voided"].includes(c.status) &&
+      !["draft", "voided"].includes(c.status) &&
       c.payment_status === "paid" &&
       overlapsMonth(c)
     );

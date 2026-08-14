@@ -1,6 +1,9 @@
 export const TERMINAL_PAYMENT_STATUSES = new Set(['cancelled', 'refunded']);
 export const PAID_PAYMENT_STATUSES = new Set(['paid', 'partially_paid']);
 export const BILLABLE_PROSPECT_STAGES = new Set(['proposal_ready', 'payment_link_sent']);
+export const OPEN_PAYMENT_STATUSES = new Set([
+  'pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid',
+]);
 
 export function isNonCancelledOrder(order) {
   return Boolean(
@@ -42,9 +45,23 @@ export function isBillableProspectOpenSale(order) {
   );
 }
 
+// A contract becomes a financial open sale as soon as it is operationally
+// approved. Unlike a draft prospect, it must remain visible even before a
+// charge/link has been generated, otherwise a renewal can disappear from the
+// collection queue.
+export function isBillableAssessmentContractOpenSale(order) {
+  return Boolean(
+    order &&
+    (order.type === 'contract' || order.contract_number) &&
+    !['draft', 'voided', 'cancelled'].includes(order.status) &&
+    OPEN_PAYMENT_STATUSES.has(order.payment_status) &&
+    !TERMINAL_PAYMENT_STATUSES.has(order.payment_status)
+  );
+}
+
 export function isOpenSaleForFinancial(order) {
   if (order?.status === 'draft') return isBillableProspectOpenSale(order);
-  return isEffectiveOpenSale(order);
+  return isBillableAssessmentContractOpenSale(order) || isEffectiveOpenSale(order);
 }
 
 export function isAwaitingCharge(order) {

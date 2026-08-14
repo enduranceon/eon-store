@@ -15,8 +15,8 @@ import { formatCurrency } from '@/lib/utils';
 export default function StatementPreview({ view: v }) {
   if (!v) return null;
   return (
-  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 16px' }}>
-    <div style={{ maxWidth: 820, margin: '0 auto', background: '#fff', borderRadius: 12, padding: 28, color: '#1e293b' }}>
+  <div className="coach-statement-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 16px' }}>
+    <div className="coach-statement-sheet" style={{ maxWidth: 820, margin: '0 auto', background: '#fff', borderRadius: 12, padding: 28, color: '#1e293b' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 11, letterSpacing: 1.2, color: '#2563eb', fontWeight: 700 }}>ENDURANCE ON</div>

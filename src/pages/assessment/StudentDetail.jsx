@@ -64,7 +64,7 @@ import {
   isRenewalContract,
 } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
-import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
+import { isEffectiveSale, isOpenSaleForFinancial } from '@/lib/sales';
 import { toast } from 'sonner';
 
 const CONTRACT_STATUS = {
@@ -251,7 +251,7 @@ function getPaidValue(row) {
 }
 
 function getOpenValue(row) {
-  return isEffectiveOpenSale(row) ? Number(row.total_value ?? row.value ?? 0) || 0 : 0;
+  return isOpenSaleForFinancial(row) ? Number(row.total_value ?? row.value ?? 0) || 0 : 0;
 }
 
 function getFinancialDate(row) {
@@ -685,10 +685,10 @@ export default function StudentDetail() {
   const effectiveOrders = orders.filter(isEffectiveSale);
   const paidOrders = effectiveOrders.filter(order => ['paid', 'partially_paid'].includes(order.payment_status));
   const openOrders = orders
-    .filter(isEffectiveOpenSale)
+    .filter(isOpenSaleForFinancial)
     .map(order => ({ ...order, _daysOverdue: daysOverdue(order.due_date, today), _value: Number(order.total_value) || 0 }));
   const openContracts = lifecycleRows
-    .filter(isEffectiveOpenSale)
+    .filter(isOpenSaleForFinancial)
     .map(contract => ({ ...contract, _daysOverdue: daysOverdue(contract.due_date, today), _value: Number(contract.value) || 0 }));
   const paidContracts = lifecycleRows.filter(contract =>
     contract.payment_status === 'paid' &&

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Search, X, Link2, Link2Off } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,11 @@ import ImageUpload from '@/components/shared/ImageUpload';
 import { StockProduct, Product } from '@/api/entities';
 import { formatCurrency } from '@/lib/utils';
 import { formatProductNumber } from '@/lib/sku';
+import {
+  normalizeStockVariations,
+  stockProductQuantity,
+  stockVariationLabel,
+} from '@/lib/stock-variations';
 import { toast } from 'sonner';
 
 const empty = {
@@ -26,6 +31,7 @@ const empty = {
   cost_price: '',
   quantity: '',
   status: 'active',
+  show_in_store: true,
   images: [],
   variations: [],
   extras: [],
@@ -33,15 +39,41 @@ const empty = {
   product_id: null,
 };
 
+function stockFormFromLibraryProduct(current, product) {
+  return {
+    ...current,
+    product_id: product.id,
+    name: product.name || '',
+    description: product.description || '',
+    category: product.category || '',
+    subcategory: product.subcategory || '',
+    supplier: product.supplier || '',
+    supplier_id: product.supplier_id || null,
+    product_number: product.product_number || null,
+    images: product.images || [],
+    sale_price: product.sale_price ?? '',
+    regular_price: product.regular_price ?? '',
+    cost_price: product.cost_price ?? '',
+    variations: normalizeStockVariations(product.variations),
+    extras: Array.isArray(product.extras) ? product.extras : [],
+    show_in_store: current.show_in_store !== false,
+    notes: product.notes || '',
+  };
+}
+
 export default function StockProductForm() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const sourceProductId = searchParams.get('produto') || searchParams.get('product_id');
   const [form, setForm] = useState(empty);
   const [saving, setSaving] = useState(false);
   const [importModal, setImportModal] = useState(false);
   const [library, setLibrary] = useState([]);
   const [librarySearch, setLibrarySearch] = useState('');
+  const importedSourceRef = useRef('');
   const isEdit = Boolean(id);
+  const addingFromProduct = !isEdit && Boolean(sourceProductId || form.product_id);
 
   useEffect(() => {
     if (isEdit) {
@@ -52,14 +84,36 @@ export default function StockProductForm() {
           cost_price: p.cost_price ?? '',
           quantity: p.quantity ?? '',
           images: p.images || [],
-          variations: Array.isArray(p.variations) ? p.variations : [],
+          variations: normalizeStockVariations(p.variations),
           extras: Array.isArray(p.extras) ? p.extras : [],
+          show_in_store: p.show_in_store !== false,
           product_id: p.product_id || null,
           supplier_id: p.supplier_id || null,
           product_number: p.product_number || null,
         })).catch(() => toast.error('Produto não encontrado'));
     }
   }, [id, isEdit]);
+
+  useEffect(() => {
+    if (isEdit || !sourceProductId || importedSourceRef.current === sourceProductId) return;
+
+    let cancelled = false;
+    importedSourceRef.current = sourceProductId;
+
+    Product.get(sourceProductId)
+      .then(product => {
+        if (cancelled) return;
+        setForm(current => stockFormFromLibraryProduct(current, product));
+        toast.success(`"${product.name}" pronto para receber estoque.`);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Produto base não encontrado para adicionar estoque');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isEdit, sourceProductId]);
 
   const set = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
@@ -75,24 +129,7 @@ export default function StockProductForm() {
   };
 
   const importFromLibrary = (p) => {
-    setForm(f => ({
-        ...f,
-        product_id: p.id,
-        name: p.name || '',
-        description: p.description || '',
-        category: p.category || '',
-        subcategory: p.subcategory || '',
-        supplier: p.supplier || '',
-        supplier_id: p.supplier_id || null,
-        product_number: p.product_number || null,
-        images: p.images || [],
-        sale_price: p.sale_price ?? '',
-        regular_price: p.regular_price ?? '',
-        cost_price: p.cost_price ?? '',
-        variations: Array.isArray(p.variations) ? p.variations : [],
-        extras: Array.isArray(p.extras) ? p.extras : [],
-        notes: p.notes || '',
-      }));
+    setForm(f => stockFormFromLibraryProduct(f, p));
     setImportModal(false);
     toast.success(`"${p.name}" importado dos produtos cadastrados!`);
   };
@@ -102,29 +139,47 @@ export default function StockProductForm() {
     if (!form.name.trim()) return toast.error('Informe o nome do produto');
     setSaving(true);
     try {
+      const stockVariations = normalizeStockVariations(form.variations);
+      const hasVariations = stockVariations.length > 0;
       const payload = {
           ...form,
           sale_price: parseFloat(form.sale_price) || 0,
           regular_price: parseFloat(form.regular_price) || 0,
           cost_price: parseFloat(form.cost_price) || 0,
-          quantity: parseInt(form.quantity) || 0,
+          quantity: hasVariations
+            ? stockProductQuantity({ variations: stockVariations })
+            : parseInt(form.quantity) || 0,
           product_number: form.product_number ? Number(form.product_number) : null,
-          variations: Array.isArray(form.variations) ? form.variations : [],
+          variations: stockVariations,
           extras: Array.isArray(form.extras) ? form.extras : [],
+          show_in_store: form.show_in_store !== false,
         };
       if (isEdit) {
         await StockProduct.update(id, payload);
-        toast.success('Produto atualizado!');
+        toast.success('Estoque salvo!');
+        navigate(`/estoque?visao=stock&destaque=${id}`);
       } else {
-        await StockProduct.create(payload);
-        toast.success('Produto criado!');
+        const saved = await StockProduct.create(payload);
+        toast.success('Estoque salvo!');
+        const highlight = saved?.id ? `&destaque=${saved.id}` : '';
+        navigate(`/estoque?visao=stock${highlight}`);
       }
-      navigate('/estoque');
     } catch (e) {
       toast.error(e.message);
     } finally {
       setSaving(false);
     }
+  };
+
+  const updateVariationQuantity = (index, value) => {
+    setForm(f => {
+      const variations = normalizeStockVariations(f.variations);
+      variations[index] = {
+        ...variations[index],
+        quantity: value,
+      };
+      return { ...f, variations };
+    });
   };
 
     const filteredLibrary = library.filter(p => {
@@ -137,8 +192,12 @@ export default function StockProductForm() {
         String(p.product_number || '').includes(q);
     });
 
-    const variationCount = Array.isArray(form.variations) ? form.variations.length : 0;
+    const variations = normalizeStockVariations(form.variations);
+    const variationCount = variations.length;
     const extrasCount = Array.isArray(form.extras) ? form.extras.length : 0;
+    const totalQuantity = variationCount > 0
+      ? stockProductQuantity({ variations })
+      : (parseInt(form.quantity) || 0);
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
@@ -146,18 +205,26 @@ export default function StockProductForm() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/estoque')}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
-        <h2 className="text-xl font-bold">{isEdit ? 'Editar produto em estoque' : 'Novo produto em estoque'}</h2>
+        <h2 className="text-xl font-bold">
+          {isEdit ? 'Editar estoque' : addingFromProduct ? 'Adicionar estoque' : 'Item avulso de estoque'}
+        </h2>
       </div>
 
       {!isEdit && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex items-center justify-between">
           <div>
-            <p className="text-sm font-semibold text-blue-900">Esse produto já está cadastrado?</p>
-            <p className="text-xs text-blue-700 mt-0.5">Importe e preencha tudo automaticamente.</p>
+            <p className="text-sm font-semibold text-blue-900">
+              {form.product_id ? 'Produto puxado da lista principal' : 'Esse produto já está cadastrado?'}
+            </p>
+            <p className="text-xs text-blue-700 mt-0.5">
+              {form.product_id
+                ? 'Confira preço, visibilidade no site e informe as quantidades por tamanho.'
+                : 'Importe e preencha tudo automaticamente antes de ajustar o estoque.'}
+            </p>
           </div>
           <Button variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-100 gap-2 shrink-0" onClick={openImport}>
             <BookOpen className="w-4 h-4" />
-            Escolher produto
+            {form.product_id ? 'Trocar produto' : 'Escolher produto'}
           </Button>
         </div>
       )}
@@ -220,6 +287,18 @@ export default function StockProductForm() {
                 </Select>
               </div>
             </div>
+              <label className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={form.show_in_store !== false}
+                  onChange={e => set('show_in_store', e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-blue-600"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-blue-950">Exibir na loja online</span>
+                  <span className="block text-xs text-blue-700 mt-0.5">Quando ativo e com status ativo, o produto aparece no link da loja.</span>
+                </span>
+              </label>
               <div>
                 <Label>Descrição</Label>
                 <Textarea className="mt-1" value={form.description} onChange={e => set('description', e.target.value)} rows={3} placeholder="Descrição do produto..." />
@@ -256,10 +335,38 @@ export default function StockProductForm() {
                 <Input className="mt-1" type="number" step="0.01" min="0" value={form.cost_price} onChange={e => set('cost_price', e.target.value)} placeholder="0,00" />
               </div>
             </div>
-            <div className="max-w-[160px]">
-              <Label>Quantidade em estoque</Label>
-              <Input className="mt-1" type="number" min="0" value={form.quantity} onChange={e => set('quantity', e.target.value)} placeholder="0" />
-            </div>
+            {variationCount > 0 ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>Quantidade por tamanho/variação</Label>
+                  <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 rounded-full px-2 py-1">
+                    Total: {totalQuantity} un.
+                  </span>
+                </div>
+                <div className="grid gap-2">
+                  {variations.map((variation, index) => (
+                    <div key={`${stockVariationLabel(variation)}-${index}`} className="grid grid-cols-[1fr,110px] gap-3 items-center rounded-xl border bg-gray-50 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{stockVariationLabel(variation)}</p>
+                        {variation.sku && <p className="text-[11px] text-muted-foreground font-mono">{variation.sku}</p>}
+                      </div>
+                      <Input
+                        type="number"
+                        min="0"
+                        value={variation.quantity ?? 0}
+                        onChange={e => updateVariationQuantity(index, e.target.value)}
+                        className="h-9 text-right"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="max-w-[160px]">
+                <Label>Quantidade em estoque</Label>
+                <Input className="mt-1" type="number" min="0" value={form.quantity} onChange={e => set('quantity', e.target.value)} placeholder="0" />
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -279,7 +386,7 @@ export default function StockProductForm() {
 
         <div className="flex justify-end gap-3">
           <Button type="button" variant="outline" onClick={() => navigate('/estoque')}>Cancelar</Button>
-          <Button type="submit" disabled={saving}>{saving ? 'Salvando...' : isEdit ? 'Salvar alterações' : 'Criar produto'}</Button>
+          <Button type="submit" disabled={saving}>{saving ? 'Salvando estoque...' : 'Salvar estoque'}</Button>
         </div>
       </form>
 

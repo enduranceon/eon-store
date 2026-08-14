@@ -34,6 +34,7 @@ interface ResourceSpec {
   sortFields: readonly string[];
   updatedColumn?: "updated_at" | "updated_date";
   allowCreate?: boolean;
+  allowUpdate?: boolean;
   allowDelete?: boolean;
 }
 
@@ -482,7 +483,19 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
           "refunded",
         ],
       }),
-      delivery_status: s(32, { nullable: true }),
+      // Imports can retain a historical state at creation time, but delivery
+      // transitions after that must go through update_order_fulfillment.
+      delivery_status: s(32, {
+        nullable: true,
+        values: [
+          "awaiting_supplier",
+          "supplier_ordered",
+          "received",
+          "separated",
+          "delivered",
+          "cancelled",
+        ],
+      }),
       payment_date: d({ nullable: true }),
       delivery_date: d({ nullable: true }),
       internal_notes: s(20_000, { nullable: true, preserveWhitespace: true }),
@@ -504,6 +517,7 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
     defaultSort: "-created_date",
     sortFields: ["id", "order_number", "created_date"],
     allowCreate: true,
+    allowUpdate: false,
   },
 };
 
@@ -690,6 +704,13 @@ export function normalizeAdminRecordPayload(
   if (mode === "create" && !resource.allowCreate) {
     throw new AdminRecordInputError(
       "Criação não permitida",
+      "method_not_allowed",
+      405,
+    );
+  }
+  if (mode === "update" && resource.allowUpdate === false) {
+    throw new AdminRecordInputError(
+      "Alteração não permitida para este recurso",
       "method_not_allowed",
       405,
     );

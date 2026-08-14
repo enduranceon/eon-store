@@ -80,6 +80,26 @@ Deno.test("admin plans and coupons enforce business-safe states", () => {
     }, "create"), "invalid_date_range");
 });
 
+Deno.test("legacy imports cannot bypass delivery transitions after creation", () => {
+  const imported = normalizeAdminRecordPayload("legacy-presale-orders", {
+    items: [],
+    delivery_status: "separated",
+  }, "create");
+  assert(
+    imported.delivery_status === "separated",
+    "valid historical delivery status was not preserved for import",
+  );
+  expectError(() =>
+    normalizeAdminRecordPayload("legacy-presale-orders", {
+      delivery_status: "delivered",
+    }, "update"), "method_not_allowed");
+  expectError(() =>
+    normalizeAdminRecordPayload("legacy-presale-orders", {
+      items: [],
+      delivery_status: "skipped",
+    }, "create"), "invalid_field");
+});
+
 function rpcClient(
   calls: Array<{ name: string; args: Record<string, unknown> }>,
 ): SupabaseClient {

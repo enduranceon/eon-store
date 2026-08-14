@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   Link2, QrCode, RefreshCw, History, Pause, XCircle, RotateCcw,
-  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, AlertCircle, Clock,
+  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, AlertCircle, Clock, Receipt,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -137,6 +137,7 @@ const EVENT_META = {
   external_charge_updated:    { icon: Link2,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Cobrança externa alterada' },
   external_charge_removed:    { icon: Link2,    color: 'text-gray-500',   bg: 'bg-gray-100',  label: 'Cobrança externa removida' },
   payment_message_sent:       { icon: MessageCircle, color: 'text-green-600', bg: 'bg-green-50', label: 'Mensagem de cobrança enviada' },
+  open_sale_registered:       { icon: Receipt,    color: 'text-amber-700', bg: 'bg-amber-50', label: 'Venda em aberto registrada' },
   manual_payment_recorded:  { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Pagamento manual' },
   renewed:                  { icon: RefreshCcw, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovado' },
   sale_voided:              { icon: XCircle,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Venda descartada' },
