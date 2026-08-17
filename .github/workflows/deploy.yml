@@ -61,6 +61,36 @@ jobs:
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
 
+  # As edge functions NÃO subiam junto com o site. Isso já custou caro: quatro
+  # rotas mescladas na main e nunca deployadas (a aba de estoque e o vínculo de
+  # cliente ficaram quebrados), e o guard de autorização das funções admin ficou
+  # um mês commitado sem chegar em produção, com a create-asaas-charge aberta a
+  # qualquer um com a anon key.
+  #
+  # Só deploya no push para a main — nunca em pull_request, para que um PR de
+  # terceiro não consiga publicar função com service_role.
+  #
+  # NÃO aplica migration de propósito. Em 17/ago/2026, 18 das 22 versões do
+  # repositório não constavam em supabase_migrations.schema_migrations: um
+  # `db push` as trataria como pendentes e reaplicaria versões antigas por cima
+  # do que está no ar. Enquanto o histórico não for reconciliado, migration
+  # continua sendo aplicada à mão e de forma supervisionada.
+  edge-functions:
+    name: Deploy edge functions to Supabase
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy functions
+        run: supabase functions deploy --project-ref bsiljrrodgtmtdilnuxr
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
   production:
     name: Publish production from main
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
