@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, CalendarDays, Check, ChevronRight, HandCoins, Layers,
-  Pencil, Plus, Search, Trash2, Users, X,
+  ArrowLeft, CalendarDays, Check, ChevronRight, Copy, ExternalLink, HandCoins, Layers,
+  Link2, Pencil, Plus, Search, Trash2, Users, X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -308,9 +308,24 @@ export default function EventDetail() {
   }
 
   const status = EVENT_STATUS[event.status] || EVENT_STATUS.draft;
+  const priceOf = reg => Number(typesById[reg.registration_type_id]?.price || 0);
   const paidTotal = registrations
     .filter(r => r.payment_status === 'paid')
-    .reduce((acc, r) => acc + Number(typesById[r.registration_type_id]?.price || 0), 0);
+    .reduce((acc, r) => acc + priceOf(r), 0);
+  // Esperado = tudo que não foi cancelado, incluindo o que ainda não foi pago.
+  // É o número que responde "quanto esse evento vale se todo mundo pagar".
+  const expectedTotal = activeRegs.reduce((acc, r) => acc + priceOf(r), 0);
+  const pendingTotal = expectedTotal - paidTotal;
+
+  const publicUrl = `${window.location.origin}/inscricao/${event.slug}`;
+  const copyPublicLink = async () => {
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      toast.success('Link copiado! É só enviar para os inscritos.');
+    } catch {
+      toast.error('Não foi possível copiar. Selecione o link manualmente.');
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -336,20 +351,62 @@ export default function EventDetail() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Inscritos ativos</p>
           <p className="text-2xl font-bold">{activeRegs.length}</p>
+          {registrations.length !== activeRegs.length && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {registrations.length - activeRegs.length} cancelada{registrations.length - activeRegs.length === 1 ? '' : 's'}
+            </p>
+          )}
         </CardContent></Card>
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Pagos</p>
           <p className="text-2xl font-bold">{registrations.filter(r => r.payment_status === 'paid').length}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">de {activeRegs.length} ativo{activeRegs.length === 1 ? '' : 's'}</p>
         </CardContent></Card>
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Receita confirmada</p>
-          <p className="text-2xl font-bold">{formatCurrency(paidTotal)}</p>
+          <p className="text-2xl font-bold text-emerald-700">{formatCurrency(paidTotal)}</p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground">Total esperado</p>
+          <p className="text-2xl font-bold">{formatCurrency(expectedTotal)}</p>
+          {pendingTotal > 0 && (
+            <p className="text-xs text-amber-700 mt-0.5">{formatCurrency(pendingTotal)} a receber</p>
+          )}
         </CardContent></Card>
       </div>
+
+      {/* Link publico de inscricao */}
+      <Card>
+        <CardContent className="p-4 space-y-2">
+          <p className="font-semibold inline-flex items-center gap-1.5"><Link2 className="w-4 h-4" /> Link de inscrição</p>
+          {event.status === 'open' ? (
+            <>
+              <div className="flex items-center gap-2">
+                <input readOnly value={publicUrl}
+                  className="flex-1 text-xs font-mono bg-gray-50 border rounded-lg px-3 py-2 truncate" />
+                <Button size="sm" variant="outline" onClick={copyPublicLink}>
+                  <Copy className="w-3.5 h-3.5 mr-1" /> Copiar
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <a href={publicUrl} target="_blank" rel="noreferrer"><ExternalLink className="w-3.5 h-3.5" /></a>
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Envie para quem vai se inscrever. A pessoa escolhe o tipo, preenche o formulário e entra na lista abaixo.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              O link só funciona com o evento em <strong>Inscrições abertas</strong>. Enquanto estiver em rascunho, quem abrir vê
+              &quot;inscrições indisponíveis&quot; — útil para montar o evento antes de divulgar.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Tipos de inscrição */}
       <Card>

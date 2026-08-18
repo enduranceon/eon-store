@@ -15,6 +15,7 @@ import ProductForm from '@/pages/ProductForm';
 import OrderDetail from '@/pages/OrderDetail';
 import OrderCenter from '@/pages/OrderCenter';
 import Events from '@/pages/Events';
+import PublicEventRegistration from '@/pages/PublicEventRegistration';
 import EventDetail from '@/pages/EventDetail';
 import Customers from '@/pages/Customers';
 import CustomerDetail from '@/pages/CustomerDetail';
@@ -126,6 +127,7 @@ export default function App() {
           <Route path="/loja/confirmacao/:orderId" element={<PublicStoreConfirmation />} />
           <Route path="/p/:orderId" element={<PublicOrderTracking />} />
           <Route path="/assinar/:planId" element={<PublicPlanEnrollment />} />
+          <Route path="/inscricao/:slug" element={<PublicEventRegistration />} />
           <Route path="/planos/:modalityId" element={<PublicModalityPlans />} />
 
           {/* Admin */}

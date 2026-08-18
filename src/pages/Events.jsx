@@ -31,7 +31,7 @@ function slugify(name) {
 async function loadEvents() {
   const [events, registrations, centers] = await Promise.all([
     EventRecord.list('-event_date'),
-    EventRegistration.list(),
+    EventRegistration.list('-created_at'),
     RevenueCenter.list().catch(() => []),
   ]);
   const countByEvent = {};

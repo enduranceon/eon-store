@@ -147,3 +147,78 @@ export async function handleEventsRequest(
 
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Rota PÚBLICA (sem login). Fica separada do resto porque roda antes do
+// requireAdmin no index.ts. O hash de IP é feito aqui: é o único ponto que
+// conhece o cabeçalho da requisição, e o limite de taxa depende dele.
+// ---------------------------------------------------------------------------
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function clientIp(req: Request): string {
+  return (
+    req.headers.get("cf-connecting-ip") ||
+    req.headers.get("x-forwarded-for")?.split(",")[0] ||
+    ""
+  ).trim().slice(0, 80);
+}
+
+export async function handlePublicEventRequest(
+  req: Request,
+  path: string,
+  supabase: SupabaseClient,
+): Promise<Response | null> {
+  if (path !== "/public/event-registrations") return null;
+  if (req.method !== "POST") {
+    return jsonResponse({
+      error: "Método não permitido",
+      code: "method_not_allowed",
+    }, 405);
+  }
+
+  const body = await parseObject(req);
+  const payload = body && isPlainObject(body.payload) ? body.payload : null;
+  const customer = payload && isPlainObject(payload.customer) ? payload.customer : null;
+
+  if (
+    !payload || !customer ||
+    typeof payload.event_slug !== "string" || !payload.event_slug.trim() ||
+    typeof payload.registration_type_id !== "string" ||
+    !UUID_PATTERN.test(payload.registration_type_id) ||
+    typeof customer.full_name !== "string" || !customer.full_name.trim() ||
+    typeof customer.whatsapp !== "string" || !customer.whatsapp.trim() ||
+    (payload.form_answers !== undefined && !isPlainObject(payload.form_answers))
+  ) {
+    return jsonResponse({
+      error: "Dados da inscrição inválidos",
+      code: "invalid_request",
+    }, 400);
+  }
+
+  const ip = clientIp(req);
+  if (!ip) {
+    return jsonResponse({
+      error: "Não foi possível validar a origem da inscrição",
+      code: "invalid_origin",
+    }, 400);
+  }
+
+  const [ipHash, phoneHash] = await Promise.all([
+    sha256Hex(ip),
+    sha256Hex(customer.whatsapp.replace(/\D/g, "")),
+  ]);
+
+  const { data, error } = await supabase.rpc(
+    "create_rate_limited_public_event_registration",
+    { p_ip_hash: ipHash, p_phone_hash: phoneHash, p_payload: payload },
+  );
+  if (error) return databaseError(error, "public registration");
+  return jsonResponse({ ok: true, data }, 201);
+}

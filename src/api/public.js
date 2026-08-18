@@ -48,3 +48,34 @@ export function createPublicStockOrder(payload) {
     return result.data;
   });
 }
+
+export function getPublicEvent(slug) {
+  return callPublicRpc('get_public_event', { p_slug: slug });
+}
+
+// Passa pela api-v1 (e nao por RPC direto) porque o limite de taxa depende do
+// hash do IP, que so o servidor consegue calcular de forma confiavel.
+export function createPublicEventRegistration(payload) {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '');
+  const publishableKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !publishableKey) {
+    return Promise.reject(new Error('Inscrições não estão configuradas corretamente'));
+  }
+
+  return fetch(`${supabaseUrl}/functions/v1/api-v1/public/event-registrations`, {
+    method: 'POST',
+    headers: {
+      apikey: publishableKey,
+      Authorization: `Bearer ${publishableKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ payload }),
+  }).then(async (response) => {
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.ok) {
+      throw new Error(result?.error || 'Não foi possível concluir a inscrição');
+    }
+    return result.data;
+  });
+}
