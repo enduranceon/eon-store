@@ -35,6 +35,7 @@ import DiscountInput from '@/components/DiscountInput';
 import StockOrderItemEditorDialog from '@/components/StockOrderItemEditorDialog';
 import { toast } from 'sonner';
 import {
+  cancelOrder,
   cancelOrderCharge,
   cancelOrderItem,
   createOrderCharge,
@@ -88,6 +89,10 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
   const [internalNotes, setInternalNotes] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
   const [fulfillmentReason, setFulfillmentReason] = useState('');
+  const [cancelOrderModal, setCancelOrderModal] = useState(false);
+  const [cancelOrderReason, setCancelOrderReason] = useState('');
+  const [cancelOrderReasonCustom, setCancelOrderReasonCustom] = useState('');
+  const [cancelOrderLoading, setCancelOrderLoading] = useState(false);
   const [asaasLoading, setAsaasLoading] = useState(false);
   const [asaasCpf, setAsaasCpf] = useState('');
   const [asaasBilling, setAsaasBilling] = useState('PIX');
@@ -312,6 +317,32 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
       toast.error(e.message || 'Erro ao cancelar');
     } finally {
       setAsaasLoading(false);
+    }
+  };
+
+  // Cancela o PEDIDO inteiro, diferente de cancelar a cobranca: aqui o estoque
+  // reservado volta para o inventario. O backend faz em duas fases
+  // (prepare + complete) e cuida da cobranca externa quando existe.
+  const openCancelOrder = () => {
+    setCancelOrderReason('');
+    setCancelOrderReasonCustom('');
+    setCancelOrderModal(true);
+  };
+
+  const confirmCancelOrder = async () => {
+    const reason = cancelOrderReason === 'Outro' ? cancelOrderReasonCustom : cancelOrderReason;
+    if (!reason?.trim()) return toast.error('Informe o motivo do cancelamento');
+
+    setCancelOrderLoading(true);
+    try {
+      await cancelOrder('stock', id, reason.trim());
+      setCancelOrderModal(false);
+      toast.success('Pedido cancelado. As peças voltaram para o estoque.');
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cancelar o pedido');
+    } finally {
+      setCancelOrderLoading(false);
     }
   };
 
@@ -617,6 +648,16 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
               <MessageCircle className="w-4 h-4" /> Cobrar via WhatsApp
             </Button>
           )}
+          {/* O backend so aceita cancelar pedido ainda nao pago
+              (prepare_order_cancellation). A condicao aqui espelha essa regra
+              para o botao nunca aparecer levando a um erro. Pedido pago se
+              resolve por Estorno, nao por cancelamento. */}
+          {['pending', 'awaiting_charge', 'charge_sent'].includes(order.payment_status)
+            && order.delivery_status !== 'cancelled' && (
+            <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50 gap-1.5" onClick={openCancelOrder}>
+              <X className="w-4 h-4" /> Cancelar pedido
+            </Button>
+          )}
         </div>
       </div>
 
@@ -895,6 +936,38 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
               <Check className="w-4 h-4 mr-1.5" /> Efetivar venda externa enviada
             </Button>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal cancelar PEDIDO (devolve o estoque) */}
+      <Dialog open={cancelOrderModal} onOpenChange={setCancelOrderModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600"><X className="w-5 h-5" /> Cancelar pedido</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              O pedido inteiro será cancelado e as peças reservadas <strong>voltam para o estoque</strong>.
+              Se houver cobrança em aberto, ela também é cancelada. Esta ação não pode ser desfeita pela tela.
+            </p>
+            <div className="space-y-1.5">
+              {CANCEL_REASONS.map(r => (
+                <button key={r} type="button" onClick={() => setCancelOrderReason(r)}
+                  className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-all ${cancelOrderReason === r ? 'border-red-400 bg-red-50 text-red-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-700'}`}>
+                  {r}
+                </button>
+              ))}
+            </div>
+            {cancelOrderReason === 'Outro' && (
+              <Textarea placeholder="Descreva o motivo..." value={cancelOrderReasonCustom} onChange={e => setCancelOrderReasonCustom(e.target.value)} rows={2} />
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setCancelOrderModal(false)}>Voltar</Button>
+              <Button className="flex-1 bg-red-500 hover:bg-red-600 text-white" onClick={confirmCancelOrder} disabled={cancelOrderLoading || !cancelOrderReason}>
+                {cancelOrderLoading ? 'Cancelando...' : 'Cancelar pedido'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
