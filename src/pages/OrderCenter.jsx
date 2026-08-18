@@ -104,9 +104,27 @@ const DELIVERY_FILTERS = [
   { value: 'stopped', label: 'Entrega interrompida' },
 ];
 
+// Forma de entrega escolhida no checkout, diferente da etapa de entrega:
+// aqui é COMO o pedido sai (frete ou retirada), não em que ponto do fluxo está.
+// 'unset' existe porque pedidos antigos e vendas manuais ficaram sem o campo —
+// sem essa opção eles sumiriam da tela ao filtrar e pareceriam perdidos.
+const DELIVERY_METHOD_FILTERS = [
+  { value: 'all', label: 'Todas as formas' },
+  { value: 'shipping', label: 'Frete' },
+  { value: 'pickup', label: 'Retirada em treino' },
+  { value: 'unset', label: 'Forma não informada' },
+];
+
 const ORIGIN_VALUES = new Set(['all', 'stock', 'presale']);
 const PAYMENT_FILTER_VALUES = new Set(PAYMENT_FILTERS.map(filter => filter.value));
 const DELIVERY_FILTER_VALUES = new Set(DELIVERY_FILTERS.map(filter => filter.value));
+const DELIVERY_METHOD_FILTER_VALUES = new Set(DELIVERY_METHOD_FILTERS.map(filter => filter.value));
+
+function matchesDeliveryMethod(order, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'unset') return !order.delivery_method;
+  return order.delivery_method === filter;
+}
 
 function paymentStatus(status) {
   return PAYMENT_STATUS[status] || { label: status || 'Sem status financeiro', variant: 'secondary' };
@@ -219,6 +237,7 @@ export default function OrderCenter() {
   const typeFilter = validFilter(searchParams.get('origem'), ORIGIN_VALUES);
   const paymentFilter = validFilter(searchParams.get('pagamento'), PAYMENT_FILTER_VALUES);
   const deliveryFilter = validFilter(searchParams.get('entrega'), DELIVERY_FILTER_VALUES);
+  const deliveryMethodFilter = validFilter(searchParams.get('forma'), DELIVERY_METHOD_FILTER_VALUES);
   const campaignFilter = searchParams.get('campanha') || 'all';
 
   const updateFilters = changes => {
@@ -256,9 +275,10 @@ export default function OrderCenter() {
         && (typeFilter === 'all' || order.type === typeFilter)
         && matchesPayment(order, paymentFilter)
         && (deliveryFilter === 'all' || order.deliveryBucket === deliveryFilter)
+        && matchesDeliveryMethod(order, deliveryMethodFilter)
         && matchesCampaign;
     });
-  }, [campaignFilter, deliveryFilter, orders, paymentFilter, search, typeFilter]);
+  }, [campaignFilter, deliveryFilter, deliveryMethodFilter, orders, paymentFilter, search, typeFilter]);
 
   const openPaymentOrders = orders.filter(order =>
     !['paid', 'cancelled', 'refunded'].includes(order.payment_status)
@@ -345,6 +365,12 @@ export default function OrderCenter() {
             {DELIVERY_FILTERS.map(filter => <SelectItem key={filter.value} value={filter.value}>{filter.label}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={deliveryMethodFilter} onValueChange={value => updateFilters({ forma: value })}>
+          <SelectTrigger className="w-52"><SelectValue placeholder="Forma de entrega" /></SelectTrigger>
+          <SelectContent>
+            {DELIVERY_METHOD_FILTERS.map(filter => <SelectItem key={filter.value} value={filter.value}>{filter.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
 
       {filtered.length === 0 ? (
@@ -352,8 +378,8 @@ export default function OrderCenter() {
           <CardContent className="flex flex-col items-center py-16 text-center">
             <ClipboardList className="mb-3 h-10 w-10 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">Nenhum pedido encontrado para esses filtros</p>
-            {(search || typeFilter !== 'all' || paymentFilter !== 'all' || deliveryFilter !== 'all' || campaignFilter !== 'all') && (
-              <Button className="mt-4" variant="outline" onClick={() => { setSearch(''); updateFilters({ origem: 'all', pagamento: 'all', entrega: 'all', campanha: 'all' }); }}>
+            {(search || typeFilter !== 'all' || paymentFilter !== 'all' || deliveryFilter !== 'all' || deliveryMethodFilter !== 'all' || campaignFilter !== 'all') && (
+              <Button className="mt-4" variant="outline" onClick={() => { setSearch(''); updateFilters({ origem: 'all', pagamento: 'all', entrega: 'all', forma: 'all', campanha: 'all' }); }}>
                 Limpar filtros
               </Button>
             )}
