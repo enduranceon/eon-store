@@ -1,3 +1,4 @@
+import { studentProfilePath } from '@/lib/customer-profile';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, User, UserPlus, Phone, Mail, Package, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, FileText, X, RotateCcw, AlertTriangle, Tag, HandCoins, Calendar, Search, Loader2, Plus } from 'lucide-react';
@@ -662,7 +663,7 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
           )}
           <div className="pt-3 mt-3 border-t flex flex-wrap gap-2">
             {order.customer_id ? (
-              <Button size="sm" variant="outline" onClick={() => navigate(`/clientes/${order.customer_id}`)}>
+              <Button size="sm" variant="outline" onClick={() => navigate(studentProfilePath(order.customer_id, 'products'))}>
                 Abrir perfil do cliente
               </Button>
             ) : (

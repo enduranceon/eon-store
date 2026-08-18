@@ -1,3 +1,4 @@
+import { studentProfilePath } from '@/lib/customer-profile';
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Users, Search, AlertTriangle } from 'lucide-react';
@@ -264,7 +265,7 @@ export default function Customers() {
                 const d = c._data;
                 return (
                   <tr key={c.id} className="hover:bg-gray-50 cursor-pointer"
-                    onClick={() => navigate(`/clientes/${c.id}`)}>
+                    onClick={() => navigate(studentProfilePath(c.id))}>
 
                     <td className="px-4 py-3">
                       <p className="font-semibold">{c.full_name}</p>

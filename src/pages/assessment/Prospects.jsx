@@ -1,3 +1,4 @@
+import { studentProfilePath } from '@/lib/customer-profile';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -196,7 +197,7 @@ function CustomerData({ customer, contract }) {
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cliente vinculado</p>
         {customer?.id && (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-blue-600" asChild>
-            <Link to={`/clientes/${customer.id}`}>Abrir cliente <ChevronRight className="w-3.5 h-3.5 ml-1" /></Link>
+            <Link to={studentProfilePath(customer.id, 'registration')}>Abrir cliente <ChevronRight className="w-3.5 h-3.5 ml-1" /></Link>
           </Button>
         )}
       </div>
@@ -599,7 +600,7 @@ function ProspectRow({
             <p className="text-xs text-muted-foreground mt-0.5">{modality?.name || '—'} · {planName}</p>
             <div className="flex items-center gap-3 mt-1.5 text-xs">
               {customer?.id && (
-                <Link to={`/clientes/${customer.id}`} className="text-blue-600 hover:underline font-medium">
+                <Link to={studentProfilePath(customer.id, 'registration')} className="text-blue-600 hover:underline font-medium">
                   Abrir cliente{customer.customer_code ? ` · ${customer.customer_code}` : ''} →
                 </Link>
               )}
