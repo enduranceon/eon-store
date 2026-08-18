@@ -1,0 +1,149 @@
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
+import { jsonResponse } from "../_shared/http.ts";
+
+// Área de Eventos, Fase 1: apenas escrita (criar inscrição, marcar pago,
+// cancelar). Leitura de events/event_registration_types/event_registrations
+// é direta pelo navegador via RLS (mesmo padrão de stock_orders) — não
+// duplicada aqui.
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+async function parseObject(req: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const body = await req.json();
+    return isPlainObject(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !DATE_PATTERN.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+}
+
+function databaseError(
+  error: { code?: string; message?: string },
+  operation: string,
+): Response {
+  console.error(`api-v1 events ${operation}:`, error);
+  if (error.code === "P0002") {
+    return jsonResponse({ error: error.message, code: "not_found" }, 404);
+  }
+  if (error.code === "22023") {
+    return jsonResponse({ error: error.message, code: "invalid_request" }, 400);
+  }
+  if (error.code === "P0001") {
+    return jsonResponse(
+      { error: error.message, code: "invalid_transition" },
+      409,
+    );
+  }
+  return jsonResponse({
+    error: "Não foi possível processar a inscrição",
+    code: "database_error",
+  }, 500);
+}
+
+export async function handleEventsRequest(
+  req: Request,
+  path: string,
+  supabase: SupabaseClient,
+  actorId: string,
+): Promise<Response | null> {
+  if (path === "/events/registrations" && req.method === "POST") {
+    const body = await parseObject(req);
+    if (
+      !body ||
+      typeof body.event_id !== "string" || !UUID_PATTERN.test(body.event_id) ||
+      typeof body.registration_type_id !== "string" || !UUID_PATTERN.test(body.registration_type_id) ||
+      typeof body.customer_id !== "string" || !UUID_PATTERN.test(body.customer_id) ||
+      (body.form_answers !== undefined && !isPlainObject(body.form_answers))
+    ) {
+      return jsonResponse({
+        error: "Dados da inscrição inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc("create_event_registration", {
+      p_event_id: body.event_id,
+      p_registration_type_id: body.registration_type_id,
+      p_customer_id: body.customer_id,
+      p_form_answers: body.form_answers ?? {},
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "create registration");
+    return jsonResponse({ data }, 201);
+  }
+
+  const payMatch = path.match(/^\/events\/registrations\/([^/]+)\/payment$/);
+  if (payMatch && req.method === "POST") {
+    const [, registrationId] = payMatch;
+    if (!UUID_PATTERN.test(registrationId)) {
+      return jsonResponse({
+        error: "Identificador de inscrição inválido",
+        code: "invalid_registration_id",
+      }, 400);
+    }
+
+    const body = await parseObject(req);
+    if (
+      !body ||
+      typeof body.payment_method !== "string" || !body.payment_method.trim() ||
+      (body.payment_date !== undefined && body.payment_date !== null && !isCalendarDate(body.payment_date))
+    ) {
+      return jsonResponse({
+        error: "Dados de pagamento inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc("record_event_registration_manual_payment", {
+      p_registration_id: registrationId,
+      p_payment_method: body.payment_method,
+      p_payment_date: body.payment_date ?? null,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "record payment");
+    return jsonResponse({ data });
+  }
+
+  const cancelMatch = path.match(/^\/events\/registrations\/([^/]+)\/cancel$/);
+  if (cancelMatch && req.method === "POST") {
+    const [, registrationId] = cancelMatch;
+    if (!UUID_PATTERN.test(registrationId)) {
+      return jsonResponse({
+        error: "Identificador de inscrição inválido",
+        code: "invalid_registration_id",
+      }, 400);
+    }
+
+    const body = await parseObject(req);
+    if (!body || typeof body.reason !== "string" || !body.reason.trim()) {
+      return jsonResponse({
+        error: "Informe o motivo do cancelamento",
+        code: "invalid_request",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc("cancel_event_registration", {
+      p_registration_id: registrationId,
+      p_reason: body.reason,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "cancel registration");
+    return jsonResponse({ data });
+  }
+
+  return null;
+}

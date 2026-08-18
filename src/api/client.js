@@ -195,6 +195,41 @@ export async function updateOrderFulfillment(
   return response.data;
 }
 
+export async function createEventRegistration({ eventId, registrationTypeId, customerId, formAnswers = {} }, options = {}) {
+  const response = await apiRequest('/events/registrations', {
+    ...options,
+    method: 'POST',
+    body: {
+      event_id: eventId,
+      registration_type_id: registrationTypeId,
+      customer_id: customerId,
+      form_answers: formAnswers,
+    },
+  });
+  invalidatePageCacheByTag('event_registrations');
+  return response.data;
+}
+
+export async function recordEventRegistrationPayment(registrationId, { paymentMethod, paymentDate = null }, options = {}) {
+  const response = await apiRequest(`/events/registrations/${registrationId}/payment`, {
+    ...options,
+    method: 'POST',
+    body: { payment_method: paymentMethod, payment_date: paymentDate },
+  });
+  invalidatePageCacheByTag('event_registrations');
+  return response.data;
+}
+
+export async function cancelEventRegistration(registrationId, reason, options = {}) {
+  const response = await apiRequest(`/events/registrations/${registrationId}/cancel`, {
+    ...options,
+    method: 'POST',
+    body: { reason },
+  });
+  invalidatePageCacheByTag('event_registrations');
+  return response.data;
+}
+
 export async function linkStockOrderCustomer(orderId, customerId, options = {}) {
   const response = await apiRequest(`/orders/stock/${orderId}/customer`, {
     ...options,

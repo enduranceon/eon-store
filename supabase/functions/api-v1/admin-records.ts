@@ -505,6 +505,38 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
     sortFields: ["id", "order_number", "created_date"],
     allowCreate: true,
   },
+  events: {
+    table: "events",
+    fields: {
+      name: s(200, { required: true }),
+      slug: s(200, { required: true }),
+      description: s(5_000, { nullable: true }),
+      event_date: d({ required: true }),
+      location: s(300, { nullable: true }),
+      revenue_center_id: u({ nullable: true }),
+      status: s(20, { required: true, values: ["draft", "open", "closed", "cancelled"] }),
+    },
+    defaultSort: "-event_date",
+    sortFields: ["id", "name", "event_date", "status", "created_at"],
+    updatedColumn: "updated_at",
+    allowCreate: true,
+  },
+  "event-registration-types": {
+    table: "event_registration_types",
+    fields: {
+      event_id: u({ required: true }),
+      name: s(200, { required: true }),
+      price: n({ required: true, min: 0 }),
+      max_quantity: i({ min: 1, nullable: true }),
+      form_fields: j("array"),
+      active: b(),
+      sort_order: i({ min: 0, max: 10_000 }),
+    },
+    defaultSort: "sort_order",
+    sortFields: ["id", "name", "price", "sort_order", "created_at"],
+    updatedColumn: "updated_at",
+    allowCreate: true,
+  },
 };
 
 export class AdminRecordInputError extends Error {

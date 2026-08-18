@@ -6,7 +6,7 @@ import {
   ShoppingCart, Megaphone, Undo2,
   LayoutDashboard, Package, Tag, UserCheck, Truck, Ticket, Palette, Settings,
   ChevronDown, ChevronRight, X, LogOut, Inbox, AlertCircle, Zap, RefreshCcw, UserPlus, ListChecks,
-  MessageCircle,
+  MessageCircle, CalendarDays,
 } from 'lucide-react';
 import { cn, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
@@ -29,6 +29,7 @@ const ASSESSORIA_ITEMS = [
   { label: 'Prospects',      icon: UserPlus,      to: '/assessoria/prospects',    badge: 'prospects' },
   { label: 'Auditoria',      icon: ListChecks,    to: '/assessoria/auditoria' },
   { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
+  { label: 'Eventos',        icon: CalendarDays,  to: '/eventos' },
   { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },
   { label: 'Fechamento',     icon: DollarSign,    to: '/assessoria/fechamento' },
 ];

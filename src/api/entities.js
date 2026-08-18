@@ -12,6 +12,9 @@ export const StockProduct     = StockProductApi;
 export const StockOrder       = db.entities.StockOrder;
 export const Product          = createAdminRecordEntity('products', 'products');
 export const Coupon           = createAdminRecordEntity('coupons', 'coupons');
+export const EventRecord      = createAdminRecordEntity('events', 'events');
+export const EventRegistrationType = createAdminRecordEntity('event-registration-types', 'event_registration_types');
+export const EventRegistration = db.entities.EventRegistration;
 
 // Universal
 export const RevenueCenter    = createCatalogEntity('revenue-centers', 'revenue_centers');

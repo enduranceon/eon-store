@@ -17,6 +17,7 @@ import {
   handlePublicAssessmentRequest,
 } from "./contract-residual.ts";
 import { handleOrdersRequest } from "./orders.ts";
+import { handleEventsRequest } from "./events.ts";
 import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
@@ -210,6 +211,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (ordersResponse) return ordersResponse;
+
+  const eventsResponse = await handleEventsRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (eventsResponse) return eventsResponse;
 
   return jsonResponse({
     error: "Rota não encontrada",

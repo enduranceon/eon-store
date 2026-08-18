@@ -14,6 +14,8 @@ import Products from '@/pages/Products';
 import ProductForm from '@/pages/ProductForm';
 import OrderDetail from '@/pages/OrderDetail';
 import OrderCenter from '@/pages/OrderCenter';
+import Events from '@/pages/Events';
+import EventDetail from '@/pages/EventDetail';
 import Customers from '@/pages/Customers';
 import CustomerDetail from '@/pages/CustomerDetail';
 import Reports from '@/pages/Reports';
@@ -146,6 +148,8 @@ export default function App() {
           <Route path="/produtos/novo" element={<AdminLayout><ProductForm mode="catalog" /></AdminLayout>} />
           <Route path="/produtos/:id" element={<AdminLayout><ProductForm mode="catalog" /></AdminLayout>} />
           <Route path="/pedidos" element={<AdminLayout><OrderCenter /></AdminLayout>} />
+          <Route path="/eventos" element={<AdminLayout><Events /></AdminLayout>} />
+          <Route path="/eventos/:id" element={<AdminLayout><EventDetail /></AdminLayout>} />
           <Route path="/pedidos/pre-venda" element={<LegacyOrderListRedirect origin="presale" />} />
           <Route path="/pedidos/:id" element={<AdminLayout><OrderDetail /></AdminLayout>} />
           <Route path="/clientes" element={<AdminLayout><Customers /></AdminLayout>} />
