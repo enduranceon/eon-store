@@ -1,3 +1,4 @@
+import { studentProfilePath } from '@/lib/customer-profile';
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, ArrowRight, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock } from 'lucide-react';
@@ -794,7 +795,7 @@ export default function OrderDetail() {
               </p>
             )}
             {customer && (
-              <Link to={`/clientes/${customer.id}`} className="text-xs text-blue-600 hover:underline block mt-1">
+              <Link to={studentProfilePath(customer.id, 'products')} className="text-xs text-blue-600 hover:underline block mt-1">
                 Ver perfil do cliente →
               </Link>
             )}
