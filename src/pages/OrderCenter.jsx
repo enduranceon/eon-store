@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
   CheckCircle2,
+  AlertTriangle,
   ClipboardList,
   Clock3,
   PackageCheck,
@@ -412,7 +413,17 @@ export default function OrderCenter() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <p className="font-medium">{order.customer}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium">{order.customer}</p>
+                        {!order.customer_id && (
+                          <span
+                            title="Este pedido veio do site mas não está vinculado a nenhum cadastro de cliente."
+                            className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200"
+                          >
+                            <AlertTriangle className="h-3 w-3" /> Sem cliente
+                          </span>
+                        )}
+                      </div>
                       {order.contact && <p className="text-xs text-muted-foreground">{order.contact}</p>}
                       {order.trainer && <p className="mt-0.5 text-xs text-muted-foreground">Treinador: {order.trainer}</p>}
                     </td>
