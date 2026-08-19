@@ -82,6 +82,8 @@ const TABLE_MAP = {
   StockOrder:       'stock_orders',
   Product:          'products',
   Coupon:           'coupons',
+  // Eventos
+  EventRegistration: 'event_registrations',
   // Universal
   RevenueCenter:    'revenue_centers',
   DiscountLog:      'discount_log',

@@ -14,6 +14,9 @@ import Products from '@/pages/Products';
 import ProductForm from '@/pages/ProductForm';
 import OrderDetail from '@/pages/OrderDetail';
 import OrderCenter from '@/pages/OrderCenter';
+import Events from '@/pages/Events';
+import PublicEventRegistration from '@/pages/PublicEventRegistration';
+import EventDetail from '@/pages/EventDetail';
 import Customers from '@/pages/Customers';
 import CustomerDetail from '@/pages/CustomerDetail';
 import Reports from '@/pages/Reports';
@@ -124,6 +127,7 @@ export default function App() {
           <Route path="/loja/confirmacao/:orderId" element={<PublicStoreConfirmation />} />
           <Route path="/p/:orderId" element={<PublicOrderTracking />} />
           <Route path="/assinar/:planId" element={<PublicPlanEnrollment />} />
+          <Route path="/inscricao/:slug" element={<PublicEventRegistration />} />
           <Route path="/planos/:modalityId" element={<PublicModalityPlans />} />
 
           {/* Admin */}
@@ -146,6 +150,8 @@ export default function App() {
           <Route path="/produtos/novo" element={<AdminLayout><ProductForm mode="catalog" /></AdminLayout>} />
           <Route path="/produtos/:id" element={<AdminLayout><ProductForm mode="catalog" /></AdminLayout>} />
           <Route path="/pedidos" element={<AdminLayout><OrderCenter /></AdminLayout>} />
+          <Route path="/eventos" element={<AdminLayout><Events /></AdminLayout>} />
+          <Route path="/eventos/:id" element={<AdminLayout><EventDetail /></AdminLayout>} />
           <Route path="/pedidos/pre-venda" element={<LegacyOrderListRedirect origin="presale" />} />
           <Route path="/pedidos/:id" element={<AdminLayout><OrderDetail /></AdminLayout>} />
           <Route path="/clientes" element={<AdminLayout><Customers /></AdminLayout>} />

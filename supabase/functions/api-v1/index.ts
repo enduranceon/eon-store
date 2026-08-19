@@ -17,6 +17,7 @@ import {
   handlePublicAssessmentRequest,
 } from "./contract-residual.ts";
 import { handleOrdersRequest } from "./orders.ts";
+import { handleEventsRequest, handlePublicEventRequest } from "./events.ts";
 import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
@@ -56,6 +57,27 @@ Deno.serve(async (req: Request) => {
       publicClient,
     );
     if (publicResponse) return publicResponse;
+  }
+
+  // Inscrição pública em evento: mesma porta sem login da adesão de planos.
+  // A proteção é limite de taxa por IP e telefone dentro do banco.
+  if (path === "/public/event-registrations") {
+    const publicClient = createServiceClient();
+    if (!publicClient) {
+      console.error(
+        "api-v1: SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente",
+      );
+      return jsonResponse({
+        error: "API não configurada",
+        code: "api_misconfigured",
+      }, 500);
+    }
+    const publicEventResponse = await handlePublicEventRequest(
+      req,
+      path,
+      publicClient,
+    );
+    if (publicEventResponse) return publicEventResponse;
   }
 
   const gate = await requireAdmin(req);
@@ -211,6 +233,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (ordersResponse) return ordersResponse;
+
+  const eventsResponse = await handleEventsRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (eventsResponse) return eventsResponse;
 
   return jsonResponse({
     error: "Rota não encontrada",

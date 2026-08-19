@@ -2993,6 +2993,8 @@
         "npm:eslint-plugin-react-refresh@~0.5.2",
         "npm:eslint@^10.3.0",
         "npm:globals@^17.6.0",
+        "npm:jspdf-autotable@^5.0.8",
+        "npm:jspdf@^4.2.1",
         "npm:libphonenumber-js@^1.13.6",
         "npm:lucide-react@^1.16.0",
         "npm:postcss@^8.5.14",
