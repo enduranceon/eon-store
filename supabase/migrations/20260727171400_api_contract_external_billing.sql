@@ -406,3 +406,4 @@ GRANT EXECUTE ON FUNCTION public.remove_assessment_contract_external_charge(
 GRANT EXECUTE ON FUNCTION public.mark_assessment_contract_payment_message_sent(
   uuid, text, text, date, jsonb, timestamptz, uuid
 ) TO service_role;
+;

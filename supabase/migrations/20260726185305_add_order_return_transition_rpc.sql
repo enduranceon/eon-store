@@ -111,3 +111,4 @@ revoke all on function public.transition_order_return(uuid, text) from public;
 revoke all on function public.transition_order_return(uuid, text) from anon;
 revoke all on function public.transition_order_return(uuid, text) from authenticated;
 grant execute on function public.transition_order_return(uuid, text) to service_role;
+;

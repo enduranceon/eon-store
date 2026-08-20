@@ -815,3 +815,4 @@ COMMENT ON FUNCTION public.prepare_assessment_contract_mutation(
 COMMENT ON FUNCTION public.complete_assessment_contract_mutation(
   UUID, UUID, JSONB
 ) IS 'Atomically mutates an unpaid contract after external charge cancellation.';
+;

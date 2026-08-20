@@ -1041,3 +1041,4 @@ GRANT EXECUTE ON FUNCTION public.complete_item_cancellation(UUID, JSONB)
   TO service_role;
 GRANT EXECUTE ON FUNCTION public.record_order_operation_external_result(UUID, JSONB)
   TO service_role;
+;

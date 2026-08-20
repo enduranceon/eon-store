@@ -101,8 +101,6 @@ export default function ClosingDetail() {
   const competence = closing?.competence;
   const isCarried = (it) => !!it.reference_competence && !!competence && it.reference_competence !== competence;
   const refLabel = (ref) => formatCompetence(ref, { short: true });
-  const carriedTotal = items.filter(isCarried).reduce((s, i) => s + Number(i.amount), 0);
-
   // Pendências (aguardando pagamento) — não somam ao total a pagar
   const todayStr = new Date().toISOString().slice(0, 10);
   const dueByContract = Object.fromEntries(pendingContracts.map(c => [c.id, c.due_date]));

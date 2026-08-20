@@ -132,3 +132,4 @@ CREATE TRIGGER enforce_public_submission_coach
 
 REVOKE ALL ON FUNCTION eon_private.enforce_contract_coach_modality() FROM PUBLIC;
 REVOKE ALL ON FUNCTION eon_private.enforce_public_submission_coach() FROM PUBLIC;
+;

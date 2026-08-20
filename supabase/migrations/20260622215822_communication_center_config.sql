@@ -175,4 +175,4 @@ SET name = EXCLUDED.name,
     message_template = EXCLUDED.message_template,
     active = EXCLUDED.active,
     order_index = EXCLUDED.order_index,
-    updated_at = now();
+    updated_at = now();;

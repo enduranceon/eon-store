@@ -194,4 +194,4 @@ BEGIN
     'leave', to_jsonb(v_leave)
   );
 END;
-$$;
+$$;;

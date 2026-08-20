@@ -707,3 +707,4 @@ COMMENT ON FUNCTION public.finalize_order_due_date_failure(UUID, UUID, TEXT, TEX
   'Closes deterministic due-date failures or persists an ambiguous result for reconciliation.';
 COMMENT ON FUNCTION public.release_order_due_date_operation(UUID, UUID, TEXT) IS
   'Releases an expired or reconciled due-date operation after an audited manual review.';
+;

@@ -548,3 +548,4 @@ REVOKE INSERT, UPDATE, DELETE, TRUNCATE
   ON TABLE public.stock_orders FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE
   ON TABLE public.stock_products FROM anon, authenticated;
+;

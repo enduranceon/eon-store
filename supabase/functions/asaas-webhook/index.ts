@@ -10,6 +10,10 @@ const EVENT_MAP: Record<string, string> = {
   PAYMENT_RESTORED:  "charge_sent",
 };
 
+function getWebhookToken(): string | undefined {
+  return Deno.env.get("ASAAS_WEBHOOK_TOKEN") || Deno.env.get("Asaas_webhook_token");
+}
+
 function mapPaymentMethod(asaasMethod: string, installments?: number): string {
   if (!asaasMethod) return "pix";
   const m = asaasMethod.toUpperCase();
@@ -101,9 +105,9 @@ Deno.serve(async (req: Request) => {
   const misconfigured = () => new Response(JSON.stringify({ error: "webhook misconfigured" }), { status: 500, headers: { "Content-Type": "application/json" } });
 
   // ✅ SEGURANÇA: token agora é OBRIGATÓRIO. Sem token configurado = recusa todas as requisições.
-  const expectedToken = Deno.env.get("ASAAS_WEBHOOK_TOKEN");
+  const expectedToken = getWebhookToken();
   if (!expectedToken) {
-    console.error("asaas-webhook: ASAAS_WEBHOOK_TOKEN não configurado");
+    console.error("asaas-webhook: token de webhook não configurado");
     return misconfigured();
   }
   const received = req.headers.get("asaas-access-token") || "";

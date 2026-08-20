@@ -364,3 +364,4 @@ GRANT EXECUTE ON FUNCTION public.change_assessment_contract_coach(uuid, uuid, ti
 GRANT EXECUTE ON FUNCTION public.start_assessment_contract_leave(uuid, date, date, text, timestamptz, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.finish_assessment_contract_leave(uuid, uuid, timestamptz, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.cancel_assessment_contract(uuid, date, numeric, text, timestamptz, uuid) TO service_role;
+;

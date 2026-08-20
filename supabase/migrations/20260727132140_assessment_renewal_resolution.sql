@@ -1515,3 +1515,4 @@ COMMENT ON FUNCTION public.prevent_assessment_renewal_delete()
   IS 'Preserves renewal sales as auditable records; resolution must void rather than delete them.';
 COMMENT ON FUNCTION public.guard_open_payout_for_inactive_contract()
   IS 'Prevents stale monthly-closing writes from opening payouts for inactive assessment sales.';
+;

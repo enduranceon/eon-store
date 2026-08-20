@@ -747,3 +747,4 @@ GRANT EXECUTE ON FUNCTION public.complete_assessment_contract_refund(
 ) TO service_role;
 GRANT EXECUTE ON FUNCTION public.apply_assessment_contract_transitions(uuid)
   TO service_role;
+;

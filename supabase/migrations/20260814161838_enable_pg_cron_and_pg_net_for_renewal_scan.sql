@@ -6,4 +6,4 @@
 -- Nenhum job é criado aqui — o agendamento vem em migration separada, depois
 -- que o CRON_SECRET estiver configurado.
 create extension if not exists pg_cron;
-create extension if not exists pg_net with schema extensions;
+create extension if not exists pg_net with schema extensions;;

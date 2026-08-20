@@ -1,10 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Activity, RefreshCw, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronRight, Database } from 'lucide-react';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { toast } from 'sonner';
 
 // ─── Definição dos checks ──────────────────────────────────────────────
 // Cada check tem:

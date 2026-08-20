@@ -368,3 +368,4 @@ COMMENT ON FUNCTION public.prepare_order_cancellation(TEXT, UUID, TEXT, UUID) IS
   'Creates or resumes the idempotent server-side operation for an unpaid order cancellation.';
 COMMENT ON FUNCTION public.complete_order_cancellation(UUID, JSONB) IS
   'Atomically cancels an unpaid order and its local side effects after the external charge step.';
+;

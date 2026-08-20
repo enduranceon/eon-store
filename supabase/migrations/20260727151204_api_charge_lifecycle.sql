@@ -648,3 +648,4 @@ COMMENT ON FUNCTION public.record_order_charge_cancellation_snapshot(
 COMMENT ON FUNCTION public.finalize_order_charge_cancellation_failure(
   UUID, UUID, TEXT, TEXT, BOOLEAN, JSONB
 ) IS 'Records deterministic failures or ambiguous cancellations for reconciliation.';
+;

@@ -1,9 +1,8 @@
-import { useParams, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { CheckCircle2, Phone, Mail, Store } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 
 export default function PublicOrderConfirmation() {
-  const { orderId } = useParams();
   const location = useLocation();
   const order = location.state?.order;
   const campaignName = location.state?.campaignName;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Calendar, CheckCircle2, Clock, DollarSign, ChevronRight, Info, TrendingUp, ArrowLeft } from 'lucide-react';
+import { Plus, Calendar, ChevronRight, Info } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PayoutMonthlyClosing, PayoutMonthlyStatementItem } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, todayLocalStr, formatCompetence } from '@/lib/utils';
+import { formatCurrency, formatDate, formatCompetence } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const STATUS = {

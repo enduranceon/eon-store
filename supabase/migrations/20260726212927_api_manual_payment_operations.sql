@@ -837,3 +837,4 @@ COMMENT ON FUNCTION public.api_adjust_manual_payment(TEXT, UUID, NUMERIC, NUMERI
   'Server-only exact-cent reallocation of confirmed manual installments.';
 COMMENT ON FUNCTION public.api_reopen_manual_payment(TEXT, UUID, UUID) IS
   'Server-only, atomic and retry-safe reopening of a confirmed manual payment.';
+;

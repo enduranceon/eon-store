@@ -311,6 +311,7 @@ Se a peça **não foi entregue** quando cancelada:
    - `PAYMENT_DELETED` → marca como **Cancelado**
    - `PAYMENT_REFUNDED` → marca como **Estornado** + devolve cupom
    - Validação obrigatória via Supabase Secret `ASAAS_WEBHOOK_TOKEN`
+     (aceita temporariamente o nome legado `Asaas_webhook_token`)
 
 3. **`create-asaas-charge`** — Função legada mantida temporariamente para
    compatibilidade. O frontend administrativo não a chama mais.
@@ -318,7 +319,7 @@ Se a peça **não foi entregue** quando cancelada:
 ### Configuração no Asaas (já feita)
 - URL webhook: `https://bsiljrrodgtmtdilnuxr.supabase.co/functions/v1/asaas-webhook`
 - Eventos marcados: `PAYMENT_CONFIRMED`, `PAYMENT_RECEIVED`, `PAYMENT_DELETED`, `PAYMENT_REFUNDED`
-- Token configurável (recomendado validar no Secret)
+- Token validado via Supabase Secret
 
 ### Ambiente atual
 - O ambiente é definido pelo Secret `ASAAS_BASE_URL`.
@@ -405,33 +406,41 @@ Localizadas em Supabase → Edge Functions.
 - Webhook Asaas sempre retorna 200 (não fica reenviando em loop)
 - Estorno proporcional ao cancelar peça (respeita cupom aplicado)
 - Devolução de cupom em **5 caminhos** (cobertura completa)
+- `presale_customers`, `presale_orders`, `stock_orders` e `coupons` não têm
+  acesso direto para `anon`; o acesso público passa por edge functions
+  validadas
+- Tabelas operacionais/idempotência sem políticas RLS ficam sem grants para
+  `anon`/`authenticated` e são usadas por funções com `service_role`
 
 ### ⚠️ Pendências de segurança (importantes para produção)
 
-#### 🔴 ALTO — Privacidade de clientes
-`presale_customers` permite anon SELECT/INSERT/UPDATE com `qual=true`. Isso significa que qualquer pessoa pode listar/editar todos os clientes (nome, WhatsApp, CPF).
+#### 🟡 BAIXO — Padronização do secret do webhook
+A produção possui o secret legado `Asaas_webhook_token`, e o código aceita esse nome junto com o nome canônico `ASAAS_WEBHOOK_TOKEN`.
 
-**Solução:** Mover `findOrCreateCustomer` para uma edge function `create-public-order` que usa service role.
+**Solução:** Quando o valor estiver em mãos, criar também o Secret `ASAAS_WEBHOOK_TOKEN` no Supabase com o mesmo valor configurado no Asaas e remover o fallback legado do código.
 
-#### 🟠 MÉDIO — Token do webhook
-Validação implementada mas Secret `ASAAS_WEBHOOK_TOKEN` ainda não está setado. Sem isso, qualquer pessoa que descubra a URL do webhook pode disparar eventos falsos.
+#### 🟠 MÉDIO — Secrets Asaas não encontrados na auditoria remota
+A auditoria de secrets do Supabase não listou `ASAAS_API_KEY` nem `ASAAS_BASE_URL`. O código falha explicitamente se esses secrets não estiverem configurados, evitando consulta acidental ao sandbox.
 
-**Solução:** Setar Secret `ASAAS_WEBHOOK_TOKEN` no Supabase com o mesmo valor configurado no Asaas.
-
-#### 🟠 MÉDIO — Chave Asaas hardcoded
-A chave de sandbox está como fallback na edge function. Para produção, gerar chave de produção e setar como Secret `ASAAS_API_KEY`.
+**Solução:** Confirmar no painel/Supabase CLI e configurar `ASAAS_API_KEY` e `ASAAS_BASE_URL` para o ambiente correto.
 
 #### 🟡 BAIXO — Sem rate limiting
 Edge functions são públicas sem rate limiting. Para produção, considerar Cloudflare na frente.
+
+#### 🟡 BAIXO — Proteção contra senhas vazadas no Auth
+O advisor do Supabase indica que a proteção contra senhas vazadas está desligada. Ativar no painel de Auth para bloquear senhas conhecidas em vazamentos.
+
+#### 🟡 BAIXO — `plpgsql_check` em `public`
+O advisor recomenda mover extensões para fora de `public`, mas `plpgsql_check` não suporta `ALTER EXTENSION ... SET SCHEMA`. Se a extensão não for mais necessária, avaliar drop/recreate em janela própria.
 
 ### Checklist antes de ir para produção
 
 - [ ] Gerar chave API de produção no Asaas
 - [ ] Setar `ASAAS_API_KEY` como Supabase Secret
-- [ ] Setar `ASAAS_WEBHOOK_TOKEN` como Supabase Secret (mesmo valor do Asaas)
-- [ ] Trocar `ASAAS_BASE` de `sandbox.asaas.com` para `www.asaas.com` nas edge functions
+- [ ] Padronizar `ASAAS_WEBHOOK_TOKEN` como Supabase Secret (produção aceita o legado `Asaas_webhook_token`)
+- [ ] Setar `ASAAS_BASE_URL` para `https://www.asaas.com/api/v3`
 - [ ] Reconfigurar webhook no Asaas produção apontando para mesma URL
-- [ ] Mover `findOrCreateCustomer` para edge function (bug de privacidade)
+- [ ] Ativar leaked password protection no Supabase Auth
 - [ ] Configurar backup automático no Supabase
 - [ ] Testar restauração em projeto separado
 - [ ] Implementar rate limiting (Cloudflare ou similar)

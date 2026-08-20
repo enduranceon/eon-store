@@ -81,4 +81,4 @@ BEGIN
 
   EXECUTE v_new;
 END
-$do$;
+$do$;;

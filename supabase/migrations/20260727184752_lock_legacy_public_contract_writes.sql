@@ -16,3 +16,4 @@ REVOKE ALL ON FUNCTION public.upsert_assessment_customer(
 REVOKE ALL ON FUNCTION public.upsert_assessment_customer(
   text, text, text, text, date, text
 ) FROM PUBLIC, anon, authenticated;
+;

@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
 
-const ASAAS_BASE    = Deno.env.get("ASAAS_BASE_URL") ?? "https://sandbox.asaas.com/api/v3";
+const ASAAS_BASE    = Deno.env.get("ASAAS_BASE_URL");
 const ASAAS_API_KEY = Deno.env.get("ASAAS_API_KEY");
 
 // Statuses Asaas que significam "já foi cobrado/recebido" (dinheiro entrou)
@@ -30,7 +30,9 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceKey || !ASAAS_API_KEY) return json({ error: "Env vars missing" }, 500);
+  if (!supabaseUrl || !serviceKey || !ASAAS_BASE || !ASAAS_API_KEY) {
+    return json({ error: "Env vars missing" }, 500);
+  }
   const supabase = createClient(supabaseUrl, serviceKey);
 
   try {

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Upload, Star, X, ChevronLeft, ChevronRight, ImageIcon, Plus } from 'lucide-react';
+import { Star, X, ChevronLeft, ChevronRight, ImageIcon, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const MAX_PHOTOS = 3;
@@ -163,7 +163,6 @@ export default function ImageUpload({ value = [], onChange }) {
           {images.length < MAX_PHOTOS && (
             <div className="flex-1">
               <AddSlot
-                onFile={addFile}
                 onDrop={handleDrop}
                 draggingOver={draggingOver}
                 setDraggingOver={setDraggingOver}
@@ -181,7 +180,6 @@ export default function ImageUpload({ value = [], onChange }) {
       {images.length === 0 && (
         <AddSlot
           empty
-          onFile={addFile}
           onDrop={handleDrop}
           draggingOver={draggingOver}
           setDraggingOver={setDraggingOver}
@@ -243,7 +241,7 @@ export default function ImageUpload({ value = [], onChange }) {
   );
 }
 
-function AddSlot({ empty, onClick, onDrop, draggingOver, setDraggingOver, onFile }) {
+function AddSlot({ empty, onClick, onDrop, draggingOver, setDraggingOver }) {
   return (
     <button
       type="button"

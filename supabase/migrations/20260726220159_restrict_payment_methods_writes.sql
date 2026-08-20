@@ -30,3 +30,4 @@ grant select
 grant select, insert, update, delete
   on table public.payment_methods
   to service_role;
+;
