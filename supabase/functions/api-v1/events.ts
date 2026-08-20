@@ -216,7 +216,6 @@ export async function handlePublicEventRequest(
       .from("assessment_coaches")
       .select("id,name")
       .eq("active", true)
-      .eq("public_visible", true)
       .order("name");
     if (coachesError) return databaseError(coachesError, "public coaches");
 
