@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { CalendarDays, CheckCircle2, MapPin, Users } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Clock, ExternalLink, MapPin, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -58,6 +58,25 @@ function answersWithNativeFields(fields = [], answers = {}, { fullName, coachNam
     else next[field.key] = fullName;
   }
   return next;
+}
+
+function timeValue(value) {
+  return String(value || '').slice(0, 5);
+}
+
+function timeSummary(event) {
+  const start = timeValue(event?.start_time);
+  const end = timeValue(event?.end_time);
+  if (start && end) return `${start} - ${end}`;
+  return start || end || '';
+}
+
+function dateSummary(event) {
+  if (!event?.event_date) return 'Data a definir';
+  if (event.end_date && event.end_date !== event.event_date) {
+    return `${formatDate(event.event_date)} - ${formatDate(event.end_date)}`;
+  }
+  return formatDate(event.event_date);
 }
 
 // Renderiza apenas os campos extras definidos no tipo de inscrição. Nome e
@@ -210,17 +229,27 @@ export default function PublicEventRegistration() {
   }
 
   const soldOut = selectedType?.spots_left === 0;
+  const eventTime = timeSummary(event);
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4">
       <div className="max-w-lg mx-auto space-y-4">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900">{event.name}</h1>
-          <div className="mt-2 flex items-center justify-center gap-4 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5"><CalendarDays className="w-4 h-4" /> {formatDate(event.event_date)}</span>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5"><CalendarDays className="w-4 h-4" /> {dateSummary(event)}</span>
+            {eventTime && <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4" /> {eventTime}</span>}
             {event.location && <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4" /> {event.location}</span>}
           </div>
+          {event.address && <p className="mt-1 text-xs text-muted-foreground">{event.address}</p>}
+          {event.online_url && (
+            <a className="mt-2 inline-flex items-center gap-1.5 text-sm text-blue-700 hover:underline"
+              href={event.online_url} target="_blank" rel="noreferrer">
+              <ExternalLink className="w-4 h-4" /> Link online do evento
+            </a>
+          )}
           {event.description && <p className="mt-3 text-sm text-gray-700">{event.description}</p>}
+          {event.public_notes && <p className="mt-2 text-sm text-gray-700 whitespace-pre-wrap">{event.public_notes}</p>}
         </div>
 
         <Card><CardContent className="p-5 space-y-4">

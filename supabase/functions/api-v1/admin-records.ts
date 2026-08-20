@@ -10,6 +10,7 @@ type FieldKind =
   | "boolean"
   | "uuid"
   | "date"
+  | "time"
   | "timestamp"
   | "json"
   | "string_array"
@@ -40,6 +41,7 @@ interface ResourceSpec {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -70,6 +72,10 @@ const u = (options: Partial<FieldSpec> = {}): FieldSpec => ({
 });
 const d = (options: Partial<FieldSpec> = {}): FieldSpec => ({
   kind: "date",
+  ...options,
+});
+const tm = (options: Partial<FieldSpec> = {}): FieldSpec => ({
+  kind: "time",
   ...options,
 });
 const t = (options: Partial<FieldSpec> = {}): FieldSpec => ({
@@ -511,8 +517,15 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       name: s(200, { required: true }),
       slug: s(200, { required: true }),
       description: s(5_000, { nullable: true }),
-      event_date: d({ required: true }),
+      event_date: d({ nullable: true }),
+      end_date: d({ nullable: true }),
+      start_time: tm({ nullable: true }),
+      end_time: tm({ nullable: true }),
       location: s(300, { nullable: true }),
+      address: s(600, { nullable: true }),
+      online_url: s(2_048, { nullable: true }),
+      public_notes: s(10_000, { nullable: true, preserveWhitespace: true }),
+      internal_notes: s(10_000, { nullable: true, preserveWhitespace: true }),
       revenue_center_id: u({ nullable: true }),
       status: s(20, { required: true, values: ["draft", "open", "closed", "cancelled"] }),
     },
@@ -677,6 +690,15 @@ function normalizeField(
     }
     return value;
   }
+  if (spec.kind === "time") {
+    if (typeof value !== "string" || !TIME_PATTERN.test(value)) {
+      throw new AdminRecordInputError(
+        `Campo ${field} inválido`,
+        "invalid_field",
+      );
+    }
+    return value;
+  }
   if (spec.kind === "timestamp") {
     if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
       throw new AdminRecordInputError(
@@ -785,6 +807,24 @@ export function normalizeAdminRecordPayload(
     throw new AdminRecordInputError(
       "Validade final anterior à inicial",
       "invalid_date_range",
+    );
+  }
+  if (
+    resourceKey === "events" && output.event_date && output.end_date &&
+    output.end_date < output.event_date
+  ) {
+    throw new AdminRecordInputError(
+      "Data final anterior à data inicial",
+      "invalid_date_range",
+    );
+  }
+  if (
+    resourceKey === "events" && output.start_time && output.end_time &&
+    output.end_time < output.start_time
+  ) {
+    throw new AdminRecordInputError(
+      "Horário final anterior ao horário inicial",
+      "invalid_time_range",
     );
   }
   if (

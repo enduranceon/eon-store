@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, CalendarDays, Check, ChevronRight, Copy, ExternalLink, HandCoins, Layers,
-  Link2, Pencil, Plus, ReceiptText, Search, Trash2, Users, X,
+  ArrowLeft, CalendarDays, Check, ChevronRight, Clock, Copy, ExternalLink, FileText,
+  Globe2, HandCoins, Info, Layers, Link2, MapPin, Pencil, Plus, ReceiptText, Search,
+  Trash2, Users, X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -52,9 +53,92 @@ const FIELD_KINDS = [
 
 const PAYMENT_METHODS = ['PIX', 'Dinheiro', 'Cartão', 'Transferência', 'Outro'];
 
+const EMPTY_EVENT_FORM = {
+  name: '',
+  slug: '',
+  event_date: '',
+  end_date: '',
+  start_time: '',
+  end_time: '',
+  location: '',
+  address: '',
+  online_url: '',
+  description: '',
+  public_notes: '',
+  internal_notes: '',
+};
 const EMPTY_FIELD = { key: '', label: '', kind: 'text', required: false, options: [] };
 const EMPTY_TYPE_FORM = { name: '', price: '', max_quantity: '', active: true, fields: [] };
 const EMPTY_EXPENSE_FORM = { description: '', category: '', amount: '', expense_date: todayLocalStr(), notes: '' };
+
+function slugify(name) {
+  return String(name || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function normalizeUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) return text;
+  return `https://${text}`;
+}
+
+function timeValue(value) {
+  return String(value || '').slice(0, 5);
+}
+
+function timeSummary(event) {
+  const start = timeValue(event.start_time);
+  const end = timeValue(event.end_time);
+  if (start && end) return `${start} - ${end}`;
+  return start || end || '';
+}
+
+function dateSummary(event) {
+  if (!event.event_date) return 'Data a definir';
+  if (event.end_date && event.end_date !== event.event_date) {
+    return `${formatDate(event.event_date)} - ${formatDate(event.end_date)}`;
+  }
+  return formatDate(event.event_date);
+}
+
+function eventToForm(event) {
+  return {
+    ...EMPTY_EVENT_FORM,
+    name: event.name || '',
+    slug: event.slug || '',
+    event_date: event.event_date || '',
+    end_date: event.end_date || '',
+    start_time: timeValue(event.start_time),
+    end_time: timeValue(event.end_time),
+    location: event.location || '',
+    address: event.address || '',
+    online_url: event.online_url || '',
+    description: event.description || '',
+    public_notes: event.public_notes || '',
+    internal_notes: event.internal_notes || '',
+  };
+}
+
+function eventPayload(form) {
+  return {
+    name: form.name.trim(),
+    slug: form.slug.trim() || slugify(form.name),
+    event_date: form.event_date || null,
+    end_date: form.end_date || null,
+    start_time: form.start_time || null,
+    end_time: form.end_time || null,
+    location: form.location.trim() || null,
+    address: form.address.trim() || null,
+    online_url: normalizeUrl(form.online_url) || null,
+    description: form.description.trim() || null,
+    public_notes: form.public_notes.trim() || null,
+    internal_notes: form.internal_notes.trim() || null,
+  };
+}
 
 function fieldKeyFromLabel(label) {
   return label
@@ -164,6 +248,36 @@ export default function EventDetail() {
     }
     return counts;
   }, [registrations]);
+
+  // ----- informações gerais do evento -----
+  const [eventModal, setEventModal] = useState(false);
+  const [eventForm, setEventForm] = useState(EMPTY_EVENT_FORM);
+  const [eventSaving, setEventSaving] = useState(false);
+
+  const openEditEvent = () => {
+    setEventForm(eventToForm(event));
+    setEventModal(true);
+  };
+
+  const saveEvent = async () => {
+    if (!eventForm.name.trim()) return toast.error('Informe o nome do evento');
+    if ((eventForm.slug.trim() || slugify(eventForm.name)).length < 3) return toast.error('Informe um link válido para o evento');
+    if (!eventForm.event_date && eventForm.end_date) return toast.error('Informe a data inicial antes da data final');
+    if (eventForm.event_date && eventForm.end_date && eventForm.end_date < eventForm.event_date) return toast.error('Data final anterior à data inicial');
+    if (eventForm.start_time && eventForm.end_time && eventForm.end_time < eventForm.start_time) return toast.error('Horário final anterior ao horário inicial');
+
+    setEventSaving(true);
+    try {
+      await EventRecord.update(id, eventPayload(eventForm));
+      setEventModal(false);
+      toast.success('Evento atualizado');
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao atualizar evento');
+    } finally {
+      setEventSaving(false);
+    }
+  };
 
   // ----- tipo de inscrição (criar/editar) -----
   const [typeModal, setTypeModal] = useState(false);
@@ -425,6 +539,7 @@ export default function EventDetail() {
   }
 
   const status = EVENT_STATUS[event.status] || EVENT_STATUS.draft;
+  const eventTime = timeSummary(event);
   const priceOf = reg => Number(typesById[reg.registration_type_id]?.price || 0);
   const paidTotal = registrations
     .filter(r => r.payment_status === 'paid')
@@ -456,12 +571,26 @@ export default function EventDetail() {
         </Button>
         <div>
           <h2 className="text-xl font-bold">{event.name}</h2>
-          <p className="text-sm text-muted-foreground inline-flex items-center gap-1.5">
-            <CalendarDays className="w-3.5 h-3.5" /> {formatDate(event.event_date)}
-            {event.location ? ` · ${event.location}` : ''}
+          <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays className="w-3.5 h-3.5" /> {dateSummary(event)}
+            </span>
+            {eventTime && (
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" /> {eventTime}
+              </span>
+            )}
+            {event.location && (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5" /> {event.location}
+              </span>
+            )}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={openEditEvent}>
+            <Pencil className="w-3.5 h-3.5 mr-1.5" /> Editar
+          </Button>
           <Badge variant={status.variant}>{status.label}</Badge>
           <Select value={event.status} onValueChange={changeEventStatus}>
             <SelectTrigger className="w-40 h-9"><SelectValue /></SelectTrigger>
@@ -471,6 +600,85 @@ export default function EventDetail() {
           </Select>
         </div>
       </div>
+
+      <Card>
+        <CardContent className="p-4 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold inline-flex items-center gap-1.5">
+                <Info className="w-4 h-4" /> Informações do evento
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Dados que organizam a operação e aparecem no link público quando fizer sentido.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={openEditEvent}>
+              <Pencil className="w-3.5 h-3.5 mr-1" /> Editar
+            </Button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Data</p>
+              <p className="text-sm inline-flex items-center gap-1.5">
+                <CalendarDays className="w-4 h-4 text-muted-foreground" /> {dateSummary(event)}
+              </p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Horário</p>
+              <p className="text-sm inline-flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-muted-foreground" /> {eventTime || 'A definir'}
+              </p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Local</p>
+              <p className="text-sm inline-flex items-center gap-1.5">
+                <MapPin className="w-4 h-4 text-muted-foreground" /> {event.location || 'A definir'}
+              </p>
+              {event.address && <p className="text-xs text-muted-foreground">{event.address}</p>}
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Online</p>
+              {event.online_url ? (
+                <a className="text-sm text-blue-700 hover:underline inline-flex items-center gap-1.5"
+                  href={event.online_url} target="_blank" rel="noreferrer">
+                  <Globe2 className="w-4 h-4" /> Abrir link
+                </a>
+              ) : (
+                <p className="text-sm text-muted-foreground">Não informado</p>
+              )}
+            </div>
+          </div>
+
+          {event.description ? (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground inline-flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" /> Descrição pública
+              </p>
+              <p className="text-sm whitespace-pre-wrap">{event.description}</p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Sem descrição pública cadastrada.</p>
+          )}
+
+          {(event.public_notes || event.internal_notes) && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {event.public_notes && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground">Informações para inscritos</p>
+                  <p className="text-sm whitespace-pre-wrap">{event.public_notes}</p>
+                </div>
+              )}
+              {event.internal_notes && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground">Notas internas</p>
+                  <p className="text-sm whitespace-pre-wrap">{event.internal_notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card><CardContent className="p-4">
@@ -737,6 +945,91 @@ export default function EventDetail() {
           )}
         </CardContent>
       </Card>
+
+      {/* Modal: informações do evento */}
+      <Dialog open={eventModal} onOpenChange={open => !eventSaving && setEventModal(open)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Editar evento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Nome do evento</Label>
+              <Input className="mt-1" value={eventForm.name}
+                onChange={e => setEventForm(f => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Link público</Label>
+              <Input className="mt-1 font-mono text-sm" value={eventForm.slug}
+                onChange={e => setEventForm(f => ({ ...f, slug: slugify(e.target.value) }))} />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Se alterar, o link de inscrição também muda.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Data inicial</Label>
+                <Input className="mt-1" type="date" value={eventForm.event_date}
+                  onChange={e => setEventForm(f => ({ ...f, event_date: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Data final</Label>
+                <Input className="mt-1" type="date" value={eventForm.end_date}
+                  onChange={e => setEventForm(f => ({ ...f, end_date: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Horário inicial</Label>
+                <Input className="mt-1" type="time" value={eventForm.start_time}
+                  onChange={e => setEventForm(f => ({ ...f, start_time: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Horário final</Label>
+                <Input className="mt-1" type="time" value={eventForm.end_time}
+                  onChange={e => setEventForm(f => ({ ...f, end_time: e.target.value }))} />
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Local</Label>
+                <Input className="mt-1" value={eventForm.location}
+                  onChange={e => setEventForm(f => ({ ...f, location: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Link online</Label>
+                <Input className="mt-1" value={eventForm.online_url}
+                  onChange={e => setEventForm(f => ({ ...f, online_url: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label>Endereço</Label>
+              <Input className="mt-1" value={eventForm.address}
+                onChange={e => setEventForm(f => ({ ...f, address: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Descrição pública</Label>
+              <Textarea className="mt-1" rows={3} value={eventForm.description}
+                onChange={e => setEventForm(f => ({ ...f, description: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Informações para inscritos</Label>
+              <Textarea className="mt-1" rows={3} value={eventForm.public_notes}
+                placeholder="Ex.: chegue 15 minutos antes, leve documento, estacionamento..."
+                onChange={e => setEventForm(f => ({ ...f, public_notes: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Notas internas</Label>
+              <Textarea className="mt-1" rows={3} value={eventForm.internal_notes}
+                onChange={e => setEventForm(f => ({ ...f, internal_notes: e.target.value }))} />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setEventModal(false)} disabled={eventSaving}>Cancelar</Button>
+              <Button className="flex-1" onClick={saveEvent} disabled={eventSaving}>
+                {eventSaving ? 'Salvando...' : 'Salvar evento'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal: tipo de inscrição */}
       <Dialog open={typeModal} onOpenChange={open => !typeSaving && setTypeModal(open)}>
