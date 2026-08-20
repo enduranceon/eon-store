@@ -79,6 +79,14 @@ function dateSummary(event) {
   return formatDate(event.event_date);
 }
 
+function eventMapUrl(event) {
+  const explicitUrl = event?.map_url || event?.online_url;
+  if (explicitUrl) return explicitUrl;
+  const query = [event?.address, event?.location].filter(Boolean).join(' ');
+  if (!query) return '';
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
 // Renderiza apenas os campos extras definidos no tipo de inscrição. Nome e
 // treinador são campos nativos do formulário público.
 function DynamicFields({ fields, answers, onChange }) {
@@ -230,6 +238,7 @@ export default function PublicEventRegistration() {
 
   const soldOut = selectedType?.spots_left === 0;
   const eventTime = timeSummary(event);
+  const mapUrl = eventMapUrl(event);
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4">
@@ -242,10 +251,10 @@ export default function PublicEventRegistration() {
             {event.location && <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4" /> {event.location}</span>}
           </div>
           {event.address && <p className="mt-1 text-xs text-muted-foreground">{event.address}</p>}
-          {event.online_url && (
+          {mapUrl && (
             <a className="mt-2 inline-flex items-center gap-1.5 text-sm text-blue-700 hover:underline"
-              href={event.online_url} target="_blank" rel="noreferrer">
-              <ExternalLink className="w-4 h-4" /> Link online do evento
+              href={mapUrl} target="_blank" rel="noreferrer">
+              <ExternalLink className="w-4 h-4" /> Abrir localização
             </a>
           )}
           {event.description && <p className="mt-3 text-sm text-gray-700">{event.description}</p>}

@@ -29,7 +29,7 @@ const EMPTY_EVENT_FORM = {
   end_time: '',
   location: '',
   address: '',
-  online_url: '',
+  map_url: '',
   description: '',
   public_notes: '',
   internal_notes: '',
@@ -62,7 +62,8 @@ function eventPayload(form, centers) {
     end_time: form.end_time || null,
     location: form.location.trim() || null,
     address: form.address.trim() || null,
-    online_url: normalizeUrl(form.online_url) || null,
+    map_url: normalizeUrl(form.map_url) || null,
+    online_url: null,
     description: form.description.trim() || null,
     public_notes: form.public_notes.trim() || null,
     internal_notes: form.internal_notes.trim() || null,
@@ -243,14 +244,14 @@ export default function Events() {
                   onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
               </div>
               <div>
-                <Label>Link online</Label>
-                <Input className="mt-1" value={form.online_url} placeholder="meet.google.com/..."
-                  onChange={e => setForm(f => ({ ...f, online_url: e.target.value }))} />
+                <Label>Link do mapa/Waze</Label>
+                <Input className="mt-1" value={form.map_url} placeholder="maps.app.goo.gl/... ou waze.com/ul?..."
+                  onChange={e => setForm(f => ({ ...f, map_url: e.target.value }))} />
               </div>
             </div>
             <div>
               <Label>Endereço</Label>
-              <Input className="mt-1" value={form.address}
+              <Input className="mt-1" value={form.address} placeholder="Endereço para o inscrito encontrar o local"
                 onChange={e => setForm(f => ({ ...f, address: e.target.value }))} />
             </div>
             <div>

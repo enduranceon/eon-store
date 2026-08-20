@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, CalendarDays, Check, ChevronRight, Clock, Copy, ExternalLink, FileText,
-  Globe2, HandCoins, Info, Layers, Link2, MapPin, Pencil, Plus, ReceiptText, Search,
+  HandCoins, Info, Layers, Link2, MapPin, Navigation, Pencil, Plus, ReceiptText, Search,
   Trash2, Users, X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -62,7 +62,7 @@ const EMPTY_EVENT_FORM = {
   end_time: '',
   location: '',
   address: '',
-  online_url: '',
+  map_url: '',
   description: '',
   public_notes: '',
   internal_notes: '',
@@ -105,6 +105,14 @@ function dateSummary(event) {
   return formatDate(event.event_date);
 }
 
+function eventMapUrl(event) {
+  const explicitUrl = event?.map_url || event?.online_url;
+  if (explicitUrl) return explicitUrl;
+  const query = [event?.address, event?.location].filter(Boolean).join(' ');
+  if (!query) return '';
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
 function eventToForm(event) {
   return {
     ...EMPTY_EVENT_FORM,
@@ -116,7 +124,7 @@ function eventToForm(event) {
     end_time: timeValue(event.end_time),
     location: event.location || '',
     address: event.address || '',
-    online_url: event.online_url || '',
+    map_url: event.map_url || event.online_url || '',
     description: event.description || '',
     public_notes: event.public_notes || '',
     internal_notes: event.internal_notes || '',
@@ -133,7 +141,8 @@ function eventPayload(form) {
     end_time: form.end_time || null,
     location: form.location.trim() || null,
     address: form.address.trim() || null,
-    online_url: normalizeUrl(form.online_url) || null,
+    map_url: normalizeUrl(form.map_url) || null,
+    online_url: null,
     description: form.description.trim() || null,
     public_notes: form.public_notes.trim() || null,
     internal_notes: form.internal_notes.trim() || null,
@@ -540,6 +549,7 @@ export default function EventDetail() {
 
   const status = EVENT_STATUS[event.status] || EVENT_STATUS.draft;
   const eventTime = timeSummary(event);
+  const mapUrl = eventMapUrl(event);
   const priceOf = reg => Number(typesById[reg.registration_type_id]?.price || 0);
   const paidTotal = registrations
     .filter(r => r.payment_status === 'paid')
@@ -638,11 +648,11 @@ export default function EventDetail() {
               {event.address && <p className="text-xs text-muted-foreground">{event.address}</p>}
             </div>
             <div className="space-y-1">
-              <p className="text-xs font-medium text-muted-foreground">Online</p>
-              {event.online_url ? (
+              <p className="text-xs font-medium text-muted-foreground">Mapa</p>
+              {mapUrl ? (
                 <a className="text-sm text-blue-700 hover:underline inline-flex items-center gap-1.5"
-                  href={event.online_url} target="_blank" rel="noreferrer">
-                  <Globe2 className="w-4 h-4" /> Abrir link
+                  href={mapUrl} target="_blank" rel="noreferrer">
+                  <Navigation className="w-4 h-4" /> Abrir localização
                 </a>
               ) : (
                 <p className="text-sm text-muted-foreground">Não informado</p>
@@ -995,14 +1005,15 @@ export default function EventDetail() {
                   onChange={e => setEventForm(f => ({ ...f, location: e.target.value }))} />
               </div>
               <div>
-                <Label>Link online</Label>
-                <Input className="mt-1" value={eventForm.online_url}
-                  onChange={e => setEventForm(f => ({ ...f, online_url: e.target.value }))} />
+                <Label>Link do mapa/Waze</Label>
+                <Input className="mt-1" value={eventForm.map_url}
+                  placeholder="maps.app.goo.gl/... ou waze.com/ul?..."
+                  onChange={e => setEventForm(f => ({ ...f, map_url: e.target.value }))} />
               </div>
             </div>
             <div>
               <Label>Endereço</Label>
-              <Input className="mt-1" value={eventForm.address}
+              <Input className="mt-1" value={eventForm.address} placeholder="Endereço para o inscrito encontrar o local"
                 onChange={e => setEventForm(f => ({ ...f, address: e.target.value }))} />
             </div>
             <div>

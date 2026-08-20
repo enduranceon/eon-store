@@ -523,6 +523,7 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       end_time: tm({ nullable: true }),
       location: s(300, { nullable: true }),
       address: s(600, { nullable: true }),
+      map_url: s(2_048, { nullable: true }),
       online_url: s(2_048, { nullable: true }),
       public_notes: s(10_000, { nullable: true, preserveWhitespace: true }),
       internal_notes: s(10_000, { nullable: true, preserveWhitespace: true }),
