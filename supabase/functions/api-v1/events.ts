@@ -212,7 +212,18 @@ export async function handlePublicEventRequest(
       }, 404);
     }
 
-    return jsonResponse({ ok: true, data });
+    const { data: coaches, error: coachesError } = await supabase
+      .from("assessment_coaches")
+      .select("id,name")
+      .eq("active", true)
+      .eq("public_visible", true)
+      .order("name");
+    if (coachesError) return databaseError(coachesError, "public coaches");
+
+    return jsonResponse({
+      ok: true,
+      data: isPlainObject(data) ? { ...data, coaches: coaches || [] } : data,
+    });
   }
 
   if (path !== "/public/event-registrations") return null;
@@ -226,6 +237,7 @@ export async function handlePublicEventRequest(
   const body = await parseObject(req);
   const payload = body && isPlainObject(body.payload) ? body.payload : null;
   const customer = payload && isPlainObject(payload.customer) ? payload.customer : null;
+  const optionalCustomerFields = ["whatsapp", "email", "cpf"];
 
   if (
     !payload || !customer ||
@@ -233,7 +245,12 @@ export async function handlePublicEventRequest(
     typeof payload.registration_type_id !== "string" ||
     !UUID_PATTERN.test(payload.registration_type_id) ||
     typeof customer.full_name !== "string" || !customer.full_name.trim() ||
-    typeof customer.whatsapp !== "string" || !customer.whatsapp.trim() ||
+    typeof customer.coach_id !== "string" ||
+    !UUID_PATTERN.test(customer.coach_id) ||
+    optionalCustomerFields.some((field) =>
+      customer[field] !== undefined && customer[field] !== null &&
+      typeof customer[field] !== "string"
+    ) ||
     (payload.form_answers !== undefined && !isPlainObject(payload.form_answers))
   ) {
     return jsonResponse({
@@ -250,9 +267,24 @@ export async function handlePublicEventRequest(
     }, 400);
   }
 
+  const cpfSeed = typeof customer.cpf === "string"
+    ? customer.cpf.replace(/\D/g, "")
+    : "";
+  const phoneSeed = typeof customer.whatsapp === "string"
+    ? customer.whatsapp.replace(/\D/g, "")
+    : "";
+  const emailSeed = typeof customer.email === "string"
+    ? customer.email.trim().toLowerCase()
+    : "";
+  const fallbackSeed = [
+    payload.event_slug.trim().toLowerCase(),
+    customer.coach_id,
+    customer.full_name.trim().toLowerCase(),
+  ].join("|");
+
   const [ipHash, phoneHash] = await Promise.all([
     sha256Hex(ip),
-    sha256Hex(customer.whatsapp.replace(/\D/g, "")),
+    sha256Hex(cpfSeed || phoneSeed || emailSeed || fallbackSeed),
   ]);
 
   const { data, error } = await supabase.rpc(

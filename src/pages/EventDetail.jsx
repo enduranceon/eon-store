@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  EventExpense, EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
+  AssessmentCoach, EventExpense, EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
 } from '@/api/entities';
 import {
   cancelEventRegistration, createEventRegistration, recordEventRegistrationPayment,
@@ -66,14 +66,15 @@ function fieldKeyFromLabel(label) {
 }
 
 async function loadEventDetail(eventId) {
-  const [event, types, registrations, customers, expenses] = await Promise.all([
+  const [event, types, registrations, customers, expenses, coaches] = await Promise.all([
     EventRecord.get(eventId),
     EventRegistrationType.filter({ event_id: eventId }),
     EventRegistration.filter({ event_id: eventId }),
     PreSaleCustomer.list('full_name'),
     EventExpense.filter({ event_id: eventId }, '-expense_date'),
+    AssessmentCoach.list('name').catch(() => []),
   ]);
-  return { event, types, registrations, customers, expenses };
+  return { event, types, registrations, customers, expenses, coaches };
 }
 
 // Desenha um formulário a partir da definição de campos do tipo de inscrição.
@@ -128,13 +129,13 @@ export default function EventDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const {
-    data: { event, types, registrations, customers, expenses },
+    data: { event, types, registrations, customers, expenses, coaches },
     loading, refresh,
   } = usePageData({
     key: `events:detail:${id}`,
     loader: () => loadEventDetail(id),
-    initialData: { event: null, types: [], registrations: [], customers: [], expenses: [] },
-    tags: ['events', 'event_registration_types', 'event_registrations', 'presale_customers', 'event_expenses'],
+    initialData: { event: null, types: [], registrations: [], customers: [], expenses: [], coaches: [] },
+    tags: ['events', 'event_registration_types', 'event_registrations', 'presale_customers', 'event_expenses', 'assessment_coaches'],
     forceOnMount: true,
     onError: () => toast.error('Erro ao carregar o evento'),
   });
@@ -142,6 +143,10 @@ export default function EventDetail() {
   const customersById = useMemo(
     () => Object.fromEntries(customers.map(c => [c.id, c])),
     [customers],
+  );
+  const coachesById = useMemo(
+    () => Object.fromEntries(coaches.map(c => [c.id, c])),
+    [coaches],
   );
   const typesById = useMemo(
     () => Object.fromEntries(types.map(t => [t.id, t])),
@@ -677,6 +682,7 @@ export default function EventDetail() {
             <div className="divide-y">
               {registrations.map(reg => {
                 const customer = customersById[reg.customer_id];
+                const coach = coachesById[reg.coach_id] || coachesById[customer?.coach_id];
                 const type = typesById[reg.registration_type_id];
                 const pay = REG_PAYMENT[reg.payment_status] || REG_PAYMENT.pending;
                 const answersEntries = Object.entries(reg.form_answers || {});
@@ -693,6 +699,7 @@ export default function EventDetail() {
                       </div>
                       <p className="text-xs text-muted-foreground">
                         {type?.name || 'Tipo removido'} · {formatCurrency(Number(type?.price || 0))}
+                        {coach && ` · ${coach.name}`}
                         {reg.payment_method && ` · ${reg.payment_method}`}
                         {reg.payment_date && ` em ${formatDate(reg.payment_date)}`}
                       </p>

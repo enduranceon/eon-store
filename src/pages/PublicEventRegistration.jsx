@@ -11,14 +11,63 @@ import { createPublicEventRegistration, getPublicEvent } from '@/api/public';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 
-// Renderiza o formulário definido pelo tipo de inscrição escolhido. Nome,
-// WhatsApp e CPF são pedidos separadamente (campos nativos da inscrição),
-// então o organizador não precisa criá-los como campos do formulário.
+function normalizeFieldToken(value = '') {
+  return value
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function fieldToken(field) {
+  return normalizeFieldToken(`${field.key || ''} ${field.label || ''}`);
+}
+
+function fieldMatches(field, aliases) {
+  const token = fieldToken(field);
+  return aliases.some(alias => token === alias || token.includes(alias));
+}
+
+function isNativeEventField(field) {
+  return fieldMatches(field, [
+    'nome', 'nome_completo', 'full_name', 'name',
+    'treinador', 'coach', 'trainer',
+  ]);
+}
+
+function visibleDynamicFields(fields = []) {
+  return fields.filter(field => !isNativeEventField(field));
+}
+
+function valueByFieldAlias(fields = [], answers = {}, aliases = []) {
+  for (const field of fields) {
+    if (!fieldMatches(field, aliases)) continue;
+    const value = answers[field.key];
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function answersWithNativeFields(fields = [], answers = {}, { fullName, coachName }) {
+  const next = { ...answers };
+  for (const field of fields) {
+    if (!field.key || !isNativeEventField(field)) continue;
+    if (fieldMatches(field, ['treinador', 'coach', 'trainer'])) next[field.key] = coachName;
+    else next[field.key] = fullName;
+  }
+  return next;
+}
+
+// Renderiza apenas os campos extras definidos no tipo de inscrição. Nome e
+// treinador são campos nativos do formulário público.
 function DynamicFields({ fields, answers, onChange }) {
-  if (!fields?.length) return null;
+  const visibleFields = visibleDynamicFields(fields);
+  if (!visibleFields.length) return null;
   return (
     <div className="space-y-3">
-      {fields.map(field => {
+      {visibleFields.map(field => {
         const value = answers[field.key] ?? '';
         const set = v => onChange({ ...answers, [field.key]: v });
         return (
@@ -63,7 +112,7 @@ export default function PublicEventRegistration() {
   const [event, setEvent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [typeId, setTypeId] = useState('');
-  const [customer, setCustomer] = useState({ full_name: '', whatsapp: '', email: '', cpf: '' });
+  const [customer, setCustomer] = useState({ full_name: '', coach_id: '' });
   const [answers, setAnswers] = useState({});
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(null);
@@ -81,11 +130,25 @@ export default function PublicEventRegistration() {
     () => event?.registration_types?.find(t => t.id === typeId) || null,
     [event, typeId],
   );
+  const selectedCoach = useMemo(
+    () => event?.coaches?.find(coach => coach.id === customer.coach_id) || null,
+    [event, customer.coach_id],
+  );
 
   const submit = async () => {
     if (!typeId) return toast.error('Escolha o tipo de inscrição');
-    if (!customer.full_name.trim()) return toast.error('Informe seu nome completo');
-    if (!customer.whatsapp.trim()) return toast.error('Informe seu WhatsApp');
+    if (!customer.full_name.trim()) return toast.error('Informe seu nome');
+    if (!customer.coach_id) return toast.error('Selecione seu treinador');
+
+    const fields = selectedType?.form_fields || [];
+    const formAnswers = answersWithNativeFields(fields, answers, {
+      fullName: customer.full_name.trim(),
+      coachName: selectedCoach?.name || '',
+    });
+    const whatsapp = valueByFieldAlias(fields, answers, ['whatsapp', 'whats', 'telefone', 'celular', 'phone']);
+    const email = valueByFieldAlias(fields, answers, ['email', 'e_mail', 'mail']);
+    const cpf = valueByFieldAlias(fields, answers, ['cpf', 'documento']);
+
     setSending(true);
     try {
       const result = await createPublicEventRegistration({
@@ -93,11 +156,12 @@ export default function PublicEventRegistration() {
         registration_type_id: typeId,
         customer: {
           full_name: customer.full_name.trim(),
-          whatsapp: customer.whatsapp.trim(),
-          email: customer.email.trim() || null,
-          cpf: customer.cpf.trim() || null,
+          coach_id: customer.coach_id,
+          whatsapp: whatsapp || null,
+          email: email || null,
+          cpf: cpf || null,
         },
-        form_answers: answers,
+        form_answers: formAnswers,
       });
       setDone(result);
     } catch (e) {
@@ -191,36 +255,34 @@ export default function PublicEventRegistration() {
 
           <div className="space-y-3 border-t pt-4">
             <div>
-              <Label className="text-sm">Nome completo <span className="text-red-500">*</span></Label>
+              <Label className="text-sm">Nome <span className="text-red-500">*</span></Label>
               <Input className="mt-1" value={customer.full_name}
                 onChange={e => setCustomer(c => ({ ...c, full_name: e.target.value }))} />
             </div>
             <div>
-              <Label className="text-sm">WhatsApp <span className="text-red-500">*</span></Label>
-              <Input className="mt-1" placeholder="(48) 99999-9999" value={customer.whatsapp}
-                onChange={e => setCustomer(c => ({ ...c, whatsapp: e.target.value }))} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-sm">E-mail</Label>
-                <Input className="mt-1" type="email" value={customer.email}
-                  onChange={e => setCustomer(c => ({ ...c, email: e.target.value }))} />
-              </div>
-              <div>
-                <Label className="text-sm">CPF</Label>
-                <Input className="mt-1" value={customer.cpf}
-                  onChange={e => setCustomer(c => ({ ...c, cpf: e.target.value }))} />
-              </div>
+              <Label className="text-sm">Treinador <span className="text-red-500">*</span></Label>
+              <Select value={customer.coach_id || undefined}
+                onValueChange={value => setCustomer(c => ({ ...c, coach_id: value }))}>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione seu treinador" /></SelectTrigger>
+                <SelectContent>
+                  {(event.coaches || []).map(coach => (
+                    <SelectItem key={coach.id} value={coach.id}>{coach.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {event.coaches?.length === 0 && (
+                <p className="mt-1 text-xs text-amber-700">Nenhum treinador disponível para inscrição pública.</p>
+              )}
             </div>
           </div>
 
-          {selectedType && (selectedType.form_fields || []).length > 0 && (
+          {selectedType && visibleDynamicFields(selectedType.form_fields || []).length > 0 && (
             <div className="border-t pt-4">
               <DynamicFields fields={selectedType.form_fields} answers={answers} onChange={setAnswers} />
             </div>
           )}
 
-          <Button className="w-full h-11" onClick={submit} disabled={sending || !typeId || soldOut}>
+          <Button className="w-full h-11" onClick={submit} disabled={sending || !typeId || soldOut || event.coaches?.length === 0}>
             {sending ? 'Enviando...' : soldOut ? 'Vagas esgotadas' : 'Confirmar inscrição'}
           </Button>
         </CardContent></Card>
