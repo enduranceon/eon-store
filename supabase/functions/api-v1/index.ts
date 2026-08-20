@@ -61,7 +61,10 @@ Deno.serve(async (req: Request) => {
 
   // Inscrição pública em evento: mesma porta sem login da adesão de planos.
   // A proteção é limite de taxa por IP e telefone dentro do banco.
-  if (path === "/public/event-registrations") {
+  if (
+    path === "/public/event-registrations" ||
+    /^\/public\/events\/[^/]+$/.test(path)
+  ) {
     const publicClient = createServiceClient();
     if (!publicClient) {
       console.error(

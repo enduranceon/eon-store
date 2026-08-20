@@ -1,4 +1,5 @@
 import { supabase } from '@/api/db';
+import { publicApiRequest } from '@/api/client';
 
 async function callPublicRpc(name, args = {}) {
   const { data, error } = await supabase.rpc(name, args);
@@ -49,8 +50,9 @@ export function createPublicStockOrder(payload) {
   });
 }
 
-export function getPublicEvent(slug) {
-  return callPublicRpc('get_public_event', { p_slug: slug });
+export async function getPublicEvent(slug) {
+  const result = await publicApiRequest(`/public/events/${encodeURIComponent(slug)}`);
+  return result.data;
 }
 
 // Passa pela api-v1 (e nao por RPC direto) porque o limite de taxa depende do

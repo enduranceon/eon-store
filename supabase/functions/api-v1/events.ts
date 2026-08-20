@@ -175,6 +175,46 @@ export async function handlePublicEventRequest(
   path: string,
   supabase: SupabaseClient,
 ): Promise<Response | null> {
+  const publicEventMatch = path.match(/^\/public\/events\/([^/]+)$/);
+  if (publicEventMatch) {
+    if (req.method !== "GET") {
+      return jsonResponse({
+        error: "Método não permitido",
+        code: "method_not_allowed",
+      }, 405);
+    }
+
+    let slug = "";
+    try {
+      slug = decodeURIComponent(publicEventMatch[1]).trim();
+    } catch {
+      return jsonResponse({
+        error: "Link de inscrição inválido",
+        code: "invalid_slug",
+      }, 400);
+    }
+
+    if (!slug || slug.length > 200) {
+      return jsonResponse({
+        error: "Link de inscrição inválido",
+        code: "invalid_slug",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc("get_public_event", {
+      p_slug: slug,
+    });
+    if (error) return databaseError(error, "public event");
+    if (!data) {
+      return jsonResponse({
+        error: "Inscrições indisponíveis",
+        code: "not_found",
+      }, 404);
+    }
+
+    return jsonResponse({ ok: true, data });
+  }
+
   if (path !== "/public/event-registrations") return null;
   if (req.method !== "POST") {
     return jsonResponse({
