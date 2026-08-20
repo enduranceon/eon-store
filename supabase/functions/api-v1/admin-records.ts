@@ -536,6 +536,23 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
     sortFields: ["id", "name", "price", "sort_order", "created_at"],
     updatedColumn: "updated_at",
     allowCreate: true,
+    allowDelete: true,
+  },
+  "event-expenses": {
+    table: "event_expenses",
+    fields: {
+      event_id: u({ required: true }),
+      description: s(300, { required: true }),
+      category: s(120, { nullable: true }),
+      amount: n({ required: true, min: 0.01 }),
+      expense_date: d({ required: true }),
+      notes: s(5_000, { nullable: true, preserveWhitespace: true }),
+    },
+    defaultSort: "-expense_date",
+    sortFields: ["id", "event_id", "expense_date", "amount", "created_at"],
+    updatedColumn: "updated_at",
+    allowCreate: true,
+    allowDelete: true,
   },
 };
 

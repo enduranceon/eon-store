@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, CalendarDays, Check, ChevronRight, Copy, ExternalLink, HandCoins, Layers,
-  Link2, Pencil, Plus, Search, Trash2, Users, X,
+  Link2, Pencil, Plus, ReceiptText, Search, Trash2, Users, X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,13 +13,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
+  EventExpense, EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
 } from '@/api/entities';
 import {
   cancelEventRegistration, createEventRegistration, recordEventRegistrationPayment,
 } from '@/api/client';
 import { studentProfilePath } from '@/lib/customer-profile';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
@@ -53,7 +53,8 @@ const FIELD_KINDS = [
 const PAYMENT_METHODS = ['PIX', 'Dinheiro', 'Cartão', 'Transferência', 'Outro'];
 
 const EMPTY_FIELD = { key: '', label: '', kind: 'text', required: false, options: [] };
-const EMPTY_TYPE_FORM = { name: '', price: '', max_quantity: '', fields: [] };
+const EMPTY_TYPE_FORM = { name: '', price: '', max_quantity: '', active: true, fields: [] };
+const EMPTY_EXPENSE_FORM = { description: '', category: '', amount: '', expense_date: todayLocalStr(), notes: '' };
 
 function fieldKeyFromLabel(label) {
   return label
@@ -65,13 +66,14 @@ function fieldKeyFromLabel(label) {
 }
 
 async function loadEventDetail(eventId) {
-  const [event, types, registrations, customers] = await Promise.all([
+  const [event, types, registrations, customers, expenses] = await Promise.all([
     EventRecord.get(eventId),
     EventRegistrationType.filter({ event_id: eventId }),
     EventRegistration.filter({ event_id: eventId }),
     PreSaleCustomer.list('full_name'),
+    EventExpense.filter({ event_id: eventId }, '-expense_date'),
   ]);
-  return { event, types, registrations, customers };
+  return { event, types, registrations, customers, expenses };
 }
 
 // Desenha um formulário a partir da definição de campos do tipo de inscrição.
@@ -126,13 +128,13 @@ export default function EventDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const {
-    data: { event, types, registrations, customers },
+    data: { event, types, registrations, customers, expenses },
     loading, refresh,
   } = usePageData({
     key: `events:detail:${id}`,
     loader: () => loadEventDetail(id),
-    initialData: { event: null, types: [], registrations: [], customers: [] },
-    tags: ['events', 'event_registration_types', 'event_registrations', 'presale_customers'],
+    initialData: { event: null, types: [], registrations: [], customers: [], expenses: [] },
+    tags: ['events', 'event_registration_types', 'event_registrations', 'presale_customers', 'event_expenses'],
     forceOnMount: true,
     onError: () => toast.error('Erro ao carregar o evento'),
   });
@@ -150,12 +152,20 @@ export default function EventDetail() {
     [types],
   );
   const activeRegs = registrations.filter(r => r.payment_status !== 'cancelled');
+  const usedByType = useMemo(() => {
+    const counts = {};
+    for (const reg of registrations) {
+      counts[reg.registration_type_id] = (counts[reg.registration_type_id] || 0) + 1;
+    }
+    return counts;
+  }, [registrations]);
 
   // ----- tipo de inscrição (criar/editar) -----
   const [typeModal, setTypeModal] = useState(false);
   const [editingTypeId, setEditingTypeId] = useState(null);
   const [typeForm, setTypeForm] = useState(EMPTY_TYPE_FORM);
   const [typeSaving, setTypeSaving] = useState(false);
+  const [typeActionId, setTypeActionId] = useState(null);
 
   const openNewType = () => { setEditingTypeId(null); setTypeForm(EMPTY_TYPE_FORM); setTypeModal(true); };
   const openEditType = t => {
@@ -164,6 +174,7 @@ export default function EventDetail() {
       name: t.name,
       price: String(t.price ?? ''),
       max_quantity: t.max_quantity == null ? '' : String(t.max_quantity),
+      active: t.active !== false,
       fields: (t.form_fields || []).map(f => ({ ...EMPTY_FIELD, ...f, options: f.options || [] })),
     });
     setTypeModal(true);
@@ -184,6 +195,7 @@ export default function EventDetail() {
       name: typeForm.name.trim(),
       price,
       max_quantity: typeForm.max_quantity === '' ? null : Number(typeForm.max_quantity),
+      active: Boolean(typeForm.active),
       form_fields: typeForm.fields.map(f => ({
         key: f.key || fieldKeyFromLabel(f.label),
         label: f.label.trim(),
@@ -204,6 +216,38 @@ export default function EventDetail() {
       toast.error(e.message || 'Erro ao salvar tipo');
     } finally {
       setTypeSaving(false);
+    }
+  };
+
+  const toggleTypeActive = async type => {
+    setTypeActionId(type.id);
+    try {
+      await EventRegistrationType.update(type.id, { active: !type.active });
+      toast.success(type.active ? 'Tipo desativado' : 'Tipo ativado');
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao atualizar tipo');
+    } finally {
+      setTypeActionId(null);
+    }
+  };
+
+  const deleteType = async type => {
+    const used = usedByType[type.id] || 0;
+    if (used > 0) {
+      toast.error('Este tipo já tem inscrições. Desative para esconder do público sem perder histórico.');
+      return;
+    }
+    if (!window.confirm(`Excluir o tipo "${type.name}"?`)) return;
+    setTypeActionId(type.id);
+    try {
+      await EventRegistrationType.delete(type.id);
+      toast.success('Tipo excluído');
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao excluir tipo');
+    } finally {
+      setTypeActionId(null);
     }
   };
 
@@ -255,6 +299,74 @@ export default function EventDetail() {
   const [cancelModal, setCancelModal] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelSaving, setCancelSaving] = useState(false);
+
+  // ----- despesas do evento -----
+  const [expenseModal, setExpenseModal] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState(null);
+  const [expenseForm, setExpenseForm] = useState(EMPTY_EXPENSE_FORM);
+  const [expenseSaving, setExpenseSaving] = useState(false);
+  const [expenseActionId, setExpenseActionId] = useState(null);
+
+  const openNewExpense = () => {
+    setEditingExpenseId(null);
+    setExpenseForm({ ...EMPTY_EXPENSE_FORM, expense_date: todayLocalStr() });
+    setExpenseModal(true);
+  };
+
+  const openEditExpense = expense => {
+    setEditingExpenseId(expense.id);
+    setExpenseForm({
+      description: expense.description || '',
+      category: expense.category || '',
+      amount: String(expense.amount ?? ''),
+      expense_date: expense.expense_date || todayLocalStr(),
+      notes: expense.notes || '',
+    });
+    setExpenseModal(true);
+  };
+
+  const saveExpense = async () => {
+    if (!expenseForm.description.trim()) return toast.error('Informe a descrição da despesa');
+    const amount = Number(expenseForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return toast.error('Valor da despesa inválido');
+    if (!expenseForm.expense_date) return toast.error('Informe a data da despesa');
+
+    const payload = {
+      event_id: id,
+      description: expenseForm.description.trim(),
+      category: expenseForm.category.trim() || null,
+      amount,
+      expense_date: expenseForm.expense_date,
+      notes: expenseForm.notes.trim() || null,
+    };
+
+    setExpenseSaving(true);
+    try {
+      if (editingExpenseId) await EventExpense.update(editingExpenseId, payload);
+      else await EventExpense.create(payload);
+      setExpenseModal(false);
+      toast.success(editingExpenseId ? 'Despesa atualizada' : 'Despesa adicionada');
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar despesa');
+    } finally {
+      setExpenseSaving(false);
+    }
+  };
+
+  const deleteExpense = async expense => {
+    if (!window.confirm(`Excluir a despesa "${expense.description}"?`)) return;
+    setExpenseActionId(expense.id);
+    try {
+      await EventExpense.delete(expense.id);
+      toast.success('Despesa excluída');
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao excluir despesa');
+    } finally {
+      setExpenseActionId(null);
+    }
+  };
 
   const confirmPayment = async () => {
     setPaySaving(true);
@@ -316,6 +428,10 @@ export default function EventDetail() {
   // É o número que responde "quanto esse evento vale se todo mundo pagar".
   const expectedTotal = activeRegs.reduce((acc, r) => acc + priceOf(r), 0);
   const pendingTotal = expectedTotal - paidTotal;
+  const expenseTotal = expenses.reduce((acc, expense) => acc + Number(expense.amount || 0), 0);
+  const confirmedResult = paidTotal - expenseTotal;
+  const expectedResult = expectedTotal - expenseTotal;
+  const confirmedMargin = paidTotal > 0 ? (confirmedResult / paidTotal) * 100 : null;
 
   const publicUrl = `${window.location.origin}/inscricao/${event.slug}`;
   const copyPublicLink = async () => {
@@ -379,6 +495,84 @@ export default function EventDetail() {
         </CardContent></Card>
       </div>
 
+      {/* Financeiro do evento */}
+      <Card>
+        <CardContent className="p-4 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold inline-flex items-center gap-1.5">
+                <ReceiptText className="w-4 h-4" /> Financeiro do evento
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Receita das inscrições menos gastos operacionais deste evento.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={openNewExpense}>
+              <Plus className="w-3.5 h-3.5 mr-1" /> Despesa
+            </Button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Receita confirmada</p>
+              <p className="text-lg font-bold text-emerald-700">{formatCurrency(paidTotal)}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Receita esperada</p>
+              <p className="text-lg font-bold">{formatCurrency(expectedTotal)}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Gastos lançados</p>
+              <p className="text-lg font-bold text-red-600">{formatCurrency(expenseTotal)}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Resultado confirmado</p>
+              <p className={`text-lg font-bold ${confirmedResult >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                {formatCurrency(confirmedResult)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Esperado: {formatCurrency(expectedResult)}
+                {confirmedMargin !== null && ` · ${confirmedMargin.toFixed(1)}%`}
+              </p>
+            </div>
+          </div>
+
+          {expenses.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nenhuma despesa lançada ainda. Use isso para registrar sala, brindes, material, coffee, equipe, taxas e qualquer custo do briefing.
+            </p>
+          ) : (
+            <div className="divide-y rounded-lg border">
+              {expenses.map(expense => (
+                <div key={expense.id} className="flex items-start gap-3 px-3 py-2.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">{expense.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDate(expense.expense_date)}
+                      {expense.category && ` · ${expense.category}`}
+                      {expense.notes && ` · ${expense.notes}`}
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold text-red-600">{formatCurrency(Number(expense.amount || 0))}</p>
+                  <Button size="sm" variant="ghost" onClick={() => openEditExpense(expense)}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-red-500 hover:text-red-700"
+                    disabled={expenseActionId === expense.id}
+                    onClick={() => deleteExpense(expense)}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Link publico de inscricao */}
       <Card>
         <CardContent className="p-4 space-y-2">
@@ -425,6 +619,7 @@ export default function EventDetail() {
             <div className="divide-y">
               {sortedTypes.map(t => {
                 const used = activeRegs.filter(r => r.registration_type_id === t.id).length;
+                const totalUsed = usedByType[t.id] || 0;
                 return (
                   <div key={t.id} className="flex items-center gap-3 py-2.5">
                     <div className="flex-1">
@@ -440,6 +635,24 @@ export default function EventDetail() {
                     </div>
                     <Button size="sm" variant="ghost" onClick={() => openEditType(t)}>
                       <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={typeActionId === t.id}
+                      onClick={() => toggleTypeActive(t)}
+                    >
+                      {t.active ? 'Desativar' : 'Ativar'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-500 hover:text-red-700"
+                      title={totalUsed > 0 ? 'Tipos com inscrições devem ser desativados para manter o histórico' : 'Excluir tipo'}
+                      disabled={typeActionId === t.id || totalUsed > 0}
+                      onClick={() => deleteType(t)}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
                     </Button>
                   </div>
                 );
@@ -543,6 +756,21 @@ export default function EventDetail() {
               </div>
             </div>
 
+            <label className="flex items-start gap-2 rounded-lg border px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={typeForm.active}
+                className="mt-1"
+                onChange={e => setTypeForm(f => ({ ...f, active: e.target.checked }))}
+              />
+              <span>
+                <span className="font-medium">Tipo ativo</span>
+                <span className="block text-xs text-muted-foreground">
+                  Tipos inativos não aparecem no formulário público e não entram em novas inscrições manuais.
+                </span>
+              </span>
+            </label>
+
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Campos do formulário</Label>
@@ -613,6 +841,72 @@ export default function EventDetail() {
               <Button variant="outline" className="flex-1" onClick={() => setTypeModal(false)} disabled={typeSaving}>Cancelar</Button>
               <Button className="flex-1" onClick={saveType} disabled={typeSaving}>
                 {typeSaving ? 'Salvando...' : 'Salvar tipo'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: despesa do evento */}
+      <Dialog open={expenseModal} onOpenChange={open => !expenseSaving && setExpenseModal(open)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingExpenseId ? 'Editar despesa' : 'Nova despesa'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Descrição</Label>
+              <Input
+                className="mt-1"
+                value={expenseForm.description}
+                placeholder="Ex.: Aluguel da sala"
+                onChange={e => setExpenseForm(f => ({ ...f, description: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Valor (R$)</Label>
+                <Input
+                  className="mt-1"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={expenseForm.amount}
+                  onChange={e => setExpenseForm(f => ({ ...f, amount: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label>Data</Label>
+                <Input
+                  className="mt-1"
+                  type="date"
+                  value={expenseForm.expense_date}
+                  onChange={e => setExpenseForm(f => ({ ...f, expense_date: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Categoria</Label>
+              <Input
+                className="mt-1"
+                value={expenseForm.category}
+                placeholder="Ex.: Estrutura, brinde, mídia"
+                onChange={e => setExpenseForm(f => ({ ...f, category: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label>Observações</Label>
+              <Textarea
+                className="mt-1"
+                rows={2}
+                value={expenseForm.notes}
+                onChange={e => setExpenseForm(f => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setExpenseModal(false)} disabled={expenseSaving}>Cancelar</Button>
+              <Button className="flex-1" onClick={saveExpense} disabled={expenseSaving}>
+                {expenseSaving ? 'Salvando...' : 'Salvar despesa'}
               </Button>
             </div>
           </div>

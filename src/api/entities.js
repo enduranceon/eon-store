@@ -14,6 +14,7 @@ export const Product          = createAdminRecordEntity('products', 'products');
 export const Coupon           = createAdminRecordEntity('coupons', 'coupons');
 export const EventRecord      = createAdminRecordEntity('events', 'events');
 export const EventRegistrationType = createAdminRecordEntity('event-registration-types', 'event_registration_types');
+export const EventExpense     = createAdminRecordEntity('event-expenses', 'event_expenses');
 export const EventRegistration = db.entities.EventRegistration;
 
 // Universal
