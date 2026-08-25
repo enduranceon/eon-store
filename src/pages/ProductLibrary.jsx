@@ -85,6 +85,12 @@ function qtyClass(qty, hasStock) {
   return 'bg-green-100 text-green-700';
 }
 
+function needsRestock(row) {
+  return row.storeState === 'not_configured'
+    || row.storeState === 'out_of_stock'
+    || (row.hasStock && row.stockQty > 0 && row.stockQty <= LOW_STOCK_LIMIT);
+}
+
 function StoreState({ state }) {
   const styles = {
     live: 'border-green-200 bg-green-50 text-green-700',
@@ -152,7 +158,7 @@ export default function ProductLibrary() {
   }, [data]);
 
   const storeLiveCount = rows.filter(row => row.storeState === 'live').length;
-  const needsStockCount = rows.filter(row => ['not_configured', 'out_of_stock'].includes(row.storeState)).length;
+  const needsStockCount = rows.filter(needsRestock).length;
   const hiddenCount = rows.filter(row => row.storeState === 'hidden').length;
 
   const filtered = rows.filter(row => {
@@ -164,7 +170,7 @@ export default function ProductLibrary() {
     const matchesScope =
       scope === 'all' ||
       (scope === 'live' && row.storeState === 'live') ||
-      (scope === 'needs_stock' && ['not_configured', 'out_of_stock'].includes(row.storeState)) ||
+      (scope === 'needs_stock' && needsRestock(row)) ||
       (scope === 'hidden' && row.storeState === 'hidden');
     return matchesSearch && matchesStatus && matchesScope;
   });

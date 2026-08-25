@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, Clock, MapPin, Plus, Users } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CircleDollarSign, Clock, MapPin, Plus, Users, Wallet } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,7 +9,9 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { EventRecord, EventRegistration, RevenueCenter } from '@/api/entities';
-import { formatDate } from '@/lib/utils';
+import { supabase } from '@/api/db';
+import { formatCurrency, formatDate } from '@/lib/utils';
+import { summarizeFinancialMovements } from '@/lib/financial-dashboard';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
@@ -88,31 +90,55 @@ function dateSummary(event) {
 }
 
 async function loadEvents() {
-  const [events, registrations, centers] = await Promise.all([
+  const [events, registrations, centers, movementsRes] = await Promise.all([
     EventRecord.list('-event_date'),
     EventRegistration.list('-created_at'),
     RevenueCenter.list().catch(() => []),
+    supabase
+      .from('financial_movements')
+      .select('movement_id,order_id,order_type,business_unit,movement_kind,cash_direction,is_actual,gross_amount,fee_amount,net_amount,signed_net_amount,occurred_on,due_on,recognition_on,scheduled_on,metadata')
+      .eq('order_type', 'event'),
   ]);
+  if (movementsRes.error) throw movementsRes.error;
   const countByEvent = {};
   const paidByEvent = {};
+  const eventByRegistrationId = {};
   for (const reg of registrations) {
+    eventByRegistrationId[reg.id] = reg.event_id;
     if (reg.payment_status === 'cancelled') continue;
     countByEvent[reg.event_id] = (countByEvent[reg.event_id] || 0) + 1;
     if (reg.payment_status === 'paid') paidByEvent[reg.event_id] = (paidByEvent[reg.event_id] || 0) + 1;
   }
-  return { events, countByEvent, paidByEvent, centers };
+  const movementsByEvent = {};
+  for (const movement of movementsRes.data || []) {
+    const eventId = eventByRegistrationId[movement.order_id] || movement.metadata?.event_id;
+    if (!eventId) continue;
+    if (!movementsByEvent[eventId]) movementsByEvent[eventId] = [];
+    movementsByEvent[eventId].push(movement);
+  }
+  const financeByEvent = Object.fromEntries(
+    Object.entries(movementsByEvent).map(([eventId, movements]) => [eventId, summarizeFinancialMovements(movements)])
+  );
+  return {
+    events,
+    countByEvent,
+    paidByEvent,
+    centers,
+    financeByEvent,
+    financeSummary: summarizeFinancialMovements(movementsRes.data || []),
+  };
 }
 
 export default function Events() {
   const navigate = useNavigate();
   const {
-    data: { events, countByEvent, paidByEvent, centers },
+    data: { events, countByEvent, paidByEvent, centers, financeByEvent, financeSummary },
     refresh,
   } = usePageData({
     key: 'events:list',
     loader: loadEvents,
-    initialData: { events: [], countByEvent: {}, paidByEvent: {}, centers: [] },
-    tags: ['events', 'event_registrations'],
+    initialData: { events: [], countByEvent: {}, paidByEvent: {}, centers: [], financeByEvent: {}, financeSummary: summarizeFinancialMovements([]) },
+    tags: ['events', 'event_registrations', 'event_expenses', 'financial_movements'],
     onError: () => toast.error('Erro ao carregar eventos'),
   });
 
@@ -153,6 +179,21 @@ export default function Events() {
         </Button>
       </div>
 
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Card><CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3"><div><p className="text-xs text-muted-foreground">Eventos abertos</p><p className="mt-1 text-2xl font-bold">{events.filter(event => event.status === 'open').length}</p></div><CalendarDays className="h-4 w-4 text-emerald-600" /></div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3"><div><p className="text-xs text-muted-foreground">Recebido líquido</p><p className="mt-1 text-2xl font-bold text-emerald-700">{formatCurrency(financeSummary.netReceipts)}</p></div><Wallet className="h-4 w-4 text-emerald-600" /></div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3"><div><p className="text-xs text-muted-foreground">Despesas lançadas</p><p className="mt-1 text-2xl font-bold text-orange-700">{formatCurrency(financeSummary.expenses)}</p></div><AlertTriangle className="h-4 w-4 text-orange-600" /></div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3"><div><p className="text-xs text-muted-foreground">Resultado de caixa</p><p className={`mt-1 text-2xl font-bold ${financeSummary.operatingResult >= 0 ? 'text-gray-900' : 'text-rose-700'}`}>{formatCurrency(financeSummary.operatingResult)}</p></div><CircleDollarSign className="h-4 w-4 text-blue-600" /></div>
+        </CardContent></Card>
+      </div>
+
       {events.length === 0 ? (
         <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">
           Nenhum evento ainda. Crie o primeiro para começar a receber inscrições.
@@ -163,6 +204,7 @@ export default function Events() {
             const status = EVENT_STATUS[event.status] || EVENT_STATUS.draft;
             const total = countByEvent[event.id] || 0;
             const paid = paidByEvent[event.id] || 0;
+            const finance = financeByEvent[event.id] || summarizeFinancialMovements([]);
             const time = timeSummary(event);
             return (
               <Card key={event.id} className="cursor-pointer transition-shadow hover:shadow-md" onClick={() => navigate(`/eventos/${event.id}`)}>
@@ -185,6 +227,13 @@ export default function Events() {
                       {total > 0 && <span className="text-xs">({paid} pago{paid === 1 ? '' : 's'})</span>}
                     </span>
                   </div>
+                  <div className="flex items-center justify-between gap-3 border-t pt-3 text-xs">
+                    <span className="text-muted-foreground">Recebido líquido</span>
+                    <span className="font-bold text-emerald-700">{formatCurrency(finance.netReceipts)}</span>
+                  </div>
+                  {finance.openReceivables > 0 && (
+                    <p className="text-xs text-amber-700">{formatCurrency(finance.openReceivables)} em cobranças abertas</p>
+                  )}
                   {event.location && (
                     <p className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
                       <MapPin className="w-3.5 h-3.5" /> {event.location}

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { cn, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
-import { isOpenSaleForFinancial } from '@/lib/sales';
+import { isAwaitingCharge, isOpenSaleForFinancial } from '@/lib/sales';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 // ─────────────────────────────────────────────────────────────────
@@ -18,6 +18,7 @@ import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 // ─────────────────────────────────────────────────────────────────
 
 const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge: 'today' };
+const DASHBOARD_ITEM = { label: 'Visão geral', icon: LayoutDashboard, to: '/admin', exact: true };
 const COMMUNICATION_ITEM = { label: 'Comunicação', icon: MessageCircle, to: '/comunicacao' };
 const OPEN_SALES_ITEM = { label: 'Vendas em aberto', icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' };
 const CASH_FLOW_ITEM = { label: 'Fluxo de caixa', icon: TrendingUp, to: '/financeiro/fluxo-caixa' };
@@ -27,6 +28,7 @@ const CLIENTS_ITEM = { label: 'Clientes', icon: Users, to: '/clientes', badge: '
 
 const CENTRAL_ITEMS = [
   TODAY_ITEM,
+  DASHBOARD_ITEM,
   COMMUNICATION_ITEM,
   OPEN_SALES_ITEM,
   CASH_FLOW_ITEM,
@@ -66,7 +68,6 @@ const EVENTOS_ITEMS = [
 
 // CONFIGURAÇÕES (colapsável)
 const CONFIG_ITEMS = [
-  { label: 'Dashboard',         icon: LayoutDashboard, to: '/admin',                  exact: true },
   { label: 'Categorias',        icon: Tag,             to: '/categorias' },
   { label: 'Treinadores',       icon: UserCheck,       to: '/treinadores' },
   { label: 'Fornecedores',      icon: Truck,           to: '/fornecedores' },
@@ -232,11 +233,11 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         const renewalWindowEndStr = toLocalDateStr(renewalWindowEnd);
 
         const [presaleOrders, stockOrders, eventRegistrations, eventTypes, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts, prospectDrafts, contractsOpenPayments] = await Promise.all([
-          supabase.from('presale_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+          supabase.from('presale_orders').select('id, payment_status, due_date, created_date, updated_at, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
-          supabase.from('stock_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+          supabase.from('stock_orders').select('id, payment_status, due_date, created_date, updated_at, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
-          supabase.from('event_registrations').select('id, payment_status, due_date, registration_type_id')
+          supabase.from('event_registrations').select('id, payment_status, due_date, created_at, updated_at, registration_type_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('event_registration_types').select('id, price'),
           supabase.from('order_returns').select('id', { count: 'exact', head: true })
@@ -254,43 +255,53 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('status', 'draft').is('parent_contract_id', null),
           supabase.from('assessment_contracts')
-            .select('id, status, payment_status, parent_contract_id, prospect_stage, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
+            .select('id, status, payment_status, due_date, created_at, updated_at, parent_contract_id, prospect_stage, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
             .not('status', 'in', '("cancelled","voided")')
             .neq('payment_status', 'paid').neq('payment_status', 'refunded'),
         ]);
 
         const allOrders = [...(presaleOrders.data || []), ...(stockOrders.data || [])];
         const eventTypePriceMap = Object.fromEntries((eventTypes.data || []).map(type => [type.id, Number(type.price) || 0]));
-        const eventOpenRows = (eventRegistrations.data || []).filter(reg =>
+        const eventPendingRows = (eventRegistrations.data || []).filter(reg =>
           (eventTypePriceMap[reg.registration_type_id] || 0) > 0 &&
           !['paid', 'refunded', 'cancelled'].includes(reg.payment_status)
         );
+        const eventOpenRows = eventPendingRows.filter(isOpenSaleForFinancial);
         const isScheduledContractOpenPayment = (contract) =>
           contract.status === 'scheduled' &&
           !['paid', 'refunded', 'cancelled'].includes(contract.payment_status);
+        const openContracts = (contractsOpenPayments.data || []).filter(contract =>
+          isOpenSaleForFinancial(contract) || isScheduledContractOpenPayment(contract)
+        );
+        const daysSince = value => value
+          ? Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000))
+          : 0;
+        const chargeFollowUps = rows => rows.filter(row =>
+          isOpenSaleForFinancial(row) &&
+          !isAwaitingCharge(row) &&
+          daysSince(row.payment_message_sent_at || row.updated_at || row.created_date || row.created_at) >= 2
+        );
+        const collectionCandidates = [...allOrders, ...eventPendingRows, ...openContracts];
         const openSalesCount =
           allOrders.filter(isOpenSaleForFinancial).length +
           eventOpenRows.length +
-          (contractsOpenPayments.data || []).filter(contract =>
-            isOpenSaleForFinancial(contract) || isScheduledContractOpenPayment(contract)
-          ).length;
+          openContracts.length;
         const todayCount =
-          allOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status)).length +
-          allOrders.filter(o => o.due_date && o.due_date < todayStr && isOpenSaleForFinancial(o)).length +
-          eventOpenRows.filter(reg => ['awaiting_charge', 'pending'].includes(reg.payment_status)).length +
-          eventOpenRows.filter(reg => reg.due_date && reg.due_date < todayStr).length +
+          collectionCandidates.filter(isAwaitingCharge).length +
+          collectionCandidates.filter(row => row.due_date && row.due_date < todayStr && isOpenSaleForFinancial(row)).length +
+          chargeFollowUps(collectionCandidates).length +
           (returnsRes.count || 0) +
           (pendingRefunds.count || 0);
 
         setBadges({
-          orders:     allOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status)).length,
+          orders:     allOrders.filter(isAwaitingCharge).length,
           clients:    clientsRes.count || 0,
           today:      todayCount,
           assessoria: (contractsOverdue.count || 0) + (contractsExpiring.count || 0),
           renewals:   renewalDrafts.count || 0,
           prospects:  prospectDrafts.count || 0,
           openSales:  openSalesCount,
-          events:     eventOpenRows.length,
+          events:     eventPendingRows.length,
         });
       } catch { /* silencioso */ }
     };

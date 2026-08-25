@@ -17,6 +17,7 @@ export function hasChargeEvidence(order) {
     order.asaas_payment_link ||
     order.asaas_pix_copy ||
     order.external_payment_link ||
+    order.external_invoice_number ||
     order.payment_message_sent_at
   );
 }

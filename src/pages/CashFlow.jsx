@@ -7,6 +7,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/api/db';
+import { toPaymentRecord } from '@/lib/financial-ledger';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import {
@@ -115,15 +116,16 @@ async function loadCashFlowPayments() {
   end.setMonth(end.getMonth() + 12);
 
   const { data, error } = await supabase
-    .from('asaas_payments')
-    .select('id, asaas_payment_id, order_id, order_type, status, source, value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments, description, external_reference, payment_method_id')
-    .gte('credit_date', toLocalDateStr(start))
-    .lte('credit_date', toLocalDateStr(end))
-    .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
-    .order('credit_date', { ascending: true });
+    .from('financial_movements')
+    .select('movement_id,source,order_id,order_type,status,gross_amount,net_amount,occurred_on,due_on,recognition_on,scheduled_on,payment_method,description,reference,revenue_center_id,is_legacy,metadata')
+    .eq('movement_kind', 'receipt')
+    .eq('is_actual', true)
+    .gte('scheduled_on', toLocalDateStr(start))
+    .lte('scheduled_on', toLocalDateStr(end))
+    .order('scheduled_on', { ascending: true });
 
   if (error) throw error;
-  const payments = data || [];
+  const payments = (data || []).map(toPaymentRecord);
 
   // ── Enriquece cada parcela com o nome do cliente ─────────────────
   // O cliente fica em lugares diferentes conforme o tipo de pedido:
@@ -217,7 +219,7 @@ export default function CashFlow() {
     key: 'cash-flow:payments',
     loader: loadCashFlowPayments,
     initialData: [],
-    tags: ['asaas_payments'],
+    tags: ['financial_movements', 'asaas_payments'],
     onError: error => console.error('Erro ao carregar fluxo de caixa:', error),
   });
   const [expandedMonth, setExpandedMonth] = useState(null);
@@ -290,7 +292,7 @@ export default function CashFlow() {
     .filter(p => monthKey(p.credit_date) === lastMonthYM)
     .reduce((s, p) => s + (Number(p.value) || 0), 0);
 
-  // Por origem (cartão Asaas vs Manual)
+  // Por origem do registro financeiro.
   const bySource = useMemo(() => {
     const map = {};
     for (const p of futurePayments) {
@@ -358,7 +360,7 @@ export default function CashFlow() {
             Fluxo de Caixa
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Previsibilidade de recebimentos · {futurePayments.length} parcelas confirmadas a receber
+            Recebimentos confirmados no ledger financeiro · {futurePayments.length} lancamentos com credito previsto
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
@@ -370,7 +372,7 @@ export default function CashFlow() {
       {/* ── KPIs ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
-          label="A receber (próximos 6 meses)"
+          label="Credito confirmado (proximos 6 meses)"
           value={formatCurrency(totalFutureAmount)}
           sub={`${futurePayments.length} parcela${futurePayments.length !== 1 ? 's' : ''}`}
           icon={Wallet}

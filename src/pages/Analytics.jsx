@@ -29,15 +29,15 @@ const INITIAL_DATA = {
   modalities: [],
   coaches: [],
   customers: [],
-  payments: [],
+  financialMovements: [],
   presaleOrders: [],
   stockOrders: [],
+  eventRegistrations: [],
   prospectSubmissions: [],
-  returns: [],
   payoutItems: [],
 };
 
-async function fetchAllRows(table, columns) {
+async function fetchAllRows(table, columns, orderColumn = 'id') {
   const rows = [];
   let cursor = null;
   const pageSize = 1000;
@@ -46,15 +46,15 @@ async function fetchAllRows(table, columns) {
     let query = supabase
       .from(table)
       .select(columns)
-      .order('id', { ascending: true })
+      .order(orderColumn, { ascending: true })
       .limit(pageSize);
-    if (cursor) query = query.gt('id', cursor);
+    if (cursor) query = query.gt(orderColumn, cursor);
     const { data, error } = await query;
     if (error) throw error;
     const page = data || [];
     rows.push(...page);
     if (page.length < pageSize) break;
-    cursor = page[page.length - 1].id;
+    cursor = page[page.length - 1][orderColumn];
   }
 
   return rows;
@@ -62,8 +62,8 @@ async function fetchAllRows(table, columns) {
 
 async function loadAnalyticsData() {
   const [
-    contracts, plans, modalities, coaches, customers, payments,
-    presaleOrders, stockOrders, prospectSubmissions, returns, payoutItems,
+    contracts, plans, modalities, coaches, customers, financialMovements,
+    presaleOrders, stockOrders, eventRegistrations, prospectSubmissions, payoutItems,
   ] = await Promise.all([
     fetchAllRows('assessment_contracts', [
       'id', 'customer_id', 'coach_id', 'plan_id', 'status', 'start_date', 'end_date',
@@ -79,17 +79,21 @@ async function loadAnalyticsData() {
     fetchAllRows('assessment_modalities', 'id,name,active'),
     fetchAllRows('assessment_coaches', 'id,name,role,active'),
     fetchAllRows('presale_customers', 'id,gender,birth_date,address_city,address_state,created_date'),
-    fetchAllRows('asaas_payments', 'id,order_id,order_type,status,value,net_value,payment_date,credit_date,due_date,created_at'),
+    fetchAllRows(
+      'financial_movements',
+      'movement_id,order_id,order_type,business_unit,movement_kind,cash_direction,is_actual,gross_amount,fee_amount,net_amount,signed_net_amount,occurred_on,due_on,recognition_on,scheduled_on,created_at',
+      'movement_id',
+    ),
     fetchAllRows('presale_orders', 'id,customer_id,payment_status,payment_date,manual_payment,asaas_charge_id,total_value,total_cost,created_date'),
     fetchAllRows('stock_orders', 'id,customer_id,payment_status,payment_date,manual_payment,asaas_charge_id,total_value,created_date'),
+    fetchAllRows('event_registrations', 'id,customer_id,event_id'),
     fetchAllRows('assessment_prospect_submissions', 'id,contract_id,customer_id,source,region,landing_page,utm,submitted_at'),
-    fetchAllRows('order_returns', 'id,order_id,order_type,refund_value,status,created_at,received_at,completed_at'),
     fetchAllRows('payout_monthly_statement_items', 'id,coach_id,contract_id,amount,reference_competence,source_type,expense_category,created_at'),
   ]);
 
   return {
-    contracts, plans, modalities, coaches, customers, payments,
-    presaleOrders, stockOrders, prospectSubmissions, returns, payoutItems,
+    contracts, plans, modalities, coaches, customers, financialMovements,
+    presaleOrders, stockOrders, eventRegistrations, prospectSubmissions, payoutItems,
   };
 }
 
@@ -225,7 +229,7 @@ function ProgressRows({ data, formatter = value => value, color = 'bg-blue-500' 
 
 function OverviewTab({ analytics }) {
   const { summary, mrrHistory, revenueHistory, period } = analytics;
-  const revenueData = revenueHistory.map(item => ({ ...item, total: item.assessoria + item.loja }));
+  const revenueData = revenueHistory.map(item => ({ ...item, total: item.assessoria + item.loja + item.eventos }));
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
@@ -233,7 +237,8 @@ function OverviewTab({ analytics }) {
         <MetricCard label="MRR contratado" value={formatCompactCurrency(summary.mrr)} sub="receita mensal da carteira atual" icon={TrendingUp} tone="green" help="Soma do valor mensal dos contratos ativos." />
         <MetricCard label="Ticket contratado" value={formatCurrency(summary.contractedTicket)} sub="MRR ÷ alunos ativos" icon={CircleDollarSign} tone="violet" />
         <MetricCard label="Receita líquida" value={formatCompactCurrency(summary.netRevenue)} sub={`${period.label.toLowerCase()} · após taxas e estornos`} icon={Wallet} tone="green" />
-        <MetricCard label="LTV realizado médio" value={formatCurrency(summary.realizedLtvTotal)} sub="assessoria + loja por cliente pagante" icon={Database} tone="blue" help="Receita líquida histórica média efetivamente recebida por cliente, já descontando estornos registrados." />
+        <MetricCard label="Resultado de caixa" value={formatCompactCurrency(summary.operatingResult)} sub={`${formatCurrency(summary.expenses)} despesas · ${formatCurrency(summary.paidPayouts)} repasses`} icon={CircleDollarSign} tone={summary.operatingResult >= 0 ? 'blue' : 'red'} />
+        <MetricCard label="LTV realizado médio" value={formatCurrency(summary.realizedLtvTotal)} sub="assessoria, loja e eventos por cliente" icon={Database} tone="blue" help="Receita líquida histórica média efetivamente recebida por cliente, já descontando estornos registrados." />
         <MetricCard label="LTV estimado" value={summary.estimatedLtv ? formatCompactCurrency(summary.estimatedLtv) : '—'} sub={summary.averageLifetimeMonths ? `${summary.averageLifetimeMonths.toFixed(1)} meses estimados` : 'churn insuficiente para estimar'} icon={Repeat2} tone="violet" />
         <MetricCard label="Churn do período" value={formatPercent(summary.churn)} sub={`${summary.exits} saídas reais · mensalizado ${formatPercent(summary.monthlyChurn)}`} icon={TrendingDown} tone={summary.churn > 5 ? 'red' : 'slate'} />
         <MetricCard label="Saldo de alunos" value={`${summary.netGrowth >= 0 ? '+' : ''}${summary.netGrowth}`} sub={`${summary.entries} entradas · ${summary.exits} saídas`} icon={UserPlus} tone={summary.netGrowth >= 0 ? 'green' : 'red'} trend={summary.netGrowth} />
@@ -274,6 +279,7 @@ function OverviewTab({ analytics }) {
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar dataKey="assessoria" name="Assessoria" stackId="revenue" fill="#2563eb" radius={[0, 0, 3, 3]} />
                   <Bar dataKey="loja" name="Loja" stackId="revenue" fill="#f97316" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="eventos" name="Eventos" stackId="revenue" fill="#059669" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -283,10 +289,11 @@ function OverviewTab({ analytics }) {
 
       <div className="grid lg:grid-cols-3 gap-4">
         <SectionCard title="Composição da receita" icon={Layers} className="lg:col-span-2">
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="grid sm:grid-cols-3 gap-4">
             {[
               { label: 'Assessoria', value: summary.assessoriaNet, icon: Activity, color: 'text-blue-700', bg: 'bg-blue-50' },
               { label: 'Loja', value: summary.storeNet, icon: ShoppingBag, color: 'text-orange-700', bg: 'bg-orange-50' },
+              { label: 'Eventos', value: summary.eventsNet, icon: CalendarDays, color: 'text-emerald-700', bg: 'bg-emerald-50' },
             ].map(item => (
               <div key={item.label} className={cn('rounded-xl p-4 border', item.bg)}>
                 <div className="flex items-center justify-between">
@@ -298,16 +305,19 @@ function OverviewTab({ analytics }) {
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-3 mt-4 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 text-center">
             <div className="rounded-lg border p-3"><p className="text-[11px] text-muted-foreground">Bruto recebido</p><p className="font-bold mt-1">{formatCurrency(summary.grossRevenue)}</p></div>
-            <div className="rounded-lg border p-3"><p className="text-[11px] text-muted-foreground">Taxas Asaas</p><p className="font-bold mt-1 text-amber-700">{formatCurrency(summary.fees)}</p></div>
+            <div className="rounded-lg border p-3"><p className="text-[11px] text-muted-foreground">Taxas de pagamento</p><p className="font-bold mt-1 text-amber-700">{formatCurrency(summary.fees)}</p></div>
             <div className="rounded-lg border p-3"><p className="text-[11px] text-muted-foreground">Estornos</p><p className="font-bold mt-1 text-red-600">{formatCurrency(summary.refunded)}</p></div>
+            <div className="rounded-lg border p-3"><p className="text-[11px] text-muted-foreground">Despesas</p><p className="font-bold mt-1 text-orange-700">{formatCurrency(summary.expenses)}</p></div>
+            <div className="rounded-lg border p-3"><p className="text-[11px] text-muted-foreground">Repasses pagos</p><p className="font-bold mt-1 text-violet-700">{formatCurrency(summary.paidPayouts)}</p></div>
           </div>
         </SectionCard>
         <SectionCard title="Risco financeiro" icon={AlertTriangle}>
           <div className="space-y-4">
             <div><p className="text-xs text-muted-foreground">Alunos inadimplentes</p><p className="text-3xl font-bold text-red-600">{summary.overdueCustomers}</p></div>
             <div><p className="text-xs text-muted-foreground">Valor em atraso</p><p className="text-xl font-bold">{formatCurrency(summary.overdueAmount)}</p></div>
+            <div><p className="text-xs text-muted-foreground">Cobranças vencidas</p><p className="text-xl font-bold text-rose-700">{formatCurrency(summary.overdueReceivableAmount)}</p><p className="text-[11px] text-muted-foreground">de {formatCurrency(summary.receivableAmount)} em aberto</p></div>
             <div className="pt-3 border-t"><p className="text-xs text-muted-foreground">Ticket efetivamente recebido</p><p className="text-xl font-bold text-green-700">{formatCurrency(summary.receivedTicket)}</p><p className="text-[11px] text-muted-foreground">{summary.payingCustomers} clientes pagantes no período</p></div>
           </div>
         </SectionCard>
@@ -609,14 +619,14 @@ export default function Analytics() {
     age: 'all',
   });
   const { data, loading, refreshing, refresh } = usePageData({
-    key: 'analytics:center:v1',
+    key: 'analytics:center:v2',
     loader: loadAnalyticsData,
     initialData: INITIAL_DATA,
     maxAge: 60_000,
     tags: [
       'assessment_contracts', 'assessment_plans', 'assessment_modalities', 'assessment_coaches',
-      'presale_customers', 'asaas_payments', 'presale_orders', 'stock_orders',
-      'assessment_prospect_submissions', 'order_returns', 'payout_monthly_statement_items',
+      'presale_customers', 'financial_movements', 'asaas_payments', 'presale_orders', 'stock_orders',
+      'event_registrations', 'assessment_prospect_submissions', 'payout_monthly_statement_items',
     ],
     onError: error => {
       console.error('[Analytics]', error);
@@ -648,7 +658,7 @@ export default function Analytics() {
         <div>
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center"><BarChart3 className="w-5 h-5" /></div>
-            <div><h1 className="text-2xl font-bold text-gray-900">Analytics</h1><p className="text-sm text-muted-foreground">Visão estratégica da assessoria, comercial e loja</p></div>
+            <div><h1 className="text-2xl font-bold text-gray-900">Analytics</h1><p className="text-sm text-muted-foreground">Visão estratégica da assessoria, comercial, loja e eventos</p></div>
           </div>
         </div>
         <Button variant="outline" onClick={() => refresh({ force: true })} disabled={refreshing}>

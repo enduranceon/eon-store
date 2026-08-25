@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   AssessmentCoach, EventExpense, EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
 } from '@/api/entities';
+import { supabase } from '@/api/db';
 import {
   cancelEventRegistration, confirmEventRegistrationCustomer,
   createEventRegistration, createOrderCharge, linkEventRegistrationCustomer,
@@ -32,6 +33,7 @@ import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { summarizeFinancialMovements } from '@/lib/financial-dashboard';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
@@ -177,15 +179,20 @@ function fieldKeyFromLabel(label) {
 }
 
 async function loadEventDetail(eventId) {
-  const [event, types, registrations, customers, expenses, coaches] = await Promise.all([
+  const [event, types, registrations, customers, expenses, coaches, movementsRes] = await Promise.all([
     EventRecord.get(eventId),
     EventRegistrationType.filter({ event_id: eventId }),
     EventRegistration.filter({ event_id: eventId }),
     PreSaleCustomer.list('full_name'),
     EventExpense.filter({ event_id: eventId }, '-expense_date'),
     AssessmentCoach.list('name').catch(() => []),
+    supabase
+      .from('financial_movements')
+      .select('movement_id,order_id,order_type,business_unit,movement_kind,cash_direction,is_actual,gross_amount,fee_amount,net_amount,signed_net_amount,occurred_on,due_on,recognition_on,scheduled_on,description,reference,metadata')
+      .eq('order_type', 'event'),
   ]);
-  return { event, types, registrations, customers, expenses, coaches };
+  if (movementsRes.error) throw movementsRes.error;
+  return { event, types, registrations, customers, expenses, coaches, financialMovements: movementsRes.data || [] };
 }
 
 // Desenha um formulário a partir da definição de campos do tipo de inscrição.
@@ -291,13 +298,13 @@ export default function EventDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const {
-    data: { event, types, registrations, customers, expenses, coaches },
+    data: { event, types, registrations, customers, expenses, coaches, financialMovements },
     loading, refresh,
   } = usePageData({
     key: `events:detail:${id}`,
     loader: () => loadEventDetail(id),
-    initialData: { event: null, types: [], registrations: [], customers: [], expenses: [], coaches: [] },
-    tags: ['events', 'event_registration_types', 'event_registrations', 'presale_customers', 'event_expenses', 'assessment_coaches'],
+    initialData: { event: null, types: [], registrations: [], customers: [], expenses: [], coaches: [], financialMovements: [] },
+    tags: ['events', 'event_registration_types', 'event_registrations', 'presale_customers', 'event_expenses', 'assessment_coaches', 'financial_movements'],
     forceOnMount: true,
     onError: () => toast.error('Erro ao carregar o evento'),
   });
@@ -895,17 +902,21 @@ export default function EventDetail() {
   const eventTime = timeSummary(event);
   const mapUrl = eventMapUrl(event);
   const priceOf = reg => Number(typesById[reg.registration_type_id]?.price || 0);
-  const paidTotal = registrations
-    .filter(r => r.payment_status === 'paid')
-    .reduce((acc, r) => acc + priceOf(r), 0);
+  const eventRegistrationIds = new Set(registrations.map(registration => registration.id));
+  const eventFinancialMovements = financialMovements.filter(movement =>
+    eventRegistrationIds.has(movement.order_id) || movement.metadata?.event_id === id
+  );
+  const eventFinance = summarizeFinancialMovements(eventFinancialMovements);
+  const confirmedGross = eventFinance.grossReceipts;
+  const confirmedNet = eventFinance.netReceipts;
   // Esperado = tudo que não foi cancelado, incluindo o que ainda não foi pago.
   // É o número que responde "quanto esse evento vale se todo mundo pagar".
   const expectedTotal = activeRegs.reduce((acc, r) => acc + priceOf(r), 0);
-  const pendingTotal = expectedTotal - paidTotal;
-  const expenseTotal = expenses.reduce((acc, expense) => acc + Number(expense.amount || 0), 0);
-  const confirmedResult = paidTotal - expenseTotal;
+  const pendingTotal = Math.max(0, expectedTotal - confirmedGross);
+  const expenseTotal = eventFinance.expenses;
+  const confirmedResult = eventFinance.operatingResult;
   const expectedResult = expectedTotal - expenseTotal;
-  const confirmedMargin = paidTotal > 0 ? (confirmedResult / paidTotal) * 100 : null;
+  const confirmedMargin = confirmedNet > 0 ? (confirmedResult / confirmedNet) * 100 : null;
 
   const publicUrl = `${window.location.origin}/inscricao/${event.slug}`;
   const copyPublicLink = async () => {
@@ -1050,8 +1061,9 @@ export default function EventDetail() {
           <p className="text-xs text-muted-foreground mt-0.5">de {activeRegs.length} ativo{activeRegs.length === 1 ? '' : 's'}</p>
         </CardContent></Card>
         <Card><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">Receita confirmada</p>
-          <p className="text-2xl font-bold text-emerald-700">{formatCurrency(paidTotal)}</p>
+          <p className="text-xs text-muted-foreground">Recebido líquido</p>
+          <p className="text-2xl font-bold text-emerald-700">{formatCurrency(confirmedNet)}</p>
+          {eventFinance.fees > 0 && <p className="text-xs text-muted-foreground mt-0.5">{formatCurrency(eventFinance.fees)} em taxas</p>}
         </CardContent></Card>
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Total esperado</p>
@@ -1071,7 +1083,7 @@ export default function EventDetail() {
                 <ReceiptText className="w-4 h-4" /> Financeiro do evento
               </p>
               <p className="text-xs text-muted-foreground">
-                Receita das inscrições menos gastos operacionais deste evento.
+                Recebimentos, gastos operacionais e resultado de caixa deste evento.
               </p>
             </div>
             <Button size="sm" variant="outline" onClick={openNewExpense}>
@@ -1079,14 +1091,18 @@ export default function EventDetail() {
             </Button>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div className="rounded-lg border p-3">
-              <p className="text-xs text-muted-foreground">Receita confirmada</p>
-              <p className="text-lg font-bold text-emerald-700">{formatCurrency(paidTotal)}</p>
+              <p className="text-xs text-muted-foreground">Recebido líquido</p>
+              <p className="text-lg font-bold text-emerald-700">{formatCurrency(confirmedNet)}</p>
             </div>
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Receita esperada</p>
               <p className="text-lg font-bold">{formatCurrency(expectedTotal)}</p>
+            </div>
+            <div className="rounded-lg border p-3">
+              <p className="text-xs text-muted-foreground">Taxas de pagamento</p>
+              <p className="text-lg font-bold text-amber-700">{formatCurrency(eventFinance.fees)}</p>
             </div>
             <div className="rounded-lg border p-3">
               <p className="text-xs text-muted-foreground">Gastos lançados</p>

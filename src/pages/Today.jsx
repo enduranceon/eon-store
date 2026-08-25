@@ -6,7 +6,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { isEffectiveOpenSale } from '@/lib/sales';
+import { isAwaitingCharge, isEffectiveOpenSale } from '@/lib/sales';
 import { usePageData } from '@/hooks/usePageData';
 import BusinessPulse from '@/components/BusinessPulse';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
@@ -41,13 +41,15 @@ function greeting() {
 // ─────────────────────────────────────────────────────────────────
 function TypeBadge({ type }) {
   if (type === 'stock')    return <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">Loja</span>;
-  if (type === 'contract') return <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">🏃 Assessoria</span>;
+  if (type === 'contract') return <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Assessoria</span>;
+  if (type === 'event')    return <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">Eventos</span>;
   return null;
 }
 
 function ItemRow({ item, badge, badgeColor }) {
   const link = item.type === 'stock'    ? `/estoque/pedidos/${item.id}`
              : item.type === 'contract' ? `/assessoria/contratos/${item.id}`
+             : item.type === 'event'    ? `/eventos/${item.event_id}`
              : `/pedidos/${item.id}`;
   return (
     <Link to={link} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors group">
@@ -114,17 +116,17 @@ function Section({ title, subtitle, icon: Icon, iconColor, count, total, borderC
 }
 
 async function loadTodayPage() {
-  const [presaleRes, stockRes, contractRes, plansRes, customersRes, returnsRes, refundsRes] = await Promise.all([
+  const [presaleRes, stockRes, contractRes, plansRes, customersRes, returnsRes, refundsRes, eventRegsRes, eventTypesRes] = await Promise.all([
     supabase.from('presale_orders')
-      .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, due_date, created_date, status_changed_at')
+      .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, due_date, created_date, status_changed_at')
       .neq('payment_status', 'cancelled')
       .neq('payment_status', 'refunded'),
     supabase.from('stock_orders')
-      .select('id, order_number, customer_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, due_date, created_date, status_changed_at')
+      .select('id, order_number, customer_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, due_date, created_date, status_changed_at')
       .neq('payment_status', 'cancelled')
       .neq('payment_status', 'refunded'),
     supabase.from('assessment_contracts')
-      .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, payment_date, manual_payment, due_date, start_date, end_date, status, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, credit_balance, plan_snapshot, refund_status, refund_amount')
+      .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, payment_date, manual_payment, due_date, start_date, end_date, status, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, enrollment_fee, manual_discount, credit_balance, plan_snapshot, refund_status, refund_amount')
       .not('status', 'in', '("cancelled","finished","draft","voided")')
       .neq('payment_status', 'refunded'),
     supabase.from('assessment_plans').select('id, price_total, price_monthly, modality_id'),
@@ -133,12 +135,27 @@ async function loadTodayPage() {
     supabase.from('assessment_contracts')
       .select('id, contract_number, customer_id, refund_amount, refund_status, payment_method, updated_at')
       .eq('refund_status', 'pending'),
+    supabase.from('event_registrations')
+      .select('id, registration_number, customer_id, event_id, registration_type_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, created_at, updated_at')
+      .neq('payment_status', 'cancelled')
+      .neq('payment_status', 'refunded'),
+    supabase.from('event_registration_types').select('id, price'),
   ]);
 
   const presale = (presaleRes.data || []).map(o => ({ ...o, type: 'presale', customer: o.checkout_name }));
   const stock = (stockRes.data || []).map(o => ({ ...o, type: 'stock', customer: o.customer_name }));
   const plansMap = Object.fromEntries((plansRes.data || []).map(p => [p.id, p]));
   const customersMap = Object.fromEntries((customersRes.data || []).map(c => [c.id, c]));
+  const eventTypePriceMap = Object.fromEntries((eventTypesRes.data || []).map(type => [type.id, Number(type.price) || 0]));
+  const events = (eventRegsRes.data || []).map(registration => ({
+    ...registration,
+    order_number: registration.registration_number,
+    customer: customersMap[registration.customer_id]?.full_name || '—',
+    total_value: eventTypePriceMap[registration.registration_type_id] || 0,
+    created_date: registration.created_at,
+    status_changed_at: registration.updated_at,
+    type: 'event',
+  }));
   const contractRows = contractRes.data || [];
   await applyAssessmentContractTransitions(contractRows);
   const contracts = buildContractLifecycleRows(contractRows, { plansById: plansMap })
@@ -184,7 +201,7 @@ async function loadTodayPage() {
   }
 
   return {
-    orders: [...presale, ...stock],
+    orders: [...presale, ...stock, ...events],
     contracts,
     returns: returnsRes.data || [],
     pendingRefunds,
@@ -209,6 +226,8 @@ export default function Today() {
       'assessment_plans',
       'presale_customers',
       'order_returns',
+      'event_registrations',
+      'event_registration_types',
     ],
     onError: error => console.error('Erro ao carregar Hoje:', error),
   });
@@ -227,20 +246,23 @@ export default function Today() {
 
   // ── Buckets ─────────────────────────────────────────────────────
 
-  // 1. Em atraso — store + assessoria
+  // 1. Em atraso — loja, assessoria e eventos
   const overdue = allItems
     .filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o))
     .sort((a, b) => a.due_date.localeCompare(b.due_date));
 
-  // 2. Para cobrar — store (awaiting_charge) + contratos sem cobrança
+  // 2. Para cobrar — loja, assessoria e eventos sem cobrança criada
   const toCharge = allItems
-    .filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status))
+    .filter(isAwaitingCharge)
     .sort((a, b) => (b.created_date || '').localeCompare(a.created_date || ''));
 
-  // 3. Cobrança enviada sem pagamento (store + assessoria) — 2+ dias sem retorno
+  // 3. Cobrança enviada sem pagamento — 2+ dias sem retorno
   const chargedNoPay = allItems
-    .filter(o => o.payment_status === 'charge_sent' && daysSince(o.status_changed_at || o.created_date) >= 2)
-    .sort((a, b) => daysSince(b.status_changed_at) - daysSince(a.status_changed_at));
+    .filter(o => isEffectiveOpenSale(o)
+      && !isAwaitingCharge(o)
+      && daysSince(o.payment_message_sent_at || o.status_changed_at || o.created_date || o.created_at) >= 2)
+    .sort((a, b) => daysSince(b.payment_message_sent_at || b.status_changed_at || b.created_date || b.created_at)
+      - daysSince(a.payment_message_sent_at || a.status_changed_at || a.created_date || a.created_at));
 
   // 5. Contratos dentro da janela de renovação
   const inRenewalWindow = (() => {
@@ -251,9 +273,9 @@ export default function Today() {
     .filter(c => c.status === 'active' && c.end_date && c.end_date <= inRenewalWindow && c.end_date >= todayStr)
     .sort((a, b) => a.end_date.localeCompare(b.end_date));
 
-  // 6. Pagos aguardando entrega (store only)
+  // 6. Pagos aguardando entrega (loja apenas)
   const awaitingDelivery = orders
-    .filter(o => o.payment_status === 'paid' && o.delivery_status && !['delivered', 'cancelled'].includes(o.delivery_status))
+    .filter(o => ['presale', 'stock'].includes(o.type) && o.payment_status === 'paid' && o.delivery_status && !['delivered', 'cancelled'].includes(o.delivery_status))
     .sort((a, b) => (a.payment_date || '').localeCompare(b.payment_date || ''));
 
   // 7. Devoluções

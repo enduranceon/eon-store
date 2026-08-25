@@ -1,246 +1,459 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { DollarSign, ShoppingCart, Users, TrendingUp, Package, AlertCircle, CheckCircle2, Clock, AlertTriangle, UserX, CreditCard } from 'lucide-react';
+import {
+  AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, CalendarDays,
+  CheckCircle2, CircleDollarSign, Clock3, CreditCard, Landmark,
+  RefreshCw, TrendingUp, Wallet,
+} from 'lucide-react';
+import {
+  Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts';
+import { supabase } from '@/api/db';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { PreSaleOrder, PreSaleCustomer, PreSaleProduct, PreSaleCampaign } from '@/api/entities';
-import { formatCurrency, formatDate } from '@/lib/utils';
-import { isEffectiveSale, isNonCancelledOrder } from '@/lib/sales';
-import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { usePageData } from '@/hooks/usePageData';
+import {
+  FINANCIAL_DASHBOARD_PERIOD_OPTIONS,
+  FINANCIAL_UNIT_META,
+  buildFinancialDashboard,
+  financialMovementDate,
+  financialUnitLabel,
+} from '@/lib/financial-dashboard';
+import { financialQualityPath, financialQualitySeverityLabel } from '@/lib/financial-ledger';
+import { cn, formatCurrency, formatDate, toLocalDateStr } from '@/lib/utils';
 
-function KPICard({ title, value, sub, icon: Icon, color = 'blue' }) {
-  const colors = {
-    blue: 'bg-blue-50 text-blue-600',
-    green: 'bg-green-50 text-green-600',
-    yellow: 'bg-yellow-50 text-yellow-600',
-    purple: 'bg-purple-50 text-purple-600',
-    red: 'bg-red-50 text-red-600',
+const MOVEMENT_COLUMNS = [
+  'movement_id', 'source', 'source_table', 'source_id', 'order_id', 'order_type', 'reference',
+  'business_unit', 'revenue_center_id', 'movement_kind', 'cash_direction', 'is_actual', 'is_legacy',
+  'status', 'gross_amount', 'fee_amount', 'net_amount', 'signed_net_amount', 'payment_method',
+  'occurred_on', 'due_on', 'recognition_on', 'scheduled_on', 'description', 'created_at', 'metadata',
+].join(',');
+
+const QUALITY_COLUMNS = [
+  'issue_id', 'severity', 'issue_type', 'business_unit', 'source_table', 'source_id', 'order_id',
+  'order_type', 'reference', 'amount', 'occurred_on', 'message', 'metadata',
+].join(',');
+
+const MOVEMENT_LABEL = {
+  receipt: 'Recebimento',
+  refund: 'Estorno',
+  expense: 'Despesa',
+  payout: 'Repasse',
+  payout_adjustment: 'Ajuste de repasse',
+};
+
+const MOVEMENT_TONE = {
+  receipt: 'bg-emerald-100 text-emerald-700',
+  refund: 'bg-rose-100 text-rose-700',
+  expense: 'bg-orange-100 text-orange-700',
+  payout: 'bg-violet-100 text-violet-700',
+  payout_adjustment: 'bg-blue-100 text-blue-700',
+};
+
+function monthsAgo(amount) {
+  const date = new Date();
+  date.setMonth(date.getMonth() - amount);
+  date.setDate(1);
+  return toLocalDateStr(date);
+}
+
+async function loadManagementDashboard() {
+  const [actualRes, receivablesRes, qualityRes] = await Promise.all([
+    supabase
+      .from('financial_movements')
+      .select(MOVEMENT_COLUMNS)
+      .eq('is_actual', true)
+      .gte('scheduled_on', monthsAgo(13))
+      .order('scheduled_on', { ascending: false }),
+    supabase
+      .from('financial_movements')
+      .select(MOVEMENT_COLUMNS)
+      .eq('movement_kind', 'receivable')
+      .eq('is_actual', false)
+      .order('due_on', { ascending: true }),
+    supabase
+      .from('financial_data_quality')
+      .select(QUALITY_COLUMNS),
+  ]);
+
+  if (actualRes.error) throw actualRes.error;
+  if (receivablesRes.error) throw receivablesRes.error;
+  if (qualityRes.error) throw qualityRes.error;
+
+  const movements = new Map();
+  [...(actualRes.data || []), ...(receivablesRes.data || [])].forEach(movement => {
+    movements.set(movement.movement_id, movement);
+  });
+
+  return { movements: [...movements.values()], qualityIssues: qualityRes.data || [] };
+}
+
+function formatCompactCurrency(value) {
+  const amount = Number(value) || 0;
+  if (Math.abs(amount) >= 1_000_000) return `R$ ${(amount / 1_000_000).toFixed(1)} mi`;
+  if (Math.abs(amount) >= 1_000) return `R$ ${(amount / 1_000).toFixed(1)} mil`;
+  return formatCurrency(amount);
+}
+
+function MetricCard({ label, value, sub, icon: Icon, tone = 'blue', to }) {
+  const tones = {
+    blue: 'bg-blue-50 text-blue-700 border-blue-100',
+    green: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+    orange: 'bg-orange-50 text-orange-700 border-orange-100',
+    red: 'bg-rose-50 text-rose-700 border-rose-100',
+    violet: 'bg-violet-50 text-violet-700 border-violet-100',
   };
-  return (
-    <Card>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-muted-foreground">{title}</p>
-            <p className="text-2xl font-bold mt-1">{value}</p>
-            {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
+  const content = (
+    <Card className={cn('h-full transition-shadow', to && 'hover:shadow-sm')}>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground">{label}</p>
+            <p className="mt-1 text-2xl font-bold text-gray-900 truncate">{value}</p>
+            {sub && <p className="mt-1 text-[11px] text-muted-foreground truncate">{sub}</p>}
           </div>
-          <div className={`p-3 rounded-full ${colors[color]}`}>
-            <Icon className="w-5 h-5" />
+          <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border', tones[tone])}>
+            <Icon className="w-4 h-4" />
           </div>
         </div>
       </CardContent>
     </Card>
   );
+  return to ? <Link to={to} className="block h-full">{content}</Link> : content;
 }
 
-const PAYMENT_STATUS_LABEL = {
-  pending: 'Pedido recebido',
-  awaiting_charge: 'Pedido recebido',
-  charge_sent: 'Cobrança enviada',
-  paid: 'Pago',
-  partially_paid: 'Parcialmente pago',
-  cancelled: 'Cancelado',
-  refunded: 'Reembolsado',
-};
+function CurrencyTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border bg-white p-3 text-xs shadow-lg">
+      <p className="mb-1.5 font-semibold">{label}</p>
+      {payload.map(item => (
+        <div key={item.dataKey} className="flex justify-between gap-6" style={{ color: item.color }}>
+          <span>{item.name}</span><b>{formatCurrency(item.value)}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-const PAYMENT_BADGE = {
-  paid: 'success',
-  partially_paid: 'warning',
-  pending: 'secondary',
-  awaiting_charge: 'secondary',
-  charge_sent: 'info',
-  cancelled: 'destructive',
-  refunded: 'outline',
-};
+function EmptyState({ children }) {
+  return (
+    <div className="flex h-64 items-center justify-center rounded-lg border border-dashed bg-gray-50 px-6 text-center text-sm text-muted-foreground">
+      {children}
+    </div>
+  );
+}
 
-export default function Dashboard() {
-  const [orders, setOrders] = useState([]);
-  const [customers, setCustomers] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [campaigns, setCampaigns] = useState([]);
-
-  useEffect(() => {
-    Promise.all([
-      PreSaleOrder.list(),
-      PreSaleCustomer.list(),
-      PreSaleProduct.list(),
-      PreSaleCampaign.list(),
-    ]).then(([o, c, p, camp]) => {
-      setOrders(o);
-      setCustomers(c);
-      setProducts(p);
-      setCampaigns(camp);
-    }).catch(() => toast.error('Erro ao carregar dados'));
-  }, []);
-
-  const activeOrders = orders.filter(isNonCancelledOrder);
-  const effectiveOrders = activeOrders.filter(isEffectiveSale);
-  const totalSold = effectiveOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalPaid = effectiveOrders.filter(o => o.payment_status === 'paid').reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const pendingOrders = effectiveOrders.filter(o => o.payment_status !== 'paid');
-  const totalPending = pendingOrders.reduce((acc, o) => acc + (o.total_value || 0), 0);
-  const totalCost = effectiveOrders.reduce((acc, o) => acc + (o.total_cost || 0), 0);
-  const grossProfit = totalSold - totalCost;
-  const margin = totalSold > 0 ? (grossProfit / totalSold) * 100 : 0;
-
-  const recentOrders = [...orders].slice(0, 8);
-  const activeCampaigns = campaigns.filter(c => c.status === 'active');
-
-  // Alertas de ação
-  const clientsNoCpf = customers.filter(c => !c.cpf);
-  const ordersAwaitingCharge = activeOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status));
-  const ordersPaidNoDate = activeOrders.filter(o => o.payment_status === 'paid' && !o.payment_date);
-  const ordersNoPaymentMethod = activeOrders.filter(o => !o.payment_method && o.payment_status !== 'paid' && o.payment_status !== 'cancelled');
-
-  const alerts = [
-    clientsNoCpf.length > 0 && {
-      icon: UserX, color: 'text-red-600 bg-red-50 border-red-200',
-      title: `${clientsNoCpf.length} cliente${clientsNoCpf.length > 1 ? 's' : ''} sem CPF`,
-      desc: 'Sem CPF não é possível gerar cobrança via Asaas.',
-      link: '/clientes?filtro=sem-cpf', linkLabel: 'Ver clientes',
-    },
-    ordersAwaitingCharge.length > 0 && {
-      icon: Clock, color: 'text-orange-600 bg-orange-50 border-orange-200',
-      title: `${ordersAwaitingCharge.length} pedido${ordersAwaitingCharge.length > 1 ? 's' : ''} recebido${ordersAwaitingCharge.length > 1 ? 's' : ''}`,
-      desc: 'Ainda não virou venda. Gere Asaas, envie link externo ou registre pagamento.',
-      link: '/pedidos?pagamento=awaiting_charge', linkLabel: 'Ver pedidos',
-    },
-    ordersNoPaymentMethod.length > 0 && {
-      icon: CreditCard, color: 'text-blue-600 bg-blue-50 border-blue-200',
-      title: `${ordersNoPaymentMethod.length} pedido${ordersNoPaymentMethod.length > 1 ? 's' : ''} sem forma de pagamento`,
-      desc: 'Clientes não informaram como querem pagar. Pergunte antes de gerar cobrança.',
-      link: '/pedidos', linkLabel: 'Ver pedidos',
-    },
-    ordersPaidNoDate.length > 0 && {
-      icon: AlertTriangle, color: 'text-gray-600 bg-gray-50 border-gray-200',
-      title: `${ordersPaidNoDate.length} pedido${ordersPaidNoDate.length > 1 ? 's' : ''} pagos sem data registrada`,
-      desc: 'Registre a data de pagamento para relatórios precisos.',
-      link: '/pedidos?pagamento=paid', linkLabel: 'Ver pedidos',
-    },
-  ].filter(Boolean);
+function QualitySummary({ issues }) {
+  const high = issues.filter(issue => issue.severity === 'high');
+  const visibleIssues = [...issues]
+    .sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.severity] ?? 3) - ({ high: 0, medium: 1, low: 2 }[b.severity] ?? 3))
+    .slice(0, 3);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-gray-900">Painel Financeiro</h2>
-        <p className="text-sm text-muted-foreground">Visão geral de vendas, pedidos e lucro</p>
-      </div>
-
-      {/* Alertas de ação */}
-      {alerts.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-500" /> Atenção agora
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {alerts.map((alert, i) => {
-              const Icon = alert.icon;
-              return (
-                <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${alert.color}`}>
-                  <Icon className="w-4 h-4 mt-0.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold leading-tight">{alert.title}</p>
-                    <p className="text-xs mt-0.5 opacity-75">{alert.desc}</p>
+    <Card className={issues.length ? 'border-amber-200' : 'border-emerald-200'}>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <AlertTriangle className={cn('w-4 h-4', issues.length ? 'text-amber-600' : 'text-emerald-600')} />
+            Qualidade financeira
+          </CardTitle>
+          <Link to="/financeiro" className="text-xs font-semibold text-blue-700 hover:underline">Abrir financeiro</Link>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {issues.length === 0 ? (
+          <p className="py-1 text-sm text-emerald-700">Sem pendências de conciliação.</p>
+        ) : (
+          <>
+            <p className="mb-3 text-sm text-gray-700">
+              {issues.length} pendência{issues.length !== 1 ? 's' : ''}
+              {high.length ? `, sendo ${high.length} prioritária${high.length !== 1 ? 's' : ''}` : ''}.
+            </p>
+            <div className="divide-y">
+              {visibleIssues.map(issue => (
+                <div key={issue.issue_id} className="flex items-center gap-3 py-2.5 first:pt-0">
+                  <span className={cn(
+                    'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                    issue.severity === 'high' ? 'bg-rose-100 text-rose-700' : issue.severity === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700',
+                  )}>{financialQualitySeverityLabel(issue.severity)}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-gray-800">{issue.message}</p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {[financialUnitLabel(issue.business_unit), issue.reference].filter(Boolean).join(' · ')}
+                    </p>
                   </div>
-                  <Link to={alert.link} className="text-xs font-semibold underline underline-offset-2 shrink-0 mt-0.5">
-                    {alert.linkLabel}
-                  </Link>
+                  <Link to={financialQualityPath(issue)} className="shrink-0 text-xs font-semibold text-blue-700 hover:underline">Ver</Link>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function Dashboard() {
+  const [period, setPeriod] = useState('month');
+  const { data, loading, refreshing, refresh } = usePageData({
+    key: 'management-dashboard:v1',
+    loader: loadManagementDashboard,
+    initialData: { movements: [], qualityIssues: [] },
+    maxAge: 60_000,
+    tags: ['financial_movements', 'financial_data_quality', 'asaas_payments', 'event_expenses', 'payout_monthly_closings'],
+  });
+  const dashboard = useMemo(
+    () => buildFinancialDashboard(data.movements, { period }),
+    [data.movements, period],
+  );
+  const { summary } = dashboard;
+  const receiptMargin = summary.netReceipts > 0
+    ? `${((summary.operatingResult / summary.netReceipts) * 100).toFixed(1)}% sobre o recebido líquido`
+    : 'Aguardando recebimentos no período';
+  const unitKeys = ['assessoria', 'loja', 'pre_venda', 'eventos'];
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[55vh] flex-col items-center justify-center gap-3 text-muted-foreground">
+        <RefreshCw className="h-7 w-7 animate-spin text-blue-600" />
+        <p className="text-sm">Montando a visão geral do negócio...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5 pb-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-white">
+              <Landmark className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Visão geral</h1>
+              <p className="text-sm text-muted-foreground">Caixa, cobranças e resultado por área.</p>
+            </div>
           </div>
         </div>
-      )}
-
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title="Total Vendido" value={formatCurrency(totalSold)} icon={DollarSign} color="blue" />
-        <KPICard title="Total Pago" value={formatCurrency(totalPaid)} sub={`${orders.filter(o => o.payment_status === 'paid').length} pedidos`} icon={CheckCircle2} color="green" />
-        <KPICard title="Total Pendente" value={formatCurrency(totalPending)} sub={`${pendingOrders.length} venda${pendingOrders.length !== 1 ? 's' : ''}`} icon={Clock} color="yellow" />
-        <KPICard title="Lucro Est." value={formatCurrency(grossProfit)} sub={`Margem: ${margin.toFixed(1)}%`} icon={TrendingUp} color="purple" />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={period} onValueChange={setPeriod}>
+            <SelectTrigger className="w-[168px] bg-white"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {FINANCIAL_DASHBOARD_PERIOD_OPTIONS.map(option => (
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="icon" title="Atualizar dados" onClick={() => refresh({ force: true })} disabled={refreshing}>
+            <RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard title="Total de Pedidos" value={activeOrders.length} icon={ShoppingCart} color="blue" />
-        <KPICard title="Clientes" value={customers.length} icon={Users} color="purple" />
-        <KPICard title="Produtos Ativos" value={products.filter(p => p.status === 'active').length} icon={Package} color="green" />
-        <KPICard title="Campanhas Ativas" value={activeCampaigns.length} icon={AlertCircle} color="yellow" />
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <MetricCard
+          label="Recebido líquido"
+          value={formatCompactCurrency(summary.netReceipts)}
+          sub={`${formatCurrency(summary.grossReceipts)} bruto · ${formatCurrency(summary.fees)} em taxas`}
+          icon={Wallet}
+          tone="green"
+          to="/financeiro/fluxo-caixa"
+        />
+        <MetricCard
+          label="Resultado de caixa"
+          value={formatCompactCurrency(summary.operatingResult)}
+          sub={receiptMargin}
+          icon={summary.operatingResult >= 0 ? TrendingUp : ArrowDownRight}
+          tone={summary.operatingResult >= 0 ? 'blue' : 'red'}
+          to="/analytics"
+        />
+        <MetricCard
+          label="Cobranças em aberto"
+          value={formatCompactCurrency(summary.openReceivables)}
+          sub={`${summary.receivableCount} cobrança${summary.receivableCount !== 1 ? 's' : ''} já registrada${summary.receivableCount !== 1 ? 's' : ''}`}
+          icon={CreditCard}
+          tone="orange"
+          to="/financeiro"
+        />
+        <MetricCard
+          label="Vencido para receber"
+          value={formatCompactCurrency(summary.overdueReceivables)}
+          sub={summary.dueSoonReceivables ? `${formatCurrency(summary.dueSoonReceivables)} vence nos próximos 7 dias` : 'Sem vencimentos próximos'}
+          icon={AlertTriangle}
+          tone={summary.overdueReceivables > 0 ? 'red' : 'violet'}
+          to="/financeiro"
+        />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pedidos recentes */}
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Pedidos Recentes</CardTitle>
-                <Link to="/pedidos" className="text-sm text-blue-600 hover:underline">Ver todos</Link>
+      <div className="grid gap-5 xl:grid-cols-3">
+        <Card className="xl:col-span-2">
+          <CardHeader className="pb-2">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base"><BarChart3 className="h-4 w-4 text-blue-600" /> Movimento de caixa</CardTitle>
+                <p className="mt-0.5 text-xs text-muted-foreground">Entradas líquidas e saídas efetivamente registradas.</p>
               </div>
-            </CardHeader>
-            <CardContent>
-              {recentOrders.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">Nenhum pedido ainda</p>
-              ) : (
-                <div className="space-y-2">
-                  {recentOrders.map(order => (
-                    <Link
-                      key={order.id}
-                      to={`/pedidos/${order.id}`}
-                      className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors border border-transparent hover:border-gray-200"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-blue-700">{order.order_number}</p>
-                        <p className="text-xs text-muted-foreground">{order.checkout_name} · {formatDate(order.created_date)}</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Badge variant={PAYMENT_BADGE[order.payment_status] || 'secondary'}>
-                          {PAYMENT_STATUS_LABEL[order.payment_status] || order.payment_status}
-                        </Badge>
-                        <span className="text-sm font-semibold">{formatCurrency(order.total_value)}</span>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              <span className="text-xs font-semibold text-muted-foreground">{dashboard.period.label}</span>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {dashboard.monthlySeries.some(row => row.receipts || row.outflows) ? (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dashboard.monthlySeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tickFormatter={value => formatCompactCurrency(value).replace('R$ ', '')} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} width={55} />
+                    <Tooltip content={<CurrencyTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="receipts" name="Recebido líquido" fill="#059669" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="outflows" name="Saídas" fill="#f97316" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : <EmptyState>Nenhum lançamento confirmado no período selecionado.</EmptyState>}
+          </CardContent>
+        </Card>
 
-        {/* Campanhas ativas */}
-        <div>
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Campanhas Ativas</CardTitle>
-                <Link to="/campanhas" className="text-sm text-blue-600 hover:underline">Ver todas</Link>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base"><CircleDollarSign className="h-4 w-4 text-violet-600" /> Composição do resultado</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {[
+              { label: 'Recebimentos líquidos', value: summary.netReceipts, className: 'text-emerald-700' },
+              { label: 'Estornos', value: -summary.refunds, className: 'text-rose-700' },
+              { label: 'Despesas operacionais', value: -summary.expenses, className: 'text-orange-700' },
+              { label: 'Repasses pagos', value: -summary.payouts, className: 'text-violet-700' },
+            ].map(row => (
+              <div key={row.label} className="flex items-center justify-between gap-3 border-b pb-3 last:border-0 last:pb-0">
+                <span className="text-sm text-muted-foreground">{row.label}</span>
+                <span className={cn('shrink-0 text-sm font-bold', row.className)}>{formatCurrency(row.value)}</span>
               </div>
-            </CardHeader>
-            <CardContent>
-              {activeCampaigns.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">Nenhuma campanha ativa</p>
-              ) : (
-                <div className="space-y-3">
-                  {activeCampaigns.map(c => {
-                    const cOrders = activeOrders.filter(o => o.campaign_id === c.id);
-                    const cTotal = cOrders.filter(isEffectiveSale).reduce((acc, o) => acc + (o.total_value || 0), 0);
-                    return (
-                      <Link
-                        key={c.id}
-                        to={`/campanhas/${c.id}`}
-                        className="block p-3 rounded-lg border hover:border-blue-300 hover:bg-blue-50 transition-colors"
-                      >
-                        <p className="text-sm font-medium">{c.name}</p>
-                        <p className="text-xs text-muted-foreground">{c.supplier} · {cOrders.length} pedidos</p>
-                        <p className="text-sm font-semibold text-blue-700 mt-1">{formatCurrency(cTotal)}</p>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            ))}
+            <div className="flex items-center justify-between gap-3 border-t pt-3">
+              <span className="font-semibold text-gray-900">Resultado de caixa</span>
+              <span className={cn('text-lg font-bold', summary.operatingResult >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+                {formatCurrency(summary.operatingResult)}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Áreas do negócio</h2>
+            <p className="text-xs text-muted-foreground">Resultado de caixa no período e cobranças abertas atuais.</p>
+          </div>
+          <Link to="/analytics" className="text-sm font-semibold text-blue-700 hover:underline">Ver análises</Link>
         </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {unitKeys.map(unit => {
+            const values = summary.byUnit[unit] || {};
+            const meta = FINANCIAL_UNIT_META[unit];
+            const result = Number(values.operatingResult) || 0;
+            return (
+              <div key={unit} className="border bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold text-gray-800">{meta.label}</span>
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: meta.color }} />
+                </div>
+                <p className={cn('mt-3 text-xl font-bold', result >= 0 ? 'text-gray-900' : 'text-rose-700')}>{formatCurrency(result)}</p>
+                <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>Recebido {formatCurrency(values.netReceipts || 0)}</span>
+                  <span>{formatCurrency(values.openReceivables || 0)} aberto</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Lançamentos recentes</CardTitle>
+                <p className="mt-0.5 text-xs text-muted-foreground">Caixa confirmado no período selecionado.</p>
+              </div>
+              <Link to="/financeiro/fluxo-caixa" className="text-xs font-semibold text-blue-700 hover:underline">Fluxo de caixa</Link>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {dashboard.recentMovements.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">Nenhum lançamento confirmado neste período.</p>
+            ) : (
+              <div className="divide-y">
+                {dashboard.recentMovements.map(movement => {
+                  const amount = Number(movement.signed_net_amount) || 0;
+                  return (
+                    <div key={movement.movement_id} className="flex items-center gap-3 py-3">
+                      <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold', MOVEMENT_TONE[movement.movement_kind] || 'bg-gray-100 text-gray-600')}>
+                        {MOVEMENT_LABEL[movement.movement_kind] || 'Movimento'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-gray-800">{movement.description || movement.reference || 'Lançamento financeiro'}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{financialUnitLabel(movement.business_unit)} · {formatDate(financialMovementDate(movement))}</p>
+                      </div>
+                      <span className={cn('shrink-0 text-sm font-bold', amount >= 0 ? 'text-emerald-700' : 'text-rose-700')}>
+                        {amount >= 0 ? '+' : '−'}{formatCurrency(Math.abs(amount))}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base"><Clock3 className="h-4 w-4 text-amber-600" /> Próximos recebimentos</CardTitle>
+                <p className="mt-0.5 text-xs text-muted-foreground">Cobranças criadas que ainda não viraram caixa.</p>
+              </div>
+              <Link to="/financeiro" className="text-xs font-semibold text-blue-700 hover:underline">Cobranças</Link>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {dashboard.openReceivables.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma cobrança registrada em aberto.</p>
+            ) : (
+              <div className="divide-y">
+                {dashboard.openReceivables.map(movement => {
+                  const dueOn = financialMovementDate(movement);
+                  const overdue = dueOn && dueOn < dashboard.period.to;
+                  return (
+                    <div key={movement.movement_id} className="flex items-center gap-3 py-3">
+                      <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold', overdue ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700')}>
+                        {overdue ? 'Vencida' : 'Em aberto'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-gray-800">{movement.description || movement.reference || 'Cobrança'}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{financialUnitLabel(movement.business_unit)} · {dueOn ? `vence ${formatDate(dueOn)}` : 'sem vencimento'}</p>
+                      </div>
+                      <span className="shrink-0 text-sm font-bold text-gray-900">{formatCurrency(movement.gross_amount)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <QualitySummary issues={data.qualityIssues} />
+
+      <div className="flex flex-wrap gap-2 border-t pt-5">
+        <Link to="/financeiro"><Button variant="outline" size="sm"><CreditCard className="mr-1.5 h-3.5 w-3.5" />Cobranças</Button></Link>
+        <Link to="/financeiro/fluxo-caixa"><Button variant="outline" size="sm"><CalendarDays className="mr-1.5 h-3.5 w-3.5" />Fluxo de caixa</Button></Link>
+        <Link to="/analytics"><Button variant="outline" size="sm"><ArrowUpRight className="mr-1.5 h-3.5 w-3.5" />Analytics</Button></Link>
       </div>
     </div>
   );

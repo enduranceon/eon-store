@@ -7,8 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "npm run test:edge",
-    "test:edge": "deno test --frozen --allow-env --allow-net supabase/functions/api-v1/",
+    "test": "npm run test:unit && npm run test:edge",
+    "test:unit": "node --test src/lib/*.test.js",
+    "test:edge": "npx --yes deno test --frozen --allow-env --allow-net supabase/functions/api-v1/",
     "preview": "vite preview"
   },
   "dependencies": {
