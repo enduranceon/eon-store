@@ -242,8 +242,11 @@ BEGIN
     AND contract_number = 'ASS-000170'
   FOR UPDATE;
 
+  -- This one-off production correction has no target in a clean database.
+  -- Keep the migration replayable while preserving the validation below when
+  -- the original contract is present.
   IF NOT FOUND THEN
-    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'Contrato do Maurício não encontrado para reclassificação';
+    RETURN;
   END IF;
   IF v_contract.payment_date IS NOT NULL
      OR NULLIF(v_contract.asaas_charge_id, '') IS NOT NULL
