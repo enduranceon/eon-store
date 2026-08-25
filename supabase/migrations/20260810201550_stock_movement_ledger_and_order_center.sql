@@ -64,6 +64,237 @@ AS $$
   );
 $$;
 
+CREATE OR REPLACE FUNCTION eon_private.reserve_stock_product(
+  p_product_id uuid,
+  p_quantity integer,
+  p_variation text DEFAULT NULL::text,
+  p_require_visible boolean DEFAULT false
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_product public.stock_products%ROWTYPE;
+  v_variations jsonb;
+  v_updated_variations jsonb;
+  v_variation jsonb;
+  v_variation_name text := NULLIF(trim(COALESCE(p_variation, '')), '');
+  v_variation_index integer;
+  v_available integer;
+  v_total_quantity integer;
+  v_sale_price numeric;
+  v_regular_price numeric;
+  v_cost_price numeric;
+BEGIN
+  IF p_quantity IS NULL OR p_quantity <= 0 THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Quantidade invalida';
+  END IF;
+
+  SELECT *
+  INTO v_product
+  FROM public.stock_products
+  WHERE id = p_product_id
+    AND status = 'active'
+    AND (NOT p_require_visible OR COALESCE(show_in_store, TRUE) = TRUE)
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'Produto indisponivel';
+  END IF;
+
+  v_variations := CASE
+    WHEN jsonb_typeof(COALESCE(v_product.variations, '[]'::jsonb)) = 'array'
+      THEN COALESCE(v_product.variations, '[]'::jsonb)
+    ELSE '[]'::jsonb
+  END;
+
+  IF jsonb_array_length(v_variations) > 0 THEN
+    IF v_variation_name IS NULL THEN
+      RAISE EXCEPTION 'Selecione o tamanho para %', v_product.name;
+    END IF;
+
+    SELECT (ordinality - 1)::integer, value
+      INTO v_variation_index, v_variation
+    FROM jsonb_array_elements(v_variations) WITH ORDINALITY
+    WHERE eon_private.stock_variation_name(value) = v_variation_name
+       OR NULLIF(trim(COALESCE(value->>'sku', '')), '') = v_variation_name
+    ORDER BY ordinality
+    LIMIT 1;
+
+    IF v_variation IS NULL THEN
+      RAISE EXCEPTION 'Tamanho indisponivel para %', v_product.name;
+    END IF;
+
+    v_variation_name := eon_private.stock_variation_name(v_variation);
+    v_available := eon_private.stock_variation_quantity(v_variation);
+    IF v_available < p_quantity THEN
+      RAISE EXCEPTION 'Estoque insuficiente para % - %', v_product.name, v_variation_name;
+    END IF;
+
+    v_sale_price := COALESCE(
+      eon_private.stock_json_numeric(v_variation, 'sale_price'),
+      v_product.sale_price,
+      0
+    );
+    v_regular_price := COALESCE(
+      eon_private.stock_json_numeric(v_variation, 'regular_price'),
+      v_product.regular_price
+    );
+    v_cost_price := COALESCE(
+      eon_private.stock_json_numeric(v_variation, 'cost_price'),
+      v_product.cost_price,
+      0
+    );
+
+    v_variation := jsonb_set(v_variation, '{name}', to_jsonb(v_variation_name), TRUE);
+    v_variation := jsonb_set(v_variation, '{quantity}', to_jsonb(v_available - p_quantity), TRUE);
+
+    SELECT COALESCE(
+      jsonb_agg(
+        CASE WHEN (ordinality - 1)::integer = v_variation_index
+          THEN v_variation
+          ELSE value
+        END
+        ORDER BY ordinality
+      ),
+      '[]'::jsonb
+    )
+    INTO v_updated_variations
+    FROM jsonb_array_elements(v_variations) WITH ORDINALITY;
+
+    v_total_quantity := eon_private.stock_variations_total_quantity(v_updated_variations);
+
+    UPDATE public.stock_products
+    SET variations = v_updated_variations,
+        quantity = v_total_quantity,
+        updated_date = now()
+    WHERE id = v_product.id
+    RETURNING * INTO v_product;
+  ELSE
+    IF COALESCE(v_product.quantity, 0) < p_quantity THEN
+      RAISE EXCEPTION 'Estoque insuficiente para %', v_product.name;
+    END IF;
+
+    UPDATE public.stock_products
+    SET quantity = COALESCE(quantity, 0) - p_quantity,
+        updated_date = now()
+    WHERE id = v_product.id
+      AND status = 'active'
+      AND COALESCE(quantity, 0) >= p_quantity
+    RETURNING * INTO v_product;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Estoque insuficiente para %', v_product.name;
+    END IF;
+
+    v_sale_price := COALESCE(v_product.sale_price, 0);
+    v_regular_price := v_product.regular_price;
+    v_cost_price := COALESCE(v_product.cost_price, 0);
+  END IF;
+
+  RETURN jsonb_strip_nulls(jsonb_build_object(
+    'product_id', v_product.id,
+    'product_name', v_product.name,
+    'variation', v_variation_name,
+    'quantity', p_quantity,
+    'sale_price', round(v_sale_price, 2),
+    'regular_price', CASE WHEN v_regular_price IS NULL THEN NULL ELSE round(v_regular_price, 2) END,
+    'cost_price', round(v_cost_price, 2),
+    'stock_reserved', TRUE,
+    'stock_reserved_at', now()
+  ));
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION eon_private.restock_stock_product(
+  p_product_id uuid,
+  p_quantity integer,
+  p_variation text DEFAULT NULL::text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_product public.stock_products%ROWTYPE;
+  v_variations jsonb;
+  v_updated_variations jsonb;
+  v_variation jsonb;
+  v_variation_name text := NULLIF(trim(COALESCE(p_variation, '')), '');
+  v_variation_index integer;
+  v_available integer;
+  v_total_quantity integer;
+BEGIN
+  IF p_quantity IS NULL OR p_quantity <= 0 THEN
+    RETURN;
+  END IF;
+
+  SELECT *
+  INTO v_product
+  FROM public.stock_products
+  WHERE id = p_product_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'Produto de estoque nao encontrado';
+  END IF;
+
+  v_variations := CASE
+    WHEN jsonb_typeof(COALESCE(v_product.variations, '[]'::jsonb)) = 'array'
+      THEN COALESCE(v_product.variations, '[]'::jsonb)
+    ELSE '[]'::jsonb
+  END;
+
+  IF jsonb_array_length(v_variations) > 0 AND v_variation_name IS NOT NULL THEN
+    SELECT (ordinality - 1)::integer, value
+      INTO v_variation_index, v_variation
+    FROM jsonb_array_elements(v_variations) WITH ORDINALITY
+    WHERE eon_private.stock_variation_name(value) = v_variation_name
+       OR NULLIF(trim(COALESCE(value->>'sku', '')), '') = v_variation_name
+    ORDER BY ordinality
+    LIMIT 1;
+
+    IF v_variation IS NOT NULL THEN
+      v_variation_name := eon_private.stock_variation_name(v_variation);
+      v_available := eon_private.stock_variation_quantity(v_variation);
+      v_variation := jsonb_set(v_variation, '{name}', to_jsonb(v_variation_name), TRUE);
+      v_variation := jsonb_set(v_variation, '{quantity}', to_jsonb(v_available + p_quantity), TRUE);
+
+      SELECT COALESCE(
+        jsonb_agg(
+          CASE WHEN (ordinality - 1)::integer = v_variation_index
+            THEN v_variation
+            ELSE value
+          END
+          ORDER BY ordinality
+        ),
+        '[]'::jsonb
+      )
+      INTO v_updated_variations
+      FROM jsonb_array_elements(v_variations) WITH ORDINALITY;
+
+      v_total_quantity := eon_private.stock_variations_total_quantity(v_updated_variations);
+
+      UPDATE public.stock_products
+      SET variations = v_updated_variations,
+          quantity = v_total_quantity,
+          updated_date = now()
+      WHERE id = v_product.id;
+
+      RETURN;
+    END IF;
+  END IF;
+
+  UPDATE public.stock_products
+  SET quantity = COALESCE(quantity, 0) + p_quantity,
+      updated_date = now()
+  WHERE id = v_product.id;
+END;
+$$;
+
 CREATE TABLE public.stock_movements (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   stock_product_id UUID NOT NULL REFERENCES public.stock_products(id) ON DELETE RESTRICT,
