@@ -186,6 +186,78 @@ CREATE TRIGGER set_stock_order_number
   WHEN (NEW.order_number IS NULL)
   EXECUTE FUNCTION public.generate_stock_order_number();
 
+-- Calendar helpers were also created before migrations were tracked.
+CREATE OR REPLACE FUNCTION public.br_easter_date(year_in integer)
+RETURNS date
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  a int; b int; c int; d int; e int; f int; g int; h int;
+  i int; k int; l int; m int; mo int; dy int;
+BEGIN
+  a := year_in % 19;
+  b := year_in / 100;
+  c := year_in % 100;
+  d := b / 4;
+  e := b % 4;
+  f := (b + 8) / 25;
+  g := (b - f + 1) / 3;
+  h := (19 * a + b - d - g + 15) % 30;
+  i := c / 4;
+  k := c % 4;
+  l := (32 + 2 * e + 2 * i - h - k) % 7;
+  m := (a + 11 * h + 22 * l) / 451;
+  mo := (h + l - 7 * m + 114) / 31;
+  dy := ((h + l - 7 * m + 114) % 31) + 1;
+  RETURN make_date(year_in, mo, dy);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.br_is_holiday(d date)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  yr int := EXTRACT(YEAR FROM d);
+  easter date := br_easter_date(yr);
+  mmdd text := to_char(d, 'MM-DD');
+BEGIN
+  IF mmdd IN ('01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25') THEN
+    RETURN true;
+  END IF;
+  IF d = easter - 48 THEN RETURN true; END IF;
+  IF d = easter - 47 THEN RETURN true; END IF;
+  IF d = easter - 2 THEN RETURN true; END IF;
+  IF d = easter + 60 THEN RETURN true; END IF;
+  RETURN false;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.br_next_business_day(d date)
+RETURNS date
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  current_day date := d;
+  i int := 0;
+BEGIN
+  WHILE i < 30 LOOP
+    IF EXTRACT(DOW FROM current_day) NOT IN (0, 6) AND NOT br_is_holiday(current_day) THEN
+      RETURN current_day;
+    END IF;
+    current_day := current_day + 1;
+    i := i + 1;
+  END LOOP;
+  RETURN current_day;
+END;
+$$;
+
 -- Sequence for order numbers
 CREATE SEQUENCE IF NOT EXISTS presale_order_seq START 1;
 
