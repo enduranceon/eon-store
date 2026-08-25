@@ -300,7 +300,7 @@ export default function Painel() {
                 <TrendingUp className="w-4.5 h-4.5 text-green-600" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Receita mensal</p>
+                <p className="text-xs text-muted-foreground">MRR contratado</p>
                 <p className="text-2xl font-bold text-green-700">{formatCurrency(monthlyRevenue)}</p>
               </div>
             </div>

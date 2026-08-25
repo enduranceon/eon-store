@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
+import { financialQualityPath, financialQualitySeverityLabel, toPaymentRecord } from '@/lib/financial-ledger';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { isBillableProspectOpenSale, isOpenSaleForFinancial } from '@/lib/sales';
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
@@ -30,7 +31,7 @@ import { toast } from 'sonner';
 const RECEIVABLES_CACHE_KEY = 'asaas_receivables_cache_v1';
 const RECEIVABLES_CACHE_TTL = 5 * 60 * 1000;
 const FINANCIAL_PAGE_CACHE_TTL = 60 * 1000;
-const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview:v2';
+const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview:v3';
 const ADJUSTABLE_DUE_DATE_STATUSES = new Set([
   'pending',
   'awaiting_charge',
@@ -51,6 +52,8 @@ function writeFinancialPageCache(data) {
     'revenue_centers',
     'stock_products',
     'asaas_payments',
+    'financial_movements',
+    'financial_data_quality',
   ]);
 }
 
@@ -81,11 +84,6 @@ function getInstallmentN(o) {
   const m = pm.match(/^card_(\d+)x$/);
   if (m) return parseInt(m[1]);
   return 1;
-}
-
-// Valor efetivo que chega em caixa por mês para um pedido/contrato.
-function effectiveMonthlyValue(o) {
-  return (o.total_value || 0) / getInstallmentN(o);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -321,7 +319,7 @@ function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, ba
           ? <p className="text-sm text-muted-foreground py-4 text-center">{emptyMsg}</p>
           : <div className="divide-y">{orders.map(o => (
             <OrderRow
-              key={o.id + o.type}
+              key={o.list_key || o.id + o.type}
               o={o}
               onEditDueDate={onEditDueDate}
               onCollectPayment={onCollectPayment}
@@ -360,6 +358,77 @@ function KpiCard({ label, value, sub, icon: Icon, iconBg, iconColor, valueColor,
   );
 }
 
+function FinancialDataQuality({ issues }) {
+  const [expanded, setExpanded] = useState(false);
+  const severityRank = { high: 0, medium: 1, low: 2 };
+  const sortedIssues = [...issues].sort((a, b) => {
+    const rank = (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3);
+    if (rank !== 0) return rank;
+    return String(b.occurred_on || '').localeCompare(String(a.occurred_on || ''));
+  });
+  const visibleIssues = expanded ? sortedIssues : sortedIssues.slice(0, 5);
+  const severityClass = {
+    high: 'bg-red-100 text-red-700',
+    medium: 'bg-amber-100 text-amber-700',
+    low: 'bg-blue-100 text-blue-700',
+  };
+  const businessUnitLabel = {
+    pre_venda: 'Pre-venda',
+    loja: 'Loja',
+    assessoria: 'Assessoria',
+    eventos: 'Eventos',
+  };
+
+  return (
+    <Card className={issues.length ? 'border-amber-200' : 'border-emerald-200'}>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <CardTitle className="text-base flex items-center gap-2">
+            <AlertTriangle className={`w-4 h-4 ${issues.length ? 'text-amber-600' : 'text-emerald-600'}`} />
+            Qualidade financeira
+          </CardTitle>
+          <span className={`text-xs font-semibold px-2 py-1 rounded-full ${issues.length ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>
+            {issues.length ? `${issues.length} pendencia${issues.length !== 1 ? 's' : ''}` : 'Sem pendencias'}
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {visibleIssues.length === 0 ? (
+          <p className="text-sm text-emerald-700 py-1">Nenhuma pendencia financeira identificada.</p>
+        ) : (
+          <div className="divide-y">
+            {visibleIssues.map(issue => (
+              <div key={issue.issue_id} className="flex items-center gap-3 py-3 first:pt-1">
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${severityClass[issue.severity] || 'bg-gray-100 text-gray-600'}`}>
+                  {financialQualitySeverityLabel(issue.severity)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-gray-800">{issue.message}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                    {[businessUnitLabel[issue.business_unit] || issue.business_unit, issue.reference].filter(Boolean).join(' · ')}
+                    {issue.amount != null ? ` · ${formatCurrency(issue.amount)}` : ''}
+                  </p>
+                </div>
+                <Link
+                  to={financialQualityPath(issue)}
+                  className="text-xs font-semibold text-blue-700 hover:underline shrink-0"
+                >
+                  Abrir
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
+        {sortedIssues.length > 5 && (
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setExpanded(value => !value)}>
+            {expanded ? 'Mostrar menos' : `Ver todas (${sortedIssues.length})`}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────
 // COMPONENTE PRINCIPAL
 // ─────────────────────────────────────────────────────────────────
@@ -373,6 +442,7 @@ export default function Financial() {
   const [loadingRec, setLoadingRec]       = useState(false);
   const [fetchedAt, setFetchedAt]         = useState(null);
   const [pendingRefunds, setPendingRefunds] = useState(() => cachedFinancialData?.pendingRefunds || []);
+  const [qualityIssues, setQualityIssues] = useState(() => cachedFinancialData?.qualityIssues || []);
   const [dueDateModal, setDueDateModal]       = useState(null);
   const [dueDateForm, setDueDateForm]         = useState({ date: '', idempotencyKey: '' });
   const [savingDueDate, setSavingDueDate]     = useState(false);
@@ -386,7 +456,7 @@ export default function Financial() {
       .catch(() => {});
     return () => { alive = false; };
   }, []);
-  const [asaasPayments, setAsaasPayments] = useState(() => cachedFinancialData?.asaasPayments || []);
+  const [financialMovements, setFinancialMovements] = useState(() => cachedFinancialData?.financialMovements || []);
   const [syncingAsaas, setSyncingAsaas]   = useState(false);
 
   // ── Fetch Asaas ───────────────────────────────────────────────
@@ -442,15 +512,15 @@ export default function Financial() {
         sevenMonthsAgo.setDate(1);
         const apFromStr = toLocalDateStr(sevenMonthsAgo);
 
-        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes, eventRegsRes, eventTypesRes, eventsRes, paymentsRes] = await Promise.all([
+        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes, eventRegsRes, eventTypesRes, eventsRes, paymentsRes, qualityRes] = await Promise.all([
           supabase.from('presale_orders')
-            .select('id, order_number, checkout_name, checkout_whatsapp, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items')
+            .select('id, order_number, checkout_name, checkout_whatsapp, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('stock_orders')
-            .select('id, order_number, customer_name, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items')
+            .select('id, order_number, customer_name, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('assessment_contracts')
-            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, manual_payment, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, credit_balance, status, installments, plan_snapshot, prospect_stage')
+            .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, manual_payment, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, credit_balance, status, installments, plan_snapshot, prospect_stage')
             .not('status', 'in', '("cancelled","voided")').neq('payment_status', 'refunded'),
           supabase.from('assessment_plans').select('id, price_total, price_monthly, name, revenue_center_id'),
           supabase.from('presale_customers').select('id, full_name, whatsapp, email, cpf'),
@@ -462,14 +532,19 @@ export default function Financial() {
             .neq('payment_status', 'refunded'),
           supabase.from('event_registration_types').select('id, event_id, name, price'),
           supabase.from('events').select('id, name, revenue_center_id, status'),
-          // Pagamentos reais do Asaas — fonte de verdade do fluxo de caixa
-          supabase.from('asaas_payments')
-            .select('id, asaas_payment_id, order_id, order_type, status, value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
-            .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
-            .gte('credit_date', apFromStr)
-            .order('credit_date', { ascending: false }),
+          supabase.from('financial_movements')
+            .select('movement_id,source,order_id,order_type,status,gross_amount,net_amount,occurred_on,due_on,recognition_on,scheduled_on,payment_method,description,reference,revenue_center_id,is_legacy,metadata')
+            .eq('movement_kind', 'receipt')
+            .eq('is_actual', true)
+            .gte('scheduled_on', apFromStr)
+            .order('scheduled_on', { ascending: false }),
+          supabase.from('financial_data_quality')
+            .select('issue_id,severity,issue_type,business_unit,source_table,source_id,order_id,order_type,reference,amount,occurred_on,message,metadata'),
         ]);
-        const nextAsaasPayments = paymentsRes.data || [];
+        if (paymentsRes.error) throw paymentsRes.error;
+        if (qualityRes.error) throw qualityRes.error;
+        const nextFinancialMovements = (paymentsRes.data || []).map(toPaymentRecord);
+        const nextQualityIssues = qualityRes.data || [];
 
         const plansMap         = Object.fromEntries((plansRes.data         || []).map(p => [p.id, p]));
         const customersMap     = Object.fromEntries((customersRes.data     || []).map(c => [c.id, c]));
@@ -516,6 +591,7 @@ export default function Financial() {
               asaas_payment_link: c.asaas_payment_link,
               asaas_pix_copy: c.asaas_pix_copy,
               external_payment_link: c.external_payment_link,
+              external_invoice_number: c.external_invoice_number,
               payment_message_sent_at: c.payment_message_sent_at,
               updated_at: c.updated_at,
               status: c.status,
@@ -591,13 +667,15 @@ export default function Financial() {
         const nextData = {
           orders: nextOrders,
           centers: nextCenters,
-          asaasPayments: nextAsaasPayments,
+          financialMovements: nextFinancialMovements,
           pendingRefunds: nextPendingRefunds,
+          qualityIssues: nextQualityIssues,
         };
         setOrders(nextOrders);
         setCenters(nextCenters);
-        setAsaasPayments(nextAsaasPayments);
+        setFinancialMovements(nextFinancialMovements);
         setPendingRefunds(nextPendingRefunds);
+        setQualityIssues(nextQualityIssues);
         writeFinancialPageCache(nextData);
       } catch (e) {
         console.error('Erro ao carregar Financeiro:', e);
@@ -613,29 +691,20 @@ export default function Financial() {
   const todayStr       = getTodayStr();
   const monthStart     = getMonthStartStr();
 
-  // Set de order_id (qualquer tipo) que tem pagamentos reais cacheados.
-  // Pra esses, asaas_payments é fonte de verdade; orders pulam o fallback.
-  const ordersWithAsaasCache = useMemo(() => {
+  // A fonte unica inclui parcelas Asaas, pagamentos manuais e o fallback legado.
+  const ordersWithReceiptMovement = useMemo(() => {
     const set = new Set();
-    for (const p of asaasPayments) if (p.order_id) set.add(p.order_id);
+    for (const p of financialMovements) if (p.order_id) set.add(p.order_id);
     return set;
-  }, [asaasPayments]);
+  }, [financialMovements]);
 
-  // Calcula recebimentos em um período.
-  const sumReceived = (predicateAsaas, predicateOrder) => {
+  // Calcula recebimentos sem inferir valor de pedidos ou contratos.
+  const sumReceived = (predicateMovement) => {
     let total = 0;
-    for (const p of asaasPayments) {
-      if (!predicateAsaas(p)) continue;
+    for (const p of financialMovements) {
+      if (!predicateMovement(p)) continue;
       const v  = Number(p.value) || 0;
       total += v;
-    }
-    // Fallback: vendas pagas que não têm cache Asaas.
-    for (const o of orders) {
-      if (o.payment_status !== 'paid') continue;
-      if (ordersWithAsaasCache.has(o.id)) continue;
-      if (!predicateOrder(o)) continue;
-      const mVal = effectiveMonthlyValue(o);
-      total += mVal;
     }
     return { total };
   };
@@ -651,11 +720,30 @@ export default function Financial() {
     !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
   const activeOrders = orders.filter(o =>
     (isOpenSaleForFinancial(o) || isScheduledContractOpenPayment(o) || isEventOpenRegistration(o)) &&
-    !ordersWithAsaasCache.has(o.id)
+    !ordersWithReceiptMovement.has(o.id)
   );
 
-  const paidThisMonth = orders
-    .filter(o => o.payment_status === 'paid' && o.payment_date >= monthStart)
+  const ordersByMovementKey = useMemo(
+    () => new Map(orders.map(order => [`${order.type}:${order.id}`, order])),
+    [orders]
+  );
+  const paidThisMonth = financialMovements
+    .filter(payment => payment.credit_date >= monthStart && payment.credit_date <= todayStr)
+    .map(payment => {
+      const order = ordersByMovementKey.get(`${payment.order_type}:${payment.order_id}`);
+      return {
+        ...order,
+        id: payment.order_id || payment.id,
+        list_key: payment.id,
+        order_number: order?.order_number || payment.external_reference || 'Recebimento',
+        customer: order?.customer || 'Cliente',
+        total_value: Number(payment.value) || 0,
+        payment_status: 'paid',
+        payment_date: payment.credit_date,
+        type: payment.order_type || order?.type,
+        revenue_center_id: payment.revenue_center_id || order?.revenue_center_id || null,
+      };
+    })
     .sort((a, b) => b.payment_date.localeCompare(a.payment_date));
 
   const overdue    = activeOrders.filter(o => o.due_date && o.due_date < todayStr).sort((a, b) => a.due_date.localeCompare(b.due_date));
@@ -666,10 +754,9 @@ export default function Financial() {
   );
   const noCharge = activeOrders.filter(o => !o.asaas_charge_id && !o.asaas_payment_link && !o.external_payment_link);
 
-  // KPI valores: combina asaas_payments (real) + orders manuais (fallback)
+  // KPI de recebimentos confirmados na fonte financeira unica.
   const monthResult = sumReceived(
-    p => p.credit_date >= monthStart,
-    o => o.payment_date >= monthStart,
+    p => p.credit_date >= monthStart && p.credit_date <= todayStr,
   );
   const receivedMonth = monthResult.total;
 
@@ -706,10 +793,10 @@ export default function Financial() {
   const centerBreakdown = useMemo(() => {
     if (!centers.length || !paidThisMonth.length) return { rows: [], semCentro: 0 };
     const byCenter = {}; let semCentro = 0;
-    for (const o of paidThisMonth) {
-      const mVal = effectiveMonthlyValue(o);
-      if (o.revenue_center_id) byCenter[o.revenue_center_id] = (byCenter[o.revenue_center_id] || 0) + mVal;
-      else semCentro += mVal;
+    for (const payment of paidThisMonth) {
+      const value = Number(payment.total_value) || 0;
+      if (payment.revenue_center_id) byCenter[payment.revenue_center_id] = (byCenter[payment.revenue_center_id] || 0) + value;
+      else semCentro += value;
     }
     const rows = centers.map(c => ({ ...c, value: byCenter[c.id] || 0 }))
       .filter(c => c.value > 0).sort((a, b) => b.value - a.value);
@@ -734,14 +821,16 @@ export default function Financial() {
       const sevenMonthsAgo = new Date();
       sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
       sevenMonthsAgo.setDate(1);
-      const { data: payments } = await supabase.from('asaas_payments')
-        .select('id, asaas_payment_id, order_id, order_type, status, value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
-        .in('status', ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'])
-        .gte('credit_date', toLocalDateStr(sevenMonthsAgo))
-        .order('credit_date', { ascending: false });
-      const nextPayments = payments || [];
-      setAsaasPayments(nextPayments);
-      patchFinancialPageCache({ asaasPayments: nextPayments });
+      const { data: movements, error: movementsError } = await supabase.from('financial_movements')
+        .select('movement_id,source,order_id,order_type,status,gross_amount,net_amount,occurred_on,due_on,recognition_on,scheduled_on,payment_method,description,reference,revenue_center_id,is_legacy,metadata')
+        .eq('movement_kind', 'receipt')
+        .eq('is_actual', true)
+        .gte('scheduled_on', toLocalDateStr(sevenMonthsAgo))
+        .order('scheduled_on', { ascending: false });
+      if (movementsError) throw movementsError;
+      const nextMovements = (movements || []).map(toPaymentRecord);
+      setFinancialMovements(nextMovements);
+      patchFinancialPageCache({ financialMovements: nextMovements });
     } catch (e) {
       toast.error('Erro ao sincronizar: ' + (e.message || ''));
     } finally {
@@ -862,6 +951,8 @@ export default function Financial() {
           </Button>
         </div>
       </div>
+
+      <FinancialDataQuality issues={qualityIssues} />
 
       {/* ── KPI Cards ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

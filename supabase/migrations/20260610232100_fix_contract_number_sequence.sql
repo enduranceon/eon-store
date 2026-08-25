@@ -5,9 +5,11 @@ CREATE SEQUENCE IF NOT EXISTS assessment_contract_number_seq;
 -- Sincroniza a sequence com o maior número já existente
 SELECT setval(
   'assessment_contract_number_seq',
-  COALESCE(
-    MAX(SUBSTRING(contract_number FROM 5)::int), 0
-  )
+  GREATEST(
+    COALESCE(MAX(SUBSTRING(contract_number FROM 5)::int), 1),
+    1
+  ),
+  COUNT(*) > 0
 )
 FROM assessment_contracts
 WHERE contract_number ~ '^ASS-[0-9]+$';

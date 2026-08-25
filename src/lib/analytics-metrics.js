@@ -1,12 +1,16 @@
 import {
   buildContractLifecycleRows,
-  getContractTotalValue,
   isContractPaymentOverdue,
 } from '@/lib/assessment-contract-lifecycle';
 import { computeMrrHistory } from '@/lib/assessment-metrics';
+import {
+  financialMovementDate,
+  isActualFinancialMovement,
+  isOpenReceivable,
+} from '@/lib/financial-dashboard';
+import { FINANCIAL_MOVEMENT_KIND } from '@/lib/financial-ledger';
 import { toLocalDateStr } from '@/lib/utils';
 
-const RECEIVED_PAYMENT_STATUSES = new Set(['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH']);
 const OPEN_PROSPECT_STAGES = new Set(['new', 'proposal_ready', 'payment_link_sent']);
 const EFFECTIVE_CONTRACT_STATUSES = new Set(['scheduled', 'active', 'overdue', 'on_leave', 'finished', 'cancelled']);
 
@@ -180,20 +184,28 @@ function buildMaps(data) {
     contractsById: Object.fromEntries(data.contracts.map(item => [item.id, item])),
     presaleOrdersById: Object.fromEntries(data.presaleOrders.map(item => [item.id, item])),
     stockOrdersById: Object.fromEntries(data.stockOrders.map(item => [item.id, item])),
+    eventRegistrationsById: Object.fromEntries(data.eventRegistrations.map(item => [item.id, item])),
   };
 }
 
-function paymentOwner(payment, maps) {
-  if (payment.order_type === 'contract') {
-    const contract = maps.contractsById[payment.order_id];
+function movementOwner(movement, maps) {
+  if (movement.order_type === 'contract') {
+    const contract = maps.contractsById[movement.order_id];
     return contract ? { unit: 'assessoria', customerId: contract.customer_id, contract } : null;
   }
-  if (payment.order_type === 'stock') {
-    const order = maps.stockOrdersById[payment.order_id];
+  if (movement.order_type === 'stock') {
+    const order = maps.stockOrdersById[movement.order_id];
     return order ? { unit: 'loja', customerId: order.customer_id, order } : null;
   }
-  const order = maps.presaleOrdersById[payment.order_id];
-  return order ? { unit: 'loja', customerId: order.customer_id, order } : null;
+  if (movement.order_type === 'presale') {
+    const order = maps.presaleOrdersById[movement.order_id];
+    return order ? { unit: 'loja', customerId: order.customer_id, order } : null;
+  }
+  if (movement.order_type === 'event') {
+    const registration = maps.eventRegistrationsById[movement.order_id];
+    return registration ? { unit: 'eventos', customerId: registration.customer_id, registration } : null;
+  }
+  return null;
 }
 
 function ownerMatches(owner, context) {
@@ -204,109 +216,48 @@ function ownerMatches(owner, context) {
   return customerMatches(customersById[owner.customerId], filters, now);
 }
 
-function receiptDate(payment) {
-  return payment.payment_date || payment.credit_date || payment.created_at;
+function reportingUnit(unit) {
+  if (unit === 'pre_venda' || unit === 'loja') return 'loja';
+  if (unit === 'assessoria' || unit === 'eventos') return unit;
+  return 'outros';
 }
 
-function buildReceiptRecords(data, maps, context) {
-  const records = data.payments
-    .filter(payment => RECEIVED_PAYMENT_STATUSES.has(payment.status))
-    .map(payment => {
-      const owner = paymentOwner(payment, maps);
-      if (!ownerMatches(owner, context)) return null;
+function movementMatches(movement, maps, context) {
+  const owner = movementOwner(movement, maps);
+  if (owner) return ownerMatches(owner, context);
+  const { filters, now } = context;
+  if (filters.modality !== 'all' || filters.plan !== 'all' || filters.coach !== 'all') return false;
+  return customerMatches(null, filters, now);
+}
+
+function buildFinancialRecords(data, maps, context) {
+  return data.financialMovements
+    .map(movement => {
+      if (!movementMatches(movement, maps, context)) return null;
+      const owner = movementOwner(movement, maps);
+      const date = financialMovementDate(movement);
+      if (!date) return null;
       return {
-        id: payment.id,
-        orderId: payment.order_id,
-        unit: owner.unit,
-        customerId: owner.customerId,
-        contractId: owner.contract?.id || null,
-        gross: number(payment.value),
-        net: number(payment.net_value ?? payment.value),
-        date: dateOnly(receiptDate(payment)),
+        id: movement.movement_id,
+        orderId: movement.order_id,
+        unit: reportingUnit(movement.business_unit),
+        customerId: owner?.customerId || null,
+        contractId: owner?.contract?.id || null,
+        movementKind: movement.movement_kind,
+        actual: isActualFinancialMovement(movement),
+        receivable: isOpenReceivable(movement),
+        gross: number(movement.gross_amount),
+        net: number(movement.net_amount),
+        fee: number(movement.fee_amount),
+        amount: number(movement.net_amount),
+        signed: number(movement.signed_net_amount),
+        date,
       };
     })
     .filter(Boolean);
-
-  const ordersWithReceipts = new Set(records.map(record => record.orderId));
-
-  data.contracts.forEach(contract => {
-    if (!contractMatches(contract, context)) return;
-    if (contract.payment_status !== 'paid' || !contract.payment_date || ordersWithReceipts.has(contract.id)) return;
-    if (!contract.manual_payment && contract.asaas_charge_id) return;
-    const value = getContractTotalValue(contract, context.plansById);
-    records.push({
-      id: `manual-contract-${contract.id}`,
-      orderId: contract.id,
-      unit: 'assessoria',
-      customerId: contract.customer_id,
-      contractId: contract.id,
-      gross: value,
-      net: value,
-      date: dateOnly(contract.payment_date),
-    });
-  });
-
-  const appendManualOrder = (order, type) => {
-    if (order.payment_status !== 'paid' || !order.payment_date || ordersWithReceipts.has(order.id)) return;
-    if (!order.manual_payment && order.asaas_charge_id) return;
-    const owner = { unit: 'loja', customerId: order.customer_id, order };
-    if (!ownerMatches(owner, context)) return;
-    const value = number(order.total_value);
-    records.push({
-      id: `manual-${type}-${order.id}`,
-      orderId: order.id,
-      unit: 'loja',
-      customerId: order.customer_id,
-      contractId: null,
-      gross: value,
-      net: value,
-      date: dateOnly(order.payment_date),
-    });
-  };
-
-  data.presaleOrders.forEach(order => appendManualOrder(order, 'presale'));
-  data.stockOrders.forEach(order => appendManualOrder(order, 'stock'));
-  return records.filter(record => record.date);
 }
 
-function buildRefundRecords(data, maps, context) {
-  const contractRefunds = data.contracts
-    .filter(contract => number(contract.refund_amount) > 0 && contractMatches(contract, context))
-    .map(contract => ({
-      id: `contract-refund-${contract.id}`,
-      orderId: contract.id,
-      unit: 'assessoria',
-      customerId: contract.customer_id,
-      contractId: contract.id,
-      amount: number(contract.refund_amount),
-      date: dateOnly(contract.refund_date || contract.updated_at),
-    }));
-
-  const storeRefunds = data.returns
-    .filter(item => number(item.refund_value) > 0 && !['cancelled', 'rejected'].includes(item.status))
-    .map(item => {
-      const paymentType = item.order_type === 'stock' ? 'stock' : 'presale';
-      const order = paymentType === 'stock'
-        ? maps.stockOrdersById[item.order_id]
-        : maps.presaleOrdersById[item.order_id];
-      const owner = order ? { unit: 'loja', customerId: order.customer_id, order } : null;
-      if (!ownerMatches(owner, context)) return null;
-      return {
-        id: `store-refund-${item.id}`,
-        orderId: item.order_id,
-        unit: 'loja',
-        customerId: owner.customerId,
-        contractId: null,
-        amount: number(item.refund_value),
-        date: dateOnly(item.completed_at || item.received_at || item.created_at),
-      };
-    })
-    .filter(Boolean);
-
-  return [...contractRefunds, ...storeRefunds].filter(record => record.date);
-}
-
-function monthSeries(period, receipts, refunds) {
+function monthSeries(period, records) {
   const first = parseLocalDate(period.from);
   const last = parseLocalDate(period.to);
   if (!first || !last) return [];
@@ -321,16 +272,18 @@ function monthSeries(period, receipts, refunds) {
   const visibleMonths = months.slice(-24);
 
   return visibleMonths.map(ym => {
-    const monthReceipts = receipts.filter(item => monthOnly(item.date) === ym);
-    const monthRefunds = refunds.filter(item => monthOnly(item.date) === ym);
+    const monthRecords = records.filter(item => item.actual && monthOnly(item.date) === ym);
+    const netRevenue = unit => sum(
+      monthRecords.filter(item => item.unit === unit && [FINANCIAL_MOVEMENT_KIND.RECEIPT, FINANCIAL_MOVEMENT_KIND.REFUND].includes(item.movementKind)),
+      item => item.signed,
+    );
     const date = new Date(`${ym}-01T12:00:00`);
     return {
       ym,
       label: date.toLocaleString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', ''),
-      assessoria: sum(monthReceipts.filter(item => item.unit === 'assessoria'), item => item.net)
-        - sum(monthRefunds.filter(item => item.unit === 'assessoria'), item => item.amount),
-      loja: sum(monthReceipts.filter(item => item.unit === 'loja'), item => item.net)
-        - sum(monthRefunds.filter(item => item.unit === 'loja'), item => item.amount),
+      assessoria: netRevenue('assessoria'),
+      loja: netRevenue('loja'),
+      eventos: netRevenue('eventos'),
     };
   });
 }
@@ -531,7 +484,7 @@ export function buildAnalytics(data, filters, now = new Date()) {
   const maps = buildMaps(data);
   const earliestDates = [
     ...data.contracts.map(item => dateOnly(item.created_at)),
-    ...data.payments.map(item => dateOnly(item.created_at)),
+    ...data.financialMovements.map(item => financialMovementDate(item)),
     ...data.presaleOrders.map(item => dateOnly(item.created_date)),
   ].filter(Boolean).sort();
   const period = getAnalyticsPeriod(filters.period, now, earliestDates[0]);
@@ -547,10 +500,15 @@ export function buildAnalytics(data, filters, now = new Date()) {
   const activeRows = filteredRows.filter(row => row.lifecycle?.counts?.active);
   const activeCustomerIds = unique(activeRows.map(row => row.customer_id));
   const activeCustomers = [...activeCustomerIds].map(id => maps.customersById[id]).filter(Boolean);
-  const receipts = buildReceiptRecords(data, maps, context);
-  const refunds = buildRefundRecords(data, maps, context);
+  const financialRecords = buildFinancialRecords(data, maps, context);
+  const receipts = financialRecords.filter(item => item.actual && item.movementKind === FINANCIAL_MOVEMENT_KIND.RECEIPT);
+  const refunds = financialRecords.filter(item => item.actual && item.movementKind === FINANCIAL_MOVEMENT_KIND.REFUND);
   const periodReceipts = receipts.filter(item => inPeriod(item.date, period));
   const periodRefunds = refunds.filter(item => inPeriod(item.date, period));
+  const periodFinancialRecords = financialRecords.filter(item => item.actual && inPeriod(item.date, period));
+  const periodExpenses = periodFinancialRecords.filter(item => item.movementKind === FINANCIAL_MOVEMENT_KIND.EXPENSE);
+  const periodPayouts = periodFinancialRecords.filter(item => item.movementKind === FINANCIAL_MOVEMENT_KIND.PAYOUT);
+  const openReceivables = financialRecords.filter(item => item.receivable);
 
   const entries = filteredRows.filter(row => row.lifecycle?.counts?.entry && inPeriod(row.created_at, period));
   const renewals = filteredRows.filter(row => row.lifecycle?.counts?.renewal && inPeriod(row.created_at, period));
@@ -582,27 +540,38 @@ export function buildAnalytics(data, filters, now = new Date()) {
     - sum(periodRefunds.filter(item => item.unit === 'assessoria'), item => item.amount);
   const storeNet = sum(periodReceipts.filter(item => item.unit === 'loja'), item => item.net)
     - sum(periodRefunds.filter(item => item.unit === 'loja'), item => item.amount);
-  const fees = Math.max(0, grossRevenue - receivedNet);
+  const eventsNet = sum(periodReceipts.filter(item => item.unit === 'eventos'), item => item.net)
+    - sum(periodRefunds.filter(item => item.unit === 'eventos'), item => item.amount);
+  const fees = sum(periodReceipts, item => item.fee);
+  const expenses = sum(periodExpenses, item => item.net);
+  const paidPayouts = sum(periodPayouts, item => item.net);
+  const operatingResult = sum(periodFinancialRecords, item => item.signed);
+  const receivableAmount = sum(openReceivables, item => item.gross);
+  const overdueReceivableAmount = sum(
+    openReceivables.filter(item => item.date < toLocalDateStr(now)),
+    item => item.gross,
+  );
   const payingCustomers = unique(periodReceipts.map(item => item.customerId));
   const receivedTicket = payingCustomers.size ? netRevenue / payingCustomers.size : 0;
 
   const realizedByCustomer = new Map();
   receipts.forEach(item => {
     if (!item.customerId) return;
-    const current = realizedByCustomer.get(item.customerId) || { assessoria: 0, loja: 0 };
+    const current = realizedByCustomer.get(item.customerId) || { assessoria: 0, loja: 0, eventos: 0 };
     current[item.unit] += item.net;
     realizedByCustomer.set(item.customerId, current);
   });
   refunds.forEach(item => {
     if (!item.customerId) return;
-    const current = realizedByCustomer.get(item.customerId) || { assessoria: 0, loja: 0 };
+    const current = realizedByCustomer.get(item.customerId) || { assessoria: 0, loja: 0, eventos: 0 };
     current[item.unit] -= item.amount;
     realizedByCustomer.set(item.customerId, current);
   });
   const realizedCustomers = [...realizedByCustomer.values()];
   const realizedLtvAssessoria = realizedCustomers.length ? average(realizedCustomers.map(item => item.assessoria)) : 0;
   const realizedLtvStore = realizedCustomers.length ? average(realizedCustomers.map(item => item.loja)) : 0;
-  const realizedLtvTotal = realizedCustomers.length ? average(realizedCustomers.map(item => item.assessoria + item.loja)) : 0;
+  const realizedLtvEvents = realizedCustomers.length ? average(realizedCustomers.map(item => item.eventos)) : 0;
+  const realizedLtvTotal = realizedCustomers.length ? average(realizedCustomers.map(item => item.assessoria + item.loja + item.eventos)) : 0;
 
   const today = toLocalDateStr(now);
   const overdueRows = activeRows.filter(row => isContractPaymentOverdue(row, today));
@@ -667,7 +636,7 @@ export function buildAnalytics(data, filters, now = new Date()) {
   const cohorts = buildCohorts(planFilteredContracts, now);
   const prospects = buildProspectMetrics(data, context, period);
   const mrrHistory = computeMrrHistory(filteredRows, data.plans, 12);
-  const revenueHistory = monthSeries(period, periodReceipts, periodRefunds);
+  const revenueHistory = monthSeries(period, financialRecords);
 
   return {
     period,
@@ -682,11 +651,19 @@ export function buildAnalytics(data, filters, now = new Date()) {
       netRevenue,
       assessoriaNet,
       storeNet,
+      eventsNet,
       refunded,
       fees,
+      expenses,
+      paidPayouts,
+      operatingResult,
+      receivableAmount,
+      overdueReceivableAmount,
+      receivableCount: openReceivables.length,
       payingCustomers: payingCustomers.size,
       realizedLtvAssessoria,
       realizedLtvStore,
+      realizedLtvEvents,
       realizedLtvTotal,
       estimatedLtv,
       averageLifetimeMonths,

@@ -8,6 +8,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/api/db';
+import { toPaymentRecord } from '@/lib/financial-ledger';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import {
@@ -226,12 +227,13 @@ export default function CentralFinanceira() {
       supabase.from('assessment_coaches').select('id, name, email'),
       supabase.from('presale_customers').select('id, full_name'),
       supabase
-        .from('asaas_payments')
-        .select('id, order_id, order_type, credit_date, value, status, source')
-        .eq('order_type', 'contract')
-        .gte('credit_date', rangeStart)
-        .lte('credit_date', rangeEnd)
-        .neq('status', 'CANCELLED'),
+        .from('financial_movements')
+        .select('movement_id,source,order_id,order_type,status,gross_amount,net_amount,occurred_on,due_on,recognition_on,scheduled_on,payment_method,description,reference,revenue_center_id,is_legacy,metadata')
+        .eq('business_unit', 'assessoria')
+        .eq('movement_kind', 'receipt')
+        .eq('is_actual', true)
+        .gte('scheduled_on', rangeStart)
+        .lte('scheduled_on', rangeEnd),
     ]);
 
     const contracts = contractsRes.data || [];
@@ -243,7 +245,7 @@ export default function CentralFinanceira() {
       modalities: modalitiesRes.data || [],
       coaches:   coachesRes.data || [],
       customers: customersRes.data || [],
-      payments:  paymentsRes.data || [],
+      payments:  (paymentsRes.data || []).map(toPaymentRecord),
       todayStr,
     });
   }, []);
