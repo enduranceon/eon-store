@@ -90,6 +90,9 @@ CREATE TABLE IF NOT EXISTS presale_orders (
   items           jsonb DEFAULT '[]',
   total_amount    numeric(10,2),
   notes           text,
+  payment_method  text,
+  delivery_method text,
+  delivery_city   text,
   created_date    timestamptz DEFAULT now(),
   updated_date    timestamptz
 );
