@@ -117,6 +117,9 @@ CREATE TABLE IF NOT EXISTS products (
   extras        jsonb DEFAULT '[]'::jsonb
 );
 
+ALTER TABLE presale_products
+  ADD COLUMN IF NOT EXISTS product_id uuid REFERENCES products(id);
+
 CREATE TABLE IF NOT EXISTS stock_products (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   created_date    timestamptz DEFAULT now(),
