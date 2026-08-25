@@ -31,19 +31,19 @@ VALUES
   ('diamond', 21, NULL, 20)
 ON CONFLICT (tier_name) DO NOTHING;
 
--- Inserir valores de repasse (corrida)
+-- Seed by modality name so a clean database does not depend on production UUIDs.
+WITH repasse_defaults (modality_name, coach_role, repasse_value) AS (
+  VALUES
+    ('corrida', 'junior', 50::numeric),
+    ('corrida', 'pleno', 70::numeric),
+    ('corrida', 'senior', 80::numeric),
+    ('triathlon', 'junior', 100::numeric),
+    ('triathlon', 'pleno', 130::numeric),
+    ('triathlon', 'senior', 160::numeric)
+)
 INSERT INTO assessment_coach_repasse (coach_role, modality_id, repasse_value)
-VALUES
-  ('junior', '13cbc183-5988-4aff-92cc-38d4a7ddfed5', 50),
-  ('pleno', '13cbc183-5988-4aff-92cc-38d4a7ddfed5', 70),
-  ('senior', '13cbc183-5988-4aff-92cc-38d4a7ddfed5', 80)
-ON CONFLICT DO NOTHING;
-
--- Inserir valores de repasse (triathlon)
-INSERT INTO assessment_coach_repasse (coach_role, modality_id, repasse_value)
-VALUES
-  ('junior', 'b93530eb-018c-4f79-948e-6775313a347a', 100),
-  ('pleno', 'b93530eb-018c-4f79-948e-6775313a347a', 130),
-  ('senior', 'b93530eb-018c-4f79-948e-6775313a347a', 160)
-ON CONFLICT DO NOTHING;
+SELECT rates.coach_role, modality.id, rates.repasse_value
+FROM repasse_defaults rates
+JOIN assessment_modalities modality ON modality.name = rates.modality_name
+ON CONFLICT (coach_role, modality_id) DO NOTHING;
 ;
