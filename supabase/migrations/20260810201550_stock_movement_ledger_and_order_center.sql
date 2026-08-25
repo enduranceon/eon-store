@@ -5,6 +5,65 @@ BEGIN;
 -- trigger below performed the same subtraction a second time after insert.
 DROP TRIGGER IF EXISTS trg_sync_stock_on_order_change ON public.stock_orders;
 
+CREATE SCHEMA IF NOT EXISTS eon_private;
+
+CREATE OR REPLACE FUNCTION eon_private.stock_json_numeric(p_payload jsonb, p_key text)
+RETURNS numeric
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT CASE
+    WHEN trim(COALESCE(p_payload->>p_key, '')) ~ '^-?[0-9]+([.][0-9]+)?$'
+      THEN (p_payload->>p_key)::numeric
+    ELSE NULL
+  END;
+$$;
+
+CREATE OR REPLACE FUNCTION eon_private.stock_variation_name(p_variation jsonb)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT COALESCE(
+    NULLIF(trim(COALESCE(p_variation->>'name', '')), ''),
+    NULLIF(array_to_string(ARRAY[
+      NULLIF(trim(COALESCE(p_variation->>'gender', '')), ''),
+      NULLIF(trim(COALESCE(p_variation->>'size', '')), '')
+    ], ' - '), ''),
+    NULLIF(trim(COALESCE(p_variation->>'sku', '')), '')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION eon_private.stock_variation_quantity(p_variation jsonb)
+RETURNS integer
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT GREATEST(
+    0,
+    COALESCE(floor(eon_private.stock_json_numeric(p_variation, 'quantity'))::integer, 0)
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION eon_private.stock_variations_total_quantity(p_variations jsonb)
+RETURNS integer
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT COALESCE(sum(eon_private.stock_variation_quantity(value)), 0)::integer
+  FROM jsonb_array_elements(
+    CASE
+      WHEN jsonb_typeof(COALESCE(p_variations, '[]'::jsonb)) = 'array'
+        THEN COALESCE(p_variations, '[]'::jsonb)
+      ELSE '[]'::jsonb
+    END
+  );
+$$;
+
 CREATE TABLE public.stock_movements (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   stock_product_id UUID NOT NULL REFERENCES public.stock_products(id) ON DELETE RESTRICT,
