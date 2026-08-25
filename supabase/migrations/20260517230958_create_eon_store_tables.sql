@@ -94,6 +94,92 @@ CREATE TABLE IF NOT EXISTS presale_orders (
   updated_date    timestamptz
 );
 
+-- Legacy store tables were created before migrations were tracked. Keep this
+-- baseline here so a clean database can replay the complete application schema.
+CREATE TABLE IF NOT EXISTS products (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_date  timestamptz DEFAULT now(),
+  updated_date  timestamptz DEFAULT now(),
+  name          text NOT NULL,
+  description   text,
+  category      text,
+  subcategory   text,
+  images        jsonb DEFAULT '[]'::jsonb,
+  sale_price    numeric DEFAULT 0,
+  regular_price numeric DEFAULT 0,
+  cost_price    numeric DEFAULT 0,
+  extra_cost    numeric DEFAULT 0,
+  supplier      text,
+  supplier_id   uuid,
+  notes         text,
+  status        text DEFAULT 'active',
+  variations    jsonb DEFAULT '[]'::jsonb,
+  extras        jsonb DEFAULT '[]'::jsonb
+);
+
+CREATE TABLE IF NOT EXISTS stock_products (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_date    timestamptz DEFAULT now(),
+  updated_date    timestamptz DEFAULT now(),
+  name            text NOT NULL,
+  description     text,
+  category        text,
+  subcategory     text,
+  images          jsonb DEFAULT '[]'::jsonb,
+  sale_price      numeric DEFAULT 0,
+  regular_price   numeric DEFAULT 0,
+  cost_price      numeric DEFAULT 0,
+  quantity        integer DEFAULT 0,
+  status          text DEFAULT 'active',
+  notes           text,
+  product_id      uuid REFERENCES products(id),
+  supplier        text,
+  supplier_id     uuid,
+  product_number  integer,
+  variations      jsonb NOT NULL DEFAULT '[]'::jsonb,
+  extras          jsonb NOT NULL DEFAULT '[]'::jsonb,
+  show_in_store   boolean NOT NULL DEFAULT true
+);
+
+CREATE TABLE IF NOT EXISTS stock_orders (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_number        text UNIQUE,
+  created_date        timestamptz DEFAULT now(),
+  updated_date        timestamptz DEFAULT now(),
+  customer_name       text,
+  customer_whatsapp   text,
+  customer_email      text,
+  items               jsonb DEFAULT '[]'::jsonb,
+  total_value         numeric DEFAULT 0,
+  payment_method      text,
+  payment_status      text DEFAULT 'awaiting_charge',
+  delivery_status     text DEFAULT 'awaiting_delivery',
+  delivery_method     text,
+  delivery_city       text,
+  internal_notes      text,
+  payment_date        date,
+  delivery_date       date
+);
+
+CREATE SEQUENCE IF NOT EXISTS stock_order_number_seq START 1;
+
+CREATE OR REPLACE FUNCTION public.generate_stock_order_number()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.order_number := 'EST-' || LPAD(nextval('stock_order_number_seq')::text, 6, '0');
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS set_stock_order_number ON stock_orders;
+CREATE TRIGGER set_stock_order_number
+  BEFORE INSERT ON stock_orders
+  FOR EACH ROW
+  WHEN (NEW.order_number IS NULL)
+  EXECUTE FUNCTION public.generate_stock_order_number();
+
 -- Sequence for order numbers
 CREATE SEQUENCE IF NOT EXISTS presale_order_seq START 1;
 
@@ -130,4 +216,7 @@ ALTER TABLE presale_campaigns  DISABLE ROW LEVEL SECURITY;
 ALTER TABLE presale_products   DISABLE ROW LEVEL SECURITY;
 ALTER TABLE presale_customers  DISABLE ROW LEVEL SECURITY;
 ALTER TABLE presale_orders     DISABLE ROW LEVEL SECURITY;
+ALTER TABLE products           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stock_products     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stock_orders       ENABLE ROW LEVEL SECURITY;
 ;
