@@ -10,6 +10,8 @@ import { handleChargeLifecycleRequest } from "./charge-lifecycle.ts";
 import { handleChargeRequest } from "./charges.ts";
 import { handleContractRequest } from "./contracts.ts";
 import { handleContractBillingRequest } from "./contract-billing.ts";
+import { handleEventBillingRequest } from "./event-billing.ts";
+import { handleOrderExternalBillingRequest } from "./order-external-billing.ts";
 import { handleContractLifecycleRequest } from "./contract-lifecycle.ts";
 import { handleContractMembershipRequest } from "./contract-membership.ts";
 import {
@@ -180,6 +182,22 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (contractBillingResponse) return contractBillingResponse;
+
+  const eventBillingResponse = await handleEventBillingRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (eventBillingResponse) return eventBillingResponse;
+
+  const orderExternalBillingResponse = await handleOrderExternalBillingRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (orderExternalBillingResponse) return orderExternalBillingResponse;
 
   const contractLifecycleResponse = await handleContractLifecycleRequest(
     req,

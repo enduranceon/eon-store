@@ -291,11 +291,24 @@ function SummaryCard({ icon: Icon, label, value, tone = 'blue', detail }) {
   );
 }
 
-function normalizeSaleHistory(ev, presaleMap, stockMap) {
-  const row = ev.order_type === 'stock' ? stockMap.get(ev.order_id) : presaleMap.get(ev.order_id);
+function normalizeSaleHistory(ev, presaleMap, stockMap, eventMap, customersMap) {
+  const row = ev.order_type === 'stock'
+    ? stockMap.get(ev.order_id)
+    : ev.order_type === 'event'
+    ? eventMap.get(ev.order_id)
+    : presaleMap.get(ev.order_id);
   if (!row) return null;
-  const customerName = ev.order_type === 'stock' ? row.customer_name : row.checkout_name;
-  const customerWhatsapp = ev.order_type === 'stock' ? row.customer_whatsapp : row.checkout_whatsapp;
+  const eventCustomer = ev.order_type === 'event' ? customersMap.get(row.customer_id) || {} : {};
+  const customerName = ev.order_type === 'stock'
+    ? row.customer_name
+    : ev.order_type === 'event'
+    ? eventCustomer.full_name
+    : row.checkout_name;
+  const customerWhatsapp = ev.order_type === 'stock'
+    ? row.customer_whatsapp
+    : ev.order_type === 'event'
+    ? eventCustomer.whatsapp
+    : row.checkout_whatsapp;
   const status = historyStatus(ev);
   return {
     id: `sale:${ev.id}`,
@@ -305,9 +318,13 @@ function normalizeSaleHistory(ev, presaleMap, stockMap) {
     statusTone: status.tone,
     customerName: customerName || 'Cliente',
     customerWhatsapp,
-    orderNumber: row.order_number,
+    orderNumber: ev.order_type === 'event' ? row.registration_number : row.order_number,
     createdAt: ev.created_at,
-    href: ev.order_type === 'stock' ? `/estoque/pedidos/${row.id}` : `/pedidos/${row.id}`,
+    href: ev.order_type === 'stock'
+      ? `/estoque/pedidos/${row.id}`
+      : ev.order_type === 'event'
+      ? `/eventos/${row.event_id}`
+      : `/pedidos/${row.id}`,
   };
 }
 
@@ -316,6 +333,7 @@ function buildHistory(data) {
   const contracts = mapById(data.contracts || []);
   const presale = mapById(data.presaleOrders || []);
   const stock = mapById(data.stockOrders || []);
+  const events = mapById(data.eventRegistrations || []);
   const contractRows = (data.contractEvents || []).map(ev => {
     const contract = contracts.get(ev.contract_id);
     if (!contract) return null;
@@ -337,7 +355,7 @@ function buildHistory(data) {
 
   const saleRows = (data.saleEvents || [])
     .filter(ev => ev.new_status === 'charge_sent' || ev.metadata?.source === 'communication_center')
-    .map(ev => normalizeSaleHistory(ev, presale, stock))
+    .map(ev => normalizeSaleHistory(ev, presale, stock, events, customers))
     .filter(Boolean);
 
   return [...contractRows, ...saleRows]
@@ -354,6 +372,9 @@ async function fetchCommunicationData() {
     plans,
     modalities,
     coaches,
+    eventRegistrations,
+    eventTypes,
+    events,
     contractEvents,
     saleEvents,
     communicationConfig,
@@ -374,6 +395,12 @@ async function fetchCommunicationData() {
     supabase.from('assessment_plans').select('id, name, modality_id, period, period_months, price_total, price_monthly'),
     supabase.from('assessment_modalities').select('id, name'),
     supabase.from('assessment_coaches').select('id, name'),
+    supabase.from('event_registrations')
+      .select('id, registration_number, event_id, registration_type_id, customer_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, customer_link_confirmed_at, customer_link_confirmed_by, created_at, updated_at')
+      .neq('payment_status', 'cancelled')
+      .neq('payment_status', 'refunded'),
+    supabase.from('event_registration_types').select('id, event_id, name, price'),
+    supabase.from('events').select('id, name'),
     supabase.from('assessment_contract_event')
       .select('id, contract_id, event_type, payload, notes, created_at')
       .in('event_type', COMMUNICATION_EVENT_TYPES)
@@ -385,7 +412,20 @@ async function fetchCommunicationData() {
     loadCommunicationConfig(),
   ]);
 
-  const responses = { presaleOrders, stockOrders, contracts, customers, plans, modalities, coaches, contractEvents, saleEvents };
+  const responses = {
+    presaleOrders,
+    stockOrders,
+    contracts,
+    customers,
+    plans,
+    modalities,
+    coaches,
+    eventRegistrations,
+    eventTypes,
+    events,
+    contractEvents,
+    saleEvents,
+  };
   for (const [name, res] of Object.entries(responses)) {
     if (res.error) throw new Error(`${name}: ${res.error.message}`);
   }

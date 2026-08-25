@@ -15,7 +15,7 @@ const AMBIGUOUS_ASAAS_ERROR_CODES = new Set([
   "asaas_due_date_update_unavailable",
   "asaas_due_date_update_unconfirmed",
 ]);
-const DUE_DATE_PATH = /^\/orders\/(presale|stock|contract)\/([^/]+)\/due-date$/;
+const DUE_DATE_PATH = /^\/orders\/(presale|stock|contract|event)\/([^/]+)\/due-date$/;
 
 interface PreparedDueDateChange {
   operation_id: string;
@@ -268,16 +268,26 @@ export async function handleBillingRequest(
     }, 400);
   }
 
-  const { data, error } = await supabase.rpc(
-    "prepare_order_due_date_change",
-    {
-      p_order_type: orderType,
-      p_order_id: orderId,
-      p_due_date: dueDate,
-      p_idempotency_key: idempotencyKey,
-      p_actor_id: actorId,
-    },
-  );
+  const { data, error } = orderType === "event"
+    ? await supabase.rpc(
+      "prepare_event_due_date_change",
+      {
+        p_order_id: orderId,
+        p_due_date: dueDate,
+        p_idempotency_key: idempotencyKey,
+        p_actor_id: actorId,
+      },
+    )
+    : await supabase.rpc(
+      "prepare_order_due_date_change",
+      {
+        p_order_type: orderType,
+        p_order_id: orderId,
+        p_due_date: dueDate,
+        p_idempotency_key: idempotencyKey,
+        p_actor_id: actorId,
+      },
+    );
   if (error) return databaseError(error, "prepare due date change");
 
   const prepared = data as PreparedDueDateChange;
@@ -352,7 +362,9 @@ export async function handleBillingRequest(
   }
 
   const { data: completed, error: completeError } = await supabase.rpc(
-    "complete_order_due_date_change",
+    orderType === "event"
+      ? "complete_event_due_date_change"
+      : "complete_order_due_date_change",
     {
       p_operation_id: prepared.operation_id,
       p_lease_token: prepared.lease_token,

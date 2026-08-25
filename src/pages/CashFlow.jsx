@@ -130,7 +130,8 @@ async function loadCashFlowPayments() {
   //  presale  → presale_orders.checkout_name
   //  stock    → stock_orders.customer_name
   //  contract → assessment_contracts.customer_id → presale_customers.full_name
-  const idsByType = { presale: new Set(), stock: new Set(), contract: new Set() };
+  //  event    → event_registrations.customer_id → presale_customers.full_name
+  const idsByType = { presale: new Set(), stock: new Set(), contract: new Set(), event: new Set() };
   for (const p of payments) {
     if (p.order_id && idsByType[p.order_type]) idsByType[p.order_type].add(p.order_id);
   }
@@ -174,6 +175,26 @@ async function loadCashFlowPayments() {
           }
           for (const c of contracts) {
             nameMap[c.id] = { customer: custMap[c.customer_id] || '—', orderNumber: c.contract_number };
+          }
+        })
+    );
+  }
+  if (idsByType.event.size) {
+    tasks.push(
+      supabase.from('event_registrations')
+        .select('id, registration_number, customer_id')
+        .in('id', [...idsByType.event])
+        .then(async ({ data }) => {
+          const registrations = data || [];
+          const custIds = [...new Set(registrations.map(r => r.customer_id).filter(Boolean))];
+          let custMap = {};
+          if (custIds.length) {
+            const { data: custs } = await supabase
+              .from('presale_customers').select('id, full_name').in('id', custIds);
+            custMap = Object.fromEntries((custs || []).map(c => [c.id, c.full_name]));
+          }
+          for (const r of registrations) {
+            nameMap[r.id] = { customer: custMap[r.customer_id] || '—', orderNumber: r.registration_number };
           }
         })
     );

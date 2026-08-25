@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, CalendarDays, Check, ChevronRight, Clock, Copy, ExternalLink, FileText,
-  HandCoins, Info, Layers, Link2, MapPin, Navigation, Pencil, Plus, ReceiptText, Search,
-  Trash2, Users, X,
+  AlertTriangle, ArrowLeft, CalendarDays, Check, CheckCircle2, ChevronRight,
+  Clock, Copy, ExternalLink, FileText, HandCoins, Info, Layers, Link2, Loader2,
+  MapPin, MessageCircle, Navigation, Pencil, Plus, ReceiptText, Search, Trash2,
+  UserPlus, Users, X, Zap,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,9 +18,19 @@ import {
   AssessmentCoach, EventExpense, EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
 } from '@/api/entities';
 import {
-  cancelEventRegistration, createEventRegistration, recordEventRegistrationPayment,
+  cancelEventRegistration, confirmEventRegistrationCustomer,
+  createEventRegistration, createOrderCharge, linkEventRegistrationCustomer,
+  removeEventExternalCharge, saveEventExternalCharge,
 } from '@/api/client';
+import ManualPaymentForm from '@/components/ManualPaymentForm';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
+import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
+import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
 import { studentProfilePath } from '@/lib/customer-profile';
+import { normalizeExternalChargeMethod } from '@/lib/external-charge';
+import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
+import { defaultPaymentDueDate } from '@/lib/payment-methods';
+import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
@@ -50,8 +61,6 @@ const FIELD_KINDS = [
   { value: 'boolean',  label: 'Sim / Não' },
   { value: 'number',   label: 'Número' },
 ];
-
-const PAYMENT_METHODS = ['PIX', 'Dinheiro', 'Cartão', 'Transferência', 'Outro'];
 
 const EMPTY_EVENT_FORM = {
   name: '',
@@ -84,6 +93,15 @@ function normalizeUrl(value) {
   if (!text) return '';
   if (/^https?:\/\//i.test(text)) return text;
   return `https://${text}`;
+}
+
+function isEventRegistrationUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.pathname.startsWith('/inscricao/');
+  } catch {
+    return false;
+  }
 }
 
 function timeValue(value) {
@@ -216,6 +234,57 @@ function DynamicForm({ fields, answers, onChange }) {
       })}
     </div>
   );
+}
+
+function hasConfirmedCustomerLink(registration) {
+  return Boolean(registration?.customer_link_confirmed_at);
+}
+
+function hasRegistrationChargeInfo(registration) {
+  return Boolean(
+    registration?.asaas_charge_id ||
+    registration?.asaas_payment_link ||
+    registration?.asaas_pix_copy ||
+    registration?.external_payment_link ||
+    registration?.external_invoice_number
+  );
+}
+
+function buildEventChargeTask(registration, { customer, type, event }) {
+  const total = Number(type?.price || 0);
+  const label = [event?.name, type?.name].filter(Boolean).join(' - ') || 'Inscrição de evento';
+  return {
+    id: `event-charge:${registration.id}:${registration.updated_at || registration.payment_message_sent_at || ''}`,
+    kind: TASK_KIND.CHARGE_SEND,
+    bucket: TASK_BUCKET.CHARGES,
+    sourceType: 'event',
+    tableName: 'event_registrations',
+    sourceId: registration.id,
+    sourceLabel: 'Inscrição de evento',
+    orderNumber: registration.registration_number,
+    customerName: customer?.full_name || 'Cliente',
+    customerWhatsapp: customer?.whatsapp || '',
+    customerEmail: customer?.email || '',
+    totalValue: total,
+    paymentStatus: registration.payment_status || 'pending',
+    dueDate: registration.due_date || defaultPaymentDueDate(),
+    paymentDate: registration.payment_date || '',
+    asaasChargeId: registration.asaas_charge_id,
+    asaasPaymentLink: registration.asaas_payment_link,
+    asaasPixCopy: registration.asaas_pix_copy,
+    externalPaymentLink: registration.external_payment_link,
+    paymentMessageSentAt: registration.payment_message_sent_at,
+    updatedAt: registration.updated_at,
+    items: [{ label, quantity: 1, unitPrice: total, lineTotal: total }],
+    itemSummary: label,
+    href: `/eventos/${registration.event_id}`,
+    title: registration.payment_message_sent_at ? 'Reenviar cobrança do evento' : 'Enviar cobrança do evento',
+    statusLabel: registration.due_date ? `vence em ${formatDate(registration.due_date)}` : 'definir vencimento',
+    scheduledDate: registration.due_date || defaultPaymentDueDate(),
+    sortDate: registration.due_date || defaultPaymentDueDate(),
+    priority: 20,
+    needsPaymentLink: !registration.asaas_payment_link && !registration.asaas_pix_copy,
+  };
 }
 
 export default function EventDetail() {
@@ -401,6 +470,87 @@ export default function EventDetail() {
       .slice(0, 8);
   }, [customers, regCustomerSearch]);
 
+  // ----- vínculo de cliente da inscrição -----
+  const [customerLinkModal, setCustomerLinkModal] = useState(null);
+  const [customerLinkSearch, setCustomerLinkSearch] = useState('');
+  const [newCustomer, setNewCustomer] = useState({ full_name: '', whatsapp: '', email: '', cpf: '' });
+  const [customerLinkSaving, setCustomerLinkSaving] = useState(false);
+
+  const customerLinkMatches = useMemo(() => {
+    const q = customerLinkSearch.trim().toLowerCase();
+    if (!q) return [];
+    return customers
+      .filter(c => [c.full_name, c.whatsapp, c.email, c.cpf].some(v => String(v || '').toLowerCase().includes(q)))
+      .slice(0, 12);
+  }, [customers, customerLinkSearch]);
+
+  const openCustomerLink = reg => {
+    const current = customersById[reg.customer_id] || {};
+    setCustomerLinkSearch('');
+    setNewCustomer({
+      full_name: current.full_name || '',
+      whatsapp: current.whatsapp || '',
+      email: current.email || '',
+      cpf: current.cpf || '',
+    });
+    setCustomerLinkModal(reg);
+  };
+
+  const confirmCurrentCustomer = async () => {
+    if (!customerLinkModal) return;
+    setCustomerLinkSaving(true);
+    try {
+      await confirmEventRegistrationCustomer(customerLinkModal.id);
+      toast.success('Cliente confirmado para a inscrição');
+      setCustomerLinkModal(null);
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível confirmar o cliente');
+    } finally {
+      setCustomerLinkSaving(false);
+    }
+  };
+
+  const linkCustomerToRegistration = async customerId => {
+    if (!customerLinkModal) return;
+    setCustomerLinkSaving(true);
+    try {
+      await linkEventRegistrationCustomer(customerLinkModal.id, customerId);
+      toast.success('Cliente vinculado à inscrição');
+      setCustomerLinkModal(null);
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível vincular o cliente');
+    } finally {
+      setCustomerLinkSaving(false);
+    }
+  };
+
+  const createAndLinkCustomer = async () => {
+    if (!customerLinkModal) return;
+    const fullName = newCustomer.full_name.trim();
+    if (fullName.length < 3) return toast.error('Informe o nome completo do cliente');
+
+    setCustomerLinkSaving(true);
+    try {
+      const customer = await PreSaleCustomer.create({
+        full_name: fullName,
+        whatsapp: newCustomer.whatsapp.trim() || null,
+        email: newCustomer.email.trim().toLowerCase() || null,
+        cpf: newCustomer.cpf.replace(/\D/g, '') || null,
+        active: true,
+      });
+      await linkEventRegistrationCustomer(customerLinkModal.id, customer.id);
+      toast.success('Cliente criado e vinculado à inscrição');
+      setCustomerLinkModal(null);
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível criar e vincular o cliente');
+    } finally {
+      setCustomerLinkSaving(false);
+    }
+  };
+
   const saveRegistration = async () => {
     if (!regTypeId) return toast.error('Escolha o tipo de inscrição');
     if (!regCustomerId) return toast.error('Escolha o cliente');
@@ -422,8 +572,26 @@ export default function EventDetail() {
 
   // ----- pagamento / cancelamento -----
   const [payModal, setPayModal] = useState(null);
-  const [payMethod, setPayMethod] = useState('PIX');
+  const [methodGroups, setMethodGroups] = useState([]);
+  const [manualPayForm, setManualPayForm] = useState({ method_id: '', date: todayLocalStr(), value: '' });
   const [paySaving, setPaySaving] = useState(false);
+  const [chargeModal, setChargeModal] = useState(null);
+  const [chargeForm, setChargeForm] = useState({
+    billing_type: 'PIX',
+    due_date: defaultPaymentDueDate(),
+    installments: 1,
+    cpf: '',
+  });
+  const [externalChargeModal, setExternalChargeModal] = useState(null);
+  const [externalChargeForm, setExternalChargeForm] = useState({
+    link: '',
+    due_date: defaultPaymentDueDate(),
+    payment_method: 'pix',
+    invoice_number: '',
+  });
+  const [chargeSaving, setChargeSaving] = useState(false);
+  const [chargeRemoving, setChargeRemoving] = useState(false);
+  const [messageTask, setMessageTask] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelSaving, setCancelSaving] = useState(false);
@@ -496,17 +664,193 @@ export default function EventDetail() {
     }
   };
 
+  const openManualPayment = async reg => {
+    if (!hasConfirmedCustomerLink(reg)) {
+      toast.error('Confirme o cliente da inscrição antes de registrar pagamento');
+      openCustomerLink(reg);
+      return;
+    }
+    const value = Number(typesById[reg.registration_type_id]?.price || 0);
+    try {
+      const groups = await loadActivePaymentMethods();
+      const preferred = findPreferredPaymentMethod(groups, 'pix_manual');
+      setMethodGroups(groups);
+      setManualPayForm({
+        method_id: preferred?.id || '',
+        date: todayLocalStr(),
+        value: value ? value.toFixed(2) : '',
+      });
+      setPayModal(reg);
+    } catch (e) {
+      toast.error(e.message || 'Erro ao carregar métodos de pagamento');
+    }
+  };
+
   const confirmPayment = async () => {
+    if (!payModal) return;
+    if (!manualPayForm.method_id) return toast.error('Selecione um método');
+    if (!manualPayForm.date) return toast.error('Informe a data do pagamento');
+    if (!manualPayForm.value || isNaN(Number(manualPayForm.value))) return toast.error('Informe o valor recebido');
+    const method = methodGroups.flatMap(([, list]) => list).find(m => m.id === manualPayForm.method_id);
+    if (!method) return toast.error('Método inválido');
+    if (payModal.asaas_charge_id) return toast.error('Cancele a cobrança Asaas antes de registrar pagamento por fora');
+
     setPaySaving(true);
     try {
-      await recordEventRegistrationPayment(payModal.id, { paymentMethod: payMethod });
+      const totalValue = Number(manualPayForm.value);
+      const expected = Number(typesById[payModal.registration_type_id]?.price || 0);
+      if (Math.abs(totalValue - expected) > 0.009) {
+        throw new Error('Pagamento parcial ainda não está habilitado. Informe o valor integral da inscrição.');
+      }
+      const result = await createManualInstallments(
+        method,
+        manualPayForm.date,
+        { order_id: payModal.id, order_type: 'event', external_reference: payModal.registration_number },
+        totalValue,
+      );
       setPayModal(null);
-      toast.success('Pagamento registrado');
+      toast.success(`Pagamento registrado!${result.installments > 1 ? ` ${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
       refresh({ force: true });
     } catch (e) {
       toast.error(e.message || 'Erro ao registrar pagamento');
     } finally {
       setPaySaving(false);
+    }
+  };
+
+  const openExternalCharge = (reg, dueDate = '') => {
+    if (!hasConfirmedCustomerLink(reg)) {
+      toast.error('Confirme o cliente da inscrição antes de cadastrar cobrança');
+      openCustomerLink(reg);
+      return;
+    }
+    const defaultExternalMethod = normalizeExternalChargeMethod(reg.payment_method, 1);
+    setExternalChargeForm({
+      link: reg.external_payment_link || '',
+      due_date: dueDate || reg.due_date || defaultPaymentDueDate(),
+      payment_method: defaultExternalMethod,
+      invoice_number: reg.external_invoice_number || '',
+    });
+    setExternalChargeModal(reg);
+  };
+
+  const openCharge = reg => {
+    if (!hasConfirmedCustomerLink(reg)) {
+      toast.error('Confirme o cliente da inscrição antes de cadastrar cobrança');
+      openCustomerLink(reg);
+      return;
+    }
+    const customer = customersById[reg.customer_id] || {};
+    if (reg.external_payment_link || !customer.cpf) {
+      openExternalCharge(reg);
+      return;
+    }
+    setChargeForm({
+      billing_type: 'PIX',
+      due_date: reg.due_date || defaultPaymentDueDate(),
+      installments: 1,
+      cpf: String(customer.cpf || '').replace(/\D/g, ''),
+    });
+    setChargeModal(reg);
+  };
+
+  const openMessageForRegistration = reg => {
+    if (!hasConfirmedCustomerLink(reg)) {
+      toast.error('Confirme o cliente da inscrição antes de enviar cobrança');
+      openCustomerLink(reg);
+      return;
+    }
+    if (!hasRegistrationChargeInfo(reg)) {
+      toast.error('Gere ou cadastre a cobrança antes de preparar o envio');
+      return;
+    }
+    setMessageTask(buildEventChargeTask(reg, {
+      customer: customersById[reg.customer_id],
+      type: typesById[reg.registration_type_id],
+      event,
+    }));
+  };
+
+  const generateCharge = async () => {
+    if (!chargeModal) return;
+    if (!hasConfirmedCustomerLink(chargeModal)) {
+      toast.error('Confirme o cliente da inscrição antes de criar cobrança');
+      openCustomerLink(chargeModal);
+      return;
+    }
+    const cpf = String(chargeForm.cpf || '').replace(/\D/g, '');
+    if (!/^\d{11}$/.test(cpf)) return toast.error('Informe o CPF do cliente para gerar cobrança Asaas');
+    if (!chargeForm.due_date) return toast.error('Informe o vencimento');
+    const installments = Number(chargeForm.installments) || 1;
+    if (chargeForm.billing_type !== 'CREDIT_CARD' && installments !== 1) {
+      return toast.error('PIX e boleto precisam ser em 1x');
+    }
+
+    setChargeSaving(true);
+    try {
+      await createOrderCharge('event', chargeModal.id, {
+        billingType: chargeForm.billing_type,
+        dueDate: chargeForm.due_date,
+        installments,
+        cpf,
+      });
+      setChargeModal(null);
+      toast.success('Cobrança Asaas criada. Envie a mensagem quando estiver pronto.');
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao gerar cobrança');
+    } finally {
+      setChargeSaving(false);
+    }
+  };
+
+  const saveExternalCharge = async () => {
+    if (!externalChargeModal) return;
+    if (!hasConfirmedCustomerLink(externalChargeModal)) {
+      toast.error('Confirme o cliente da inscrição antes de cadastrar cobrança');
+      openCustomerLink(externalChargeModal);
+      return;
+    }
+    const link = externalChargeForm.link.trim();
+    if (!link) return toast.error('Informe o link da cobrança externa');
+    if (!/^https:\/\//i.test(link)) return toast.error('O link da cobrança externa precisa começar com https://');
+    if (isEventRegistrationUrl(link)) {
+      return toast.error('Esse é o link de inscrição do evento. Cole aqui o link da cobrança criada no Asaas.');
+    }
+    if (!externalChargeForm.due_date) return toast.error('Informe o vencimento');
+
+    setChargeSaving(true);
+    try {
+      const hadExternalLink = Boolean(externalChargeModal.external_payment_link);
+      await saveEventExternalCharge(externalChargeModal.id, {
+        externalLink: link,
+        dueDate: externalChargeForm.due_date,
+        paymentMethod: normalizeExternalChargeMethod(externalChargeForm.payment_method, 1),
+        invoiceNumber: externalChargeForm.invoice_number.trim() || null,
+        expectedUpdatedAt: externalChargeModal.updated_at,
+      });
+      setExternalChargeModal(null);
+      toast.success(hadExternalLink ? 'Cobrança externa atualizada.' : 'Cobrança externa cadastrada.');
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao salvar cobrança externa');
+    } finally {
+      setChargeSaving(false);
+    }
+  };
+
+  const removeExternalCharge = async reg => {
+    if (!window.confirm('Remover a cobrança externa? O histórico de pagamentos não será alterado.')) return;
+
+    setChargeRemoving(true);
+    try {
+      await removeEventExternalCharge(reg.id, reg.updated_at);
+      toast.success('Cobrança externa removida.');
+      refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Erro ao remover cobrança externa');
+    } finally {
+      setChargeRemoving(false);
     }
   };
 
@@ -903,6 +1247,9 @@ export default function EventDetail() {
                 const coach = coachesById[reg.coach_id] || coachesById[customer?.coach_id];
                 const type = typesById[reg.registration_type_id];
                 const pay = REG_PAYMENT[reg.payment_status] || REG_PAYMENT.pending;
+                const customerConfirmed = hasConfirmedCustomerLink(reg);
+                const hasCharge = hasRegistrationChargeInfo(reg);
+                const canManagePayment = ['pending', 'awaiting_charge', 'charge_sent', 'overdue'].includes(reg.payment_status);
                 const answersEntries = Object.entries(reg.form_answers || {});
                 return (
                   <div key={reg.id} className="py-2.5 flex items-start gap-3">
@@ -913,6 +1260,15 @@ export default function EventDetail() {
                           onClick={() => customer && navigate(studentProfilePath(customer.id))}>
                           {customer?.full_name || 'Cliente removido'}
                         </button>
+                        {customerConfirmed ? (
+                          <Badge variant="success" className="gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> cliente confirmado
+                          </Badge>
+                        ) : (
+                          <Badge variant="warning" className="gap-1">
+                            <AlertTriangle className="w-3 h-3" /> cliente a confirmar
+                          </Badge>
+                        )}
                         <Badge variant={pay.variant}>{pay.label}</Badge>
                       </div>
                       <p className="text-xs text-muted-foreground">
@@ -921,6 +1277,23 @@ export default function EventDetail() {
                         {reg.payment_method && ` · ${reg.payment_method}`}
                         {reg.payment_date && ` em ${formatDate(reg.payment_date)}`}
                       </p>
+                      {reg.external_payment_link && (
+                        <div className="mt-2">
+                          <ExternalChargeSummary
+                            externalLink={reg.external_payment_link}
+                            paymentMethod={reg.payment_method}
+                            invoiceNumber={reg.external_invoice_number}
+                            dueDateLabel={reg.due_date ? formatDate(reg.due_date) : null}
+                            messageSentLabel={reg.payment_message_sent_at ? `em ${formatDate(reg.payment_message_sent_at)}` : null}
+                            onCopy={() => { navigator.clipboard.writeText(reg.external_payment_link); toast.success('Link copiado!'); }}
+                            onMessage={customerConfirmed && canManagePayment ? () => openMessageForRegistration(reg) : undefined}
+                            onEdit={customerConfirmed && canManagePayment ? () => openExternalCharge(reg) : undefined}
+                            onRemove={customerConfirmed && canManagePayment ? () => removeExternalCharge(reg) : undefined}
+                            onRecordPayment={customerConfirmed && canManagePayment ? () => openManualPayment(reg) : undefined}
+                            removing={chargeRemoving}
+                          />
+                        </div>
+                      )}
                       {answersEntries.length > 0 && (
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {answersEntries.map(([k, v]) => {
@@ -934,12 +1307,34 @@ export default function EventDetail() {
                       )}
                     </div>
                     <div className="flex items-center gap-1">
-                      {['pending', 'awaiting_charge', 'charge_sent'].includes(reg.payment_status) && (
+                      {canManagePayment && (
                         <>
-                          <Button size="sm" variant="outline" className="text-emerald-700 hover:bg-emerald-50"
-                            onClick={() => { setPayMethod('PIX'); setPayModal(reg); }}>
-                            <HandCoins className="w-3.5 h-3.5 mr-1" /> Registrar pagamento
+                          <Button size="sm" variant={customerConfirmed ? 'ghost' : 'outline'}
+                            className={customerConfirmed ? '' : 'text-amber-700 hover:bg-amber-50'}
+                            onClick={() => openCustomerLink(reg)}>
+                            <Search className="w-3.5 h-3.5 mr-1" />
+                            {customerConfirmed ? 'Trocar cliente' : 'Vincular cliente'}
                           </Button>
+                          {customerConfirmed && !reg.external_payment_link && !reg.asaas_charge_id && !reg.asaas_payment_link && !reg.asaas_pix_copy && Number(type?.price || 0) > 0 && (
+                            <Button size="sm" variant="outline" className="text-blue-700 hover:bg-blue-50"
+                              onClick={() => openCharge(reg)}>
+                              <ReceiptText className="w-3.5 h-3.5 mr-1" /> Gerar cobrança
+                            </Button>
+                          )}
+                          {customerConfirmed && hasCharge && !reg.external_payment_link && (
+                            <Button size="sm" variant="outline" className="text-green-700 hover:bg-green-50"
+                              onClick={() => openMessageForRegistration(reg)}>
+                              <MessageCircle className="w-3.5 h-3.5 mr-1" /> Mensagem
+                            </Button>
+                          )}
+                          {!reg.external_payment_link && (
+                            <Button size="sm" variant="outline" className="text-emerald-700 hover:bg-emerald-50"
+                              disabled={!customerConfirmed}
+                              title={!customerConfirmed ? 'Confirme o cliente antes de registrar pagamento' : 'Registrar pagamento recebido'}
+                              onClick={() => openManualPayment(reg)}>
+                              <HandCoins className="w-3.5 h-3.5 mr-1" /> Registrar pagamento
+                            </Button>
+                          )}
                           <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-700"
                             title="Cancelar inscrição"
                             onClick={() => { setCancelReason(''); setCancelModal(reg); }}>
@@ -1158,6 +1553,134 @@ export default function EventDetail() {
         </DialogContent>
       </Dialog>
 
+      {/* Modal: vínculo do cliente da inscrição */}
+      <Dialog open={Boolean(customerLinkModal)} onOpenChange={open => !customerLinkSaving && !open && setCustomerLinkModal(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Vincular cliente da inscrição</DialogTitle>
+          </DialogHeader>
+          {customerLinkModal && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-gray-50 p-3 text-sm">
+                <p className="font-mono text-xs font-semibold text-blue-700">{customerLinkModal.registration_number}</p>
+                <p className="font-semibold">
+                  {typesById[customerLinkModal.registration_type_id]?.name || 'Inscrição'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Antes da cobrança, confirme qual cadastro de cliente representa esta pessoa.
+                </p>
+              </div>
+
+              <div className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Cliente atual</p>
+                    <p className="text-sm font-semibold">
+                      {customersById[customerLinkModal.customer_id]?.full_name || 'Cliente não encontrado'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {[
+                        customersById[customerLinkModal.customer_id]?.whatsapp,
+                        customersById[customerLinkModal.customer_id]?.email,
+                        customersById[customerLinkModal.customer_id]?.cpf,
+                      ].filter(Boolean).join(' · ') || 'Sem contato cadastrado'}
+                    </p>
+                  </div>
+                  {hasConfirmedCustomerLink(customerLinkModal) ? (
+                    <Badge variant="success">confirmado</Badge>
+                  ) : (
+                    <Badge variant="warning">a confirmar</Badge>
+                  )}
+                </div>
+                <Button
+                  className="mt-3 w-full"
+                  variant={hasConfirmedCustomerLink(customerLinkModal) ? 'outline' : 'default'}
+                  disabled={customerLinkSaving || !customerLinkModal.customer_id}
+                  onClick={confirmCurrentCustomer}
+                >
+                  <CheckCircle2 className="w-4 h-4 mr-1.5" />
+                  Confirmar cliente atual
+                </Button>
+              </div>
+
+              <div>
+                <Label>Buscar cliente existente</Label>
+                <div className="relative mt-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    placeholder="Nome, WhatsApp, e-mail ou CPF..."
+                    value={customerLinkSearch}
+                    onChange={e => setCustomerLinkSearch(e.target.value)}
+                    disabled={customerLinkSaving}
+                  />
+                </div>
+                {customerLinkMatches.length > 0 && (
+                  <div className="mt-2 rounded-lg border divide-y">
+                    {customerLinkMatches.map(customer => (
+                      <button
+                        key={customer.id}
+                        type="button"
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center justify-between gap-3"
+                        disabled={customerLinkSaving}
+                        onClick={() => linkCustomerToRegistration(customer.id)}
+                      >
+                        <span className="min-w-0">
+                          <span className="block font-medium truncate">{customer.full_name}</span>
+                          <span className="block text-xs text-muted-foreground truncate">
+                            {[customer.whatsapp, customer.email, customer.cpf].filter(Boolean).join(' · ') || 'Sem contato'}
+                          </span>
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-lg border p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <UserPlus className="w-4 h-4 text-blue-600" />
+                  <p className="text-sm font-semibold">Criar novo cliente e vincular</p>
+                </div>
+                <div>
+                  <Label>Nome completo</Label>
+                  <Input className="mt-1" value={newCustomer.full_name}
+                    onChange={e => setNewCustomer(f => ({ ...f, full_name: e.target.value }))} />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label>WhatsApp</Label>
+                    <Input className="mt-1" value={newCustomer.whatsapp}
+                      onChange={e => setNewCustomer(f => ({ ...f, whatsapp: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label>CPF</Label>
+                    <Input className="mt-1" inputMode="numeric" value={newCustomer.cpf}
+                      onChange={e => setNewCustomer(f => ({ ...f, cpf: e.target.value.replace(/\D/g, '').slice(0, 11) }))} />
+                  </div>
+                </div>
+                <div>
+                  <Label>E-mail</Label>
+                  <Input className="mt-1" value={newCustomer.email}
+                    onChange={e => setNewCustomer(f => ({ ...f, email: e.target.value }))} />
+                </div>
+                <Button className="w-full" variant="outline" disabled={customerLinkSaving} onClick={createAndLinkCustomer}>
+                  {customerLinkSaving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
+                  Criar e vincular
+                </Button>
+              </div>
+
+              <div className="flex justify-end">
+                <Button variant="outline" disabled={customerLinkSaving} onClick={() => setCustomerLinkModal(null)}>
+                  Fechar
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Modal: despesa do evento */}
       <Dialog open={expenseModal} onOpenChange={open => !expenseSaving && setExpenseModal(open)}>
         <DialogContent className="max-w-md">
@@ -1301,31 +1824,146 @@ export default function EventDetail() {
 
       {/* Modal: registrar pagamento */}
       <Dialog open={Boolean(payModal)} onOpenChange={open => !paySaving && !open && setPayModal(null)}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-emerald-700"><Check className="w-5 h-5" /> Registrar pagamento</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              {payModal && `${customersById[payModal.customer_id]?.full_name || 'Cliente'} · ${formatCurrency(Number(typesById[payModal.registration_type_id]?.price || 0))}`}
-            </p>
-            <div className="space-y-1.5">
-              {PAYMENT_METHODS.map(m => (
-                <button key={m} type="button" onClick={() => setPayMethod(m)}
-                  className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-all ${payMethod === m ? 'border-emerald-400 bg-emerald-50 text-emerald-800 font-medium' : 'border-gray-200 hover:border-gray-300 text-gray-700'}`}>
-                  {m}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-2 pt-1">
-              <Button variant="outline" className="flex-1" onClick={() => setPayModal(null)} disabled={paySaving}>Voltar</Button>
-              <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={confirmPayment} disabled={paySaving}>
-                {paySaving ? 'Registrando...' : 'Confirmar'}
-              </Button>
-            </div>
-          </div>
+          <ManualPaymentForm
+            form={manualPayForm}
+            setForm={setManualPayForm}
+            methodGroups={methodGroups}
+            saving={paySaving}
+            onSave={confirmPayment}
+            onCancel={() => setPayModal(null)}
+          />
         </DialogContent>
       </Dialog>
+
+      <ExternalChargeDialog
+        open={Boolean(externalChargeModal)}
+        onCancel={() => setExternalChargeModal(null)}
+        hasCharge={Boolean(externalChargeModal?.external_payment_link)}
+        form={externalChargeForm}
+        setForm={setExternalChargeForm}
+        saving={chargeSaving}
+        onSave={saveExternalCharge}
+      />
+
+      {/* Modal: gerar cobrança Asaas */}
+      <Dialog open={Boolean(chargeModal)} onOpenChange={open => !chargeSaving && !open && setChargeModal(null)}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-700">
+              <ReceiptText className="w-5 h-5" /> Gerar cobrança via Asaas
+            </DialogTitle>
+          </DialogHeader>
+          {chargeModal && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-gray-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-xs font-semibold text-blue-700">{chargeModal.registration_number}</p>
+                    <p className="text-sm font-semibold truncate">{customersById[chargeModal.customer_id]?.full_name || 'Cliente'}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {typesById[chargeModal.registration_type_id]?.name || 'Inscrição'}
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold shrink-0">
+                    {formatCurrency(Number(typesById[chargeModal.registration_type_id]?.price || 0))}
+                  </p>
+                </div>
+                <div className="mt-2 flex items-center gap-2 text-xs text-emerald-700">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Cliente confirmado
+                </div>
+              </div>
+
+              <div>
+                <Label>Forma de cobrança</Label>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  {[
+                    { value: 'PIX', label: 'PIX' },
+                    { value: 'BOLETO', label: 'Boleto' },
+                    { value: 'CREDIT_CARD', label: 'Cartão' },
+                  ].map(method => (
+                    <Button
+                      key={method.value}
+                      type="button"
+                      variant={chargeForm.billing_type === method.value ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setChargeForm(form => ({
+                        ...form,
+                        billing_type: method.value,
+                        installments: method.value === 'CREDIT_CARD' ? form.installments : 1,
+                      }))}
+                      disabled={chargeSaving}
+                    >
+                      {method.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Vencimento</Label>
+                  <Input className="mt-1" type="date" value={chargeForm.due_date}
+                    onChange={e => setChargeForm(form => ({ ...form, due_date: e.target.value }))}
+                    disabled={chargeSaving} />
+                </div>
+                <div>
+                  <Label>Parcelas</Label>
+                  <Input className="mt-1" type="number" min="1" max="12"
+                    disabled={chargeSaving || chargeForm.billing_type !== 'CREDIT_CARD'}
+                    value={chargeForm.installments}
+                    onChange={e => setChargeForm(form => ({ ...form, installments: e.target.value }))} />
+                </div>
+              </div>
+              <div>
+                <Label>CPF do cliente</Label>
+                <Input className="mt-1" inputMode="numeric" value={chargeForm.cpf}
+                  onChange={e => setChargeForm(form => ({ ...form, cpf: e.target.value.replace(/\D/g, '').slice(0, 11) }))}
+                  placeholder="Somente números"
+                  disabled={chargeSaving} />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Necessário para criar ou localizar o cliente no Asaas via API.
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" onClick={() => setChargeModal(null)} disabled={chargeSaving}>Cancelar</Button>
+                <Button className="flex-1" onClick={generateCharge} disabled={chargeSaving || !chargeForm.due_date}>
+                  {chargeSaving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Zap className="w-4 h-4 mr-1.5" />}
+                  {chargeSaving ? 'Salvando...' : 'Gerar cobrança'}
+                </Button>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full text-amber-700 border-amber-300 hover:bg-amber-50"
+                disabled={chargeSaving}
+                onClick={() => {
+                  const registration = chargeModal;
+                  setChargeModal(null);
+                  if (registration) openExternalCharge(registration, chargeForm.due_date);
+                }}
+              >
+                <Link2 className="w-4 h-4 mr-1.5" /> Cadastrar cobrança externa
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {messageTask && (
+        <CommunicationSendDialog
+          key={messageTask.id}
+          task={messageTask}
+          onClose={() => setMessageTask(null)}
+          onSent={() => {
+            setMessageTask(null);
+            refresh({ force: true });
+          }}
+        />
+      )}
 
       {/* Modal: cancelar inscrição */}
       <Dialog open={Boolean(cancelModal)} onOpenChange={open => !cancelSaving && !open && setCancelModal(null)}>

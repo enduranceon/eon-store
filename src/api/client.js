@@ -190,7 +190,12 @@ export async function updateOrderFulfillment(
       fulfillment_reason: fulfillmentReason,
     },
   });
-  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    event: 'event_registrations',
+  };
+  invalidatePageCacheByTag(tableByType[orderType] || 'presale_orders');
   invalidatePageCacheByTag('sales_status_events');
   return response.data;
 }
@@ -210,16 +215,6 @@ export async function createEventRegistration({ eventId, registrationTypeId, cus
   return response.data;
 }
 
-export async function recordEventRegistrationPayment(registrationId, { paymentMethod, paymentDate = null }, options = {}) {
-  const response = await apiRequest(`/events/registrations/${registrationId}/payment`, {
-    ...options,
-    method: 'POST',
-    body: { payment_method: paymentMethod, payment_date: paymentDate },
-  });
-  invalidatePageCacheByTag('event_registrations');
-  return response.data;
-}
-
 export async function cancelEventRegistration(registrationId, reason, options = {}) {
   const response = await apiRequest(`/events/registrations/${registrationId}/cancel`, {
     ...options,
@@ -227,6 +222,28 @@ export async function cancelEventRegistration(registrationId, reason, options = 
     body: { reason },
   });
   invalidatePageCacheByTag('event_registrations');
+  return response.data;
+}
+
+export async function linkEventRegistrationCustomer(registrationId, customerId, options = {}) {
+  const response = await apiRequest(`/events/registrations/${registrationId}/customer`, {
+    ...options,
+    method: 'PATCH',
+    body: { customer_id: customerId },
+  });
+  invalidatePageCacheByTag('event_registrations');
+  invalidatePageCacheByTag('presale_customers');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
+export async function confirmEventRegistrationCustomer(registrationId, options = {}) {
+  const response = await apiRequest(`/events/registrations/${registrationId}/customer-confirmation`, {
+    ...options,
+    method: 'POST',
+  });
+  invalidatePageCacheByTag('event_registrations');
+  invalidatePageCacheByTag('sales_status_events');
   return response.data;
 }
 
@@ -256,7 +273,12 @@ export async function markOrderPaymentMessageSent(
       metadata,
     },
   });
-  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    event: 'event_registrations',
+  };
+  invalidatePageCacheByTag(tableByType[orderType] || 'presale_orders');
   invalidatePageCacheByTag('sales_status_events');
   return response.data;
 }
@@ -297,6 +319,7 @@ export async function updateOrderDueDate(
     presale: 'presale_orders',
     stock: 'stock_orders',
     contract: 'assessment_contracts',
+    event: 'event_registrations',
   };
   if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
   invalidatePageCacheByTag('asaas_payments');
@@ -335,6 +358,7 @@ export async function createOrderCharge(
     presale: 'presale_orders',
     stock: 'stock_orders',
     contract: 'assessment_contracts',
+    event: 'event_registrations',
   };
   if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
   invalidatePageCacheByTag('asaas_payments');
@@ -355,6 +379,7 @@ export async function syncOrderChargeStatus(orderType, orderId, options = {}) {
     presale: 'presale_orders',
     stock: 'stock_orders',
     contract: 'assessment_contracts',
+    event: 'event_registrations',
   };
   if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
   invalidatePageCacheByTag('asaas_payments');
@@ -380,6 +405,7 @@ export async function cancelOrderCharge(
     presale: 'presale_orders',
     stock: 'stock_orders',
     contract: 'assessment_contracts',
+    event: 'event_registrations',
   };
   if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
   invalidatePageCacheByTag('asaas_payments');
@@ -1017,6 +1043,111 @@ export async function saveAssessmentContractExternalCharge(
   return response.data;
 }
 
+export async function saveEventExternalCharge(
+  registrationId,
+  {
+    externalLink,
+    dueDate,
+    paymentMethod,
+    invoiceNumber = null,
+    expectedUpdatedAt,
+  },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/event/${registrationId}/external-charge`,
+    {
+      ...options,
+      method: 'PUT',
+      body: {
+        external_link: externalLink,
+        due_date: dueDate,
+        payment_method: paymentMethod,
+        invoice_number: invoiceNumber,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidatePageCacheByTag('event_registrations');
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
+export async function removeEventExternalCharge(
+  registrationId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/event/${registrationId}/external-charge`,
+    {
+      ...options,
+      method: 'DELETE',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidatePageCacheByTag('event_registrations');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
+export async function saveOrderExternalCharge(
+  orderType,
+  orderId,
+  {
+    externalLink,
+    dueDate,
+    paymentMethod,
+    invoiceNumber = null,
+    expectedUpdatedAt,
+  },
+  options = {},
+) {
+  if (!['presale', 'stock'].includes(orderType)) {
+    throw new Error('Tipo de pedido inválido para cobrança externa');
+  }
+  const response = await apiRequest(
+    `/orders/${orderType}/${orderId}/external-charge`,
+    {
+      ...options,
+      method: 'PUT',
+      body: {
+        external_link: externalLink,
+        due_date: dueDate,
+        payment_method: paymentMethod,
+        invoice_number: invoiceNumber,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
+export async function removeOrderExternalCharge(
+  orderType,
+  orderId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  if (!['presale', 'stock'].includes(orderType)) {
+    throw new Error('Tipo de pedido inválido para cobrança externa');
+  }
+  const response = await apiRequest(
+    `/orders/${orderType}/${orderId}/external-charge`,
+    {
+      ...options,
+      method: 'DELETE',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
 export async function removeAssessmentContractExternalCharge(
   contractId,
   expectedUpdatedAt,
@@ -1161,6 +1292,15 @@ export async function recordManualPayment(
       total,
     },
   });
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+    event: 'event_registrations',
+  };
+  if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('sales_status_events');
   return response.data;
 }
 
@@ -1180,6 +1320,15 @@ export async function adjustManualPayment(
       discount_recurring: discountRecurring,
     },
   });
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+    event: 'event_registrations',
+  };
+  if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('sales_status_events');
   return response.data;
 }
 
@@ -1188,6 +1337,15 @@ export async function reopenManualPayment(orderType, orderId, options = {}) {
     ...options,
     method: 'DELETE',
   });
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+    event: 'event_registrations',
+  };
+  if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('sales_status_events');
   return response.data;
 }
 

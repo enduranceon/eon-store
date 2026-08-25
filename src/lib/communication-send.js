@@ -60,7 +60,7 @@ export async function registerCommunicationSend(task, options = {}) {
     }
 
     await markOrderPaymentMessageSent(
-      task.sourceType === 'stock' ? 'stock' : 'presale',
+      task.sourceType === 'stock' ? 'stock' : task.sourceType === 'event' ? 'event' : 'presale',
       task.sourceId,
       {
         externalPaymentLink: nativePaymentInfo ? null : (trimmedLink || task.externalPaymentLink || null),
@@ -109,7 +109,7 @@ async function registerCommunicationTaskAction(task, action, options = {}) {
     });
   } else {
     await recordCommunicationEvent({
-      source_type: task.sourceType === 'stock' ? 'stock' : 'presale',
+      source_type: task.sourceType === 'stock' ? 'stock' : task.sourceType === 'event' ? 'event' : 'presale',
       source_id: task.sourceId,
       event_type: 'communication_task_ignored', payload, reason: notes,
     });

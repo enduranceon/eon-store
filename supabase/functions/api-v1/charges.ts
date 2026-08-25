@@ -17,7 +17,7 @@ import { isValidIsoDate } from "./payments.ts";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
-const CHARGE_PATH = /^\/orders\/(presale|stock|contract)\/([^/]+)\/charge$/;
+const CHARGE_PATH = /^\/orders\/(presale|stock|contract|event)\/([^/]+)\/charge$/;
 const BILLING_TYPES = new Set(["PIX", "BOLETO", "CREDIT_CARD"]);
 const CONTRACT_SOURCES = new Set(["contract_detail", "renewals_page"]);
 const RECOVERABLE_PAYMENT_STATUSES = new Set([
@@ -704,17 +704,27 @@ export async function handleChargeRequest(
     }, 400);
   }
 
-  const { data, error } = await supabase.rpc("prepare_order_charge_creation", {
-    p_order_type: orderType,
-    p_order_id: orderId,
-    p_billing_type: billingType,
-    p_due_date: dueDate,
-    p_installments: installments,
-    p_customer_cpf: orderType === "contract" ? null : cpf,
-    p_idempotency_key: idempotencyKey,
-    p_actor_id: actorId,
-    p_source: source,
-  });
+  const { data, error } = orderType === "event"
+    ? await supabase.rpc("prepare_event_charge_creation", {
+      p_order_id: orderId,
+      p_billing_type: billingType,
+      p_due_date: dueDate,
+      p_installments: installments,
+      p_customer_cpf: cpf,
+      p_idempotency_key: idempotencyKey,
+      p_actor_id: actorId,
+    })
+    : await supabase.rpc("prepare_order_charge_creation", {
+      p_order_type: orderType,
+      p_order_id: orderId,
+      p_billing_type: billingType,
+      p_due_date: dueDate,
+      p_installments: installments,
+      p_customer_cpf: orderType === "contract" ? null : cpf,
+      p_idempotency_key: idempotencyKey,
+      p_actor_id: actorId,
+      p_source: source,
+    });
   if (error) return databaseError(error, "prepare");
 
   const prepared = data as PreparedChargeCreation;
@@ -796,7 +806,9 @@ export async function handleChargeRequest(
   }
 
   const { data: completed, error: completeError } = await supabase.rpc(
-    "complete_order_charge_creation",
+    orderType === "event"
+      ? "complete_event_charge_creation"
+      : "complete_order_charge_creation",
     {
       p_operation_id: prepared.operation_id,
       p_lease_token: prepared.lease_token,

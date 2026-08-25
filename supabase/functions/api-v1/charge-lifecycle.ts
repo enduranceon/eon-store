@@ -84,6 +84,7 @@ function tableForType(orderType: string): string | null {
   if (orderType === "presale") return "presale_orders";
   if (orderType === "stock") return "stock_orders";
   if (orderType === "contract") return "assessment_contracts";
+  if (orderType === "event") return "event_registrations";
   return null;
 }
 
@@ -214,6 +215,10 @@ async function syncChargeStatus(
         payment.billingType,
         orderRecord.installments,
       );
+      if (method) updates.payment_method = method;
+      updates.updated_at = new Date().toISOString();
+    } else if (orderType === "event") {
+      const method = mapPaymentMethod(payment.billingType, 1);
       if (method) updates.payment_method = method;
       updates.updated_at = new Date().toISOString();
     } else {
@@ -380,16 +385,26 @@ async function cancelCharge(
     }, 400);
   }
 
-  const { data, error } = await supabase.rpc(
-    "prepare_order_charge_cancellation",
-    {
-      p_order_type: orderType,
-      p_order_id: orderId,
-      p_reason: reason,
-      p_idempotency_key: idempotencyKey,
-      p_actor_id: actorId,
-    },
-  );
+  const { data, error } = orderType === "event"
+    ? await supabase.rpc(
+      "prepare_event_charge_cancellation",
+      {
+        p_order_id: orderId,
+        p_reason: reason,
+        p_idempotency_key: idempotencyKey,
+        p_actor_id: actorId,
+      },
+    )
+    : await supabase.rpc(
+      "prepare_order_charge_cancellation",
+      {
+        p_order_type: orderType,
+        p_order_id: orderId,
+        p_reason: reason,
+        p_idempotency_key: idempotencyKey,
+        p_actor_id: actorId,
+      },
+    );
   if (error) return databaseError(error, "prepare cancellation");
   const prepared = data as PreparedCancellation;
   if (prepared.status === "completed") {
@@ -484,7 +499,9 @@ async function cancelCharge(
     }
 
     const { data: completed, error: completeError } = await supabase.rpc(
-      "complete_order_charge_cancellation",
+      orderType === "event"
+        ? "complete_event_charge_cancellation"
+        : "complete_order_charge_cancellation",
       {
         p_operation_id: prepared.operation_id,
         p_lease_token: prepared.lease_token,
@@ -560,7 +577,7 @@ export async function handleChargeLifecycleRequest(
   actorId: string,
 ): Promise<Response | null> {
   const statusMatch = path.match(
-    /^\/orders\/(presale|stock|contract)\/([^/]+)\/charge\/status$/,
+    /^\/orders\/(presale|stock|contract|event)\/([^/]+)\/charge\/status$/,
   );
   if (statusMatch) {
     if (req.method !== "POST") {
@@ -573,7 +590,7 @@ export async function handleChargeLifecycleRequest(
   }
 
   const cancelMatch = path.match(
-    /^\/orders\/(presale|stock|contract)\/([^/]+)\/charge\/cancel$/,
+    /^\/orders\/(presale|stock|contract|event)\/([^/]+)\/charge\/cancel$/,
   );
   if (!cancelMatch) return null;
   if (req.method !== "POST") {

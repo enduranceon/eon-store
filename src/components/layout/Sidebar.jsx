@@ -19,6 +19,22 @@ import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge: 'today' };
 const COMMUNICATION_ITEM = { label: 'Comunicação', icon: MessageCircle, to: '/comunicacao' };
+const OPEN_SALES_ITEM = { label: 'Vendas em aberto', icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' };
+const CASH_FLOW_ITEM = { label: 'Fluxo de caixa', icon: TrendingUp, to: '/financeiro/fluxo-caixa' };
+const REFUNDS_ITEM = { label: 'Estornos', icon: HandCoins, to: '/estornos' };
+const REPORTS_ITEM = { label: 'Relatórios', icon: BarChart3, to: '/relatorios' };
+const CLIENTS_ITEM = { label: 'Clientes', icon: Users, to: '/clientes', badge: 'clients' };
+
+const CENTRAL_ITEMS = [
+  TODAY_ITEM,
+  COMMUNICATION_ITEM,
+  OPEN_SALES_ITEM,
+  CASH_FLOW_ITEM,
+  REFUNDS_ITEM,
+  REPORTS_ITEM,
+  CLIENTS_ITEM,
+];
+
 // OPERAÇÃO — assessoria esportiva
 const ASSESSORIA_ITEMS = [
   { label: 'Painel',         icon: Activity,      to: '/assessoria',              exact: true },
@@ -29,21 +45,10 @@ const ASSESSORIA_ITEMS = [
   { label: 'Prospects',      icon: UserPlus,      to: '/assessoria/prospects',    badge: 'prospects' },
   { label: 'Auditoria',      icon: ListChecks,    to: '/assessoria/auditoria' },
   { label: 'Coaches',        icon: Award,         to: '/assessoria/coaches' },
-  { label: 'Eventos',        icon: CalendarDays,  to: '/eventos' },
   { label: 'Planos',         icon: Layers,        to: '/assessoria/planos' },
+  { label: 'Central financeira', icon: Wallet,    to: '/assessoria/central-financeira' },
+  { label: 'Repasse',        icon: DollarSign,    to: '/assessoria/repasse' },
   { label: 'Fechamento',     icon: DollarSign,    to: '/assessoria/fechamento' },
-];
-
-// FINANCEIRO — visão financeira unificada
-const FINANCEIRO_ITEMS = [
-  { label: 'Analytics',          icon: BarChart3,   to: '/analytics' },
-  { label: 'Central Financeira', icon: Wallet,      to: '/assessoria/central-financeira' },
-  { label: 'Repasse',            icon: DollarSign,  to: '/assessoria/repasse' },
-  { label: 'Vendas em aberto',   icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' },
-  { label: 'Estornos',           icon: HandCoins,   to: '/estornos' },
-  { label: 'Fluxo de caixa',     icon: TrendingUp,  to: '/financeiro/fluxo-caixa' },
-  { label: 'Relatórios',         icon: BarChart3,   to: '/relatorios' },
-  { label: 'Clientes',           icon: Users,       to: '/clientes',   badge: 'clients' },
 ];
 
 // LOJA — módulo secundário (colapsável)
@@ -53,6 +58,10 @@ const LOJA_ITEMS = [
   { label: 'Coleções',       icon: Megaphone,     to: '/campanhas' },
   { label: 'Pré-venda',      icon: Megaphone,     to: '/produtos/pre-venda' },
   { label: 'Devoluções',     icon: Undo2,         to: '/devolucoes' },
+];
+
+const EVENTOS_ITEMS = [
+  { label: 'Painel de eventos', icon: CalendarDays, to: '/eventos', badge: 'events' },
 ];
 
 // CONFIGURAÇÕES (colapsável)
@@ -111,26 +120,76 @@ function SectionLabel({ label }) {
   );
 }
 
-function CollapseSection({ label, icon: Icon, items, isActive, badges, onClick, defaultOpen = false }) {
+function CollapseSection({
+  label,
+  icon: Icon,
+  items,
+  isActive,
+  badges,
+  onClick,
+  defaultOpen = false,
+  helper = null,
+  badgeKey = null,
+  tone = 'slate',
+}) {
   const location = useLocation();
   const isInGroup = items.some(item =>
     item.exact ? location.pathname === item.to : location.pathname.startsWith(item.to)
   );
   const [manuallyOpen, setManuallyOpen] = useState(defaultOpen);
   const open = manuallyOpen || isInGroup;
+  const badgeCount = badgeKey ? (badges[badgeKey] || 0) : 0;
+  const tones = {
+    blue: {
+      shell: open ? 'border-blue-500/40 bg-blue-500/10' : 'border-slate-700/60 bg-slate-800/30',
+      icon: open ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-300',
+      text: open ? 'text-blue-100' : 'text-slate-200',
+      helper: open ? 'text-blue-200/80' : 'text-slate-400',
+      badge: 'bg-blue-500/15 text-blue-100 border border-blue-400/20',
+    },
+    amber: {
+      shell: open ? 'border-amber-500/40 bg-amber-500/10' : 'border-slate-700/60 bg-slate-800/30',
+      icon: open ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-300',
+      text: open ? 'text-amber-100' : 'text-slate-200',
+      helper: open ? 'text-amber-100/75' : 'text-slate-400',
+      badge: 'bg-amber-500/15 text-amber-100 border border-amber-400/20',
+    },
+    emerald: {
+      shell: open ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-slate-700/60 bg-slate-800/30',
+      icon: open ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-300',
+      text: open ? 'text-emerald-100' : 'text-slate-200',
+      helper: open ? 'text-emerald-100/75' : 'text-slate-400',
+      badge: 'bg-emerald-500/15 text-emerald-100 border border-emerald-400/20',
+    },
+  };
+  const styles = tones[tone] || tones.blue;
 
   return (
-    <div className="mt-1">
+    <div className={cn('mt-2 rounded-2xl border transition-colors', styles.shell)}>
       <button
         onClick={() => setManuallyOpen(o => !o)}
-        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+        className="w-full flex items-center gap-3 px-3.5 py-3 text-left transition-colors"
       >
-        <Icon className="w-3.5 h-3.5 shrink-0" />
-        <span className="flex-1 text-left">{label}</span>
-        {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', styles.icon)}>
+          <Icon className="w-4 h-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className={cn('text-sm font-semibold', styles.text)}>{label}</span>
+            {badgeCount > 0 && (
+              <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', styles.badge)}>
+                {badgeCount}
+              </span>
+            )}
+          </div>
+          {helper && (
+            <p className={cn('mt-0.5 text-xs', styles.helper)}>{helper}</p>
+          )}
+        </div>
+        {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
       </button>
       {open && (
-        <div className="mt-0.5 ml-2 pl-2 border-l border-slate-700/60">
+        <div className="mx-3.5 mb-3 border-l border-slate-700/60 pl-3">
           {items.map(item => (
             <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClick} />
           ))}
@@ -146,7 +205,16 @@ function CollapseSection({ label, icon: Icon, items, isActive, badges, onClick, 
 
 export default function Sidebar({ open, onClose, onSignOut }) {
   const location = useLocation();
-  const [badges, setBadges] = useState({ orders: 0, clients: 0, today: 0, assessoria: 0, renewals: 0, prospects: 0, openSales: 0 });
+  const [badges, setBadges] = useState({
+    orders: 0,
+    clients: 0,
+    today: 0,
+    assessoria: 0,
+    renewals: 0,
+    prospects: 0,
+    openSales: 0,
+    events: 0,
+  });
 
   const isActive = (to, exact) => {
     if (exact) return location.pathname === to;
@@ -163,11 +231,14 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         renewalWindowEnd.setDate(renewalWindowEnd.getDate() + RENEWAL_ATTENTION_WINDOW_DAYS);
         const renewalWindowEndStr = toLocalDateStr(renewalWindowEnd);
 
-        const [presaleOrders, stockOrders, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts, prospectDrafts, contractsOpenPayments] = await Promise.all([
+        const [presaleOrders, stockOrders, eventRegistrations, eventTypes, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts, prospectDrafts, contractsOpenPayments] = await Promise.all([
           supabase.from('presale_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('stock_orders').select('id, payment_status, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
+          supabase.from('event_registrations').select('id, payment_status, due_date, registration_type_id')
+            .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
+          supabase.from('event_registration_types').select('id, price'),
           supabase.from('order_returns').select('id', { count: 'exact', head: true })
             .in('status', ['pending_return', 'received']),
           supabase.from('presale_customers').select('id', { count: 'exact', head: true })
@@ -189,17 +260,25 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         ]);
 
         const allOrders = [...(presaleOrders.data || []), ...(stockOrders.data || [])];
+        const eventTypePriceMap = Object.fromEntries((eventTypes.data || []).map(type => [type.id, Number(type.price) || 0]));
+        const eventOpenRows = (eventRegistrations.data || []).filter(reg =>
+          (eventTypePriceMap[reg.registration_type_id] || 0) > 0 &&
+          !['paid', 'refunded', 'cancelled'].includes(reg.payment_status)
+        );
         const isScheduledContractOpenPayment = (contract) =>
           contract.status === 'scheduled' &&
           !['paid', 'refunded', 'cancelled'].includes(contract.payment_status);
         const openSalesCount =
           allOrders.filter(isOpenSaleForFinancial).length +
+          eventOpenRows.length +
           (contractsOpenPayments.data || []).filter(contract =>
             isOpenSaleForFinancial(contract) || isScheduledContractOpenPayment(contract)
           ).length;
         const todayCount =
           allOrders.filter(o => ['awaiting_charge', 'pending'].includes(o.payment_status)).length +
           allOrders.filter(o => o.due_date && o.due_date < todayStr && isOpenSaleForFinancial(o)).length +
+          eventOpenRows.filter(reg => ['awaiting_charge', 'pending'].includes(reg.payment_status)).length +
+          eventOpenRows.filter(reg => reg.due_date && reg.due_date < todayStr).length +
           (returnsRes.count || 0) +
           (pendingRefunds.count || 0);
 
@@ -211,6 +290,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           renewals:   renewalDrafts.count || 0,
           prospects:  prospectDrafts.count || 0,
           openSales:  openSalesCount,
+          events:     eventOpenRows.length,
         });
       } catch { /* silencioso */ }
     };
@@ -246,44 +326,57 @@ export default function Sidebar({ open, onClose, onSignOut }) {
 
         {/* ── Navegação ─────────────────────────────────────── */}
         <nav className="flex-1 overflow-y-auto py-2 px-3">
-
-          {/* Hoje */}
-          <div className="pt-1 pb-1">
-            <NavItem item={TODAY_ITEM} isActive={isActive} badges={badges} onClick={onClose} />
-            <NavItem item={COMMUNICATION_ITEM} isActive={isActive} badges={badges} onClick={onClose} />
+          <SectionLabel label="Central" />
+          <div className="rounded-2xl border border-slate-700/60 bg-slate-800/30 p-2">
+            {CENTRAL_ITEMS.map(item => (
+              <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
+            ))}
           </div>
 
-          {/* ── OPERAÇÃO — assessoria esportiva ───────────── */}
-          <SectionLabel label="Operação" />
-          {ASSESSORIA_ITEMS.map(item => (
-            <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
-          ))}
+          <SectionLabel label="Categorias" />
+          <CollapseSection
+            label="Assessoria"
+            icon={Activity}
+            items={ASSESSORIA_ITEMS}
+            isActive={isActive}
+            badges={badges}
+            onClick={onClose}
+            defaultOpen
+            helper="Contratos, alunos, renovações e operação da assessoria."
+            badgeKey="assessoria"
+            tone="blue"
+          />
           {badges.assessoria > 0 && (
-            <div className="mx-1 mb-1 flex items-center gap-1.5 text-xs text-amber-400 bg-amber-400/10 rounded-lg px-2.5 py-1.5 mt-0.5">
+            <div className="mx-1 mb-1 mt-1 flex items-center gap-1.5 rounded-xl bg-amber-400/10 px-2.5 py-2 text-xs text-amber-400">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               <span>{badges.assessoria} contrato{badges.assessoria !== 1 ? 's' : ''} exige atenção</span>
             </div>
           )}
-
-          {/* ── FINANCEIRO ────────────────────────────────── */}
-          <SectionLabel label="Financeiro" />
-          {FINANCEIRO_ITEMS.map(item => (
-            <NavItem key={item.to} item={item} isActive={isActive} badges={badges} onClick={onClose} />
-          ))}
-
-          {/* ── LOJA — colapsável ──────────────────────────── */}
-          <div className="mt-3 border-t border-slate-700/40 pt-2">
-            <CollapseSection
-              label="Loja"
-              icon={ShoppingCart}
-              items={LOJA_ITEMS}
-              isActive={isActive}
-              badges={badges}
-              onClick={onClose}
-            />
-          </div>
+          <CollapseSection
+            label="Loja"
+            icon={ShoppingCart}
+            items={LOJA_ITEMS}
+            isActive={isActive}
+            badges={badges}
+            onClick={onClose}
+            helper="Produtos, campanhas, pedidos e devoluções."
+            badgeKey="orders"
+            tone="amber"
+          />
+          <CollapseSection
+            label="Eventos"
+            icon={CalendarDays}
+            items={EVENTOS_ITEMS}
+            isActive={isActive}
+            badges={badges}
+            onClick={onClose}
+            helper="Inscrições, acompanhamento e financeiro dos eventos."
+            badgeKey="events"
+            tone="emerald"
+          />
 
           {/* ── CONFIGURAÇÕES — colapsável ─────────────────── */}
+          <SectionLabel label="Administração" />
           <CollapseSection
             label="Configurações"
             icon={Settings}
@@ -291,6 +384,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
             isActive={isActive}
             badges={badges}
             onClick={onClose}
+            helper="Cadastros mestres, parâmetros e saúde do sistema."
           />
 
         </nav>

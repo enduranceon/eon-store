@@ -206,7 +206,7 @@ async function handleCommunicationEvent(
   const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
   const payload = body?.payload;
   if (
-    !body || !["contract", "presale", "stock"].includes(String(sourceType)) ||
+    !body || !["contract", "presale", "stock", "event"].includes(String(sourceType)) ||
     typeof sourceId !== "string" || !UUID_PATTERN.test(sourceId) ||
     typeof eventType !== "string" ||
     !COMMUNICATION_EVENT_TYPES.has(eventType) ||
@@ -236,12 +236,16 @@ async function handleCommunicationEvent(
     return jsonResponse({ data }, 201);
   }
 
-  const table = sourceType === "stock" ? "stock_orders" : "presale_orders";
+  const table = sourceType === "stock"
+    ? "stock_orders"
+    : sourceType === "event"
+    ? "event_registrations"
+    : "presale_orders";
   const { data: order } = await supabase.from(table).select("id,payment_status")
     .eq("id", sourceId).maybeSingle();
   if (!order) {
     return jsonResponse(
-      { error: "Pedido não encontrado", code: "not_found" },
+      { error: sourceType === "event" ? "Inscrição não encontrada" : "Pedido não encontrado", code: "not_found" },
       404,
     );
   }

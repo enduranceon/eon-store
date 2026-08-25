@@ -44,6 +44,9 @@ function writeFinancialPageCache(data) {
     'stock_orders',
     'assessment_contracts',
     'assessment_plans',
+    'events',
+    'event_registration_types',
+    'event_registrations',
     'presale_customers',
     'revenue_centers',
     'stock_products',
@@ -170,11 +173,17 @@ function collectionTaskFor(order, rules = DEFAULT_COMMUNICATION_RULES) {
       return { label, quantity, lineTotal: Math.max(0, unit * quantity) };
     });
 
-  const tableByType = { presale: 'presale_orders', stock: 'stock_orders', contract: 'assessment_contracts' };
+  const tableByType = {
+    presale: 'presale_orders',
+    stock: 'stock_orders',
+    contract: 'assessment_contracts',
+    event: 'event_registrations',
+  };
   const hrefByType = {
     presale: `/pedidos/${order.id}`,
     stock: `/estoque/pedidos/${order.id}`,
     contract: `/assessoria/contratos/${order.id}`,
+    event: `/eventos/${order.event_id || ''}`,
   };
 
   return {
@@ -184,7 +193,7 @@ function collectionTaskFor(order, rules = DEFAULT_COMMUNICATION_RULES) {
     sourceType: order.type,
     tableName: tableByType[order.type],
     sourceId: order.id,
-    sourceLabel: order.type === 'contract' ? 'Contrato' : 'Pedido',
+    sourceLabel: order.type === 'contract' ? 'Contrato' : order.type === 'event' ? 'Inscrição de evento' : 'Pedido',
     orderNumber: order.order_number,
     customerName: order.customer || 'Cliente',
     customerWhatsapp: order.customer_whatsapp || '',
@@ -214,6 +223,7 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
   const link = o.is_prospect         ? '/assessoria/prospects'
              : o.type === 'stock'    ? `/estoque/pedidos/${o.id}`
              : o.type === 'contract' ? `/assessoria/contratos/${o.id}`
+             : o.type === 'event'    ? `/eventos/${o.event_id || o.id}`
              : `/pedidos/${o.id}`;
   const hasUnsupportedInstallment = !!o.asaas_charge_id && getInstallmentN(o) > 1;
   const canEditDueDate = !!onEditDueDate
@@ -231,6 +241,9 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
           )}
           {o.type === 'contract' && (
             <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">🏃 Assessoria</span>
+          )}
+          {o.type === 'event' && (
+            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">Evento</span>
           )}
           {o.is_prospect && (
             <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-medium">Prospect</span>
@@ -429,7 +442,7 @@ export default function Financial() {
         sevenMonthsAgo.setDate(1);
         const apFromStr = toLocalDateStr(sevenMonthsAgo);
 
-        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes, paymentsRes] = await Promise.all([
+        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes, eventRegsRes, eventTypesRes, eventsRes, paymentsRes] = await Promise.all([
           supabase.from('presale_orders')
             .select('id, order_number, checkout_name, checkout_whatsapp, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
@@ -440,9 +453,15 @@ export default function Financial() {
             .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, manual_payment, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, credit_balance, status, installments, plan_snapshot, prospect_stage')
             .not('status', 'in', '("cancelled","voided")').neq('payment_status', 'refunded'),
           supabase.from('assessment_plans').select('id, price_total, price_monthly, name, revenue_center_id'),
-          supabase.from('presale_customers').select('id, full_name, whatsapp'),
+          supabase.from('presale_customers').select('id, full_name, whatsapp, email, cpf'),
           supabase.from('revenue_centers').select('id, name, color'),
           supabase.from('stock_products').select('id, revenue_center_id'),
+          supabase.from('event_registrations')
+            .select('id, registration_number, event_id, registration_type_id, customer_id, coach_id, payment_status, payment_method, payment_date, due_date, manual_payment, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, customer_link_confirmed_at, customer_link_confirmed_by, created_at, updated_at')
+            .neq('payment_status', 'cancelled')
+            .neq('payment_status', 'refunded'),
+          supabase.from('event_registration_types').select('id, event_id, name, price'),
+          supabase.from('events').select('id, name, revenue_center_id, status'),
           // Pagamentos reais do Asaas — fonte de verdade do fluxo de caixa
           supabase.from('asaas_payments')
             .select('id, asaas_payment_id, order_id, order_type, status, value, credit_date, payment_date, due_date, billing_type, installment_number, total_installments')
@@ -455,6 +474,8 @@ export default function Financial() {
         const plansMap         = Object.fromEntries((plansRes.data         || []).map(p => [p.id, p]));
         const customersMap     = Object.fromEntries((customersRes.data     || []).map(c => [c.id, c]));
         const stockProductsMap = Object.fromEntries((stockProductsRes.data || []).map(p => [p.id, p]));
+        const eventTypesMap    = Object.fromEntries((eventTypesRes.data    || []).map(t => [t.id, t]));
+        const eventsMap        = Object.fromEntries((eventsRes.data        || []).map(e => [e.id, e]));
         const orderCenter = (items) => {
           if (!items?.length) return null;
           return stockProductsMap[items[0].product_id]?.revenue_center_id || null;
@@ -506,8 +527,46 @@ export default function Financial() {
               installments: c.installments || 1,
             };
           });
+        const eventOrders = (eventRegsRes.data || [])
+          .map(reg => {
+            const type = eventTypesMap[reg.registration_type_id] || {};
+            const eventRecord = eventsMap[reg.event_id] || {};
+            const customer = customersMap[reg.customer_id] || {};
+            const value = Number(type.price) || 0;
+            return {
+              id: reg.id,
+              order_number: reg.registration_number,
+              customer: customer.full_name || 'Cliente',
+              customer_whatsapp: customer.whatsapp || null,
+              customer_email: customer.email || null,
+              customer_cpf: customer.cpf || null,
+              total_value: value,
+              payment_status: reg.payment_status,
+              payment_method: reg.payment_method,
+              payment_date: reg.payment_date,
+              due_date: reg.due_date,
+              asaas_charge_id: reg.asaas_charge_id,
+              asaas_payment_link: reg.asaas_payment_link,
+              asaas_pix_copy: reg.asaas_pix_copy,
+              external_payment_link: reg.external_payment_link,
+              payment_message_sent_at: reg.payment_message_sent_at,
+              updated_at: reg.updated_at,
+              created_at: reg.created_at,
+              type: 'event',
+              event_id: reg.event_id,
+              event_name: eventRecord.name || 'Evento',
+              registration_type_name: type.name || 'Inscrição',
+              revenue_center_id: eventRecord.revenue_center_id || null,
+              items: [{
+                name: [eventRecord.name, type.name].filter(Boolean).join(' - ') || 'Inscrição de evento',
+                quantity: 1,
+                sale_price: value,
+              }],
+            };
+          })
+          .filter(o => o.total_value > 0);
 
-        const nextOrders = [...presale, ...stock, ...contracts];
+        const nextOrders = [...presale, ...stock, ...contracts, ...eventOrders];
         const nextCenters = centersRes.data || [];
 
         // ── Estornos pendentes ──────────────────────────────────────
@@ -586,8 +645,12 @@ export default function Financial() {
     o.type === 'contract' &&
     o.status === 'scheduled' &&
     !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
+  const isEventOpenRegistration = (o) =>
+    o.type === 'event' &&
+    Number(o.total_value) > 0 &&
+    !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
   const activeOrders = orders.filter(o =>
-    (isOpenSaleForFinancial(o) || isScheduledContractOpenPayment(o)) &&
+    (isOpenSaleForFinancial(o) || isScheduledContractOpenPayment(o) || isEventOpenRegistration(o)) &&
     !ordersWithAsaasCache.has(o.id)
   );
 
@@ -777,7 +840,7 @@ export default function Financial() {
             Vendas em aberto
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Cobranças pendentes — quem ainda não pagou · Loja · Pré-venda · Assessoria
+            Cobranças pendentes — quem ainda não pagou · Loja · Pré-venda · Assessoria · Eventos
           </p>
           {(loadingRec || fetchedAt) && (
             <p className="text-xs text-muted-foreground mt-1">

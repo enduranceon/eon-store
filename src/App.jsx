@@ -19,8 +19,6 @@ import PublicEventRegistration from '@/pages/PublicEventRegistration';
 import EventDetail from '@/pages/EventDetail';
 import Customers from '@/pages/Customers';
 import CustomerDetail from '@/pages/CustomerDetail';
-import Reports from '@/pages/Reports';
-import Analytics from '@/pages/Analytics';
 import Suppliers from '@/pages/Suppliers';
 import SupplierForm from '@/pages/SupplierForm';
 import Categories from '@/pages/Categories';
@@ -39,7 +37,6 @@ import StockOrderDetail from '@/pages/StockOrderDetail';
 import PublicStore from '@/pages/PublicStore';
 import PublicStoreConfirmation from '@/pages/PublicStoreConfirmation';
 import Financial from '@/pages/Financial';
-import CashFlow from '@/pages/CashFlow';
 import Returns from '@/pages/Returns';
 import Refunds from '@/pages/Refunds';
 import Today from '@/pages/Today';
@@ -67,13 +64,25 @@ import AssContractDetail from '@/pages/assessment/ContractDetail';
 import AssMonthlyClosing from '@/pages/assessment/MonthlyClosing';
 import AssClosingDetail from '@/pages/assessment/ClosingDetail';
 const AssCoachStatement = lazy(() => import('@/pages/assessment/CoachStatement'));
-import AssPainel from '@/pages/assessment/Painel';
 import AssRenewals from '@/pages/assessment/Renewals';
 import AssProspects from '@/pages/assessment/Prospects';
-import AssCentralFinanceira from '@/pages/assessment/CentralFinanceira';
 import AssRepasse from '@/pages/assessment/Repasse';
 import AssContractAudit from '@/pages/assessment/ContractAudit';
 import AssLeaves from '@/pages/assessment/Leaves';
+
+const Reports = lazy(() => import('@/pages/Reports'));
+const Analytics = lazy(() => import('@/pages/Analytics'));
+const CashFlow = lazy(() => import('@/pages/CashFlow'));
+const AssPainel = lazy(() => import('@/pages/assessment/Painel'));
+const AssCentralFinanceira = lazy(() => import('@/pages/assessment/CentralFinanceira'));
+
+function RouteFallback() {
+  return (
+    <div className="min-h-[12rem] flex items-center justify-center" role="status" aria-label="Carregando conteúdo">
+      <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
 
 function AdminLayout({ children }) {
   const { user, loading, signOut } = useAuth();
@@ -95,7 +104,9 @@ function AdminLayout({ children }) {
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           <ErrorBoundary routeKey={location.pathname}>
-            {children}
+            <Suspense fallback={<RouteFallback />}>
+              {children}
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>

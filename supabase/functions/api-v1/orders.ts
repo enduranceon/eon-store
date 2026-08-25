@@ -445,7 +445,7 @@ export async function handleOrdersRequest(
   }
 
   const messageMatch = path.match(
-    /^\/orders\/(presale|stock)\/([^/]+)\/payment-message$/,
+    /^\/orders\/(presale|stock|event)\/([^/]+)\/payment-message$/,
   );
   if (req.method === "POST" && messageMatch) {
     const [, orderType, orderId] = messageMatch;
@@ -473,17 +473,28 @@ export async function handleOrdersRequest(
         code: "invalid_request",
       }, 400);
     }
-    const { data, error } = await supabase.rpc(
-      "mark_order_payment_message_sent_with_metadata",
-      {
-        p_order_type: orderType,
-        p_order_id: orderId,
-        p_external_payment_link: body.external_payment_link ?? null,
-        p_due_date: body.due_date ?? null,
-        p_metadata: body.metadata ?? {},
-        p_actor_id: actorId,
-      },
-    );
+    const { data, error } = orderType === "event"
+      ? await supabase.rpc(
+        "mark_event_payment_message_sent_with_metadata",
+        {
+          p_order_id: orderId,
+          p_external_payment_link: body.external_payment_link ?? null,
+          p_due_date: body.due_date ?? null,
+          p_metadata: body.metadata ?? {},
+          p_actor_id: actorId,
+        },
+      )
+      : await supabase.rpc(
+        "mark_order_payment_message_sent_with_metadata",
+        {
+          p_order_type: orderType,
+          p_order_id: orderId,
+          p_external_payment_link: body.external_payment_link ?? null,
+          p_due_date: body.due_date ?? null,
+          p_metadata: body.metadata ?? {},
+          p_actor_id: actorId,
+        },
+      );
     if (error) return databaseError(error, "mark payment message");
     return jsonResponse({ data });
   }

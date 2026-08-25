@@ -39,7 +39,7 @@ import {
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
-import { EXTERNAL_CHARGE_METHODS, externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
+import { normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
 import {
   generateAssessmentContractCharge,
@@ -51,6 +51,8 @@ import { loadActivePaymentMethods, createManualInstallments, adjustManualInstall
 import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
+import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
+import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
 
 function addPeriod(startStr, plan) {
   const d = new Date(startStr + 'T12:00:00');
@@ -1389,52 +1391,19 @@ export default function ContractDetail() {
               </div>
             </div>
           ) : contract.external_payment_link ? (
-            <div className="space-y-3">
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Link2 className="w-4 h-4 text-amber-600 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-amber-800">Cobrança externa registrada</p>
-                    <p className="text-sm text-amber-700 truncate">{contract.external_payment_link}</p>
-                    <p className="text-[11px] text-amber-700 mt-0.5">
-                      {externalChargeMethodLabel(normalizeExternalChargeMethod(contract.payment_method, contract.installments))}
-                      {contract.external_invoice_number && (
-                        <> · Fatura <span className="font-mono font-semibold">{contract.external_invoice_number}</span></>
-                      )}
-                    </p>
-                  </div>
-                  <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(contract.external_payment_link); toast.success('Link copiado!'); }}>
-                    <Copy className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-                <div className="flex items-center justify-between text-xs text-amber-800">
-                  <span>📆 Vence em <strong>{contract.due_date ? formatDate(contract.due_date) : '—'}</strong></span>
-                  {contract.payment_message_sent_at ? (
-                    <span className="text-green-700 flex items-center gap-1">
-                      <Check className="w-3 h-3" /> Mensagem enviada em {formatDate(contract.payment_message_sent_at)}
-                    </span>
-                  ) : (
-                    <span className="text-amber-700 italic">Mensagem ainda não enviada</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex gap-2 justify-center flex-wrap border-t pt-3">
-                {student?.whatsapp && (
-                  <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp}>
-                    <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> Enviar via WhatsApp
-                  </Button>
-                )}
-                <Button size="sm" variant="outline" onClick={openExternalSaleModal}>
-                  <PenLine className="w-3.5 h-3.5 mr-1.5" /> Editar cobrança
-                </Button>
-                <Button size="sm" variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={removeExternalSale}>
-                  <XCircle className="w-3.5 h-3.5 mr-1.5" /> Remover
-                </Button>
-                <Button size="sm" variant="outline" className="text-green-700 border-green-300 hover:bg-green-50" onClick={openManualPay}>
-                  <HandCoins className="w-3.5 h-3.5 mr-1.5" /> Dar baixa / registrar pagamento
-                </Button>
-              </div>
-            </div>
+            <ExternalChargeSummary
+              externalLink={contract.external_payment_link}
+              paymentMethod={contract.payment_method}
+              installments={contract.installments}
+              invoiceNumber={contract.external_invoice_number}
+              dueDateLabel={contract.due_date ? formatDate(contract.due_date) : null}
+              messageSentLabel={contract.payment_message_sent_at ? `em ${formatDate(contract.payment_message_sent_at)}` : null}
+              onCopy={() => { navigator.clipboard.writeText(contract.external_payment_link); toast.success('Link copiado!'); }}
+              onMessage={student?.whatsapp ? openWhatsApp : undefined}
+              onEdit={openExternalSaleModal}
+              onRemove={removeExternalSale}
+              onRecordPayment={openManualPay}
+            />
           ) : (
             <div className="space-y-3">
               <div className="text-center py-2">
@@ -1865,83 +1834,16 @@ export default function ContractDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL: cadastrar/editar cobrança externa */}
-      <Dialog open={externalSaleModal} onOpenChange={setExternalSaleModal}>
-        <DialogContent className="max-w-md" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-amber-600" />
-              {contract?.external_payment_link ? 'Editar cobrança externa' : 'Cadastrar cobrança externa'}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              Use quando a cobrança foi gerada fora da plataforma (Asaas no painel, Stone, etc.).
-              O contrato entra em "vendas em aberto" e você acompanha pelo painel.
-            </p>
-            <div>
-              <Label className="text-xs">Forma da cobrança *</Label>
-              <Select
-                value={externalSaleForm.payment_method}
-                onValueChange={value => setExternalSaleForm(f => ({ ...f, payment_method: value }))}
-              >
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Selecione a forma" />
-                </SelectTrigger>
-                <SelectContent>
-                  {EXTERNAL_CHARGE_METHODS.map(method => (
-                    <SelectItem key={method.value} value={method.value}>
-                      {method.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-xs">Link de pagamento *</Label>
-              <Input
-                className="mt-1 font-mono text-xs"
-                placeholder="https://..."
-                value={externalSaleForm.link}
-                onChange={e => setExternalSaleForm(f => ({ ...f, link: e.target.value }))}
-                autoFocus
-              />
-              <p className="text-[11px] text-muted-foreground mt-1">Cole aqui o link da cobrança gerada externamente.</p>
-            </div>
-            <div>
-              <Label className="text-xs">Número da fatura</Label>
-              <Input
-                className="mt-1 font-mono text-xs"
-                placeholder="Ex: 12345678 (opcional)"
-                value={externalSaleForm.invoice_number}
-                onChange={e => setExternalSaleForm(f => ({ ...f, invoice_number: e.target.value }))}
-              />
-              <p className="text-[11px] text-muted-foreground mt-1">Identificador da fatura no sistema externo, para conferência.</p>
-            </div>
-            <div>
-              <Label className="text-xs">Data de vencimento *</Label>
-              <Input
-                className="mt-1"
-                type="date"
-                value={externalSaleForm.due_date}
-                onChange={e => setExternalSaleForm(f => ({ ...f, due_date: e.target.value }))}
-              />
-              <p className="text-[11px] text-muted-foreground mt-1">
-                {isRenewalContract(contract) ? 'Para renovação, o padrão é o início da nova vigência.' : `Padrão do sistema: D+${DEFAULT_ASAAS_DUE_DAYS}.`}
-              </p>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <Button variant="outline" className="flex-1" onClick={() => setExternalSaleModal(false)} disabled={externalSaleSaving}>
-                Cancelar
-              </Button>
-              <Button className="flex-1" onClick={saveExternalSale} disabled={externalSaleSaving}>
-                <Check className="w-4 h-4 mr-1.5" />
-                {externalSaleSaving ? 'Salvando...' : 'Salvar cobrança'}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ExternalChargeDialog
+        open={externalSaleModal}
+        onCancel={() => setExternalSaleModal(false)}
+        hasCharge={Boolean(contract?.external_payment_link)}
+        form={externalSaleForm}
+        setForm={setExternalSaleForm}
+        saving={externalSaleSaving}
+        onSave={saveExternalSale}
+        preventOutsideClose
+      />
 
       {/* MODAL: pagamento manual */}
       <Dialog open={manualPayModal} onOpenChange={setManualPayModal}>

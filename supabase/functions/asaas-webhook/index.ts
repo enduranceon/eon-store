@@ -143,6 +143,7 @@ Deno.serve(async (req: Request) => {
           ["presale_orders", "presale"],
           ["stock_orders", "stock"],
           ["assessment_contracts", "contract"],
+          ["event_registrations", "event"],
         ]) {
           const { data: row } = await supabase
             .from(table).select("id").eq("asaas_charge_id", chargeId).maybeSingle();
@@ -240,6 +241,32 @@ Deno.serve(async (req: Request) => {
       await supabase.from("assessment_contracts").update(updates).eq("id", contract.id);
       await upsertAsaasPayment(supabase, payment, contract.id, "contract");
       console.log("[asaas-webhook] assessment_contract", contract.id, "→", newStatus);
+      return ok();
+    }
+
+    let { data: eventRegistration } = await supabase
+      .from("event_registrations")
+      .select("id, payment_status")
+      .eq("asaas_charge_id", chargeId)
+      .maybeSingle();
+
+    if (eventRegistration) {
+      const updates: Record<string, unknown> = { payment_status: newStatus };
+      if (newStatus === "paid") {
+        updates.payment_date = payment.paymentDate || new Date().toISOString().split("T")[0];
+        if (payment.billingType) {
+          updates.payment_method = mapPaymentMethod(payment.billingType, 1);
+        }
+      }
+      if (newStatus === "cancelled") {
+        updates.asaas_charge_id    = null;
+        updates.asaas_payment_link = null;
+        updates.asaas_pix_qrcode   = null;
+        updates.asaas_pix_copy     = null;
+      }
+      await supabase.from("event_registrations").update(updates).eq("id", eventRegistration.id);
+      await upsertAsaasPayment(supabase, payment, eventRegistration.id, "event");
+      console.log("[asaas-webhook] event_registration", eventRegistration.id, "→", newStatus);
       return ok();
     }
 

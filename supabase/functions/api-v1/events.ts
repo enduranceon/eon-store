@@ -1,14 +1,14 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { jsonResponse } from "../_shared/http.ts";
 
-// Área de Eventos, Fase 1: apenas escrita (criar inscrição, marcar pago,
-// cancelar). Leitura de events/event_registration_types/event_registrations
-// é direta pelo navegador via RLS (mesmo padrão de stock_orders) — não
-// duplicada aqui.
+// Área de Eventos: escrita operacional de inscrições/cancelamentos. Pagamento
+// e cobrança de inscrição usam o fluxo financeiro canônico em /orders/event/...
+// para alimentar Central de Cobranças, Asaas, asaas_payments e fluxo de caixa.
+// Leitura de events/event_registration_types/event_registrations é direta pelo
+// navegador via RLS (mesmo padrão de stock_orders) — não duplicada aqui.
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -21,14 +21,6 @@ async function parseObject(req: Request): Promise<Record<string, unknown> | null
   } catch {
     return null;
   }
-}
-
-function isCalendarDate(value: unknown): value is string {
-  if (typeof value !== "string" || !DATE_PATTERN.test(value)) return false;
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day;
 }
 
 function databaseError(
@@ -86,9 +78,11 @@ export async function handleEventsRequest(
     return jsonResponse({ data }, 201);
   }
 
-  const payMatch = path.match(/^\/events\/registrations\/([^/]+)\/payment$/);
-  if (payMatch && req.method === "POST") {
-    const [, registrationId] = payMatch;
+  const customerMatch = path.match(
+    /^\/events\/registrations\/([^/]+)\/customer$/,
+  );
+  if (customerMatch && req.method === "PATCH") {
+    const [, registrationId] = customerMatch;
     if (!UUID_PATTERN.test(registrationId)) {
       return jsonResponse({
         error: "Identificador de inscrição inválido",
@@ -99,23 +93,56 @@ export async function handleEventsRequest(
     const body = await parseObject(req);
     if (
       !body ||
-      typeof body.payment_method !== "string" || !body.payment_method.trim() ||
-      (body.payment_date !== undefined && body.payment_date !== null && !isCalendarDate(body.payment_date))
+      typeof body.customer_id !== "string" ||
+      !UUID_PATTERN.test(body.customer_id)
     ) {
       return jsonResponse({
-        error: "Dados de pagamento inválidos",
+        error: "Cliente inválido",
         code: "invalid_request",
       }, 400);
     }
 
-    const { data, error } = await supabase.rpc("record_event_registration_manual_payment", {
-      p_registration_id: registrationId,
-      p_payment_method: body.payment_method,
-      p_payment_date: body.payment_date ?? null,
-      p_actor_id: actorId,
-    });
-    if (error) return databaseError(error, "record payment");
+    const { data, error } = await supabase.rpc(
+      "link_event_registration_customer",
+      {
+        p_registration_id: registrationId,
+        p_customer_id: body.customer_id,
+        p_actor_id: actorId,
+      },
+    );
+    if (error) return databaseError(error, "link customer");
     return jsonResponse({ data });
+  }
+
+  const customerConfirmationMatch = path.match(
+    /^\/events\/registrations\/([^/]+)\/customer-confirmation$/,
+  );
+  if (customerConfirmationMatch && req.method === "POST") {
+    const [, registrationId] = customerConfirmationMatch;
+    if (!UUID_PATTERN.test(registrationId)) {
+      return jsonResponse({
+        error: "Identificador de inscrição inválido",
+        code: "invalid_registration_id",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc(
+      "confirm_event_registration_customer_link",
+      {
+        p_registration_id: registrationId,
+        p_actor_id: actorId,
+      },
+    );
+    if (error) return databaseError(error, "confirm customer");
+    return jsonResponse({ data });
+  }
+
+  const payMatch = path.match(/^\/events\/registrations\/([^/]+)\/payment$/);
+  if (payMatch && req.method === "POST") {
+    return jsonResponse({
+      error: "Use /orders/event/{id}/manual-payment para registrar pagamento de inscrição",
+      code: "route_deprecated",
+    }, 410);
   }
 
   const cancelMatch = path.match(/^\/events\/registrations\/([^/]+)\/cancel$/);

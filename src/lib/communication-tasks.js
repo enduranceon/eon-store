@@ -122,7 +122,11 @@ function groupContractEvents(events = []) {
 function groupSaleEvents(events = []) {
   return events.reduce((acc, ev) => {
     if (!ev.order_type || !ev.order_id) return acc;
-    const sourceType = ev.order_type === 'stock' ? 'stock' : 'presale';
+    const sourceType = ev.order_type === 'stock'
+      ? 'stock'
+      : ev.order_type === 'event'
+      ? 'event'
+      : 'presale';
     const key = `${sourceType}:${ev.order_id}`;
     if (!acc.has(key)) acc.set(key, []);
     acc.get(key).push(ev);
@@ -294,6 +298,40 @@ function normalizeContract(contract, maps) {
     renewalItemSummary: itemSummary(renewalItems),
     href: `/assessoria/contratos/${contract.id}`,
     createdAt: contract.created_at,
+  };
+}
+
+function normalizeEventRegistration(registration, maps) {
+  const customer = maps.customers.get(registration.customer_id) || {};
+  const type = maps.eventTypes.get(registration.registration_type_id) || {};
+  const event = maps.events.get(registration.event_id) || {};
+  const totalValue = Number(type.price) || 0;
+  const label = [event.name, type.name].filter(Boolean).join(' - ') || 'Inscrição de evento';
+  const items = normalizeSaleItems([{ product_name: label, quantity: 1, sale_price: totalValue }]);
+
+  return {
+    sourceType: 'event',
+    tableName: 'event_registrations',
+    sourceLabel: 'Inscrição de evento',
+    sourceId: registration.id,
+    orderNumber: registration.registration_number,
+    customerName: customer.full_name,
+    customerWhatsapp: customer.whatsapp,
+    customerEmail: customer.email,
+    totalValue,
+    paymentStatus: registration.payment_status || 'pending',
+    dueDate: registration.due_date || '',
+    paymentDate: registration.payment_date || '',
+    asaasChargeId: registration.asaas_charge_id,
+    asaasPaymentLink: registration.asaas_payment_link,
+    asaasPixCopy: registration.asaas_pix_copy,
+    externalPaymentLink: registration.external_payment_link,
+    paymentMessageSentAt: registration.payment_message_sent_at,
+    updatedAt: registration.updated_at,
+    items,
+    itemSummary: itemSummary(items),
+    href: `/eventos/${registration.event_id}`,
+    createdAt: registration.created_at,
   };
 }
 
@@ -484,15 +522,20 @@ export function buildCommunicationTasks(data, options = {}) {
     plans: mapById(data.plans || []),
     modalities: mapById(data.modalities || []),
     coaches: mapById(data.coaches || []),
+    events: mapById(data.events || []),
+    eventTypes: mapById(data.eventTypes || []),
   };
   const eventsByContract = groupContractEvents(data.contractEvents || []);
   const eventsBySale = groupSaleEvents(data.saleEvents || []);
   const presaleSales = (data.presaleOrders || []).map(normalizePresale);
   const stockSales = (data.stockOrders || []).map(normalizeStock);
   const contractSales = (data.contracts || []).map(contract => normalizeContract(contract, maps));
+  const eventSales = (data.eventRegistrations || [])
+    .map(registration => normalizeEventRegistration(registration, maps))
+    .filter(sale => sale.totalValue > 0);
   const tasks = [];
 
-  [...presaleSales, ...stockSales, ...contractSales].forEach(sale => {
+  [...presaleSales, ...stockSales, ...contractSales, ...eventSales].forEach(sale => {
     const events = sale.sourceType === 'contract'
       ? eventsByContract.get(sale.sourceId) || []
       : eventsBySale.get(`${sale.sourceType}:${sale.sourceId}`) || [];
@@ -523,7 +566,11 @@ function renderCommunicationTemplate(template, task, options = {}) {
   const communityLink = String(options.communityLink || '').trim();
   const paymentLink = paymentLinkFor(task, externalLink);
   const pixCopy = task.asaasPixCopy;
-  const saleType = task.sourceType === 'contract' ? 'contrato' : 'pedido';
+  const saleType = task.sourceType === 'contract'
+    ? 'contrato'
+    : task.sourceType === 'event'
+    ? 'inscrição'
+    : 'pedido';
   const due = dueDate ? formatDate(dueDate) : '';
   const daysToEnd = task.endDate ? daysBetween(task.endDate, todayLocalStr()) : null;
   const items = task.items || [];
@@ -615,7 +662,11 @@ export function buildTaskMessage(task, options = {}) {
   }
 
   if (task.kind === TASK_KIND.CHARGE_SEND) {
-    const saleType = task.sourceType === 'contract' ? 'contrato' : 'pedido';
+    const saleType = task.sourceType === 'contract'
+      ? 'contrato'
+      : task.sourceType === 'event'
+      ? 'inscrição'
+      : 'pedido';
     const due = dueDate ? formatDate(dueDate) : '';
     let msg = `Olá, ${name}! Tudo bem?\n\n`;
     msg += `Segue a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;

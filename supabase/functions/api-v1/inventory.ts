@@ -27,6 +27,7 @@ const WRITABLE_FIELDS = new Set([
   "name",
   "description",
   "category",
+  "subcategory",
   "images",
   "sale_price",
   "regular_price",
@@ -36,6 +37,12 @@ const WRITABLE_FIELDS = new Set([
   "notes",
   "product_id",
   "revenue_center_id",
+  "supplier",
+  "supplier_id",
+  "product_number",
+  "variations",
+  "extras",
+  "show_in_store",
 ]);
 
 export class InventoryInputError extends Error {
@@ -89,6 +96,25 @@ function optionalNumber(
   output[field] = Math.round(value * 100) / 100;
 }
 
+function optionalInteger(
+  input: ProductPayload,
+  output: ProductPayload,
+  field: string,
+  { min = 0, max = 10_000_000 }: { min?: number; max?: number } = {},
+): void {
+  if (!(field in input)) return;
+  const value = input[field];
+  if (value === null || value === "") {
+    output[field] = null;
+    return;
+  }
+  const integer = Number(value);
+  if (!Number.isInteger(integer) || integer < min || integer > max) {
+    throw new InventoryInputError(`Valor inválido: ${field}`);
+  }
+  output[field] = integer;
+}
+
 function optionalUuid(
   input: ProductPayload,
   output: ProductPayload,
@@ -102,6 +128,32 @@ function optionalUuid(
   }
   if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
     throw new InventoryInputError(`Identificador inválido: ${field}`);
+  }
+  output[field] = value;
+}
+
+function optionalBoolean(
+  input: ProductPayload,
+  output: ProductPayload,
+  field: string,
+): void {
+  if (!(field in input)) return;
+  if (typeof input[field] !== "boolean") {
+    throw new InventoryInputError(`Campo inválido: ${field}`);
+  }
+  output[field] = input[field];
+}
+
+function optionalJsonArray(
+  input: ProductPayload,
+  output: ProductPayload,
+  field: string,
+  { maxItems = 100 }: { maxItems?: number } = {},
+): void {
+  if (!(field in input)) return;
+  const value = input[field];
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw new InventoryInputError(`Campo inválido: ${field}`);
   }
   output[field] = value;
 }
@@ -134,12 +186,19 @@ export function normalizeStockProductPayload(
 
   optionalText(payload, output, "description", 5_000);
   optionalText(payload, output, "category", 200);
+  optionalText(payload, output, "subcategory", 200);
+  optionalText(payload, output, "supplier", 200);
   optionalText(payload, output, "notes", 5_000);
   optionalNumber(payload, output, "sale_price");
   optionalNumber(payload, output, "regular_price");
   optionalNumber(payload, output, "cost_price");
   optionalUuid(payload, output, "product_id");
   optionalUuid(payload, output, "revenue_center_id");
+  optionalUuid(payload, output, "supplier_id");
+  optionalInteger(payload, output, "product_number", { min: 1, max: 10_000_000 });
+  optionalBoolean(payload, output, "show_in_store");
+  optionalJsonArray(payload, output, "variations", { maxItems: 200 });
+  optionalJsonArray(payload, output, "extras", { maxItems: 100 });
 
   if ("quantity" in payload) {
     const quantity = Number(payload.quantity);

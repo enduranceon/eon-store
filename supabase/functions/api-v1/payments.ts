@@ -5,7 +5,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MANUAL_PAYMENT_PATH =
-  /^\/orders\/(presale|stock|contract)\/([^/]+)\/manual-payment$/;
+  /^\/orders\/(presale|stock|contract|event)\/([^/]+)\/manual-payment$/;
 
 interface PaymentMethodConfig {
   id: string;
@@ -314,21 +314,37 @@ export async function handlePaymentsRequest(
       method as PaymentMethodConfig,
       body.payment_date,
     );
-    const { data, error } = await supabase.rpc("api_record_manual_payment", {
-      p_order_type: orderType,
-      p_order_id: orderId,
-      p_payment_method_id: body.payment_method_id,
-      p_payment_date: body.payment_date,
-      p_total: body.total,
-      p_installments: installments,
-      p_actor_id: actorId,
-    });
+    const { data, error } = orderType === "event"
+      ? await supabase.rpc("api_record_event_manual_payment", {
+        p_order_id: orderId,
+        p_payment_method_id: body.payment_method_id,
+        p_payment_date: body.payment_date,
+        p_total: body.total,
+        p_installments: installments,
+        p_actor_id: actorId,
+      })
+      : await supabase.rpc("api_record_manual_payment", {
+        p_order_type: orderType,
+        p_order_id: orderId,
+        p_payment_method_id: body.payment_method_id,
+        p_payment_date: body.payment_date,
+        p_total: body.total,
+        p_installments: installments,
+        p_actor_id: actorId,
+      });
 
     if (error) return databaseError(error, "record");
     return jsonResponse({ data });
   }
 
   if (req.method === "PATCH") {
+    if (orderType === "event") {
+      return jsonResponse({
+        error: "Ajuste de pagamento manual de evento ainda não está habilitado",
+        code: "unsupported_order_type",
+      }, 400);
+    }
+
     const body = normalizeManualAdjustmentBody(await parseBody(req));
     if (!body) {
       return jsonResponse({
@@ -352,11 +368,16 @@ export async function handlePaymentsRequest(
   }
 
   if (req.method === "DELETE") {
-    const { data, error } = await supabase.rpc("api_reopen_manual_payment", {
-      p_order_type: orderType,
-      p_order_id: orderId,
-      p_actor_id: actorId,
-    });
+    const { data, error } = orderType === "event"
+      ? await supabase.rpc("api_reopen_event_manual_payment", {
+        p_order_id: orderId,
+        p_actor_id: actorId,
+      })
+      : await supabase.rpc("api_reopen_manual_payment", {
+        p_order_type: orderType,
+        p_order_id: orderId,
+        p_actor_id: actorId,
+      });
 
     if (error) return databaseError(error, "reopen");
     return jsonResponse({ data });
