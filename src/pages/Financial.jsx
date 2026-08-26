@@ -16,7 +16,12 @@ import { updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
 import { financialQualityPath, financialQualitySeverityLabel, toPaymentRecord } from '@/lib/financial-ledger';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { isBillableProspectOpenSale, isOpenSaleForFinancial } from '@/lib/sales';
+import {
+  hasChargeEvidence,
+  isAwaitingCharge,
+  isBillableProspectOpenSale,
+  isOpenCollectionSale,
+} from '@/lib/sales';
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
 import { DEFAULT_COMMUNICATION_RULES, loadCommunicationConfig } from '@/lib/communication-config';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
@@ -31,7 +36,7 @@ import { toast } from 'sonner';
 const RECEIVABLES_CACHE_KEY = 'asaas_receivables_cache_v1';
 const RECEIVABLES_CACHE_TTL = 5 * 60 * 1000;
 const FINANCIAL_PAGE_CACHE_TTL = 60 * 1000;
-const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview:v3';
+const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview:v4';
 const ADJUSTABLE_DUE_DATE_STATUSES = new Set([
   'pending',
   'awaiting_charge',
@@ -573,8 +578,7 @@ export default function Financial() {
             return (
               c.lifecycle?.counts?.active ||
               c.payment_status === 'paid' ||
-              isOpenSaleForFinancial(c) ||
-              (c.status === 'scheduled' && !['paid', 'refunded', 'cancelled'].includes(c.payment_status))
+              isOpenCollectionSale(c)
             );
           })
           .map(c => {
@@ -709,17 +713,10 @@ export default function Financial() {
     return { total };
   };
 
-  // Exclui pedidos que já têm pagamento confirmado no Asaas mesmo que payment_status ainda não foi sincronizado
-  const isScheduledContractOpenPayment = (o) =>
-    o.type === 'contract' &&
-    o.status === 'scheduled' &&
-    !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
-  const isEventOpenRegistration = (o) =>
-    o.type === 'event' &&
-    Number(o.total_value) > 0 &&
-    !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
+  // A fila operacional inclui pedidos que ainda aguardam a primeira cobranca.
+  // O livro-caixa continua usando somente movimentos/recebiveis ja registrados.
   const activeOrders = orders.filter(o =>
-    (isOpenSaleForFinancial(o) || isScheduledContractOpenPayment(o) || isEventOpenRegistration(o)) &&
+    isOpenCollectionSale(o) &&
     !ordersWithReceiptMovement.has(o.id)
   );
 
@@ -750,9 +747,9 @@ export default function Financial() {
   const upcoming   = activeOrders.filter(o => o.due_date && o.due_date >= todayStr).sort((a, b) => a.due_date.localeCompare(b.due_date));
   const missingDueDate = activeOrders.filter(o => !o.due_date);
   const sentCharge = activeOrders.filter(o =>
-    o.asaas_charge_id || ['charge_sent', 'partially_paid'].includes(o.payment_status)
+    hasChargeEvidence(o) || o.payment_status === 'charge_sent'
   );
-  const noCharge = activeOrders.filter(o => !o.asaas_charge_id && !o.asaas_payment_link && !o.external_payment_link);
+  const noCharge = activeOrders.filter(isAwaitingCharge);
 
   // KPI de recebimentos confirmados na fonte financeira unica.
   const monthResult = sumReceived(
@@ -929,7 +926,7 @@ export default function Financial() {
             Vendas em aberto
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Cobranças pendentes — quem ainda não pagou · Loja · Pré-venda · Assessoria · Eventos
+            Vendas que ainda precisam de cobrança ou pagamento · Loja · Pré-venda · Assessoria · Eventos
           </p>
           {(loadingRec || fetchedAt) && (
             <p className="text-xs text-muted-foreground mt-1">

@@ -48,6 +48,16 @@ export function isOpenSaleForFinancial(order) {
   return isEffectiveOpenSale(order);
 }
 
+// A venda pode precisar aparecer na fila de cobranca antes de existir um link,
+// fatura ou parcela. Isso e diferente de um recebivel financeiro ja emitido.
+export function isOpenCollectionSale(order) {
+  if (!order || order.status === 'voided') return false;
+  if (TERMINAL_PAYMENT_STATUSES.has(order.payment_status)) return false;
+  if (PAID_PAYMENT_STATUSES.has(order.payment_status)) return false;
+  if (order.status === 'draft') return isBillableProspectOpenSale(order);
+  return true;
+}
+
 export function isAwaitingCharge(order) {
   return Boolean(
     order &&
