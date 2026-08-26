@@ -75,6 +75,14 @@ const QUALITY_SORT_FIELDS = new Set([
   "occurred_on",
   "severity",
 ]);
+const QUALITY_SEVERITIES = new Set(["high", "medium", "low"]);
+const QUALITY_ISSUE_TYPES = new Set([
+  "event_refund_without_details",
+  "movement_without_revenue_center",
+  "open_sale_without_due_date",
+  "pending_refund",
+  "receipt_without_payment_row",
+]);
 
 class FinancialQueryError extends Error {
   code: string;
@@ -94,6 +102,14 @@ export type FinancialMovementFilters = {
   isActual: boolean | null;
   scheduledFrom: string | null;
   scheduledTo: string | null;
+  sort: Sort;
+  limit: number;
+};
+
+export type FinancialQualityFilters = {
+  businessUnit: string | null;
+  severity: string | null;
+  issueType: string | null;
   sort: Sort;
   limit: number;
 };
@@ -173,6 +189,17 @@ export function parseFinancialMovementFilters(url: URL): FinancialMovementFilter
   };
 }
 
+export function parseFinancialQualityFilters(url: URL): FinancialQualityFilters {
+  const params = url.searchParams;
+  return {
+    businessUnit: optionalEnum(params, "business_unit", BUSINESS_UNITS),
+    severity: optionalEnum(params, "severity", QUALITY_SEVERITIES),
+    issueType: optionalEnum(params, "issue_type", QUALITY_ISSUE_TYPES),
+    sort: parseSort(params, QUALITY_SORT_FIELDS, "issue_id"),
+    limit: parseLimit(params),
+  };
+}
+
 function queryErrorResponse(error: unknown): Response {
   if (error instanceof FinancialQueryError) {
     return jsonResponse({ error: error.message, code: error.code }, 400);
@@ -231,13 +258,18 @@ export async function handleFinancialRequest(
       return jsonResponse({ data: data ?? [] });
     }
 
-    const sort = parseSort(url.searchParams, QUALITY_SORT_FIELDS, "issue_id");
-    const limit = parseLimit(url.searchParams);
-    const { data, error } = await supabase
+    const filters = parseFinancialQualityFilters(url);
+    let query = supabase
       .from("financial_data_quality")
       .select(QUALITY_COLUMNS)
-      .order(sort.field, { ascending: sort.ascending })
-      .limit(limit);
+      .order(filters.sort.field, { ascending: filters.sort.ascending })
+      .limit(filters.limit);
+
+    if (filters.businessUnit) query = query.eq("business_unit", filters.businessUnit);
+    if (filters.severity) query = query.eq("severity", filters.severity);
+    if (filters.issueType) query = query.eq("issue_type", filters.issueType);
+
+    const { data, error } = await query;
     if (error) return databaseError(error, "quality");
     return jsonResponse({ data: data ?? [] });
   } catch (error) {
