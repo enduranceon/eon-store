@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { listFinancialMovements } from '@/api/client';
 import { supabase } from '@/api/db';
 import { toPaymentRecord } from '@/lib/financial-ledger';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
@@ -115,17 +116,14 @@ async function loadCashFlowPayments() {
   const end = new Date();
   end.setMonth(end.getMonth() + 12);
 
-  const { data, error } = await supabase
-    .from('financial_movements')
-    .select('movement_id,source,order_id,order_type,status,gross_amount,net_amount,occurred_on,due_on,recognition_on,scheduled_on,payment_method,description,reference,revenue_center_id,is_legacy,metadata')
-    .eq('movement_kind', 'receipt')
-    .eq('is_actual', true)
-    .gte('scheduled_on', toLocalDateStr(start))
-    .lte('scheduled_on', toLocalDateStr(end))
-    .order('scheduled_on', { ascending: true });
-
-  if (error) throw error;
-  const payments = (data || []).map(toPaymentRecord);
+  const movements = await listFinancialMovements({
+    movementKind: 'receipt',
+    isActual: true,
+    scheduledFrom: toLocalDateStr(start),
+    scheduledTo: toLocalDateStr(end),
+    sort: 'scheduled_on',
+  });
+  const payments = movements.map(toPaymentRecord);
 
   // ── Enriquece cada parcela com o nome do cliente ─────────────────
   // O cliente fica em lugares diferentes conforme o tipo de pedido:

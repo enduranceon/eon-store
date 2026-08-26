@@ -17,11 +17,10 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   AssessmentCoach, EventExpense, EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
 } from '@/api/entities';
-import { supabase } from '@/api/db';
 import {
   cancelEventRegistration, confirmEventRegistrationCustomer,
   createEventRegistration, createOrderCharge, linkEventRegistrationCustomer,
-  removeEventExternalCharge, saveEventExternalCharge,
+  listFinancialMovements, removeEventExternalCharge, saveEventExternalCharge,
 } from '@/api/client';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
@@ -179,20 +178,19 @@ function fieldKeyFromLabel(label) {
 }
 
 async function loadEventDetail(eventId) {
-  const [event, types, registrations, customers, expenses, coaches, movementsRes] = await Promise.all([
+  const [event, types, registrations, customers, expenses, coaches, financialMovements] = await Promise.all([
     EventRecord.get(eventId),
     EventRegistrationType.filter({ event_id: eventId }),
     EventRegistration.filter({ event_id: eventId }),
     PreSaleCustomer.list('full_name'),
     EventExpense.filter({ event_id: eventId }, '-expense_date'),
     AssessmentCoach.list('name').catch(() => []),
-    supabase
-      .from('financial_movements')
-      .select('movement_id,order_id,order_type,business_unit,movement_kind,cash_direction,is_actual,gross_amount,fee_amount,net_amount,signed_net_amount,occurred_on,due_on,recognition_on,scheduled_on,description,reference,metadata')
-      .eq('order_type', 'event'),
+    listFinancialMovements({ orderType: 'event' }).catch(error => {
+      console.error('[EventDetail] Erro ao carregar métricas financeiras:', error);
+      return [];
+    }),
   ]);
-  if (movementsRes.error) throw movementsRes.error;
-  return { event, types, registrations, customers, expenses, coaches, financialMovements: movementsRes.data || [] };
+  return { event, types, registrations, customers, expenses, coaches, financialMovements };
 }
 
 // Desenha um formulário a partir da definição de campos do tipo de inscrição.

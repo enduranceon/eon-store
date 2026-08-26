@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { listFinancialMovements } from '@/api/client';
 import { EventRecord, EventRegistration, RevenueCenter } from '@/api/entities';
-import { supabase } from '@/api/db';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { summarizeFinancialMovements } from '@/lib/financial-dashboard';
 import { usePageData } from '@/hooks/usePageData';
@@ -90,16 +90,15 @@ function dateSummary(event) {
 }
 
 async function loadEvents() {
-  const [events, registrations, centers, movementsRes] = await Promise.all([
+  const [events, registrations, centers, financialMovements] = await Promise.all([
     EventRecord.list('-event_date'),
     EventRegistration.list('-created_at'),
     RevenueCenter.list().catch(() => []),
-    supabase
-      .from('financial_movements')
-      .select('movement_id,order_id,order_type,business_unit,movement_kind,cash_direction,is_actual,gross_amount,fee_amount,net_amount,signed_net_amount,occurred_on,due_on,recognition_on,scheduled_on,metadata')
-      .eq('order_type', 'event'),
+    listFinancialMovements({ orderType: 'event' }).catch(error => {
+      console.error('[Events] Erro ao carregar métricas financeiras:', error);
+      return [];
+    }),
   ]);
-  if (movementsRes.error) throw movementsRes.error;
   const countByEvent = {};
   const paidByEvent = {};
   const eventByRegistrationId = {};
@@ -110,7 +109,7 @@ async function loadEvents() {
     if (reg.payment_status === 'paid') paidByEvent[reg.event_id] = (paidByEvent[reg.event_id] || 0) + 1;
   }
   const movementsByEvent = {};
-  for (const movement of movementsRes.data || []) {
+  for (const movement of financialMovements) {
     const eventId = eventByRegistrationId[movement.order_id] || movement.metadata?.event_id;
     if (!eventId) continue;
     if (!movementsByEvent[eventId]) movementsByEvent[eventId] = [];
@@ -125,7 +124,7 @@ async function loadEvents() {
     paidByEvent,
     centers,
     financeByEvent,
-    financeSummary: summarizeFinancialMovements(movementsRes.data || []),
+    financeSummary: summarizeFinancialMovements(financialMovements),
   };
 }
 

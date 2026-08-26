@@ -117,6 +117,38 @@ export function getCurrentAdmin(options = {}) {
   return apiRequest('/session', options);
 }
 
+function financialQuery(filters = {}) {
+  const params = new URLSearchParams();
+  const values = {
+    business_unit: filters.businessUnit,
+    order_type: filters.orderType,
+    movement_kind: filters.movementKind,
+    is_actual: filters.isActual,
+    scheduled_from: filters.scheduledFrom,
+    scheduled_to: filters.scheduledTo,
+    sort: filters.sort,
+    limit: filters.limit,
+  };
+
+  Object.entries(values).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') return;
+    params.set(key, String(value));
+  });
+
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+export async function listFinancialMovements(filters = {}, options = {}) {
+  const response = await apiRequest(`/financial/movements${financialQuery(filters)}`, options);
+  return response.data || [];
+}
+
+export async function listFinancialDataQuality(filters = {}, options = {}) {
+  const response = await apiRequest(`/financial/quality${financialQuery(filters)}`, options);
+  return response.data || [];
+}
+
 export async function listOrderReturns(options = {}) {
   const response = await apiRequest('/returns', options);
   return response.data;
