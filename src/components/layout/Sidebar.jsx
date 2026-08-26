@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { cn, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
-import { isAwaitingCharge, isOpenSaleForFinancial } from '@/lib/sales';
+import { isAwaitingCharge, isOpenCollectionSale, isOpenSaleForFinancial } from '@/lib/sales';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
 // ─────────────────────────────────────────────────────────────────
@@ -266,13 +266,8 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           (eventTypePriceMap[reg.registration_type_id] || 0) > 0 &&
           !['paid', 'refunded', 'cancelled'].includes(reg.payment_status)
         );
-        const eventOpenRows = eventPendingRows.filter(isOpenSaleForFinancial);
-        const isScheduledContractOpenPayment = (contract) =>
-          contract.status === 'scheduled' &&
-          !['paid', 'refunded', 'cancelled'].includes(contract.payment_status);
-        const openContracts = (contractsOpenPayments.data || []).filter(contract =>
-          isOpenSaleForFinancial(contract) || isScheduledContractOpenPayment(contract)
-        );
+        const eventOpenRows = eventPendingRows.filter(isOpenCollectionSale);
+        const openContracts = (contractsOpenPayments.data || []).filter(isOpenCollectionSale);
         const daysSince = value => value
           ? Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000))
           : 0;
@@ -283,7 +278,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         );
         const collectionCandidates = [...allOrders, ...eventPendingRows, ...openContracts];
         const openSalesCount =
-          allOrders.filter(isOpenSaleForFinancial).length +
+          allOrders.filter(isOpenCollectionSale).length +
           eventOpenRows.length +
           openContracts.length;
         const todayCount =
