@@ -73,6 +73,7 @@ import AssLeaves from '@/pages/assessment/Leaves';
 const Reports = lazy(() => import('@/pages/Reports'));
 const Analytics = lazy(() => import('@/pages/Analytics'));
 const CashFlow = lazy(() => import('@/pages/CashFlow'));
+const FinancialReconciliation = lazy(() => import('@/pages/FinancialReconciliation'));
 const AssPainel = lazy(() => import('@/pages/assessment/Painel'));
 const AssCentralFinanceira = lazy(() => import('@/pages/assessment/CentralFinanceira'));
 
@@ -174,6 +175,7 @@ export default function App() {
           <Route path="/fornecedores/:id" element={<AdminLayout><SupplierForm /></AdminLayout>} />
           <Route path="/relatorios" element={<AdminLayout><Reports /></AdminLayout>} />
           <Route path="/analytics" element={<AdminLayout><Analytics /></AdminLayout>} />
+          <Route path="/financeiro/conciliacao" element={<AdminLayout><FinancialReconciliation /></AdminLayout>} />
           <Route path="/financeiro" element={<AdminLayout><Financial /></AdminLayout>} />
           <Route path="/financeiro/fluxo-caixa" element={<AdminLayout><CashFlow /></AdminLayout>} />
           <Route path="/devolucoes" element={<AdminLayout><Returns /></AdminLayout>} />

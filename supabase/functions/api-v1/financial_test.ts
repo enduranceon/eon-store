@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import {
   handleFinancialRequest,
+  parseFinancialQualityFilters,
   parseFinancialMovementFilters,
 } from "./financial.ts";
 
@@ -99,7 +100,7 @@ Deno.test("financial quality uses the protected quality view", async () => {
     error: null,
   });
   const response = await handleFinancialRequest(
-    new Request("https://example.test/api-v1/financial/quality?sort=-occurred_on&limit=10"),
+    new Request("https://example.test/api-v1/financial/quality?business_unit=assessoria&severity=high&issue_type=pending_refund&sort=-occurred_on&limit=10"),
     "/financial/quality",
     client,
   );
@@ -108,6 +109,21 @@ Deno.test("financial quality uses the protected quality view", async () => {
   assert(calls[0].args[0] === "financial_data_quality", "wrong quality relation was queried");
   assert(calls.some(call => call.method === "order" && call.args[0] === "occurred_on"), "quality sort was lost");
   assert(calls.some(call => call.method === "limit" && call.args[0] === 10), "quality limit was lost");
+  assert(calls.some(call => call.method === "eq" && call.args[0] === "business_unit" && call.args[1] === "assessoria"), "quality business unit filter was lost");
+  assert(calls.some(call => call.method === "eq" && call.args[0] === "severity" && call.args[1] === "high"), "quality severity filter was lost");
+  assert(calls.some(call => call.method === "eq" && call.args[0] === "issue_type" && call.args[1] === "pending_refund"), "quality issue type filter was lost");
+});
+
+Deno.test("financial quality filters accept only known reconciliation dimensions", () => {
+  const filters = parseFinancialQualityFilters(
+    new URL("https://example.test/api-v1/financial/quality?business_unit=loja&severity=medium&issue_type=movement_without_revenue_center&sort=-occurred_on&limit=50"),
+  );
+
+  assert(filters.businessUnit === "loja", "quality business unit changed");
+  assert(filters.severity === "medium", "quality severity changed");
+  assert(filters.issueType === "movement_without_revenue_center", "quality issue type changed");
+  assert(filters.sort.field === "occurred_on" && !filters.sort.ascending, "quality sort changed");
+  assert(filters.limit === 50, "quality limit changed");
 });
 
 Deno.test("financial route rejects invalid filters and write methods", async () => {
@@ -118,6 +134,13 @@ Deno.test("financial route rejects invalid filters and write methods", async () 
     client,
   );
   assert(invalid?.status === 400, "invalid sort was accepted");
+
+  const invalidQuality = await handleFinancialRequest(
+    new Request("https://example.test/api-v1/financial/quality?issue_type=unexpected"),
+    "/financial/quality",
+    client,
+  );
+  assert(invalidQuality?.status === 400, "invalid quality filter was accepted");
 
   const write = await handleFinancialRequest(
     new Request("https://example.test/api-v1/financial/movements", { method: "POST" }),

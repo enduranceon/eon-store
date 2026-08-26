@@ -14,7 +14,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { listFinancialDataQuality, listFinancialMovements, updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
-import { financialQualityPath, financialQualitySeverityLabel, toPaymentRecord } from '@/lib/financial-ledger';
+import { financialQualitySeverityLabel, toPaymentRecord } from '@/lib/financial-ledger';
+import {
+  financialQualityTypeMeta,
+  financialQualityUnitLabel,
+  summarizeFinancialQuality,
+} from '@/lib/financial-quality';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import {
   hasChargeEvidence,
@@ -364,70 +369,59 @@ function KpiCard({ label, value, sub, icon: Icon, iconBg, iconColor, valueColor,
 }
 
 function FinancialDataQuality({ issues }) {
-  const [expanded, setExpanded] = useState(false);
-  const severityRank = { high: 0, medium: 1, low: 2 };
-  const sortedIssues = [...issues].sort((a, b) => {
-    const rank = (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3);
-    if (rank !== 0) return rank;
-    return String(b.occurred_on || '').localeCompare(String(a.occurred_on || ''));
-  });
-  const visibleIssues = expanded ? sortedIssues : sortedIssues.slice(0, 5);
+  const summary = summarizeFinancialQuality(issues);
+  const visibleGroups = summary.groups.slice(0, 3);
   const severityClass = {
     high: 'bg-red-100 text-red-700',
     medium: 'bg-amber-100 text-amber-700',
     low: 'bg-blue-100 text-blue-700',
   };
-  const businessUnitLabel = {
-    pre_venda: 'Pre-venda',
-    loja: 'Loja',
-    assessoria: 'Assessoria',
-    eventos: 'Eventos',
-  };
 
   return (
-    <Card className={issues.length ? 'border-amber-200' : 'border-emerald-200'}>
+    <Card className={summary.totalCount ? 'border-amber-200' : 'border-emerald-200'}>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <CardTitle className="text-base flex items-center gap-2">
-            <AlertTriangle className={`w-4 h-4 ${issues.length ? 'text-amber-600' : 'text-emerald-600'}`} />
+            <AlertTriangle className={`w-4 h-4 ${summary.totalCount ? 'text-amber-600' : 'text-emerald-600'}`} />
             Qualidade financeira
           </CardTitle>
-          <span className={`text-xs font-semibold px-2 py-1 rounded-full ${issues.length ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>
-            {issues.length ? `${issues.length} pendencia${issues.length !== 1 ? 's' : ''}` : 'Sem pendencias'}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className={`text-xs font-semibold px-2 py-1 rounded-full ${summary.totalCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>
+              {summary.totalCount ? `${summary.totalCount} registro${summary.totalCount !== 1 ? 's' : ''}` : 'Sem pendencias'}
+            </span>
+            <Link to="/financeiro/conciliacao" className="text-xs font-semibold text-blue-700 hover:underline">Abrir fila</Link>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="pt-0">
-        {visibleIssues.length === 0 ? (
+        {visibleGroups.length === 0 ? (
           <p className="text-sm text-emerald-700 py-1">Nenhuma pendencia financeira identificada.</p>
         ) : (
-          <div className="divide-y">
-            {visibleIssues.map(issue => (
-              <div key={issue.issue_id} className="flex items-center gap-3 py-3 first:pt-1">
-                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${severityClass[issue.severity] || 'bg-gray-100 text-gray-600'}`}>
-                  {financialQualitySeverityLabel(issue.severity)}
+          <>
+            <p className="mb-3 text-sm text-gray-700">
+              {summary.groupCount} grupo{summary.groupCount !== 1 ? 's' : ''} para revisar
+              {summary.highCount ? `, com ${summary.highCount} registro${summary.highCount !== 1 ? 's' : ''} de prioridade alta` : ''}.
+            </p>
+            <div className="divide-y">
+            {visibleGroups.map(group => {
+              const meta = financialQualityTypeMeta(group.issueType);
+              return (
+              <div key={group.key} className="flex items-center gap-3 py-3 first:pt-1">
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${severityClass[group.severity] || 'bg-gray-100 text-gray-600'}`}>
+                  {financialQualitySeverityLabel(group.severity)}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm text-gray-800">{issue.message}</p>
+                  <p className="text-sm text-gray-800 truncate">{meta.label}</p>
                   <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                    {[businessUnitLabel[issue.business_unit] || issue.business_unit, issue.reference].filter(Boolean).join(' · ')}
-                    {issue.amount != null ? ` · ${formatCurrency(issue.amount)}` : ''}
+                    {financialQualityUnitLabel(group.businessUnit)} · {group.count} registro{group.count !== 1 ? 's' : ''}
                   </p>
                 </div>
-                <Link
-                  to={financialQualityPath(issue)}
-                  className="text-xs font-semibold text-blue-700 hover:underline shrink-0"
-                >
-                  Abrir
-                </Link>
+                <span className="text-xs font-semibold text-gray-800 shrink-0">{formatCurrency(group.totalAmount)}</span>
               </div>
-            ))}
-          </div>
-        )}
-        {sortedIssues.length > 5 && (
-          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setExpanded(value => !value)}>
-            {expanded ? 'Mostrar menos' : `Ver todas (${sortedIssues.length})`}
-          </Button>
+              );
+            })}
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

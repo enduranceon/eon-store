@@ -139,13 +139,32 @@ function financialQuery(filters = {}) {
   return query ? `?${query}` : '';
 }
 
+function financialQualityQuery(filters = {}) {
+  const params = new URLSearchParams();
+  const values = {
+    business_unit: filters.businessUnit,
+    severity: filters.severity,
+    issue_type: filters.issueType,
+    sort: filters.sort,
+    limit: filters.limit,
+  };
+
+  Object.entries(values).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') return;
+    params.set(key, String(value));
+  });
+
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
 export async function listFinancialMovements(filters = {}, options = {}) {
   const response = await apiRequest(`/financial/movements${financialQuery(filters)}`, options);
   return response.data || [];
 }
 
 export async function listFinancialDataQuality(filters = {}, options = {}) {
-  const response = await apiRequest(`/financial/quality${financialQuery(filters)}`, options);
+  const response = await apiRequest(`/financial/quality${financialQualityQuery(filters)}`, options);
   return response.data || [];
 }
 

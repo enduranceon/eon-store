@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { cn, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { supabase } from '@/api/db';
+import { listFinancialDataQuality } from '@/api/client';
 import { isAwaitingCharge, isOpenCollectionSale, isOpenSaleForFinancial } from '@/lib/sales';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 
@@ -21,6 +22,7 @@ const TODAY_ITEM = { label: 'Hoje', icon: Inbox, to: '/hoje', exact: true, badge
 const DASHBOARD_ITEM = { label: 'Visão geral', icon: LayoutDashboard, to: '/admin', exact: true };
 const COMMUNICATION_ITEM = { label: 'Comunicação', icon: MessageCircle, to: '/comunicacao' };
 const OPEN_SALES_ITEM = { label: 'Vendas em aberto', icon: AlertCircle, to: '/financeiro', exact: true, badge: 'openSales' };
+const RECONCILIATION_ITEM = { label: 'Conciliação', icon: ListChecks, to: '/financeiro/conciliacao', exact: true, badge: 'financialQuality' };
 const CASH_FLOW_ITEM = { label: 'Fluxo de caixa', icon: TrendingUp, to: '/financeiro/fluxo-caixa' };
 const REFUNDS_ITEM = { label: 'Estornos', icon: HandCoins, to: '/estornos' };
 const REPORTS_ITEM = { label: 'Relatórios', icon: BarChart3, to: '/relatorios' };
@@ -31,6 +33,7 @@ const CENTRAL_ITEMS = [
   DASHBOARD_ITEM,
   COMMUNICATION_ITEM,
   OPEN_SALES_ITEM,
+  RECONCILIATION_ITEM,
   CASH_FLOW_ITEM,
   REFUNDS_ITEM,
   REPORTS_ITEM,
@@ -214,6 +217,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
     renewals: 0,
     prospects: 0,
     openSales: 0,
+    financialQuality: 0,
     events: 0,
   });
 
@@ -232,7 +236,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
         renewalWindowEnd.setDate(renewalWindowEnd.getDate() + RENEWAL_ATTENTION_WINDOW_DAYS);
         const renewalWindowEndStr = toLocalDateStr(renewalWindowEnd);
 
-        const [presaleOrders, stockOrders, eventRegistrations, eventTypes, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts, prospectDrafts, contractsOpenPayments] = await Promise.all([
+        const [presaleOrders, stockOrders, eventRegistrations, eventTypes, returnsRes, clientsRes, contractsOverdue, contractsExpiring, pendingRefunds, renewalDrafts, prospectDrafts, contractsOpenPayments, highQualityIssues] = await Promise.all([
           supabase.from('presale_orders').select('id, payment_status, due_date, created_date, updated_at, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
           supabase.from('stock_orders').select('id, payment_status, due_date, created_date, updated_at, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
@@ -258,6 +262,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
             .select('id, status, payment_status, due_date, created_at, updated_at, parent_contract_id, prospect_stage, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at')
             .not('status', 'in', '("cancelled","voided")')
             .neq('payment_status', 'paid').neq('payment_status', 'refunded'),
+          listFinancialDataQuality({ severity: 'high' }).catch(() => []),
         ]);
 
         const allOrders = [...(presaleOrders.data || []), ...(stockOrders.data || [])];
@@ -296,6 +301,7 @@ export default function Sidebar({ open, onClose, onSignOut }) {
           renewals:   renewalDrafts.count || 0,
           prospects:  prospectDrafts.count || 0,
           openSales:  openSalesCount,
+          financialQuality: highQualityIssues.length,
           events:     eventPendingRows.length,
         });
       } catch { /* silencioso */ }

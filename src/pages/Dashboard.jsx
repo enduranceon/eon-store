@@ -20,7 +20,12 @@ import {
   financialMovementDate,
   financialUnitLabel,
 } from '@/lib/financial-dashboard';
-import { financialQualityPath, financialQualitySeverityLabel } from '@/lib/financial-ledger';
+import { financialQualitySeverityLabel } from '@/lib/financial-ledger';
+import {
+  financialQualityTypeMeta,
+  financialQualityUnitLabel,
+  summarizeFinancialQuality,
+} from '@/lib/financial-quality';
 import { cn, formatCurrency, formatDate, toLocalDateStr } from '@/lib/utils';
 
 const MOVEMENT_LABEL = {
@@ -135,47 +140,48 @@ function EmptyState({ children }) {
 }
 
 function QualitySummary({ issues }) {
-  const high = issues.filter(issue => issue.severity === 'high');
-  const visibleIssues = [...issues]
-    .sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.severity] ?? 3) - ({ high: 0, medium: 1, low: 2 }[b.severity] ?? 3))
-    .slice(0, 3);
+  const summary = summarizeFinancialQuality(issues);
+  const visibleGroups = summary.groups.slice(0, 3);
 
   return (
-    <Card className={issues.length ? 'border-amber-200' : 'border-emerald-200'}>
+    <Card className={summary.totalCount ? 'border-amber-200' : 'border-emerald-200'}>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2 text-base">
-            <AlertTriangle className={cn('w-4 h-4', issues.length ? 'text-amber-600' : 'text-emerald-600')} />
+            <AlertTriangle className={cn('w-4 h-4', summary.totalCount ? 'text-amber-600' : 'text-emerald-600')} />
             Qualidade financeira
           </CardTitle>
-          <Link to="/financeiro" className="text-xs font-semibold text-blue-700 hover:underline">Abrir financeiro</Link>
+          <Link to="/financeiro/conciliacao" className="text-xs font-semibold text-blue-700 hover:underline">Abrir fila</Link>
         </div>
       </CardHeader>
       <CardContent className="pt-0">
-        {issues.length === 0 ? (
+        {summary.totalCount === 0 ? (
           <p className="py-1 text-sm text-emerald-700">Sem pendências de conciliação.</p>
         ) : (
           <>
             <p className="mb-3 text-sm text-gray-700">
-              {issues.length} pendência{issues.length !== 1 ? 's' : ''}
-              {high.length ? `, sendo ${high.length} prioritária${high.length !== 1 ? 's' : ''}` : ''}.
+              {summary.totalCount} registro{summary.totalCount !== 1 ? 's' : ''} em {summary.groupCount} grupo{summary.groupCount !== 1 ? 's' : ''}
+              {summary.highCount ? `, sendo ${summary.highCount} de prioridade alta` : ''}.
             </p>
             <div className="divide-y">
-              {visibleIssues.map(issue => (
-                <div key={issue.issue_id} className="flex items-center gap-3 py-2.5 first:pt-0">
+              {visibleGroups.map(group => {
+                const meta = financialQualityTypeMeta(group.issueType);
+                return (
+                <div key={group.key} className="flex items-center gap-3 py-2.5 first:pt-0">
                   <span className={cn(
                     'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                    issue.severity === 'high' ? 'bg-rose-100 text-rose-700' : issue.severity === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700',
-                  )}>{financialQualitySeverityLabel(issue.severity)}</span>
+                    group.severity === 'high' ? 'bg-rose-100 text-rose-700' : group.severity === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700',
+                  )}>{financialQualitySeverityLabel(group.severity)}</span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-gray-800">{issue.message}</p>
+                    <p className="truncate text-sm text-gray-800">{meta.label}</p>
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {[financialUnitLabel(issue.business_unit), issue.reference].filter(Boolean).join(' · ')}
+                      {financialQualityUnitLabel(group.businessUnit)} · {group.count} registro{group.count !== 1 ? 's' : ''}
                     </p>
                   </div>
-                  <Link to={financialQualityPath(issue)} className="shrink-0 text-xs font-semibold text-blue-700 hover:underline">Ver</Link>
+                  <span className="shrink-0 text-xs font-semibold text-gray-800">{formatCurrency(group.totalAmount)}</span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}
