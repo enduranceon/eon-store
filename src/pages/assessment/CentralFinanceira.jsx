@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { listFinancialMovements } from '@/api/client';
 import { supabase } from '@/api/db';
 import { toPaymentRecord } from '@/lib/financial-ledger';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
@@ -226,14 +227,16 @@ export default function CentralFinanceira() {
       supabase.from('assessment_modalities').select('id, name'),
       supabase.from('assessment_coaches').select('id, name, email'),
       supabase.from('presale_customers').select('id, full_name'),
-      supabase
-        .from('financial_movements')
-        .select('movement_id,source,order_id,order_type,status,gross_amount,net_amount,occurred_on,due_on,recognition_on,scheduled_on,payment_method,description,reference,revenue_center_id,is_legacy,metadata')
-        .eq('business_unit', 'assessoria')
-        .eq('movement_kind', 'receipt')
-        .eq('is_actual', true)
-        .gte('scheduled_on', rangeStart)
-        .lte('scheduled_on', rangeEnd),
+      listFinancialMovements({
+        businessUnit: 'assessoria',
+        movementKind: 'receipt',
+        isActual: true,
+        scheduledFrom: rangeStart,
+        scheduledTo: rangeEnd,
+      }).catch(error => {
+        console.error('[CentralFinanceira] Erro ao carregar recebimentos:', error);
+        return [];
+      }),
     ]);
 
     const contracts = contractsRes.data || [];
@@ -245,7 +248,7 @@ export default function CentralFinanceira() {
       modalities: modalitiesRes.data || [],
       coaches:   coachesRes.data || [],
       customers: customersRes.data || [],
-      payments:  (paymentsRes.data || []).map(toPaymentRecord),
+      payments:  paymentsRes.map(toPaymentRecord),
       todayStr,
     });
   }, []);

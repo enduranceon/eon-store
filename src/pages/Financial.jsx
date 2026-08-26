@@ -12,7 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { updateOrderDueDate } from '@/api/client';
+import { listFinancialDataQuality, listFinancialMovements, updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
 import { financialQualityPath, financialQualitySeverityLabel, toPaymentRecord } from '@/lib/financial-ledger';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
@@ -537,19 +537,22 @@ export default function Financial() {
             .neq('payment_status', 'refunded'),
           supabase.from('event_registration_types').select('id, event_id, name, price'),
           supabase.from('events').select('id, name, revenue_center_id, status'),
-          supabase.from('financial_movements')
-            .select('movement_id,source,order_id,order_type,status,gross_amount,net_amount,occurred_on,due_on,recognition_on,scheduled_on,payment_method,description,reference,revenue_center_id,is_legacy,metadata')
-            .eq('movement_kind', 'receipt')
-            .eq('is_actual', true)
-            .gte('scheduled_on', apFromStr)
-            .order('scheduled_on', { ascending: false }),
-          supabase.from('financial_data_quality')
-            .select('issue_id,severity,issue_type,business_unit,source_table,source_id,order_id,order_type,reference,amount,occurred_on,message,metadata'),
+          listFinancialMovements({
+            movementKind: 'receipt',
+            isActual: true,
+            scheduledFrom: apFromStr,
+            sort: '-scheduled_on',
+          }).catch(error => {
+            console.error('[Financial] Erro ao carregar recebimentos:', error);
+            return [];
+          }),
+          listFinancialDataQuality().catch(error => {
+            console.error('[Financial] Erro ao carregar qualidade financeira:', error);
+            return [];
+          }),
         ]);
-        if (paymentsRes.error) throw paymentsRes.error;
-        if (qualityRes.error) throw qualityRes.error;
-        const nextFinancialMovements = (paymentsRes.data || []).map(toPaymentRecord);
-        const nextQualityIssues = qualityRes.data || [];
+        const nextFinancialMovements = paymentsRes.map(toPaymentRecord);
+        const nextQualityIssues = qualityRes;
 
         const plansMap         = Object.fromEntries((plansRes.data         || []).map(p => [p.id, p]));
         const customersMap     = Object.fromEntries((customersRes.data     || []).map(c => [c.id, c]));
@@ -818,14 +821,13 @@ export default function Financial() {
       const sevenMonthsAgo = new Date();
       sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
       sevenMonthsAgo.setDate(1);
-      const { data: movements, error: movementsError } = await supabase.from('financial_movements')
-        .select('movement_id,source,order_id,order_type,status,gross_amount,net_amount,occurred_on,due_on,recognition_on,scheduled_on,payment_method,description,reference,revenue_center_id,is_legacy,metadata')
-        .eq('movement_kind', 'receipt')
-        .eq('is_actual', true)
-        .gte('scheduled_on', toLocalDateStr(sevenMonthsAgo))
-        .order('scheduled_on', { ascending: false });
-      if (movementsError) throw movementsError;
-      const nextMovements = (movements || []).map(toPaymentRecord);
+      const movements = await listFinancialMovements({
+        movementKind: 'receipt',
+        isActual: true,
+        scheduledFrom: toLocalDateStr(sevenMonthsAgo),
+        sort: '-scheduled_on',
+      });
+      const nextMovements = movements.map(toPaymentRecord);
       setFinancialMovements(nextMovements);
       patchFinancialPageCache({ financialMovements: nextMovements });
     } catch (e) {

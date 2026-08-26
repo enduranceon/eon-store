@@ -12,6 +12,7 @@ import {
   XAxis, YAxis,
 } from 'recharts';
 import { toast } from 'sonner';
+import { listFinancialMovements } from '@/api/client';
 import { supabase } from '@/api/db';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -79,11 +80,10 @@ async function loadAnalyticsData() {
     fetchAllRows('assessment_modalities', 'id,name,active'),
     fetchAllRows('assessment_coaches', 'id,name,role,active'),
     fetchAllRows('presale_customers', 'id,gender,birth_date,address_city,address_state,created_date'),
-    fetchAllRows(
-      'financial_movements',
-      'movement_id,order_id,order_type,business_unit,movement_kind,cash_direction,is_actual,gross_amount,fee_amount,net_amount,signed_net_amount,occurred_on,due_on,recognition_on,scheduled_on,created_at',
-      'movement_id',
-    ),
+    listFinancialMovements({ sort: 'movement_id' }).catch(error => {
+      console.error('[Analytics] Erro ao carregar movimentos financeiros:', error);
+      return [];
+    }),
     fetchAllRows('presale_orders', 'id,customer_id,payment_status,payment_date,manual_payment,asaas_charge_id,total_value,total_cost,created_date'),
     fetchAllRows('stock_orders', 'id,customer_id,payment_status,payment_date,manual_payment,asaas_charge_id,total_value,created_date'),
     fetchAllRows('event_registrations', 'id,customer_id,event_id'),

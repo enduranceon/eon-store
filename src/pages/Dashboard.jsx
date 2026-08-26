@@ -8,7 +8,7 @@ import {
 import {
   Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { supabase } from '@/api/db';
+import { listFinancialDataQuality, listFinancialMovements } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,18 +22,6 @@ import {
 } from '@/lib/financial-dashboard';
 import { financialQualityPath, financialQualitySeverityLabel } from '@/lib/financial-ledger';
 import { cn, formatCurrency, formatDate, toLocalDateStr } from '@/lib/utils';
-
-const MOVEMENT_COLUMNS = [
-  'movement_id', 'source', 'source_table', 'source_id', 'order_id', 'order_type', 'reference',
-  'business_unit', 'revenue_center_id', 'movement_kind', 'cash_direction', 'is_actual', 'is_legacy',
-  'status', 'gross_amount', 'fee_amount', 'net_amount', 'signed_net_amount', 'payment_method',
-  'occurred_on', 'due_on', 'recognition_on', 'scheduled_on', 'description', 'created_at', 'metadata',
-].join(',');
-
-const QUALITY_COLUMNS = [
-  'issue_id', 'severity', 'issue_type', 'business_unit', 'source_table', 'source_id', 'order_id',
-  'order_type', 'reference', 'amount', 'occurred_on', 'message', 'metadata',
-].join(',');
 
 const MOVEMENT_LABEL = {
   receipt: 'Recebimento',
@@ -59,34 +47,35 @@ function monthsAgo(amount) {
 }
 
 async function loadManagementDashboard() {
-  const [actualRes, receivablesRes, qualityRes] = await Promise.all([
-    supabase
-      .from('financial_movements')
-      .select(MOVEMENT_COLUMNS)
-      .eq('is_actual', true)
-      .gte('scheduled_on', monthsAgo(13))
-      .order('scheduled_on', { ascending: false }),
-    supabase
-      .from('financial_movements')
-      .select(MOVEMENT_COLUMNS)
-      .eq('movement_kind', 'receivable')
-      .eq('is_actual', false)
-      .order('due_on', { ascending: true }),
-    supabase
-      .from('financial_data_quality')
-      .select(QUALITY_COLUMNS),
+  const [actualMovements, receivablesMovements, qualityIssues] = await Promise.all([
+    listFinancialMovements({
+      isActual: true,
+      scheduledFrom: monthsAgo(13),
+      sort: '-scheduled_on',
+    }).catch(error => {
+      console.error('[Dashboard] Erro ao carregar realizados:', error);
+      return [];
+    }),
+    listFinancialMovements({
+      movementKind: 'receivable',
+      isActual: false,
+      sort: 'due_on',
+    }).catch(error => {
+      console.error('[Dashboard] Erro ao carregar recebíveis:', error);
+      return [];
+    }),
+    listFinancialDataQuality().catch(error => {
+      console.error('[Dashboard] Erro ao carregar qualidade financeira:', error);
+      return [];
+    }),
   ]);
 
-  if (actualRes.error) throw actualRes.error;
-  if (receivablesRes.error) throw receivablesRes.error;
-  if (qualityRes.error) throw qualityRes.error;
-
   const movements = new Map();
-  [...(actualRes.data || []), ...(receivablesRes.data || [])].forEach(movement => {
+  [...actualMovements, ...receivablesMovements].forEach(movement => {
     movements.set(movement.movement_id, movement);
   });
 
-  return { movements: [...movements.values()], qualityIssues: qualityRes.data || [] };
+  return { movements: [...movements.values()], qualityIssues };
 }
 
 function formatCompactCurrency(value) {

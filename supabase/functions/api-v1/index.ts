@@ -20,6 +20,7 @@ import {
 } from "./contract-residual.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handleEventsRequest, handlePublicEventRequest } from "./events.ts";
+import { handleFinancialRequest } from "./financial.ts";
 import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
@@ -112,6 +113,13 @@ Deno.serve(async (req: Request) => {
       code: "api_misconfigured",
     }, 500);
   }
+
+  const financialResponse = await handleFinancialRequest(
+    req,
+    path,
+    serviceClient,
+  );
+  if (financialResponse) return financialResponse;
 
   const catalogResponse = await handleCatalogRequest(req, path, serviceClient);
   if (catalogResponse) return catalogResponse;
