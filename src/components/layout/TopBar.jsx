@@ -12,6 +12,7 @@ const titles = {
   '/pedidos': 'Pedidos',
   '/clientes': 'Clientes',
   '/assessoria/alunos': 'Alunos',
+  '/assessoria/indicadores': 'Indicadores da Assessoria',
   '/relatorios': 'Relatórios',
 };
 

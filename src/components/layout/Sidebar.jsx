@@ -43,6 +43,7 @@ const CENTRAL_ITEMS = [
 // OPERAÇÃO — assessoria esportiva
 const ASSESSORIA_ITEMS = [
   { label: 'Painel',         icon: Activity,      to: '/assessoria',              exact: true },
+  { label: 'Indicadores',    icon: BarChart3,     to: '/assessoria/indicadores' },
   { label: 'Contratos',      icon: FileText,      to: '/assessoria/contratos',    badge: 'assessoria' },
   { label: 'Licenças',       icon: Pause,         to: '/assessoria/licencas' },
   { label: 'Alunos',         icon: Users,         to: '/assessoria/alunos' },
