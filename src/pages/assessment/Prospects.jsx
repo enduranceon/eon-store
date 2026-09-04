@@ -218,6 +218,7 @@ function CustomerData({ customer, contract }) {
       {[
         ['Código', customer?.customer_code],
         ['Nome', customer?.full_name],
+        ['Nascimento', customer?.birth_date ? formatDate(customer.birth_date) : null],
         ['WhatsApp', customer?.whatsapp],
         ['E-mail', customer?.email],
         ['CPF', customer?.cpf],
@@ -940,7 +941,7 @@ export default function Prospects() {
       const submittedCoachIds = [...new Set((submissionsResult.data || []).map(item => item.coach_id).filter(Boolean))];
       const coachIds = [...new Set([...list.map(item => item.coach_id).filter(Boolean), ...submittedCoachIds])];
       const [customerResult, coachResult, modalityResult, submittedPlanResult] = await Promise.all([
-        customerIds.length ? supabase.from('presale_customers').select('id, customer_code, full_name, whatsapp, email, cpf, address_zip, address_street, address_number, address_complement, address_neighborhood, address_city, address_state').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
+        customerIds.length ? supabase.from('presale_customers').select('id, customer_code, full_name, birth_date, whatsapp, email, cpf, address_zip, address_street, address_number, address_complement, address_neighborhood, address_city, address_state').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
         coachIds.length ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds) : Promise.resolve({ data: [], error: null }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds) : Promise.resolve({ data: [], error: null }),
         submittedPlanIds.length ? supabase.from('assessment_plans').select('id, name, period, period_months, modality_id, price_total, price_monthly, enrollment_fee, max_installments, active').in('id', submittedPlanIds) : Promise.resolve({ data: [], error: null }),
