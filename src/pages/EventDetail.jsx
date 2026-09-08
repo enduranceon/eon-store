@@ -712,6 +712,7 @@ export default function EventDetail() {
         manualPayForm.date,
         { order_id: payModal.id, order_type: 'event', external_reference: payModal.registration_number },
         totalValue,
+        manualPayForm.installments,
       );
       setPayModal(null);
       toast.success(`Pagamento registrado!${result.installments > 1 ? ` ${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);

@@ -32,6 +32,7 @@ export interface ProjectedInstallment {
   total: number;
   due_date: string;
   credit_date: string;
+  value: number;
 }
 
 function databaseError(
@@ -147,6 +148,7 @@ function nextBusinessDay(date: string): string {
 export function projectManualInstallments(
   method: PaymentMethodConfig,
   paymentDate: string,
+  totalValue: number,
 ): ProjectedInstallment[] {
   if (!isValidIsoDate(paymentDate)) {
     throw new Error("Data de pagamento inválida");
@@ -160,6 +162,7 @@ export function projectManualInstallments(
   const nextOffset = Number(method.credit_days_between) || 32;
   const projection: ProjectedInstallment[] = [];
   let previousDate = paymentDate;
+  let allocated = 0;
 
   for (let number = 1; number <= installments; number += 1) {
     const rawDate = addDays(
@@ -167,16 +170,75 @@ export function projectManualInstallments(
       number === 1 ? firstOffset : nextOffset,
     );
     const creditDate = nextBusinessDay(rawDate);
+    const value = number === installments
+      ? Math.round((totalValue - allocated) * 100) / 100
+      : Math.round((totalValue / installments) * 100) / 100;
     projection.push({
       number,
       total: installments,
       due_date: creditDate,
       credit_date: creditDate,
+      value,
     });
+    allocated += value;
     previousDate = creditDate;
   }
 
   return projection;
+}
+
+// Valida a projeção de parcelas enviada pelo cliente (edição manual de
+// valor/data por parcela). Retorna null quando o cliente não mandou
+// override nenhum, para o chamador usar a projeção automática.
+function normalizeInstallmentsOverride(
+  raw: unknown,
+  expectedCount: number,
+  expectedTotal: number,
+): ProjectedInstallment[] {
+  if (!Array.isArray(raw) || raw.length !== expectedCount) {
+    throw new Error("Projeção de parcelas inválida");
+  }
+
+  let allocated = 0;
+  const result: ProjectedInstallment[] = [];
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const item = raw[index] as Record<string, unknown> | null;
+    const number = Number(item?.number);
+    const dueDate = typeof item?.due_date === "string" ? item.due_date : "";
+    const creditDate = typeof item?.credit_date === "string"
+      ? item.credit_date
+      : dueDate;
+    const value = typeof item?.value === "number"
+      ? item.value
+      : Number(item?.value);
+
+    if (
+      number !== index + 1 ||
+      !isValidIsoDate(dueDate) ||
+      !isValidIsoDate(creditDate) ||
+      !Number.isFinite(value) ||
+      value <= 0
+    ) {
+      throw new Error("Parcela inválida");
+    }
+
+    const rounded = Math.round(value * 100) / 100;
+    allocated += rounded;
+    result.push({
+      number,
+      total: expectedCount,
+      due_date: dueDate,
+      credit_date: creditDate,
+      value: rounded,
+    });
+  }
+
+  if (Math.abs(allocated - expectedTotal) > 0.01) {
+    throw new Error("A soma das parcelas precisa ser igual ao valor total");
+  }
+
+  return result;
 }
 
 function normalizeManualPaymentBody(
@@ -287,7 +349,8 @@ export async function handlePaymentsRequest(
   }
 
   if (req.method === "POST") {
-    const body = normalizeManualPaymentBody(await parseBody(req));
+    const rawBody = await parseBody(req);
+    const body = normalizeManualPaymentBody(rawBody);
     if (!body) {
       return jsonResponse({
         error: "Dados do pagamento manual são inválidos",
@@ -310,10 +373,35 @@ export async function handlePaymentsRequest(
       }, 400);
     }
 
-    const installments = projectManualInstallments(
-      method as PaymentMethodConfig,
-      body.payment_date,
+    const installmentCount = Math.max(
+      1,
+      Math.min(12, Number((method as PaymentMethodConfig).installments) || 1),
     );
+
+    let installments: ProjectedInstallment[];
+    try {
+      // Se o front mandou parcelas editadas (valor/data por parcela), usa
+      // elas -- já validadas contra o total. Senão, projeta automaticamente
+      // como sempre foi.
+      installments = rawBody?.installments != null
+        ? normalizeInstallmentsOverride(
+          rawBody.installments,
+          installmentCount,
+          body.total,
+        )
+        : projectManualInstallments(
+          method as PaymentMethodConfig,
+          body.payment_date,
+          body.total,
+        );
+    } catch (err) {
+      return jsonResponse({
+        error: err instanceof Error
+          ? err.message
+          : "Projeção de parcelas inválida",
+        code: "invalid_request",
+      }, 400);
+    }
     const { data, error } = orderType === "event"
       ? await supabase.rpc("api_record_event_manual_payment", {
         p_order_id: orderId,

@@ -854,6 +854,7 @@ export default function ContractDetail() {
         method, manualPayForm.date,
         { order_id: id, order_type: 'contract', external_reference: contract.contract_number },
         totalV,
+        manualPayForm.installments,
       );
       toast.success(`Pagamento registrado! ${result.installments > 1 ? `${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
       setManualPayModal(false);

@@ -110,23 +110,37 @@ function addDaysLocal(yyyymmdd, days) {
   return date.toISOString().slice(0, 10);
 }
 
-export function projectInstallments(methodConfig, paymentDate) {
+// totalValue é opcional: sem ele, cada parcela sai sem `value` (só a data),
+// usado pelo preview antes de saber o valor. Com ele, divide o valor
+// igualmente entre as parcelas, sobra de arredondamento na última — mesma
+// regra do backend, que é quem valida de verdade no momento de gravar.
+export function projectInstallments(methodConfig, paymentDate, totalValue) {
   if (!methodConfig || !paymentDate) return [];
   const installments = Math.max(1, Math.min(12, Number(methodConfig.installments) || 1));
   const firstOffset = Number(methodConfig.credit_days_first) || 0;
   const nextOffset = Number(methodConfig.credit_days_between) || 32;
+  const hasValue = Number.isFinite(totalValue);
   const projection = [];
   let previousDate = paymentDate;
+  let allocated = 0;
 
   for (let number = 1; number <= installments; number += 1) {
     const rawDate = addDaysLocal(previousDate, number === 1 ? firstOffset : nextOffset);
     const creditDate = nextBusinessDay(rawDate);
-    projection.push({
+    const row = {
       number,
       total: installments,
       due_date: creditDate,
       credit_date: creditDate,
-    });
+    };
+    if (hasValue) {
+      const value = number === installments
+        ? Math.round((totalValue - allocated) * 100) / 100
+        : Math.round((totalValue / installments) * 100) / 100;
+      row.value = value;
+      allocated += value;
+    }
+    projection.push(row);
     previousDate = creditDate;
   }
 
@@ -134,7 +148,10 @@ export function projectInstallments(methodConfig, paymentDate) {
 }
 
 // Registra o pagamento e suas parcelas em uma única transação no backend.
-export async function createManualInstallments(methodConfig, paymentDate, orderRef, totalValue) {
+// installmentsOverride (opcional) = [{ number, date, value }, ...] quando o
+// usuário editou valor/data de alguma parcela no formulário. A soma ainda
+// precisa bater com totalValue -- validado no backend antes de gravar.
+export async function createManualInstallments(methodConfig, paymentDate, orderRef, totalValue, installmentsOverride) {
   if (!methodConfig) throw new Error('Método de pagamento obrigatório');
   if (!paymentDate)  throw new Error('Data de pagamento obrigatória');
   if (!orderRef?.order_id || !orderRef?.order_type) throw new Error('order_id e order_type obrigatórios');
@@ -143,6 +160,14 @@ export async function createManualInstallments(methodConfig, paymentDate, orderR
     paymentMethodId: methodConfig.id,
     paymentDate,
     total: Number(totalValue) || 0,
+    installments: installmentsOverride?.length
+      ? installmentsOverride.map(row => ({
+        number: row.number,
+        due_date: row.date,
+        credit_date: row.date,
+        value: Number(row.value) || 0,
+      }))
+      : undefined,
   });
 }
 
