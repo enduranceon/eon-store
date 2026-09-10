@@ -99,12 +99,74 @@ function validAdminCreation(body: Record<string, unknown>): boolean {
         UUID_PATTERN.test(body.replacement_contract_id)));
 }
 
+function validManualProspect(body: Record<string, unknown>): boolean {
+  const whatsapp = typeof body.whatsapp === "string"
+    ? body.whatsapp.replace(/\D/g, "")
+    : "";
+  const email = typeof body.email === "string" ? body.email.trim() : "";
+  const cpf = typeof body.cpf === "string" ? body.cpf.replace(/\D/g, "") : "";
+  return exactKeys(body, [
+    "full_name",
+    "whatsapp",
+    "email",
+    "cpf",
+    "plan_id",
+    "coach_id",
+    "installments",
+    "notes",
+  ]) && typeof body.full_name === "string" &&
+    body.full_name.trim().length >= 2 && body.full_name.trim().length <= 200 &&
+    whatsapp.length >= 10 && whatsapp.length <= 13 &&
+    (body.email === null ||
+      (email.length > 0 && email.length <= 320 && EMAIL_PATTERN.test(email))) &&
+    (body.cpf === null || cpf.length === 11) &&
+    typeof body.plan_id === "string" && UUID_PATTERN.test(body.plan_id) &&
+    typeof body.coach_id === "string" && UUID_PATTERN.test(body.coach_id) &&
+    typeof body.installments === "number" &&
+    Number.isInteger(body.installments) && body.installments >= 1 &&
+    body.installments <= 120 && nullableText(body.notes, 2000);
+}
+
 export async function handleContractResidualRequest(
   req: Request,
   path: string,
   supabase: SupabaseClient,
   actorId: string,
 ): Promise<Response | null> {
+  if (path === "/assessment/prospects/manual") {
+    if (req.method !== "POST") {
+      return jsonResponse({
+        error: "Método não permitido",
+        code: "method_not_allowed",
+      }, 405);
+    }
+    const key = operationKey(req);
+    const body = await readBody(req);
+    if (!key || !body || !validManualProspect(body)) {
+      return jsonResponse({
+        error: "Dados do prospect ou chave de idempotência inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc(
+      "create_manual_assessment_prospect",
+      {
+        p_full_name: body.full_name,
+        p_whatsapp: body.whatsapp,
+        p_email: body.email,
+        p_cpf: body.cpf,
+        p_plan_id: body.plan_id,
+        p_coach_id: body.coach_id,
+        p_installments: body.installments,
+        p_notes: body.notes,
+        p_idempotency_key: key,
+        p_actor_id: actorId,
+      },
+    );
+    if (error) return databaseError(error, "Não foi possível criar o prospect");
+    return jsonResponse({ data }, 201);
+  }
+
   if (path === "/orders/contracts") {
     if (req.method !== "POST") {
       return jsonResponse({
