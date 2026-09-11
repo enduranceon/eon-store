@@ -76,6 +76,20 @@ function validAdminBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function validManualProspectBody(overrides: Record<string, unknown> = {}) {
+  return {
+    full_name: "Pessoa Prospect",
+    whatsapp: "51999999999",
+    email: "prospect@example.test",
+    cpf: "12345678909",
+    plan_id: PLAN_ID,
+    coach_id: COACH_ID,
+    installments: 3,
+    notes: "Veio pelo WhatsApp",
+    ...overrides,
+  };
+}
+
 function validPublicBody(overrides: Record<string, unknown> = {}) {
   return {
     plan_id: PLAN_ID,
@@ -91,6 +105,67 @@ function validPublicBody(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+Deno.test("Manual prospect creation rejects a malformed contact and missing key", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = "/assessment/prospects/manual";
+  const response = await handleContractResidualRequest(
+    request(path, "POST", validManualProspectBody({ whatsapp: "123" })),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(response?.status === 400, "invalid prospect payload was accepted");
+  assert(calls.length === 0, "database was called for invalid prospect input");
+});
+
+Deno.test("Manual prospect creation forwards normalized fields to the RPC", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = "/assessment/prospects/manual";
+  const response = await handleContractResidualRequest(
+    request(
+      path,
+      "POST",
+      validManualProspectBody(),
+      "prospect:create:test-001",
+    ),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(response?.status === 201, "valid manual prospect was rejected");
+  assert(
+    calls[0].name === "create_manual_assessment_prospect",
+    "wrong RPC",
+  );
+  assert(calls[0].args.p_actor_id === ACTOR_ID, "actor changed");
+  assert(
+    calls[0].args.p_idempotency_key === "prospect:create:test-001",
+    "key changed",
+  );
+  assert(calls[0].args.p_full_name === "Pessoa Prospect", "name changed");
+  assert(calls[0].args.p_plan_id === PLAN_ID, "plan changed");
+  assert(calls[0].args.p_coach_id === COACH_ID, "coach changed");
+});
+
+Deno.test("Manual prospect creation accepts optional email/cpf as null", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = "/assessment/prospects/manual";
+  const response = await handleContractResidualRequest(
+    request(
+      path,
+      "POST",
+      validManualProspectBody({ email: null, cpf: null, notes: null }),
+      "prospect:create:test-002",
+    ),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(response?.status === 201, "prospect without email/cpf was rejected");
+  assert(calls[0].args.p_email === null, "email was not forwarded as null");
+  assert(calls[0].args.p_cpf === null, "cpf was not forwarded as null");
+});
 
 Deno.test("Admin contract creation requires a stable idempotency key", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];

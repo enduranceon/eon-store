@@ -260,6 +260,7 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
         method, manualPayForm.date,
         { order_id: id, order_type: 'stock', external_reference: order?.order_number },
         totalV,
+        manualPayForm.installments,
       );
       toast.success(`Pagamento registrado!${result.installments > 1 ? ` ${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
       setManualPayModal(false);

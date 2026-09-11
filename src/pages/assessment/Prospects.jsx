@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ArchiveX, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
-  Clock3, Copy, CreditCard, ExternalLink, Loader2, MessageCircle, Send,
+  Clock3, Copy, CreditCard, ExternalLink, Loader2, MessageCircle, Plus, Send,
   TrendingUp, UserCheck, UserPlus, UserRoundCheck,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,18 +12,22 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
+import { PhoneInput } from '@/components/PhoneInput';
 import {
   changeAssessmentContractPlan,
+  createManualAssessmentProspect,
   loseAssessmentProspect,
   markAssessmentProspectMessageSent,
   prepareAssessmentProspectProposal,
 } from '@/api/client';
+import { AssessmentCoach, AssessmentPlan } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { formatCustomerAddress } from '@/lib/br-address';
-import { formatCurrency, formatDate, formatDateTime, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { phoneDigitsForWhatsApp } from '@/lib/phone';
+import { formatCurrency, formatDate, formatDateTime, maskCpf, todayLocalStr, toLocalDateStr } from '@/lib/utils';
+import { phoneDigitsForWhatsApp, normalizePhone } from '@/lib/phone';
 import { toast } from 'sonner';
 
 const STAGES = {
@@ -553,6 +557,141 @@ function LossModal({ data, onClose, onDone }) {
   );
 }
 
+function CreateProspectModal({ onClose, onDone }) {
+  const [plans, setPlans] = useState([]);
+  const [coaches, setCoaches] = useState([]);
+  const [loadingOptions, setLoadingOptions] = useState(true);
+  const [form, setForm] = useState({
+    full_name: '', whatsapp: '', email: '', cpf: '',
+    plan_id: '', coach_id: '', installments: 1, notes: '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      AssessmentPlan.filter({ active: true }).catch(() => []),
+      AssessmentCoach.filter({ active: true }, 'name').catch(() => []),
+    ]).then(([planList, coachList]) => {
+      if (!active) return;
+      setPlans(planList);
+      setCoaches(coachList);
+    }).finally(() => { if (active) setLoadingOptions(false); });
+    return () => { active = false; };
+  }, []);
+
+  const selectedPlan = plans.find(plan => plan.id === form.plan_id);
+  const maxInstallments = Math.max(1, Number(selectedPlan?.max_installments) || 1);
+
+  const save = async () => {
+    const fullName = form.full_name.trim();
+    if (fullName.length < 2) return toast.error('Informe o nome completo');
+    const whatsapp = normalizePhone(form.whatsapp);
+    if (!whatsapp) return toast.error('Informe um WhatsApp válido');
+    if (!form.plan_id) return toast.error('Selecione o plano');
+    if (!form.coach_id) return toast.error('Selecione o coach');
+    const installments = Math.max(1, Math.min(maxInstallments, Number(form.installments) || 1));
+
+    setSaving(true);
+    try {
+      await createManualAssessmentProspect({
+        fullName,
+        whatsapp,
+        email: form.email.trim() || null,
+        cpf: form.cpf.replace(/\D/g, '') || null,
+        planId: form.plan_id,
+        coachId: form.coach_id,
+        installments,
+        notes: form.notes.trim() || null,
+      });
+      toast.success('Prospect criado! Ele já aparece na coluna "Novos".');
+      onDone();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível criar o prospect');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <UserPlus className="w-5 h-5 text-green-600" /> Novo prospect
+        </DialogTitle>
+      </DialogHeader>
+      <div className="space-y-4 mt-2">
+        <div>
+          <Label>Nome completo *</Label>
+          <Input className="mt-1" value={form.full_name}
+            onChange={event => setForm(f => ({ ...f, full_name: event.target.value }))} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>WhatsApp *</Label>
+            <PhoneInput className="mt-1" value={form.whatsapp}
+              onChange={value => setForm(f => ({ ...f, whatsapp: value }))} />
+          </div>
+          <div>
+            <Label>E-mail</Label>
+            <Input className="mt-1" type="email" value={form.email}
+              onChange={event => setForm(f => ({ ...f, email: event.target.value }))} />
+          </div>
+        </div>
+        <div>
+          <Label>CPF</Label>
+          <Input className="mt-1" value={form.cpf}
+            onChange={event => setForm(f => ({ ...f, cpf: maskCpf(event.target.value) }))} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Plano *</Label>
+            <Select value={form.plan_id}
+              onValueChange={value => setForm(f => ({ ...f, plan_id: value, installments: 1 }))}>
+              <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+              <SelectContent>
+                {plans.map(plan => (
+                  <SelectItem key={plan.id} value={plan.id}>{plan.name || `Plano ${plan.period || ''}`}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Coach *</Label>
+            <Select value={form.coach_id} onValueChange={value => setForm(f => ({ ...f, coach_id: value }))}>
+              <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+              <SelectContent>
+                {coaches.map(coach => <SelectItem key={coach.id} value={coach.id}>{coach.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div>
+          <Label>Parcelas</Label>
+          <Input className="mt-1" type="number" min="1" max={maxInstallments} value={form.installments}
+            onChange={event => setForm(f => ({ ...f, installments: event.target.value }))} />
+          {selectedPlan && (
+            <p className="text-xs text-muted-foreground mt-1">Este plano permite até {maxInstallments}x.</p>
+          )}
+        </div>
+        <div>
+          <Label>Observações</Label>
+          <Textarea className="mt-1" rows={3} maxLength={2000} value={form.notes}
+            onChange={event => setForm(f => ({ ...f, notes: event.target.value }))}
+            placeholder="Ex.: veio por indicação, contato prévio por WhatsApp..." />
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={save} disabled={saving || loadingOptions}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
+            Criar prospect
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ProspectRow({
   draft,
   customer,
@@ -904,6 +1043,7 @@ export default function Prospects() {
   const [proposal, setProposal] = useState(null);
   const [payment, setPayment] = useState(null);
   const [loss, setLoss] = useState(null);
+  const [creatingProspect, setCreatingProspect] = useState(false);
   const [applyingSubmission, setApplyingSubmission] = useState(null);
 
   const load = useCallback(async () => {
@@ -1025,7 +1165,7 @@ export default function Prospects() {
     modality: modalities[draft.plan_snapshot?.modality_id],
   });
   const finishModal = () => {
-    setProposal(null); setPayment(null); setLoss(null); load();
+    setProposal(null); setPayment(null); setLoss(null); setCreatingProspect(false); load();
   };
   const applyLatestSubmission = async draft => {
     const submission = draft.latest_submission;
@@ -1075,22 +1215,27 @@ export default function Prospects() {
             Do cadastro público à confirmação do pagamento. Link enviado continua em negociação até o pagamento cair.
           </p>
         </div>
-        <div className="flex rounded-xl border bg-white p-1 shadow-sm">
-          {[
-            ['kanban', 'Kanban'],
-            ['list', 'Lista'],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setViewMode(value)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                viewMode === value ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setCreatingProspect(true)}>
+            <Plus className="w-4 h-4 mr-1.5" /> Novo prospect
+          </Button>
+          <div className="flex rounded-xl border bg-white p-1 shadow-sm">
+            {[
+              ['kanban', 'Kanban'],
+              ['list', 'Lista'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setViewMode(value)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  viewMode === value ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -1164,6 +1309,11 @@ export default function Prospects() {
       </Dialog>
       <Dialog open={Boolean(loss)} onOpenChange={open => { if (!open) setLoss(null); }}>
         <DialogContent className="max-w-md">{loss && <LossModal data={loss} onClose={() => setLoss(null)} onDone={finishModal} />}</DialogContent>
+      </Dialog>
+      <Dialog open={creatingProspect} onOpenChange={open => { if (!open) setCreatingProspect(false); }}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
+          {creatingProspect && <CreateProspectModal onClose={() => setCreatingProspect(false)} onDone={finishModal} />}
+        </DialogContent>
       </Dialog>
     </div>
   );

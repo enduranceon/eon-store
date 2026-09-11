@@ -1331,7 +1331,7 @@ export async function listPaymentMethods(options = {}) {
 export async function recordManualPayment(
   orderType,
   orderId,
-  { paymentMethodId, paymentDate, total },
+  { paymentMethodId, paymentDate, total, installments },
   options = {},
 ) {
   const response = await apiRequest(`/orders/${orderType}/${orderId}/manual-payment`, {
@@ -1341,6 +1341,7 @@ export async function recordManualPayment(
       payment_method_id: paymentMethodId,
       payment_date: paymentDate,
       total,
+      ...(installments?.length ? { installments } : {}),
     },
   });
   const tableByType = {
