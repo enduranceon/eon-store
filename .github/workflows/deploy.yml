@@ -112,7 +112,7 @@ jobs:
 
   deploy-edge-functions:
     name: Deploy api-v1 edge function to Supabase
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.SUPABASE_ACCESS_TOKEN != ''
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [migrations]
     runs-on: ubuntu-latest
     steps:
@@ -123,6 +123,7 @@ jobs:
           version: 2.115.0
 
       - name: Deploy api-v1
+        if: secrets.SUPABASE_ACCESS_TOKEN != ''
         run: supabase functions deploy api-v1 --project-ref bsiljrrodgtmtdilnuxr
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
