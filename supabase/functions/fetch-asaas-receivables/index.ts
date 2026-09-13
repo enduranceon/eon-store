@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
 
-const ASAAS_BASE = Deno.env.get("ASAAS_BASE_URL");
+const ASAAS_BASE = Deno.env.get("ASAAS_BASE_URL") ?? "https://sandbox.asaas.com/api/v3";
 const ASAAS_API_KEY = Deno.env.get("ASAAS_API_KEY");
 
 const cors = {
@@ -26,8 +26,8 @@ Deno.serve(async (req: Request) => {
   if (!gate.ok) return json({ error: "unauthorized" }, gate.status);
 
   try {
-    if (!ASAAS_BASE || !ASAAS_API_KEY) {
-      return json({ error: "ASAAS_BASE_URL ou ASAAS_API_KEY não configurada" }, 500);
+    if (!ASAAS_API_KEY) {
+      return json({ error: "ASAAS_API_KEY não configurada" }, 500);
     }
 
     // Busca cobranças que ainda vão gerar receita (PENDING, CONFIRMED, OVERDUE)
