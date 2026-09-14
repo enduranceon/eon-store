@@ -93,6 +93,154 @@ Deno.test("stock item adjustment accepts only a normalized cart and calls the pr
   assert(rpcArgs.p_actor_id === actorId, "actor did not reach item adjustment RPC");
 });
 
+Deno.test("customer linking routes each order type to its protected RPC", async () => {
+  const orderId = crypto.randomUUID();
+  const customerId = crypto.randomUUID();
+  const expectedCustomerId = crypto.randomUUID();
+  const actorId = crypto.randomUUID();
+  const expectedUpdatedAt = "2026-09-13T07:48:55.000Z";
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const supabase = {
+    rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return Promise.resolve({ data: { id: orderId }, error: null });
+    },
+  };
+
+  for (const orderType of ["presale", "stock"] as const) {
+    const response = await handleOrdersRequest(
+      new Request(
+        `https://example.test/orders/${orderType}/${orderId}/customer`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(orderType === "presale"
+            ? {
+              customer_id: customerId,
+              expected_customer_id: expectedCustomerId,
+              expected_updated_at: expectedUpdatedAt,
+            }
+            : { customer_id: customerId }),
+        },
+      ),
+      `/orders/${orderType}/${orderId}/customer`,
+      supabase as never,
+      actorId,
+    );
+    assert(response?.status === 200, `${orderType} customer link was rejected`);
+  }
+
+  assert(calls.length === 2, "customer linking did not execute exactly once per request");
+  assert(
+    calls[0].name === "link_presale_order_customer",
+    "presale customer link used the wrong RPC",
+  );
+  assert(
+    calls[1].name === "link_stock_order_customer",
+    "stock customer link used the wrong RPC",
+  );
+  for (const call of calls) {
+    assert(call.args.p_order_id === orderId, "order id changed before the RPC");
+    assert(
+      call.args.p_customer_id === customerId,
+      "customer id changed before the RPC",
+    );
+    assert(call.args.p_actor_id === actorId, "actor id did not reach the RPC");
+  }
+  assert(
+    calls[0].args.p_expected_customer_id === expectedCustomerId,
+    "previous presale customer identity did not reach the RPC",
+  );
+  assert(
+    calls[0].args.p_expected_updated_at === expectedUpdatedAt,
+    "presale order version did not reach the RPC",
+  );
+  assert(
+    !("p_expected_customer_id" in calls[1].args),
+    "stock customer identity contract changed unexpectedly",
+  );
+  assert(
+    !("p_expected_updated_at" in calls[1].args),
+    "stock customer link contract changed unexpectedly",
+  );
+});
+
+Deno.test("presale customer linking rejects invalid versions and surfaces conflicts", async () => {
+  const orderId = crypto.randomUUID();
+  const customerId = crypto.randomUUID();
+  const actorId = crypto.randomUUID();
+  let rpcCalls = 0;
+  const validatingClient = {
+    rpc() {
+      rpcCalls += 1;
+      return Promise.resolve({ data: null, error: null });
+    },
+  };
+
+  for (const body of [
+    { customer_id: customerId },
+    {
+      customer_id: customerId,
+      expected_customer_id: null,
+      expected_updated_at: "not-a-date",
+    },
+    {
+      customer_id: customerId,
+      expected_customer_id: "not-a-uuid",
+      expected_updated_at: "2026-09-13T07:48:55.000Z",
+    },
+    {
+      customer_id: customerId,
+      expected_customer_id: null,
+      expected_updated_at: "2026-09-13T07:48:55.000Z",
+      unexpected: true,
+    },
+  ]) {
+    const response = await handleOrdersRequest(
+      new Request(
+        `https://example.test/orders/presale/${orderId}/customer`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      ),
+      `/orders/presale/${orderId}/customer`,
+      validatingClient as never,
+      actorId,
+    );
+    assert(response?.status === 400, "invalid presale link payload was accepted");
+  }
+  assert(rpcCalls === 0, "invalid presale link payload reached the database");
+
+  const conflictingClient = {
+    rpc() {
+      return Promise.resolve({
+        data: null,
+        error: { code: "P0001", message: "O pedido foi alterado" },
+      });
+    },
+  };
+  const conflict = await handleOrdersRequest(
+    new Request(
+      `https://example.test/orders/presale/${orderId}/customer`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_id: customerId,
+          expected_customer_id: null,
+          expected_updated_at: "2026-09-13T07:48:55.000Z",
+        }),
+      },
+    ),
+    `/orders/presale/${orderId}/customer`,
+    conflictingClient as never,
+    actorId,
+  );
+  assert(conflict?.status === 409, "presale link conflict did not return HTTP 409");
+});
+
 Deno.test("fulfillment forwards its interruption reason to the protected RPC", async () => {
   const orderId = crypto.randomUUID();
   const actorId = crypto.randomUUID();

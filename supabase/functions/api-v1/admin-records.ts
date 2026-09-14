@@ -19,6 +19,7 @@ type FieldKind =
 interface FieldSpec {
   kind: FieldKind;
   required?: boolean;
+  createOnly?: boolean;
   nullable?: boolean;
   maxLength?: number;
   min?: number;
@@ -464,7 +465,7 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
     fields: {
       order_number: s(80, { nullable: true }),
       campaign_id: u({ nullable: true }),
-      customer_id: u({ nullable: true }),
+      customer_id: u({ nullable: true, createOnly: true }),
       customer_name: s(200, { nullable: true }),
       customer_whatsapp: s(32, { nullable: true }),
       customer_email: s(254, { nullable: true }),
@@ -472,9 +473,9 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       items: j("array", { required: true }),
       total_amount: n({ nullable: true }),
       notes: s(10_000, { nullable: true, preserveWhitespace: true }),
-      checkout_name: s(200, { nullable: true }),
-      checkout_whatsapp: s(32, { nullable: true }),
-      checkout_email: s(254, { nullable: true }),
+      checkout_name: s(200, { nullable: true, createOnly: true }),
+      checkout_whatsapp: s(32, { nullable: true, createOnly: true }),
+      checkout_email: s(254, { nullable: true, createOnly: true }),
       total_value: n({ min: 0, nullable: true }),
       total_cost: n({ min: 0, nullable: true }),
       payment_status: s(32, {
@@ -777,6 +778,12 @@ export function normalizeAdminRecordPayload(
     if (!spec) {
       throw new AdminRecordInputError(
         `Campo não permitido: ${field}`,
+        "invalid_field",
+      );
+    }
+    if (mode === "update" && spec.createOnly) {
+      throw new AdminRecordInputError(
+        `Campo não permitido em atualização: ${field}`,
         "invalid_field",
       );
     }

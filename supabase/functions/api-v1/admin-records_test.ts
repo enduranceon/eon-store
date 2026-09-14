@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import {
   AdminRecordInputError,
+  handleAdminRecordRequest,
   normalizeAdminRecordPayload,
 } from "./admin-records.ts";
 import { handleAdminOperationRequest } from "./admin-operations.ts";
@@ -78,6 +79,61 @@ Deno.test("admin plans and coupons enforce business-safe states", () => {
       valid_from: "2026-09-01",
       valid_until: "2026-08-01",
     }, "create"), "invalid_date_range");
+});
+
+Deno.test("legacy presale updates reject identity fields before the database", async () => {
+  const protectedFields: Record<string, unknown>[] = [
+    { customer_id: TARGET_ID },
+    { checkout_name: "Atleta" },
+    { checkout_whatsapp: "5511999999999" },
+    { checkout_email: "atleta@example.test" },
+  ];
+  let databaseCalls = 0;
+  const databaseClient = {
+    from() {
+      databaseCalls += 1;
+      throw new Error("database must not be called");
+    },
+  } as unknown as SupabaseClient;
+
+  for (const payload of protectedFields) {
+    const response = await handleAdminRecordRequest(
+      new Request("https://example.test", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+      `/admin-records/legacy-presale-orders/${TARGET_ID}`,
+      databaseClient,
+      ACTOR_ID,
+    );
+    const field = Object.keys(payload)[0];
+    assert(response?.status === 400, `${field} was accepted`);
+    const body = await response.json();
+    assert(body.code === "invalid_field", `${field} returned the wrong error`);
+  }
+
+  assert(databaseCalls === 0, "database was called for protected fields");
+});
+
+Deno.test("legacy presale creation keeps checkout identity fields", () => {
+  const payload = normalizeAdminRecordPayload("legacy-presale-orders", {
+    items: [],
+    customer_id: TARGET_ID,
+    checkout_name: "Atleta",
+    checkout_whatsapp: "5511999999999",
+    checkout_email: "atleta@example.test",
+  }, "create");
+
+  assert(payload.customer_id === TARGET_ID, "customer link was removed");
+  assert(payload.checkout_name === "Atleta", "checkout name was removed");
+  assert(
+    payload.checkout_whatsapp === "5511999999999",
+    "checkout whatsapp was removed",
+  );
+  assert(
+    payload.checkout_email === "atleta@example.test",
+    "checkout email was removed",
+  );
 });
 
 function rpcClient(

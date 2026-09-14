@@ -113,6 +113,11 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 50 &&
+    Number.isFinite(Date.parse(value));
+}
+
 function numericValue(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const number = typeof value === "number" ? value : Number(value);
@@ -673,6 +678,15 @@ export async function handleChargeRequest(
   const body = await parseBody(req);
   const allowedKeys = orderType === "contract"
     ? new Set(["billing_type", "due_date", "source"])
+    : orderType === "presale"
+    ? new Set([
+      "billing_type",
+      "due_date",
+      "installments",
+      "cpf",
+      "expected_customer_id",
+      "expected_updated_at",
+    ])
     : new Set(["billing_type", "due_date", "installments", "cpf"]);
   if (!body || Object.keys(body).some((key) => !allowedKeys.has(key))) {
     return jsonResponse({
@@ -691,12 +705,17 @@ export async function handleChargeRequest(
   const source = orderType === "contract"
     ? sourceValue as ContractSource
     : null;
+  const expectedCustomerId = stringValue(body.expected_customer_id);
+  const expectedUpdatedAt = body.expected_updated_at;
   if (
     !BILLING_TYPES.has(billingType) || !isValidIsoDate(dueDate) ||
     !Number.isInteger(installments) || installments < 1 || installments > 12 ||
     (billingType !== "CREDIT_CARD" && installments !== 1) ||
     (orderType !== "contract" && cpf.length !== 11) ||
-    (orderType === "contract" && !CONTRACT_SOURCES.has(sourceValue))
+    (orderType === "contract" && !CONTRACT_SOURCES.has(sourceValue)) ||
+    (orderType === "presale" &&
+      (!UUID_PATTERN.test(expectedCustomerId) ||
+        !isTimestamp(expectedUpdatedAt)))
   ) {
     return jsonResponse({
       error: "Dados da cobrança inválidos",
@@ -712,6 +731,18 @@ export async function handleChargeRequest(
       p_installments: installments,
       p_customer_cpf: cpf,
       p_idempotency_key: idempotencyKey,
+      p_actor_id: actorId,
+    })
+    : orderType === "presale"
+    ? await supabase.rpc("prepare_presale_order_charge_creation", {
+      p_order_id: orderId,
+      p_billing_type: billingType,
+      p_due_date: dueDate,
+      p_installments: installments,
+      p_customer_cpf: cpf,
+      p_idempotency_key: idempotencyKey,
+      p_expected_customer_id: expectedCustomerId,
+      p_expected_updated_at: expectedUpdatedAt,
       p_actor_id: actorId,
     })
     : await supabase.rpc("prepare_order_charge_creation", {

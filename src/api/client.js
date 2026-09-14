@@ -309,6 +309,28 @@ export async function linkStockOrderCustomer(orderId, customerId, options = {}) 
   return response.data;
 }
 
+export async function linkPresaleOrderCustomer(
+  orderId,
+  customerId,
+  expectedCustomerId,
+  expectedUpdatedAt,
+  options = {},
+) {
+  const response = await apiRequest(`/orders/presale/${orderId}/customer`, {
+    ...options,
+    method: 'PATCH',
+    body: {
+      customer_id: customerId,
+      expected_customer_id: expectedCustomerId,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidatePageCacheByTag('presale_orders');
+  invalidatePageCacheByTag('presale_customers');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
 export async function markOrderPaymentMessageSent(
   orderType,
   orderId,
@@ -386,6 +408,8 @@ export async function createOrderCharge(
     installments = 1,
     cpf,
     source,
+    expectedCustomerId,
+    expectedUpdatedAt,
   },
   options = {},
 ) {
@@ -394,7 +418,16 @@ export async function createOrderCharge(
     due_date: dueDate,
     ...(orderType === 'contract'
       ? { source }
-      : { installments, cpf }),
+      : {
+          installments,
+          cpf,
+          ...(orderType === 'presale'
+            ? {
+                expected_customer_id: expectedCustomerId,
+                expected_updated_at: expectedUpdatedAt,
+              }
+            : {}),
+        }),
   };
   const response = await apiRequest(
     `/orders/${orderType}/${orderId}/charge`,
