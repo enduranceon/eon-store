@@ -5,7 +5,7 @@ import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircl
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -1248,6 +1248,9 @@ export default function OrderDetail() {
             <DialogTitle className="flex items-center gap-2">
               <Check className="w-5 h-5 text-green-600" /> Pagamento registrado
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Escolha se deseja enviar ao cliente a confirmação do pagamento manual.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -2310,6 +2313,9 @@ export default function OrderDetail() {
             <DialogTitle className="flex items-center gap-2">
               <HandCoins className="w-4 h-4 text-green-600" /> Registrar pagamento manual
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Informe a forma, o valor, a data e a projeção do recebimento registrado fora da plataforma.
+            </DialogDescription>
           </DialogHeader>
           <ManualPaymentForm
             form={manualPayForm}
