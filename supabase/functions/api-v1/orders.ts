@@ -17,6 +17,11 @@ const INACTIVE_REFUND_STATUSES = new Set(["FAILED", "CANCELLED", "CANCELED"]);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 50 &&
+    Number.isFinite(Date.parse(value));
+}
+
 export class OrderInputError extends Error {
   code: string;
 
@@ -533,9 +538,11 @@ export async function handleOrdersRequest(
     return jsonResponse({ data });
   }
 
-  const customerMatch = path.match(/^\/orders\/stock\/([^/]+)\/customer$/);
+  const customerMatch = path.match(
+    /^\/orders\/(presale|stock)\/([^/]+)\/customer$/,
+  );
   if (req.method === "PATCH" && customerMatch) {
-    const [, orderId] = customerMatch;
+    const [, orderType, orderId] = customerMatch;
     if (!UUID_PATTERN.test(orderId)) {
       return jsonResponse({
         error: "Identificador de pedido inválido",
@@ -543,22 +550,42 @@ export async function handleOrdersRequest(
       }, 400);
     }
     const body = await parseObject(req);
+    const isPresale = orderType === "presale";
     if (
-      !body || Object.keys(body).length !== 1 ||
+      !body || Object.keys(body).length !== (isPresale ? 3 : 1) ||
       typeof body.customer_id !== "string" ||
-      !UUID_PATTERN.test(body.customer_id)
+      !UUID_PATTERN.test(body.customer_id) ||
+      (isPresale && (
+        !isTimestamp(body.expected_updated_at) ||
+        (
+          body.expected_customer_id !== null &&
+          (
+            typeof body.expected_customer_id !== "string" ||
+            !UUID_PATTERN.test(body.expected_customer_id)
+          )
+        )
+      ))
     ) {
       return jsonResponse({
         error: "Cliente inválido",
         code: "invalid_request",
       }, 400);
     }
-    const { data, error } = await supabase.rpc("link_stock_order_customer", {
+    const rpcName = isPresale
+      ? "link_presale_order_customer"
+      : "link_stock_order_customer";
+    const { data, error } = await supabase.rpc(rpcName, {
       p_order_id: orderId,
       p_customer_id: body.customer_id,
+      ...(isPresale
+        ? {
+          p_expected_customer_id: body.expected_customer_id,
+          p_expected_updated_at: body.expected_updated_at,
+        }
+        : {}),
       p_actor_id: actorId,
     });
-    if (error) return databaseError(error, "link stock order customer");
+    if (error) return databaseError(error, `link ${orderType} order customer`);
     return jsonResponse({ data });
   }
 

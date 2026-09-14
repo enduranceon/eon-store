@@ -3,6 +3,8 @@ import { AsaasApiError } from "../_shared/asaas.ts";
 import { executeAsaasChargeCreation, handleChargeRequest } from "./charges.ts";
 
 const CUSTOMER_CPF = "12345678901";
+const CUSTOMER_ID = "630cbed0-f7a4-4bc4-9fc8-d63796946be0";
+const ORDER_UPDATED_AT = "2026-08-14T12:30:00.000Z";
 const CUSTOMER_REFERENCE = "EONCUS-0f127b5e-63b0-4b21-9b4d-b0bcc4d0d2dd";
 const PAYMENT_REFERENCE = "EONCHG-f1bd863e-c244-4bdd-a69c-1321d5b94b54";
 
@@ -594,6 +596,8 @@ Deno.test("Charge route rejects invalid fields and contract sources before the d
         due_date: "2026-02-30",
         installments: 1,
         cpf: CUSTOMER_CPF,
+        expected_customer_id: CUSTOMER_ID,
+        expected_updated_at: ORDER_UPDATED_AT,
       }),
     }),
     new Request(`https://example.test/api-v1${presalePath}`, {
@@ -604,7 +608,19 @@ Deno.test("Charge route rejects invalid fields and contract sources before the d
         due_date: "2026-08-20",
         installments: 1,
         cpf: CUSTOMER_CPF,
+        expected_customer_id: CUSTOMER_ID,
+        expected_updated_at: ORDER_UPDATED_AT,
         value: 1,
+      }),
+    }),
+    new Request(`https://example.test/api-v1${presalePath}`, {
+      method: "POST",
+      headers: { "Idempotency-Key": "charge-identity-missing" },
+      body: JSON.stringify({
+        billing_type: "PIX",
+        due_date: "2026-08-20",
+        installments: 1,
+        cpf: CUSTOMER_CPF,
       }),
     }),
     new Request(`https://example.test/api-v1${contractPath}`, {
@@ -623,7 +639,13 @@ Deno.test("Charge route rejects invalid fields and contract sources before the d
     }),
   ];
 
-  const paths = [presalePath, presalePath, contractPath, contractPath];
+  const paths = [
+    presalePath,
+    presalePath,
+    presalePath,
+    contractPath,
+    contractPath,
+  ];
   for (let index = 0; index < requests.length; index += 1) {
     const response = await handleChargeRequest(
       requests[index],
@@ -761,7 +783,7 @@ Deno.test("Ambiguous payment timeout is persisted for reconciliation", async () 
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const client = fakeClient((name, args) => {
       calls.push({ name, args });
-      if (name === "prepare_order_charge_creation") {
+      if (name === "prepare_presale_order_charge_creation") {
         return Promise.resolve({ data: prepared(), error: null });
       }
       return Promise.resolve({
@@ -782,6 +804,8 @@ Deno.test("Ambiguous payment timeout is persisted for reconciliation", async () 
           due_date: "2026-08-20",
           installments: 1,
           cpf: CUSTOMER_CPF,
+          expected_customer_id: CUSTOMER_ID,
+          expected_updated_at: ORDER_UPDATED_AT,
         }),
       }),
       path,
@@ -789,6 +813,15 @@ Deno.test("Ambiguous payment timeout is persisted for reconciliation", async () 
       "5cfe13fe-3150-4f5f-bbc8-f8ca3a25cc93",
     );
     assert(response?.status === 409, "ambiguous timeout was not blocked");
+    assert(
+      calls[0].name === "prepare_presale_order_charge_creation",
+      "presale charge bypassed the identity-aware prepare RPC",
+    );
+    assert(
+      calls[0].args.p_expected_customer_id === CUSTOMER_ID &&
+        calls[0].args.p_expected_updated_at === ORDER_UPDATED_AT,
+      "reviewed customer identity was not sent atomically",
+    );
     assert(paymentSearches === 2, "timeout was not reconciled by lookup");
     assert(
       calls[1].name === "finalize_order_charge_creation_failure",

@@ -1,11 +1,11 @@
 import { studentProfilePath } from '@/lib/customer-profile';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock } from 'lucide-react';
+import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock, Search, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -35,6 +35,7 @@ import {
   cancelOrderCharge,
   cancelOrderItem,
   createOrderCharge,
+  linkPresaleOrderCustomer,
   markOrderPaymentMessageSent,
   removeOrderExternalCharge,
   refundOrder,
@@ -79,6 +80,7 @@ function SALE_EVENT_META(ev) {
     external_charge_registered: { label: 'Cobrança externa cadastrada', dot: 'bg-amber-500' },
     external_charge_updated: { label: 'Cobrança externa atualizada', dot: 'bg-amber-500' },
     external_charge_removed: { label: 'Cobrança externa removida', dot: 'bg-gray-400' },
+    customer_link_changed: { label: 'Vínculo de cliente atualizado', dot: 'bg-blue-500' },
     charge_sent:          { label: 'Cobrança enviada',       dot: 'bg-green-500' },
     charge_resent:        { label: 'Cobrança reenviada',     dot: 'bg-green-500' },
     charge_cancelled:     { label: 'Cobrança cancelada',     dot: 'bg-red-500' },
@@ -101,6 +103,8 @@ function SALE_EVENT_META(ev) {
 export default function OrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const loadGeneration = useRef(0);
+  const activeRouteId = useRef(null);
   const [order, setOrder] = useState(null);
   const [campaign, setCampaign] = useState(null);
   const [customer, setCustomer] = useState(null);
@@ -164,6 +168,11 @@ export default function OrderDetail() {
     payment_method: 'pix',
     invoice_number: '',
   });
+  const [customerModal, setCustomerModal] = useState(null);
+  const [customers, setCustomers] = useState([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerSaving, setCustomerSaving] = useState(false);
   // Histórico de ações da venda (sales_status_events)
   const [saleEvents, setSaleEvents] = useState([]);
   // Adicionar peça
@@ -177,7 +186,19 @@ export default function OrderDetail() {
   const [addItemLoading, setAddItemLoading] = useState(false);
 
   const load = async () => {
-    const o = await PreSaleOrder.get(id);
+    const requestedId = id;
+    if (activeRouteId.current !== requestedId) return;
+    const generation = ++loadGeneration.current;
+    const isCurrent = () => generation === loadGeneration.current &&
+      activeRouteId.current === requestedId;
+    setCustomer(null);
+    setAsaasCpf('');
+    setCampaign(null);
+    setCampaignProducts([]);
+    setPaymentInstallments([]);
+    setSaleEvents([]);
+    const o = await PreSaleOrder.get(requestedId);
+    if (!isCurrent()) return;
     setOrder(o);
     setDeliveryStatus(o.delivery_status || '');
     setInternalNotes(o.internal_notes || '');
@@ -193,41 +214,77 @@ export default function OrderDetail() {
       setAsaasBilling('PIX');
     }
     if (o.campaign_id) {
-      PreSaleCampaign.get(o.campaign_id).then(setCampaign).catch(() => {});
+      PreSaleCampaign.get(o.campaign_id).then(value => {
+        if (isCurrent()) setCampaign(value);
+      }).catch(() => {});
       // Produtos podem estar vinculados via campaign_id (single) OU campaign_ids (array uuid[])
       supabase
         .from('presale_products')
         .select('*')
         .eq('status', 'active')
         .or(`campaign_id.eq.${o.campaign_id},campaign_ids.cs.{${o.campaign_id}}`)
-        .then(({ data }) => setCampaignProducts(data || []))
-        .catch(() => setCampaignProducts([]));
+        .then(({ data }) => {
+          if (isCurrent()) setCampaignProducts(data || []);
+        })
+        .catch(() => {
+          if (isCurrent()) setCampaignProducts([]);
+        });
     }
     if (o.customer_id) PreSaleCustomer.get(o.customer_id).then(c => {
+      if (!isCurrent() || c.id !== o.customer_id) return;
       setCustomer(c);
-      if (c.cpf) setAsaasCpf(c.cpf);
-    }).catch(() => {});
+      setAsaasCpf(c.cpf || '');
+    }).catch(() => {
+      if (isCurrent()) {
+        setCustomer(null);
+        setAsaasCpf('');
+      }
+    });
 
     // Carrega parcelas projetadas (asaas_payments) — só "ativas"
     supabase.from('asaas_payments')
       .select('*')
-      .eq('order_id', id)
+      .eq('order_id', requestedId)
       .eq('order_type', 'presale')
       .order('installment_number', { ascending: true })
-      .then(({ data }) => setPaymentInstallments(data || []))
-      .catch(() => setPaymentInstallments([]));
+      .then(({ data }) => {
+        if (isCurrent()) setPaymentInstallments(data || []);
+      })
+      .catch(() => {
+        if (isCurrent()) setPaymentInstallments([]);
+      });
 
     // Histórico de ações da venda (cobranças geradas, canceladas, etc.)
     supabase.from('sales_status_events')
       .select('*')
       .eq('order_type', 'presale')
-      .eq('order_id', id)
+      .eq('order_id', requestedId)
       .order('created_at', { ascending: false })
-      .then(({ data }) => setSaleEvents(data || []))
-      .catch(() => setSaleEvents([]));
+      .then(({ data }) => {
+        if (isCurrent()) setSaleEvents(data || []);
+      })
+      .catch(() => {
+        if (isCurrent()) setSaleEvents([]);
+      });
   };
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    activeRouteId.current = id;
+    loadGeneration.current += 1;
+    setOrder(null);
+    setCustomer(null);
+    setAsaasCpf('');
+    setCustomerModal(null);
+    setPayAction(null);
+    setExternalChargeModal(false);
+    setManualPayModal(false);
+    setWhatsappModal(false);
+    load();
+    return () => {
+      loadGeneration.current += 1;
+      if (activeRouteId.current === id) activeRouteId.current = null;
+    };
+  }, [id]);
 
   const openManualPay = async () => {
     const total = order?.total_value ? Number(order.total_value).toFixed(2) : '';
@@ -372,6 +429,9 @@ export default function OrderDetail() {
   };
 
   const createAsaasCharge = async (billingType) => {
+    if (!order?.customer_id || customer?.id !== order.customer_id) {
+      return toast.error('Confirme e carregue o cliente antes de gerar uma cobrança Asaas');
+    }
     const cpf = asaasCpf.replace(/\D/g, '');
     if (cpf.length < 11) return toast.error('Informe o CPF do cliente (11 dígitos)');
     setAsaasLoading(true);
@@ -381,6 +441,8 @@ export default function OrderDetail() {
         dueDate: asaasDueDate,
         installments: billingType === 'CREDIT_CARD' ? asaasInstallments : 1,
         cpf: asaasCpf,
+        expectedCustomerId: order.customer_id,
+        expectedUpdatedAt: order.updated_date || order.created_date,
       });
       toast.success('Cobrança criada com sucesso!');
       load();
@@ -659,7 +721,67 @@ export default function OrderDetail() {
     }
   };
 
-  if (!order) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
+  const openCustomerLink = async () => {
+    setCustomerSearch('');
+    setCustomerModal('link');
+    if (customers.length > 0) return;
+
+    setCustomersLoading(true);
+    try {
+      setCustomers(await PreSaleCustomer.list('full_name'));
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível carregar os clientes');
+      setCustomerModal(null);
+    } finally {
+      setCustomersLoading(false);
+    }
+  };
+
+  const linkCustomer = async (customerId) => {
+    setCustomerSaving(true);
+    try {
+      await linkPresaleOrderCustomer(
+        id,
+        customerId,
+        order.customer_id || null,
+        order.updated_date || order.created_date,
+      );
+      toast.success('Cliente vinculado ao pedido');
+      setCustomerModal(null);
+      await load();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível vincular o cliente');
+      if (error?.status === 409) {
+        setCustomerModal(null);
+        await load().catch(() => {});
+      }
+    } finally {
+      setCustomerSaving(false);
+    }
+  };
+
+  if (!order || order.id !== id) {
+    return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
+  }
+
+  const customerQuery = customerSearch.trim().toLowerCase();
+  const matchingCustomers = customers.filter(candidate => !customerQuery || [
+    candidate.full_name,
+    candidate.whatsapp,
+    candidate.email,
+  ].some(value => value?.toLowerCase().includes(customerQuery))).slice(0, 30);
+
+  const hasAsaasIdentity = Boolean(
+    order.asaas_customer_id || order.asaas_charge_id ||
+    order.asaas_payment_link || order.asaas_pix_copy || order.asaas_pix_qrcode,
+  );
+  const canLinkCustomer = !hasAsaasIdentity && (
+    ['pending', 'awaiting_charge'].includes(order.payment_status) ||
+    (!order.customer_id && ['charge_sent', 'overdue'].includes(order.payment_status))
+  );
+  const customerIdentityReady = Boolean(
+    order.customer_id && customer?.id === order.customer_id,
+  );
 
   const ps = PAYMENT_STATUS[order.payment_status] || { label: order.payment_status, badge: 'secondary' };
   const ds = fulfillmentStatus('presale', order.delivery_status);
@@ -827,7 +949,21 @@ export default function OrderDetail() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Dados do cliente */}
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><User className="w-4 h-4" /> Cliente</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base flex items-center gap-2"><User className="w-4 h-4" /> Cliente</CardTitle>
+              {order.customer_id ? (
+                <div className="flex items-center gap-2">
+                  <Badge variant="success">Vinculado</Badge>
+                  {canLinkCustomer && (
+                    <Button size="sm" variant="outline" onClick={openCustomerLink}>Trocar vínculo</Button>
+                  )}
+                </div>
+              ) : (
+                <Badge variant="warning">A confirmar</Badge>
+              )}
+            </div>
+          </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <p className="font-semibold text-base">{order.checkout_name}</p>
             {order.checkout_whatsapp && <p className="flex items-center gap-2 text-muted-foreground"><Phone className="w-3.5 h-3.5" />{order.checkout_whatsapp}</p>}
@@ -841,11 +977,23 @@ export default function OrderDetail() {
                   : 'Frete'}
               </p>
             )}
-            {customer && (
-              <Link to={studentProfilePath(customer.id, 'products')} className="text-xs text-blue-600 hover:underline block mt-1">
-                Ver perfil do cliente →
-              </Link>
-            )}
+            <div className="pt-3 mt-3 border-t flex flex-wrap gap-2">
+              {customer ? (
+                <Button size="sm" variant="outline" asChild>
+                  <Link to={studentProfilePath(customer.id, 'products')}>Abrir perfil do cliente</Link>
+                </Button>
+              ) : canLinkCustomer ? (
+                <Button size="sm" onClick={openCustomerLink}>
+                  <Search className="w-3.5 h-3.5" /> Vincular cliente existente
+                </Button>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {hasAsaasIdentity
+                    ? 'Reconcilie a identidade da cobrança Asaas antes de alterar o vínculo.'
+                    : 'O vínculo fica bloqueado depois que o pedido recebe pagamento, cancelamento ou estorno.'}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -1100,6 +1248,9 @@ export default function OrderDetail() {
             <DialogTitle className="flex items-center gap-2">
               <Check className="w-5 h-5 text-green-600" /> Pagamento registrado
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Escolha se deseja enviar ao cliente a confirmação do pagamento manual.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -1704,8 +1855,11 @@ export default function OrderDetail() {
                 <button
                   type="button"
                   onClick={() => setPayAction(payAction === 'asaas' ? null : 'asaas')}
+                  disabled={!customerIdentityReady}
                   className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
-                    payAction === 'asaas' ? 'bg-blue-50' : 'hover:bg-gray-50'
+                    !customerIdentityReady
+                      ? 'cursor-not-allowed bg-gray-50 opacity-60'
+                      : payAction === 'asaas' ? 'bg-blue-50' : 'hover:bg-gray-50'
                   }`}
                 >
                   <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
@@ -1713,11 +1867,17 @@ export default function OrderDetail() {
                   </div>
                   <div className="flex-1">
                     <p className="text-sm font-semibold">Gerar cobrança no Asaas</p>
-                    <p className="text-xs text-muted-foreground">PIX, Boleto ou Cartão — link enviado pelo gateway</p>
+                    <p className="text-xs text-muted-foreground">
+                      {customerIdentityReady
+                        ? 'PIX, Boleto ou Cartão — link enviado pelo gateway'
+                        : order.customer_id
+                          ? 'Aguarde o cadastro do cliente terminar de carregar'
+                          : 'Vincule e confira o cliente antes de usar o gateway'}
+                    </p>
                   </div>
                   <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${payAction === 'asaas' ? 'rotate-90' : ''}`} />
                 </button>
-                {payAction === 'asaas' && (
+                {payAction === 'asaas' && customerIdentityReady && (
                   <div className="border-t bg-white px-4 py-3 space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -2040,6 +2200,65 @@ export default function OrderDetail() {
         </Card>
       )}
 
+      <Dialog open={customerModal === 'link'} onOpenChange={open => !open && !customerSaving && setCustomerModal(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Vincular cliente existente</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Escolha o cadastro que realmente pertence a este pedido. Os dados informados no checkout continuam preservados no histórico.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Se a pessoa ainda não estiver cadastrada, crie-a em{' '}
+              <button className="underline" onClick={() => navigate('/clientes')}>Clientes</button>
+              {' '}e depois retorne ao pedido para fazer o vínculo.
+            </p>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 w-4 h-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                autoFocus
+                placeholder="Nome, WhatsApp ou e-mail"
+                value={customerSearch}
+                onChange={event => setCustomerSearch(event.target.value)}
+              />
+            </div>
+            {customersLoading ? (
+              <div className="py-8 flex justify-center text-muted-foreground">
+                <Loader2 className="w-5 h-5 animate-spin" />
+              </div>
+            ) : (
+              <div className="max-h-72 overflow-y-auto border rounded-lg divide-y">
+                {matchingCustomers.length === 0 ? (
+                  <p className="p-4 text-sm text-muted-foreground">Nenhum cliente encontrado.</p>
+                ) : matchingCustomers.map(candidate => (
+                  <div key={candidate.id} className="p-3 flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium truncate">{candidate.full_name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {[candidate.whatsapp, candidate.email].filter(Boolean).join(' · ') || 'Sem contato cadastrado'}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={customerSaving}
+                      onClick={() => linkCustomer(candidate.id)}
+                    >
+                      Vincular
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end">
+              <Button variant="ghost" onClick={() => setCustomerModal(null)} disabled={customerSaving}>Cancelar</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Modal editar forma de pagamento */}
       <Dialog open={editPayMethodModal} onOpenChange={setEditPayMethodModal}>
         <DialogContent className="max-w-sm">
@@ -2094,6 +2313,9 @@ export default function OrderDetail() {
             <DialogTitle className="flex items-center gap-2">
               <HandCoins className="w-4 h-4 text-green-600" /> Registrar pagamento manual
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Informe a forma, o valor, a data e a projeção do recebimento registrado fora da plataforma.
+            </DialogDescription>
           </DialogHeader>
           <ManualPaymentForm
             form={manualPayForm}
