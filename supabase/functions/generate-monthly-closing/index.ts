@@ -11,7 +11,26 @@ import { requireAdmin } from "../_shared/requireAdmin.ts";
 //   - Pendências de meses anteriores cujo contrato JÁ pagou -> RESGATADAS: entram como item no
 //                                          fechamento atual, mas carimbadas com reference = mês original.
 //
-// Body: { competence?: "YYYY-MM-01", regenerate?: boolean }. Aprovado/pago nunca recalcula.
+// Body: { competence: "YYYY-MM-01", regenerate?: boolean }. Aprovado/pago nunca recalcula.
+//
+// ORDEM DO HANDLER (não reordenar): OPTIONS -> método -> requireAdmin -> corpo.
+// O preflight do navegador não manda Authorization; se o guard vier antes, ele
+// responde 401 e o botão "Recalcular" quebra na tela. E todas as respostas —
+// inclusive 401/403 — precisam sair com os headers de CORS, senão o navegador
+// não consegue ler a mensagem de erro.
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
+};
+
+const json = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 
 const DAY_MS = 86400000;
 
@@ -26,12 +45,29 @@ function dateKeyUTC(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-function activeDayKeys(contract: any, leaves: any[], monthStart: Date, monthEndExclusive: Date) {
-  const start = parseDateUTC(contract.start_date, monthStart);
-  let endExclusive = parseDateUTC(contract.end_date, monthEndExclusive);
+function effectiveEndExclusive(contract: any, fallback: Date) {
+  const start = parseDateUTC(contract.start_date, fallback);
+  let endExclusive = parseDateUTC(contract.end_date, fallback);
+
   if (contract.end_date && endExclusive.getTime() === start.getTime()) {
     endExclusive = new Date(endExclusive.getTime() + DAY_MS);
   }
+
+  if (contract.status === "cancelled" && contract.cancellation_date) {
+    const cancellationEndExclusive = new Date(
+      parseDateUTC(contract.cancellation_date, fallback).getTime() + DAY_MS,
+    );
+    if (cancellationEndExclusive < endExclusive) {
+      endExclusive = cancellationEndExclusive;
+    }
+  }
+
+  return endExclusive;
+}
+
+function activeDayKeys(contract: any, leaves: any[], monthStart: Date, monthEndExclusive: Date) {
+  const start = parseDateUTC(contract.start_date, monthStart);
+  const endExclusive = effectiveEndExclusive(contract, monthEndExclusive);
 
   const current = start > monthStart ? new Date(start) : new Date(monthStart);
   const end = endExclusive < monthEndExclusive ? endExclusive : monthEndExclusive;
@@ -44,8 +80,15 @@ function activeDayKeys(contract: any, leaves: any[], monthStart: Date, monthEndE
 
   for (const leave of leaves.filter((l: any) => l.contract_id === contract.id)) {
     const leaveStart = parseDateUTC(leave.start_date, monthStart);
-    const leaveEnd = parseDateUTC(leave.end_date, leaveStart);
-    const leaveEndExclusive = new Date(leaveEnd.getTime() + DAY_MS);
+    // end_date nulo = licença EM ABERTO (o constraint de assessment_leaves exige
+    // days nulo e status 'active' nesse caso). Ela vale até o fim da competência,
+    // e volta a valer nos meses seguintes enquanto o aluno não retornar.
+    // Antes isto caía no fallback = leaveStart e descontava um único dia: no mês
+    // em que a licença começava perdia-se só 1 dia, e nos meses seguintes o aluno
+    // voltava a contar integralmente mesmo seguindo afastado.
+    const leaveEndExclusive = leave.end_date
+      ? new Date(parseDateUTC(leave.end_date, leaveStart).getTime() + DAY_MS)
+      : new Date(monthEndExclusive);
     const leaveCurrent = leaveStart > monthStart ? new Date(leaveStart) : new Date(monthStart);
     const leaveLimit = leaveEndExclusive < monthEndExclusive ? leaveEndExclusive : monthEndExclusive;
 
@@ -118,24 +161,33 @@ function finalizeGroups(groups: Map<string, any>) {
 }
 
 Deno.serve(async (req: Request) => {
-  // 🔒 AUTHZ: só admin allowlistado
+  // 1) Preflight do navegador: responde na hora, SEM auth e SEM tocar no banco.
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  // 2) Só POST executa. Evita que GET/HEAD disparem geração de competência.
+  if (req.method !== "POST") {
+    return json({ error: "Método não permitido. Use POST." }, 405);
+  }
+
+  // 3) 🔒 AUTHZ: só admin allowlistado. verify_jwt sozinho não basta — a anon key
+  //    pública também é um JWT válido, e esta função usa service_role (ignora RLS).
   const gate = await requireAdmin(req);
   if (!gate.ok) {
-    return new Response(JSON.stringify({ error: "unauthorized" }), {
-      status: gate.status, headers: { "Content-Type": "application/json" },
-    });
+    return json({ error: gate.error || "unauthorized" }, gate.status);
   }
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   try {
     const body = await req.json().catch(() => ({}));
-    let competence = body?.competence as string | undefined;
+    const competence = body?.competence as string | undefined;
 
-    // Default: mês atual (primeiro dia)
-    if (!competence) {
-      const d = new Date();
-      competence = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+    // Competência é obrigatória: nunca assume "mês atual" por conta própria.
+    // (Era o default silencioso que fez um preflight gerar um fechamento fantasma.)
+    if (!competence || !/^\d{4}-\d{2}-01$/.test(competence)) {
+      return json({ error: "Informe a competência no formato YYYY-MM-01." }, 400);
     }
 
     const regenerate = body?.regenerate === true;
@@ -146,18 +198,18 @@ Deno.serve(async (req: Request) => {
 
     // Aprovado/pago nunca recalcula — protege valores já congelados.
     if (existing && existing.status !== "pending_approval") {
-      return new Response(JSON.stringify({
+      return json({
         error: "Fechamento já existe e foi aprovado/pago para essa competência.",
         closing_id: existing.id,
-      }), { status: 409, headers: { "Content-Type": "application/json" } });
+      }, 409);
     }
 
     // Existe em revisão, mas o recálculo não foi pedido explicitamente.
     if (existing && !regenerate) {
-      return new Response(JSON.stringify({
+      return json({
         error: "Fechamento já existe para essa competência (em revisão).",
         closing_id: existing.id,
-      }), { status: 409, headers: { "Content-Type": "application/json" } });
+      }, 409);
     }
 
     const monthStart = new Date(competence + "T00:00:00Z");
@@ -190,14 +242,14 @@ Deno.serve(async (req: Request) => {
     // Contrato tem vigência (dias) dentro da competência?
     const overlapsMonth = (c: any) => {
       const cStart = parseDateUTC(c.start_date, monthStart);
-      let cEnd = parseDateUTC(c.end_date, monthEndExclusive);
-      if (c.end_date && cEnd.getTime() === cStart.getTime()) cEnd = new Date(cEnd.getTime() + DAY_MS);
+      const cEnd = effectiveEndExclusive(c, monthEndExclusive);
       return cStart < monthEndExclusive && cEnd > monthStart;
     };
 
-    // Pagos e vigentes no mês (base do repasse e do tier).
+    // Pagos e vigentes no mês (base do repasse e do tier). Contratos
+    // cancelados contam até a cancellation_date; draft/voided nunca contam.
     const paidContracts = contracts.filter((c: any) =>
-      !["cancelled", "draft", "voided"].includes(c.status) &&
+      !["draft", "voided"].includes(c.status) &&
       c.payment_status === "paid" &&
       overlapsMonth(c)
     );
@@ -355,7 +407,7 @@ Deno.serve(async (req: Request) => {
     // Total a pagar = itens (mês corrente + resgatados). Pendências não somam.
     const total = items.reduce((s, i) => s + Number(i.amount), 0);
 
-    return new Response(JSON.stringify({
+    return json({
       ok: true, closing_id: closing.id,
       regenerated: !!existing,
       tier_name: tier?.name, total_athletes: totalActive,
@@ -365,10 +417,8 @@ Deno.serve(async (req: Request) => {
       pendings_count: pendingRows.length,
       total_amount: total,
       tier_snapshot: tierSnapshot,
-    }), { headers: { "Content-Type": "application/json" } });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
-      status: 500, headers: { "Content-Type": "application/json" },
     });
+  } catch (e: any) {
+    return json({ error: String(e?.message || e) }, 500);
   }
 });

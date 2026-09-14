@@ -1,0 +1,76 @@
+{
+  "observed_on": "2026-09-12",
+  "project_ref": "bsiljrrodgtmtdilnuxr",
+  "netlify_site_id": "9a9edc3b-04e4-431f-8927-f946900b0b27",
+  "netlify_deploy_id": "6aa43e63c5c59af1f6dc1f24",
+  "frontend_commit": "2bbcfc4b075fc666e535ad2deb7eb84ef3698b52",
+  "purpose": "Historical read-only baseline for the first reconciliation; not a deployment instruction.",
+  "functions": [
+    {
+      "slug": "get-public-order",
+      "deployed_version": 7,
+      "files": [
+        {
+          "path": "supabase/functions/get-public-order/index.ts",
+          "sha256": "17c30dccb7bb93caf7922df6467f3cf01f9e05084f5a36485f3e73d49637d63a"
+        }
+      ]
+    },
+    {
+      "slug": "generate-monthly-closing",
+      "deployed_version": 13,
+      "files": [
+        {
+          "path": "supabase/functions/generate-monthly-closing/index.ts",
+          "sha256": "88375d86dadb58560a69f2aa29a8fa86913d6d5ada5704fc67e38cd5200e2192"
+        },
+        {
+          "path": "supabase/functions/_shared/requireAdmin.ts",
+          "sha256": "cd5db2a4ae96b0d1d2584779fd58d15eefb14573ec1f31e7d8eb09145d22e463"
+        }
+      ]
+    },
+    {
+      "slug": "fetch-asaas-receivables",
+      "deployed_version": 3,
+      "files": [
+        {
+          "path": "supabase/functions/fetch-asaas-receivables/index.ts",
+          "sha256": "66174929bef910172e4387fd02a3add60510ffdea075d168a3e3337d72c8db98"
+        },
+        {
+          "path": "supabase/functions/_shared/requireAdmin.ts",
+          "sha256": "cd5db2a4ae96b0d1d2584779fd58d15eefb14573ec1f31e7d8eb09145d22e463"
+        }
+      ]
+    },
+    {
+      "slug": "fetch-contract-installments",
+      "deployed_version": 3,
+      "files": [
+        {
+          "path": "supabase/functions/fetch-contract-installments/index.ts",
+          "sha256": "ca6e2cb68b32059974789281e324e0222ad1baae30aaccfcb659b3ac9377833c"
+        },
+        {
+          "path": "supabase/functions/_shared/requireAdmin.ts",
+          "sha256": "cd5db2a4ae96b0d1d2584779fd58d15eefb14573ec1f31e7d8eb09145d22e463"
+        }
+      ]
+    }
+  ],
+  "migration_filename_alignment": [
+    {
+      "previous_version": "20260911120000",
+      "deployed_version": "20260911163326",
+      "name": "redeploy_manual_payment_editable_installments",
+      "file_sha256": "120faeeadb0a22c7c891099bce981d6149536f0628ff55fa1ac25a0bc18b70ba"
+    },
+    {
+      "previous_version": "20260911170000",
+      "deployed_version": "20260911165116",
+      "name": "fix_stuck_manual_payment_flag_on_legacy_presale_orders",
+      "file_sha256": "a512c7ce6cf1b3f7aab920f884e74a74073c10b3b5b715478653b9002f7a6e28"
+    }
+  ]
+}

@@ -38,7 +38,7 @@ Deno.serve(async (req: Request) => {
       ? await req.json().catch(() => ({}))
       : {};
     const url = new URL(req.url);
-    const token = body?.public_token || body?.order_id || url.searchParams.get("token") || url.searchParams.get("id");
+    const token = body?.public_token || url.searchParams.get("token");
 
     if (!token || !UUID_PATTERN.test(token)) {
       return response({ error: "invalid_token" }, 400);
@@ -56,7 +56,7 @@ Deno.serve(async (req: Request) => {
     const { data: presale } = await supabase
       .from("presale_orders")
       .select(presaleColumns)
-      .or(`public_token.eq.${token},id.eq.${token}`)
+      .eq("public_token", token)
       .maybeSingle();
 
     if (presale) {
@@ -97,7 +97,7 @@ Deno.serve(async (req: Request) => {
     const { data: stock } = await supabase
       .from("stock_orders")
       .select(stockColumns)
-      .or(`public_token.eq.${token},id.eq.${token}`)
+      .eq("public_token", token)
       .maybeSingle();
 
     if (stock) {
