@@ -34,6 +34,8 @@ Executar `npm run lint`, `npm test` e `npm run build`. Os cenários de cobrança
 
 O frontend e os handlers produtivos da `api-v1` não precisam mudar para esta reconciliação. O [workflow de publicação](deploy-production.md) passa a exigir as validações antes da API e o sucesso da API antes do frontend. O artefato inclui `netlify.toml`; a política de segurança existente precisa ser validada na prévia antes de integrar.
 
+> Nota (15/09/2026): a partir desta data o workflow passou a publicar todas as Edge Functions, inclusive as auxiliares reconciliadas aqui. Ver [deploy-production.md](deploy-production.md). O restante desta seção descreve o comportamento vigente em 12/09/2026, no momento da reconciliação.
+
 As funções auxiliares reconciliadas não são publicadas pelo workflow. Uma PR publica apenas prévia de frontend; integrar na `main` dispara produção. A prévia ainda pode usar o banco de produção: testar somente páginas públicas sem submissões e usar fixtures para operações financeiras. Algumas telas administrativas executam transições ao carregar, portanto navegar nelas não constitui necessariamente uma operação somente de leitura.
 
 ## Próximas etapas

@@ -154,7 +154,7 @@ jobs:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
 
   release-supabase:
-    name: Release api-v1 and Supabase migrations
+    name: Release Edge Functions and Supabase migrations
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: [migrations, build]
     runs-on: ubuntu-latest
@@ -304,5 +304,5 @@ jobs:
             | length == 1
           ' >/dev/null
 
-      - name: Deploy api-v1
-        run: supabase functions deploy api-v1 --project-ref "$SUPABASE_PROJECT_ID"
+      - name: Deploy Edge Functions
+        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_ID"
