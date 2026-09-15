@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/components/AuthProvider';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import RouteFallback from '@/components/RouteFallback';
 
 const AdminLayout = lazy(() => import('@/components/layout/AdminLayout'));
@@ -83,13 +84,20 @@ function LegacyOrderListRedirect({ origin }) {
   return <Navigate to={`/pedidos?${params.toString()}${location.hash}`} replace />;
 }
 
+function RouteErrorBoundary({ children }) {
+  const location = useLocation();
+
+  return <ErrorBoundary routeKey={location.pathname}>{children}</ErrorBoundary>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Toaster position="top-right" richColors />
-        <Suspense fallback={<RouteFallback />}>
-          <Routes>
+        <RouteErrorBoundary>
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
           {/* Públicas */}
           <Route path="/" element={<PublicHome />} />
           <Route path="/checkout/:campaignId" element={<PublicCheckout />} />
@@ -177,8 +185,9 @@ export default function App() {
           <Route path="/estoque/pedidos/:id" element={<AdminLayout><StockOrderDetail /></AdminLayout>} />
           <Route path="/estoque/:id" element={<AdminLayout><ProductStockManager /></AdminLayout>} />
           <Route path="*" element={<Navigate to="/hoje" replace />} />
-          </Routes>
-        </Suspense>
+            </Routes>
+          </Suspense>
+        </RouteErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
   );
