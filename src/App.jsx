@@ -1,75 +1,73 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import ErrorBoundary from '@/components/ErrorBoundary';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/components/AuthProvider';
-import { useAuth } from '@/hooks/useAuth';
-import Sidebar from '@/components/layout/Sidebar';
-import TopBar from '@/components/layout/TopBar';
-import Dashboard from '@/pages/Dashboard';
-import Campaigns from '@/pages/Campaigns';
-import CampaignDetail from '@/pages/CampaignDetail';
-import ProductLibrary from '@/pages/ProductLibrary';
-import Products from '@/pages/Products';
-import ProductForm from '@/pages/ProductForm';
-import OrderDetail from '@/pages/OrderDetail';
-import OrderCenter from '@/pages/OrderCenter';
-import Events from '@/pages/Events';
-import PublicEventRegistration from '@/pages/PublicEventRegistration';
-import EventDetail from '@/pages/EventDetail';
-import Customers from '@/pages/Customers';
-import CustomerDetail from '@/pages/CustomerDetail';
-import Suppliers from '@/pages/Suppliers';
-import SupplierForm from '@/pages/SupplierForm';
-import Categories from '@/pages/Categories';
-import Trainers from '@/pages/Trainers';
-import { seedTrainers } from '@/api/entities';
-import PublicCheckout from '@/pages/PublicCheckout';
-import PublicOrderConfirmation from '@/pages/PublicOrderConfirmation';
-import PublicHome from '@/pages/PublicHome';
-import Migrate from '@/pages/Migrate';
-import CampaignReport from '@/pages/CampaignReport';
-import Login from '@/pages/Login';
-import StockMovements from '@/pages/StockMovements';
-import ProductStockManager from '@/pages/ProductStockManager';
-import ProductStockSetup from '@/pages/ProductStockSetup';
-import StockOrderDetail from '@/pages/StockOrderDetail';
-import PublicStore from '@/pages/PublicStore';
-import PublicStoreConfirmation from '@/pages/PublicStoreConfirmation';
-import Financial from '@/pages/Financial';
-import Returns from '@/pages/Returns';
-import Refunds from '@/pages/Refunds';
-import Today from '@/pages/Today';
-import CommunicationCenter from '@/pages/CommunicationCenter';
-import CommunicationSettings from '@/pages/CommunicationSettings';
-import Coupons from '@/pages/Coupons';
-import CouponForm from '@/pages/CouponForm';
-import RevenueCenters from '@/pages/RevenueCenters';
-import PaymentMethodsConfig from '@/pages/PaymentMethodsConfig';
-import HealthCheck from '@/pages/admin/HealthCheck';
-import StockOrderNewAdmin from '@/pages/StockOrderNewAdmin';
-import PublicOrderTracking from '@/pages/PublicOrderTracking';
-import PublicPlanEnrollment from '@/pages/public/PublicPlanEnrollment';
-import PublicModalityPlans from '@/pages/public/PublicModalityPlans';
+import ErrorBoundary from '@/components/ErrorBoundary';
+import RouteFallback from '@/components/RouteFallback';
+
+const AdminLayout = lazy(() => import('@/components/layout/AdminLayout'));
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const Campaigns = lazy(() => import('@/pages/Campaigns'));
+const CampaignDetail = lazy(() => import('@/pages/CampaignDetail'));
+const ProductLibrary = lazy(() => import('@/pages/ProductLibrary'));
+const Products = lazy(() => import('@/pages/Products'));
+const ProductForm = lazy(() => import('@/pages/ProductForm'));
+const OrderDetail = lazy(() => import('@/pages/OrderDetail'));
+const OrderCenter = lazy(() => import('@/pages/OrderCenter'));
+const Events = lazy(() => import('@/pages/Events'));
+const PublicEventRegistration = lazy(() => import('@/pages/PublicEventRegistration'));
+const EventDetail = lazy(() => import('@/pages/EventDetail'));
+const Customers = lazy(() => import('@/pages/Customers'));
+const CustomerDetail = lazy(() => import('@/pages/CustomerDetail'));
+const Suppliers = lazy(() => import('@/pages/Suppliers'));
+const SupplierForm = lazy(() => import('@/pages/SupplierForm'));
+const Categories = lazy(() => import('@/pages/Categories'));
+const Trainers = lazy(() => import('@/pages/Trainers'));
+const PublicCheckout = lazy(() => import('@/pages/PublicCheckout'));
+const PublicOrderConfirmation = lazy(() => import('@/pages/PublicOrderConfirmation'));
+const PublicHome = lazy(() => import('@/pages/PublicHome'));
+const Migrate = lazy(() => import('@/pages/Migrate'));
+const CampaignReport = lazy(() => import('@/pages/CampaignReport'));
+const Login = lazy(() => import('@/pages/Login'));
+const StockMovements = lazy(() => import('@/pages/StockMovements'));
+const ProductStockManager = lazy(() => import('@/pages/ProductStockManager'));
+const ProductStockSetup = lazy(() => import('@/pages/ProductStockSetup'));
+const StockOrderDetail = lazy(() => import('@/pages/StockOrderDetail'));
+const PublicStore = lazy(() => import('@/pages/PublicStore'));
+const PublicStoreConfirmation = lazy(() => import('@/pages/PublicStoreConfirmation'));
+const Financial = lazy(() => import('@/pages/Financial'));
+const Returns = lazy(() => import('@/pages/Returns'));
+const Refunds = lazy(() => import('@/pages/Refunds'));
+const Today = lazy(() => import('@/pages/Today'));
+const CommunicationCenter = lazy(() => import('@/pages/CommunicationCenter'));
+const CommunicationSettings = lazy(() => import('@/pages/CommunicationSettings'));
+const Coupons = lazy(() => import('@/pages/Coupons'));
+const CouponForm = lazy(() => import('@/pages/CouponForm'));
+const RevenueCenters = lazy(() => import('@/pages/RevenueCenters'));
+const PaymentMethodsConfig = lazy(() => import('@/pages/PaymentMethodsConfig'));
+const HealthCheck = lazy(() => import('@/pages/admin/HealthCheck'));
+const StockOrderNewAdmin = lazy(() => import('@/pages/StockOrderNewAdmin'));
+const PublicOrderTracking = lazy(() => import('@/pages/PublicOrderTracking'));
+const PublicPlanEnrollment = lazy(() => import('@/pages/public/PublicPlanEnrollment'));
+const PublicModalityPlans = lazy(() => import('@/pages/public/PublicModalityPlans'));
 
 // Assessoria
-import AssConfiguracoes from '@/pages/assessment/Configuracoes';
-import AssPlanos from '@/pages/assessment/Planos';
-import AssCoaches from '@/pages/assessment/Coaches';
-import AssStudents from '@/pages/assessment/Students';
-import AssStudentDetail from '@/pages/assessment/StudentDetail';
-import AssContracts from '@/pages/assessment/Contracts';
-import AssContractForm from '@/pages/assessment/ContractForm';
-import AssContractDetail from '@/pages/assessment/ContractDetail';
-import AssMonthlyClosing from '@/pages/assessment/MonthlyClosing';
-import AssClosingDetail from '@/pages/assessment/ClosingDetail';
+const AssConfiguracoes = lazy(() => import('@/pages/assessment/Configuracoes'));
+const AssPlanos = lazy(() => import('@/pages/assessment/Planos'));
+const AssCoaches = lazy(() => import('@/pages/assessment/Coaches'));
+const AssStudents = lazy(() => import('@/pages/assessment/Students'));
+const AssStudentDetail = lazy(() => import('@/pages/assessment/StudentDetail'));
+const AssContracts = lazy(() => import('@/pages/assessment/Contracts'));
+const AssContractForm = lazy(() => import('@/pages/assessment/ContractForm'));
+const AssContractDetail = lazy(() => import('@/pages/assessment/ContractDetail'));
+const AssMonthlyClosing = lazy(() => import('@/pages/assessment/MonthlyClosing'));
+const AssClosingDetail = lazy(() => import('@/pages/assessment/ClosingDetail'));
 const AssCoachStatement = lazy(() => import('@/pages/assessment/CoachStatement'));
-import AssRenewals from '@/pages/assessment/Renewals';
-import AssProspects from '@/pages/assessment/Prospects';
-import AssRepasse from '@/pages/assessment/Repasse';
-import AssContractAudit from '@/pages/assessment/ContractAudit';
-import AssLeaves from '@/pages/assessment/Leaves';
-
+const AssRenewals = lazy(() => import('@/pages/assessment/Renewals'));
+const AssProspects = lazy(() => import('@/pages/assessment/Prospects'));
+const AssRepasse = lazy(() => import('@/pages/assessment/Repasse'));
+const AssContractAudit = lazy(() => import('@/pages/assessment/ContractAudit'));
+const AssLeaves = lazy(() => import('@/pages/assessment/Leaves'));
 const Reports = lazy(() => import('@/pages/Reports'));
 const Analytics = lazy(() => import('@/pages/Analytics'));
 const CashFlow = lazy(() => import('@/pages/CashFlow'));
@@ -77,44 +75,6 @@ const FinancialReconciliation = lazy(() => import('@/pages/FinancialReconciliati
 const AssPainel = lazy(() => import('@/pages/assessment/Painel'));
 const AssIndicators = lazy(() => import('@/pages/assessment/Indicators'));
 const AssCentralFinanceira = lazy(() => import('@/pages/assessment/CentralFinanceira'));
-
-function RouteFallback() {
-  return (
-    <div className="min-h-[12rem] flex items-center justify-center" role="status" aria-label="Carregando conteúdo">
-      <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
-}
-
-function AdminLayout({ children }) {
-  const { user, loading, signOut } = useAuth();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const location = useLocation();
-
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
-
-  if (!user) return <Navigate to="/login" replace />;
-
-  return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} onSignOut={signOut} />
-      <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
-        <TopBar onMenuClick={() => setSidebarOpen(true)} />
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6">
-          <ErrorBoundary routeKey={location.pathname}>
-            <Suspense fallback={<RouteFallback />}>
-              {children}
-            </Suspense>
-          </ErrorBoundary>
-        </main>
-      </div>
-    </div>
-  );
-}
 
 function LegacyOrderListRedirect({ origin }) {
   const location = useLocation();
@@ -124,14 +84,20 @@ function LegacyOrderListRedirect({ origin }) {
   return <Navigate to={`/pedidos?${params.toString()}${location.hash}`} replace />;
 }
 
-export default function App() {
-  useEffect(() => { seedTrainers(); }, []);
+function RouteErrorBoundary({ children }) {
+  const location = useLocation();
 
+  return <ErrorBoundary routeKey={location.pathname}>{children}</ErrorBoundary>;
+}
+
+export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Toaster position="top-right" richColors />
-        <Routes>
+        <RouteErrorBoundary>
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
           {/* Públicas */}
           <Route path="/" element={<PublicHome />} />
           <Route path="/checkout/:campaignId" element={<PublicCheckout />} />
@@ -219,7 +185,9 @@ export default function App() {
           <Route path="/estoque/pedidos/:id" element={<AdminLayout><StockOrderDetail /></AdminLayout>} />
           <Route path="/estoque/:id" element={<AdminLayout><ProductStockManager /></AdminLayout>} />
           <Route path="*" element={<Navigate to="/hoje" replace />} />
-        </Routes>
+            </Routes>
+          </Suspense>
+        </RouteErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
   );
