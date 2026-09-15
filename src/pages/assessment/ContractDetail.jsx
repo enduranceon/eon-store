@@ -818,10 +818,9 @@ export default function ContractDetail() {
       const allMethods = groups.flatMap(([, list]) => list);
       const defaultMethod = allMethods.find(m => m.internal_code === 'pix_manual') || allMethods[0];
       setManualPayForm({
-        method_id:    defaultMethod?.id || '',
-        date:         todayLocalStr(),
-        value:        total.toFixed(2),
-        installments: 1,
+        method_id: defaultMethod?.id || '',
+        date:      todayLocalStr(),
+        value:     total.toFixed(2),
       });
       setManualPayModal(true);
     } catch (e) {
