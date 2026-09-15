@@ -862,6 +862,16 @@ export default function ContractDetail() {
     finally { setManualPaySaving(false); }
   };
 
+  // Atalho ?receber=1 (vindo da lista de Vendas em aberto) → abre o modal direto
+  useEffect(() => {
+    if (searchParams.get('receber') !== '1' || loading || !contract) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('receber');
+    setSearchParams(nextParams, { replace: true });
+    const timer = setTimeout(openManualPay, 0);
+    return () => clearTimeout(timer);
+  }, [contract, loading, openManualPay, searchParams, setSearchParams]);
+
   const buildMessage = () => {
     if (!contract || !student) return '';
     return buildAssessmentContractMessage({

@@ -497,6 +497,16 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
     return () => window.clearTimeout(timer);
   }, [openWhatsApp, order, searchParams, setSearchParams]);
 
+  // Atalho ?receber=1 (vindo da lista de Vendas em aberto) → abre o modal direto
+  useEffect(() => {
+    if (!order || searchParams.get('receber') !== '1') return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('receber');
+    setSearchParams(nextParams, { replace: true });
+    const timer = window.setTimeout(openManualPay, 0);
+    return () => window.clearTimeout(timer);
+  }, [openManualPay, order, searchParams, setSearchParams]);
+
   const markMessageSent = async () => {
     try {
       const hasNativeCharge = Boolean(
