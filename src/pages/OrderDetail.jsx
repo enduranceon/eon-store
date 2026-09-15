@@ -1,6 +1,6 @@
 import { studentProfilePath } from '@/lib/customer-profile';
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock, Search, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -103,6 +103,7 @@ function SALE_EVENT_META(ev) {
 export default function OrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const loadGeneration = useRef(0);
   const activeRouteId = useRef(null);
   const [order, setOrder] = useState(null);
@@ -339,6 +340,16 @@ export default function OrderDetail() {
       setManualPaySaving(false);
     }
   };
+
+  // Atalho ?receber=1 (vindo da lista de Vendas em aberto) → abre o modal direto
+  useEffect(() => {
+    if (!order || searchParams.get('receber') !== '1') return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('receber');
+    setSearchParams(nextParams, { replace: true });
+    const timer = setTimeout(openManualPay, 0);
+    return () => clearTimeout(timer);
+  }, [openManualPay, order, searchParams, setSearchParams]);
 
   // Atalho do modal de WhatsApp manual → registrar pagamento
   const switchToManualPay = () => {

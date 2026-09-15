@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, CalendarDays, Check, CheckCircle2, ChevronRight,
   Clock, Copy, ExternalLink, FileText, HandCoins, Info, Layers, Link2, Loader2,
@@ -295,6 +295,7 @@ function buildEventChargeTask(registration, { customer, type, event }) {
 export default function EventDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     data: { event, types, registrations, customers, expenses, coaches, financialMovements },
     loading, refresh,
@@ -690,6 +691,19 @@ export default function EventDetail() {
       toast.error(e.message || 'Erro ao carregar métodos de pagamento');
     }
   };
+
+  // Atalho ?receber=<id da inscrição> (vindo da lista de Vendas em aberto) → abre o modal direto
+  useEffect(() => {
+    const regId = searchParams.get('receber');
+    if (!regId || loading) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('receber');
+    setSearchParams(nextParams, { replace: true });
+    const reg = registrations.find(r => r.id === regId);
+    if (!reg) return;
+    const timer = setTimeout(() => openManualPayment(reg), 0);
+    return () => clearTimeout(timer);
+  }, [loading, openManualPayment, registrations, searchParams, setSearchParams]);
 
   const confirmPayment = async () => {
     if (!payModal) return;

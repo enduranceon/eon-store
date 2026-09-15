@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   DollarSign, Calendar, CheckCircle2, Clock, AlertTriangle,
   ChevronRight, RefreshCw, Wallet, Receipt,
-  BarChart3, RotateCcw, MessageCircle,
+  BarChart3, RotateCcw, MessageCircle, Banknote,
 } from 'lucide-react';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -238,6 +238,18 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
     && ADJUSTABLE_DUE_DATE_STATUSES.has(o.payment_status)
     && !hasUnsupportedInstallment;
   const canCollect = !!onCollectPayment && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
+  // Atalho "Receber": leva pra tela do pedido/contrato/evento já com o modal de
+  // pagamento manual aberto (?receber=1). Cada tela sabe calcular o valor certo
+  // pro seu tipo (plano+matrícula-desconto no contrato, preço da inscrição no
+  // evento, total_value em loja/pré-venda) — não duplicamos essa conta aqui.
+  // Some ao já ter cobrança Asaas ativa: lá o registro manual é bloqueado mesmo.
+  const canRegisterPayment = !o.is_prospect
+    && !o.asaas_charge_id
+    && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
+  const payLink = o.type === 'stock'    ? `/estoque/pedidos/${o.id}?receber=1`
+                : o.type === 'contract' ? `/assessoria/contratos/${o.id}?receber=1`
+                : o.type === 'event'    ? `/eventos/${o.event_id}?receber=${o.id}`
+                : `/pedidos/${o.id}?receber=1`;
 
   return (
     <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors group">
@@ -284,6 +296,20 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
           >
             <MessageCircle className="w-3.5 h-3.5 sm:mr-1" />
             <span className="hidden sm:inline">Cobrar</span>
+          </Button>
+        )}
+        {canRegisterPayment && (
+          <Button
+            asChild
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+          >
+            <Link to={payLink}>
+              <Banknote className="w-3.5 h-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Receber</span>
+            </Link>
           </Button>
         )}
         {canEditDueDate && (
