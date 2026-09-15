@@ -107,7 +107,14 @@ Deno.serve(async (req: Request) => {
     if (forcedIds && forcedIds.length > 0) {
       query = query.in("id", forcedIds);
     } else {
-      query = query.gte("end_date", todayStr).lte("end_date", horizonStr);
+      // Sem limite inferior de propósito: um contrato que já passou do
+      // end_date e ainda está active/on_leave/overdue sem rascunho (scan
+      // perdido, job de cron que falhou um dia, etc.) precisa continuar
+      // aparecendo aqui pra se autocorrigir no próximo scan -- não só os
+      // que ainda vão vencer. renewal_generated já evita reprocessar quem
+      // já tem rascunho; quem foi fechado manualmente já não está mais em
+      // status active/on_leave/overdue, então também some da busca.
+      query = query.lte("end_date", horizonStr);
     }
 
     const { data: candidates, error: candErr } = await query;
