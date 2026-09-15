@@ -30,6 +30,8 @@ import {
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
 import { DEFAULT_COMMUNICATION_RULES, loadCommunicationConfig } from '@/lib/communication-config';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
+import ManualPaymentForm from '@/components/ManualPaymentForm';
+import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { readPageCache, writePageCache } from '@/lib/page-cache';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
@@ -227,7 +229,7 @@ function collectionTaskFor(order, rules = DEFAULT_COMMUNICATION_RULES) {
 }
 
 
-function OrderRow({ o, onEditDueDate, onCollectPayment }) {
+function OrderRow({ o, onEditDueDate, onCollectPayment, onRegisterPayment }) {
   const link = o.is_prospect         ? '/assessoria/prospects'
              : o.type === 'stock'    ? `/estoque/pedidos/${o.id}`
              : o.type === 'contract' ? `/assessoria/contratos/${o.id}`
@@ -238,18 +240,16 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
     && ADJUSTABLE_DUE_DATE_STATUSES.has(o.payment_status)
     && !hasUnsupportedInstallment;
   const canCollect = !!onCollectPayment && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
-  // Atalho "Receber": leva pra tela do pedido/contrato/evento já com o modal de
-  // pagamento manual aberto (?receber=1). Cada tela sabe calcular o valor certo
-  // pro seu tipo (plano+matrícula-desconto no contrato, preço da inscrição no
-  // evento, total_value em loja/pré-venda) — não duplicamos essa conta aqui.
+  // Atalho "Receber": abre o modal de pagamento manual direto na lista (sem
+  // navegar), pra dar conta de processar várias cobranças em sequência.
+  // o.total_value já é o valor certo pro tipo (plano+matrícula-desconto no
+  // contrato, preço da inscrição no evento, total_value em loja/pré-venda) —
+  // é o mesmo número mostrado na linha, não recalculamos nada aqui.
   // Some ao já ter cobrança Asaas ativa: lá o registro manual é bloqueado mesmo.
-  const canRegisterPayment = !o.is_prospect
+  const canRegisterPayment = !!onRegisterPayment
+    && !o.is_prospect
     && !o.asaas_charge_id
     && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
-  const payLink = o.type === 'stock'    ? `/estoque/pedidos/${o.id}?receber=1`
-                : o.type === 'contract' ? `/assessoria/contratos/${o.id}?receber=1`
-                : o.type === 'event'    ? `/eventos/${o.event_id}?receber=${o.id}`
-                : `/pedidos/${o.id}?receber=1`;
 
   return (
     <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors group">
@@ -300,16 +300,14 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
         )}
         {canRegisterPayment && (
           <Button
-            asChild
             type="button"
             variant="outline"
             size="sm"
             className="h-7 px-2 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+            onClick={() => onRegisterPayment(o)}
           >
-            <Link to={payLink}>
-              <Banknote className="w-3.5 h-3.5 sm:mr-1" />
-              <span className="hidden sm:inline">Receber</span>
-            </Link>
+            <Banknote className="w-3.5 h-3.5 sm:mr-1" />
+            <span className="hidden sm:inline">Receber</span>
           </Button>
         )}
         {canEditDueDate && (
@@ -332,7 +330,7 @@ function OrderRow({ o, onEditDueDate, onCollectPayment }) {
   );
 }
 
-function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, badgeCls, total, onEditDueDate, onCollectPayment }) {
+function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, badgeCls, total, onEditDueDate, onCollectPayment, onRegisterPayment }) {
   if (orders.length === 0) return null;
   return (
     <Card className={border || ''}>
@@ -359,6 +357,7 @@ function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, ba
               o={o}
               onEditDueDate={onEditDueDate}
               onCollectPayment={onCollectPayment}
+              onRegisterPayment={onRegisterPayment}
             />
           ))}</div>
         }
@@ -472,6 +471,10 @@ export default function Financial() {
   const [dueDateForm, setDueDateForm]         = useState({ date: '', idempotencyKey: '' });
   const [savingDueDate, setSavingDueDate]     = useState(false);
   const [collectionTask, setCollectionTask] = useState(null);
+  const [payModal, setPayModal]           = useState(null);
+  const [payMethodGroups, setPayMethodGroups] = useState([]);
+  const [payForm, setPayForm]             = useState({ method_id: '', date: '', value: '' });
+  const [paySaving, setPaySaving]         = useState(false);
   const [commConfig, setCommConfig] = useState({ rules: DEFAULT_COMMUNICATION_RULES, communityLink: '' });
 
   useEffect(() => {
@@ -521,15 +524,14 @@ export default function Financial() {
   }, [fetchReceivables]);
 
   // ── Fetch pedidos/contratos ────────────────────────────────────
-  useEffect(() => {
-    let active = true;
-
-    const load = async () => {
-      const cacheIsFresh = initialFinancialCache
+  // useCallback (não só useEffect) porque o modal de "Receber" chama load(true)
+  // de novo depois de registrar um pagamento, pra atualizar a lista sem sair da página.
+  const load = useCallback(async (force = false) => {
+      const cacheIsFresh = !force && initialFinancialCache
         && Date.now() - initialFinancialCache.updatedAt < FINANCIAL_PAGE_CACHE_TTL;
       if (cacheIsFresh) return;
 
-      if (!initialFinancialCache?.data) setLoading(true);
+      if (!initialFinancialCache?.data || force) setLoading(true);
       try {
         // Janela ampla pra puxar pagamentos: hoje − 7 meses para cobrir gráfico de 6 meses
         const sevenMonthsAgo = new Date();
@@ -660,6 +662,7 @@ export default function Financial() {
               event_name: eventRecord.name || 'Evento',
               registration_type_name: type.name || 'Inscrição',
               revenue_center_id: eventRecord.revenue_center_id || null,
+              customer_link_confirmed_at: reg.customer_link_confirmed_at || null,
               items: [{
                 name: [eventRecord.name, type.name].filter(Boolean).join(' - ') || 'Inscrição de evento',
                 quantity: 1,
@@ -690,7 +693,6 @@ export default function Financial() {
           }));
         }
 
-        if (!active) return;
         const nextData = {
           orders: nextOrders,
           centers: nextCenters,
@@ -707,12 +709,11 @@ export default function Financial() {
       } catch (e) {
         console.error('Erro ao carregar Financeiro:', e);
       } finally {
-        if (active) setLoading(false);
+        setLoading(false);
       }
-    };
-    load();
-    return () => { active = false; };
   }, [initialFinancialCache]);
+
+  useEffect(() => { load(); }, [load]);
 
   // ── Cálculos ──────────────────────────────────────────────────
   const todayStr       = getTodayStr();
@@ -902,6 +903,69 @@ export default function Financial() {
     }
   };
 
+  // "Receber": abre o modal de pagamento manual sem sair da lista, pra dar conta
+  // de processar várias cobranças em sequência. o.total_value já é o valor certo
+  // pro tipo (total_value direto em loja/pré-venda, preço da inscrição em evento,
+  // plano+matrícula-desconto-crédito em contrato via getContractTotalValue) --
+  // é o mesmo número já mostrado na linha, então não recalculamos nada aqui.
+  const openRegisterPayment = async (order) => {
+    if (order.type === 'event' && !order.customer_link_confirmed_at) {
+      toast.error('Confirme o cliente da inscrição antes de registrar pagamento — abra a inscrição pela lista.');
+      return;
+    }
+    try {
+      const groups = await loadActivePaymentMethods();
+      setPayMethodGroups(groups);
+      const preferred = findPreferredPaymentMethod(groups, order.payment_method, 'pix_manual');
+      setPayForm({
+        method_id: preferred?.id || '',
+        date:      todayLocalStr(),
+        value:     Number(order.total_value || 0).toFixed(2),
+      });
+      setPayModal(order);
+    } catch (e) {
+      toast.error('Erro ao carregar métodos: ' + e.message);
+    }
+  };
+
+  const recordRegisterPayment = async () => {
+    if (!payModal) return;
+    if (!payForm.method_id) return toast.error('Selecione um método');
+    if (!payForm.date)      return toast.error('Informe a data do pagamento');
+    if (!payForm.value || isNaN(Number(payForm.value))) return toast.error('Informe o valor recebido');
+    const method = payMethodGroups.flatMap(([, list]) => list).find(m => m.id === payForm.method_id);
+    if (!method) return toast.error('Método inválido');
+    if (payModal.asaas_charge_id) return toast.error('Cancele a cobrança Asaas antes de registrar pagamento por fora');
+
+    setPaySaving(true);
+    try {
+      const totalV = Number(payForm.value);
+      const expectedTotal = Number(payModal.total_value) || 0;
+      if (Math.abs(totalV - expectedTotal) > 0.009) {
+        throw new Error('Pagamento parcial ainda não está habilitado. Informe o valor integral.');
+      }
+      const result = await createManualInstallments(
+        method, payForm.date,
+        { order_id: payModal.id, order_type: payModal.type, external_reference: payModal.order_number },
+        totalV,
+        payForm.installments,
+      );
+      const nextOrders = orders.map(o =>
+        o.id === payModal.id && o.type === payModal.type
+          ? { ...o, payment_status: 'paid', payment_date: payForm.date, payment_method: method.internal_code }
+          : o
+      );
+      setOrders(nextOrders);
+      patchFinancialPageCache({ orders: nextOrders });
+      toast.success(`Pagamento registrado!${result.installments > 1 ? ` ${result.installments} parcelas projetadas no fluxo de caixa.` : ''}`);
+      setPayModal(null);
+    } catch (e) {
+      toast.error(e.message || 'Erro ao registrar pagamento');
+    } finally {
+      setPaySaving(false);
+    }
+  };
+
   const openCollectionEditor = (order) => {
     setCollectionTask(collectionTaskFor(order, commConfig.rules));
   };
@@ -1087,6 +1151,7 @@ export default function Financial() {
             orders={overdue} total={overdueTotal}
             onEditDueDate={openDueDateEditor}
             onCollectPayment={openCollectionEditor}
+            onRegisterPayment={openRegisterPayment}
           />
           <OrderSection
             title="A vencer" icon={Calendar} iconCls="text-blue-600"
@@ -1094,6 +1159,7 @@ export default function Financial() {
             orders={upcoming} total={upcomingTotal}
             onEditDueDate={openDueDateEditor}
             onCollectPayment={openCollectionEditor}
+            onRegisterPayment={openRegisterPayment}
           />
           <OrderSection
             title="Sem vencimento" icon={Clock} iconCls="text-gray-500"
@@ -1101,6 +1167,7 @@ export default function Financial() {
             orders={missingDueDate} total={missingDueDateTotal}
             onEditDueDate={openDueDateEditor}
             onCollectPayment={openCollectionEditor}
+            onRegisterPayment={openRegisterPayment}
           />
           <OrderSection
             title="Recebidos esse mês" icon={CheckCircle2} iconCls="text-green-700"
@@ -1276,6 +1343,31 @@ export default function Financial() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal: registrar pagamento manual (atalho "Receber") ─────────────── */}
+      <Dialog open={!!payModal} onOpenChange={open => !open && setPayModal(null)}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Banknote className="w-4 h-4 text-emerald-600" /> Registrar pagamento manual
+            </DialogTitle>
+          </DialogHeader>
+          {payModal && (
+            <div className="text-sm bg-gray-50 border rounded-lg px-3 py-2 mb-1 flex items-center justify-between">
+              <span className="font-mono font-semibold">{payModal.order_number}</span>
+              <span className="text-muted-foreground truncate ml-2">{payModal.customer}</span>
+            </div>
+          )}
+          <ManualPaymentForm
+            form={payForm}
+            setForm={setPayForm}
+            methodGroups={payMethodGroups}
+            saving={paySaving}
+            onSave={recordRegisterPayment}
+            onCancel={() => setPayModal(null)}
+          />
         </DialogContent>
       </Dialog>
 
