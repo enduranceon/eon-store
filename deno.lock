@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@supabase/functions-js@*": "2.110.7",
+    "jsr:@supabase/supabase-js@2": "2.110.7",
     "jsr:@supabase/supabase-js@2.110.7": "2.110.7",
     "npm:@eslint/js@^10.0.1": "10.0.1_eslint@10.7.0",
     "npm:@hookform/resolvers@^5.2.2": "5.4.0_react-hook-form@7.81.0__react@19.2.7_react@19.2.7",
