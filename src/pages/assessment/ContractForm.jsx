@@ -790,7 +790,7 @@ export default function ContractForm() {
             <div>
               <p className="text-sm font-medium flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5 text-green-600" /> Renovação automática</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                O contrato será renovado automaticamente ao vencer.
+                A próxima vigência será agendada 5 dias antes, com a cobrança interna em aberto.
               </p>
             </div>
           </label>

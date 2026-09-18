@@ -209,6 +209,11 @@ function RenewalRow({ draft, parent, customer, coach, modality, onActivate, onDe
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm font-semibold text-blue-700">{draft.contract_number}</span>
               <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">Rascunho</span>
+              {draft.auto_renewal && (
+                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">
+                  Automática
+                </span>
+              )}
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${renewalTimingClass(daysLeft)}`}>
                 {timingLabel}
               </span>
@@ -316,6 +321,11 @@ function ScheduledRenewalRow({ contract, parent, customer, coach, modality, onGe
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-sm font-semibold text-blue-700">{contract.contract_number}</span>
               <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">{lifecycle}</span>
+              {contract.auto_renewal && (
+                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">
+                  Automática
+                </span>
+              )}
               <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${pay.cls}`}>{pay.label}</span>
               {charged && (
                 <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">
@@ -430,7 +440,7 @@ export default function Renewals() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const renewalFields = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, payment_date, manual_payment, refund_status, refund_amount, refund_date, refund_notes, parent_contract_id, notes, created_at, updated_at, status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, asaas_pix_qrcode, external_payment_link, external_invoice_number, payment_message_sent_at';
+      const renewalFields = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, payment_date, manual_payment, refund_status, refund_amount, refund_date, refund_notes, parent_contract_id, notes, created_at, updated_at, status, auto_renewal, asaas_charge_id, asaas_payment_link, asaas_pix_copy, asaas_pix_qrcode, external_payment_link, external_invoice_number, payment_message_sent_at';
       const { data: renewalData, error: renewalError } = await supabase
         .from('assessment_contracts')
         .select(renewalFields)
@@ -656,9 +666,18 @@ export default function Renewals() {
       }
       if (data?.error) throw new Error(data.error);
       setScanResult(data);
-      if (data.drafts_created > 0) {
-        toast.success(`${data.drafts_created} rascunho${data.drafts_created !== 1 ? 's' : ''} criado${data.drafts_created !== 1 ? 's' : ''}!`);
-        load();
+      const errorCount = data?.errors?.length || 0;
+      if (Number(data?.processed || 0) > 0) {
+        const changes = [];
+        if (data.drafts_created > 0) changes.push(`${data.drafts_created} rascunho${data.drafts_created !== 1 ? 's' : ''}`);
+        if (data.automatic_renewals_scheduled > 0) changes.push(`${data.automatic_renewals_scheduled} automática${data.automatic_renewals_scheduled !== 1 ? 's' : ''} agendada${data.automatic_renewals_scheduled !== 1 ? 's' : ''}`);
+        if (data.automatic_renewals_activated > 0) changes.push(`${data.automatic_renewals_activated} automática${data.automatic_renewals_activated !== 1 ? 's' : ''} ativada${data.automatic_renewals_activated !== 1 ? 's' : ''}`);
+        if (data.scheduled_renewals_activated > 0) changes.push(`${data.scheduled_renewals_activated} agendada${data.scheduled_renewals_activated !== 1 ? 's' : ''} iniciada${data.scheduled_renewals_activated !== 1 ? 's' : ''}`);
+        toast.success(changes.length > 0 ? changes.join(' · ') : 'Renovações atualizadas!');
+        await load();
+        if (errorCount > 0) toast.error(`${errorCount} ${errorCount === 1 ? 'renovação precisa' : 'renovações precisam'} de revisão.`);
+      } else if (errorCount > 0) {
+        toast.error(`${errorCount} ${errorCount === 1 ? 'renovação não pôde ser processada' : 'renovações não puderam ser processadas'}.`);
       } else {
         toast.info(data.message || 'Nenhum contrato dentro da janela.');
       }
@@ -790,7 +809,7 @@ export default function Renewals() {
             <CheckCheck className="w-10 h-10 text-green-500 mb-3" />
             <p className="text-base font-semibold text-gray-700">Nenhuma renovação pendente</p>
             <p className="text-sm text-muted-foreground mt-1">
-              Contratos próximos do vencimento geram rascunhos automaticamente aqui.
+              Renovações manuais geram rascunhos; as automáticas são agendadas 5 dias antes.
             </p>
             <Button className="mt-4" variant="outline" onClick={() => setScanModal(true)}>
               <RotateCcw className="w-4 h-4 mr-1.5" /> Verificar agora
@@ -803,7 +822,7 @@ export default function Renewals() {
             <section className="space-y-3">
               <div>
                 <h3 className="text-sm font-semibold text-gray-900">Aguardando aprovação</h3>
-                <p className="text-xs text-muted-foreground">Aprove a renovação para agendar a continuidade do aluno.</p>
+                <p className="text-xs text-muted-foreground">As manuais aguardam aprovação; rascunhos automáticos antigos serão agendados 5 dias antes.</p>
               </div>
               {orderedDrafts.map(draft => (
                 <RenewalRow
@@ -1061,8 +1080,8 @@ export default function Renewals() {
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Busca contratos próximos do vencimento e gera rascunhos de renovação automaticamente.
-              Rascunhos já existentes não são duplicados.
+              Contratos manuais geram rascunhos para revisão. Contratos com renovação
+              automática são agendados 5 dias antes, sem acessar o Asaas.
             </p>
             <div>
               <Label>Janela de renovação</Label>
@@ -1081,14 +1100,16 @@ export default function Renewals() {
                 Com <b>{scanWindowDays} dia{scanWindowDays === 1 ? '' : 's'}</b>, serão considerados contratos que vencem de <b>{formatDate(todayStr)}</b> até <b>{formatDate(scanWindowEnd)}</b>.
               </p>
               <p className="text-blue-700">
-                Depois de criados, os rascunhos aparecem do menor prazo para o maior prazo.
+                Renovações existentes não são duplicadas.
               </p>
             </div>
 
             {scanResult && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm space-y-1">
-                <p><b>Contratos verificados:</b> {scanResult.processed}</p>
+                <p><b>Alterações processadas:</b> {scanResult.processed}</p>
                 <p className="text-green-700"><b>Rascunhos criados:</b> {scanResult.drafts_created}</p>
+                <p className="text-green-700"><b>Automáticas agendadas:</b> {scanResult.automatic_renewals_scheduled || 0}</p>
+                <p className="text-green-700"><b>Renovações iniciadas:</b> {(scanResult.automatic_renewals_activated || 0) + (scanResult.scheduled_renewals_activated || 0)}</p>
                 {scanResult.errors?.length > 0 && (
                   <p className="text-red-700"><b>Erros:</b> {scanResult.errors.length}</p>
                 )}
