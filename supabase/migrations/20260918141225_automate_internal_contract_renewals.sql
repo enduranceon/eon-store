@@ -9,7 +9,7 @@ CREATE OR REPLACE FUNCTION public.process_internal_assessment_renewals(
 )
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE

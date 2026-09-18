@@ -3,7 +3,7 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
 
-SELECT plan(29);
+SELECT plan(31);
 
 SELECT ok(
   has_function_privilege(
@@ -28,6 +28,22 @@ SELECT ok(
     'EXECUTE'
   ),
   'authenticated clients cannot call the service-only renewal function'
+);
+SELECT ok(
+  (
+    SELECT procedure.prosecdef
+    FROM pg_catalog.pg_proc AS procedure
+    WHERE procedure.oid = 'public.process_internal_assessment_renewals(integer,integer,uuid[])'::regprocedure
+  ),
+  'renewal processing uses its owner privileges for the server-only transaction'
+);
+SELECT ok(
+  (
+    SELECT 'search_path=""' = ANY(procedure.proconfig)
+    FROM pg_catalog.pg_proc AS procedure
+    WHERE procedure.oid = 'public.process_internal_assessment_renewals(integer,integer,uuid[])'::regprocedure
+  ),
+  'the privileged renewal function keeps an empty search path'
 );
 
 INSERT INTO public.assessment_modalities (id, name)
