@@ -48,12 +48,13 @@ INSERT INTO public.assessment_plans (
   50
 );
 
-INSERT INTO public.assessment_coaches (id, name, email, role)
+INSERT INTO public.assessment_coaches (id, name, email, role, modality_ids)
 VALUES (
   '10000000-0000-4000-a000-000000000012',
   'Coach de renovação',
   'renewal-test@example.test',
-  'senior'
+  'senior',
+  ARRAY['10000000-0000-4000-a000-000000000010'::uuid]
 );
 
 INSERT INTO public.presale_customers (id, full_name, whatsapp)
