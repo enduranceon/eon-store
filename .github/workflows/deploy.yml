@@ -207,6 +207,54 @@ jobs:
                 from supabase_migrations.schema_migrations
                 where version = '20260913074855'
               )
+                and exists (
+                  select 1
+                  from supabase_migrations.schema_migrations
+                  where version = '20260918164157'
+                )
+                and (
+                  select ns.nspname = 'extensions'
+                  from pg_catalog.pg_extension as ext
+                  join pg_catalog.pg_namespace as ns
+                    on ns.oid = ext.extnamespace
+                  where ext.extname = 'plpgsql_check'
+                )
+                and (
+                  select count(*) = 4
+                  from pg_catalog.pg_policies
+                  where policyname = 'backend_only_deny_browser_access'
+                    and permissive = 'RESTRICTIVE'
+                    and cmd = 'ALL'
+                    and roles @> array['anon', 'authenticated']::name[]
+                    and qual = 'false'
+                    and with_check = 'false'
+                    and (schemaname, tablename) in (
+                      ('public', 'assessment_contract_creation_operations'),
+                      ('public', 'order_operations'),
+                      ('public', 'stock_order_creation_operations'),
+                      ('eon_private', 'public_store_checkout_rate_limits')
+                    )
+                )
+                and not has_table_privilege(
+                  'anon',
+                  'public.order_operations',
+                  'SELECT,INSERT,UPDATE,DELETE'
+                )
+                and not has_table_privilege(
+                  'authenticated',
+                  'public.order_operations',
+                  'SELECT,INSERT,UPDATE,DELETE'
+                )
+                and has_table_privilege(
+                  'service_role',
+                  'public.order_operations',
+                  'SELECT,INSERT,UPDATE'
+                )
+                and has_table_privilege(
+                  'service_role',
+                  'eon_private.public_store_checkout_rate_limits',
+                  'SELECT,INSERT,DELETE'
+                )
                 and to_regprocedure(
                   'public.link_presale_order_customer(uuid,uuid,uuid,timestamptz,uuid)'
                 ) is not null
