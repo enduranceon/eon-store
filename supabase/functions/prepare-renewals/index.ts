@@ -1,15 +1,20 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
+import {
+  normalizeRenewalRequest,
+  RenewalRequestValidationError,
+} from "./policy.ts";
 
-// Cria contratos de renovação em status 'draft' para contratos que estão prestes a vencer.
-// Idempotente: usa renewal_generated=true como flag para nunca gerar 2x.
+// Processa a continuidade interna dos contratos sem acessar o Asaas.
+// Renovações manuais viram rascunho; automáticas são agendadas 5 dias antes.
 //
 // Body (opcional):
 //   { horizon_days: 15 }  // janela em dias antes do end_date (default 15)
+//   { auto_horizon_days: 5 }  // antecedência da renovação automática
 //   { contract_ids: ["uuid", ...] }  // força renovação só desses (ignora horizon)
 //
-// Retorna: { ok, processed, drafts_created, errors }
+// Retorna contadores de rascunhos, automações e transições de vigência.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -53,19 +58,6 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function addMonthsToDate(dateStr: string, months: number): string {
-  const d = new Date(dateStr + "T12:00:00Z");
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
-}
-
-function getPlanMonths(plan: any, snapshot: any): number {
-  if (snapshot?.period_months) return Number(snapshot.period_months);
-  if (plan?.period_months) return Number(plan.period_months);
-  const periodMap: Record<string, number> = { mensal: 1, trimestral: 3, semestral: 6, anual: 12 };
-  return periodMap[snapshot?.period || plan?.period] || 1;
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -86,174 +78,34 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const horizonDays = Math.max(1, Math.min(90, Number(body?.horizon_days) || 15));
-    const forcedIds: string[] | null = Array.isArray(body?.contract_ids) ? body.contract_ids : null;
-
-    // Janela: hoje até hoje+horizonte
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const todayStr = today.toISOString().slice(0, 10);
-    const horizon = new Date(today);
-    horizon.setUTCDate(horizon.getUTCDate() + horizonDays);
-    const horizonStr = horizon.toISOString().slice(0, 10);
-
-    // Busca contratos candidatos
-    let query = supabase
-      .from("assessment_contracts")
-      .select("*")
-      .in("status", ["active", "on_leave", "overdue"])
-      .or("renewal_generated.is.null,renewal_generated.eq.false");
-
-    if (forcedIds && forcedIds.length > 0) {
-      query = query.in("id", forcedIds);
-    } else {
-      // Sem limite inferior de propósito: um contrato que já passou do
-      // end_date e ainda está active/on_leave/overdue sem rascunho (scan
-      // perdido, job de cron que falhou um dia, etc.) precisa continuar
-      // aparecendo aqui pra se autocorrigir no próximo scan -- não só os
-      // que ainda vão vencer. renewal_generated já evita reprocessar quem
-      // já tem rascunho; quem foi fechado manualmente já não está mais em
-      // status active/on_leave/overdue, então também some da busca.
-      query = query.lte("end_date", horizonStr);
-    }
-
-    const { data: candidates, error: candErr } = await query;
-    if (candErr) throw candErr;
-
-    if (!candidates || candidates.length === 0) {
-      return jsonResponse({
-        ok: true, processed: 0, drafts_created: 0,
-        message: "Nenhum contrato dentro da janela de renovação.",
-      });
-    }
-
-    // Busca planos para fallback de snapshot (caso contrato antigo sem snapshot)
-    const planIds = [...new Set(candidates.map((c: any) => c.plan_id))];
-    const { data: plans } = await supabase
-      .from("assessment_plans").select("*").in("id", planIds);
-    const planMap = new Map((plans || []).map((p: any) => [p.id, p]));
-
-    const results: any[] = [];
-    const errors: any[] = [];
-    let draftsCreated = 0;
-
-    for (const parent of candidates) {
-      try {
-        const plan = planMap.get(parent.plan_id);
-        // Snapshot: prefere o do contrato pai (preserva valor original);
-        // se não tiver, monta do plano vivo.
-        let snapshot = parent.plan_snapshot;
-        if (!snapshot && plan) {
-          snapshot = {
-            plan_id:           plan.id,
-            name:              plan.name || null,
-            modality_id:       plan.modality_id,
-            price_total:       Number(plan.price_total) || 0,
-            price_monthly:     Number(plan.price_monthly) || 0,
-            enrollment_fee:    Number(plan.enrollment_fee) || 0,
-            max_installments:  plan.max_installments,
-            period_months:     plan.period_months,
-            period:            plan.period,
-            revenue_center_id: plan.revenue_center_id || null,
-            snapshot_at:       new Date().toISOString(),
-            snapshot_source:   "prepare_renewals_fallback",
-          };
-        }
-        // Renovação começa quando o atual termina
-        const newStart = parent.end_date;
-        const months   = getPlanMonths(plan, snapshot);
-        const newEnd   = addMonthsToDate(newStart, months);
-        const newDueDate = newStart < todayStr ? todayStr : newStart;
-
-        // Cria o draft
-        const { data: draft, error: draftErr } = await supabase
-          .from("assessment_contracts")
-          .insert({
-            customer_id:        parent.customer_id,
-            coach_id:           parent.coach_id,
-            plan_id:            parent.plan_id,
-            plan_snapshot:      snapshot,
-            status:             "draft",
-            start_date:         newStart,
-            end_date:           newEnd,
-            original_end_date:  newEnd,
-            due_date:           newDueDate,
-            installments:       parent.installments || 1,
-            enrollment_fee:     0, // renovações não cobram matrícula
-            manual_discount:    0,
-            payment_status:     "pending",
-            payment_method:     parent.payment_method,
-            auto_renewal:       parent.auto_renewal || false,
-            parent_contract_id: parent.id,
-            notes:              `Renovação gerada automaticamente de ${parent.contract_number} em ${todayStr}`,
-          })
-          .select()
-          .single();
-        if (draftErr) throw draftErr;
-
-        // Marca o pai
-        await supabase
-          .from("assessment_contracts")
-          .update({ renewal_generated: true })
-          .eq("id", parent.id);
-
-        // Evento no pai
-        await supabase.from("assessment_contract_event").insert({
-          contract_id: parent.id,
-          event_type:  "renewal_drafted",
-          payload: {
-            draft_contract_id:     draft.id,
-            draft_contract_number: draft.contract_number,
-            draft_start:           newStart,
-            draft_end:             newEnd,
-            draft_due_date:        newDueDate,
-            auto_generated:        true,
-            horizon_days:          horizonDays,
-          },
-          notes: "Rascunho de renovação gerado automaticamente. Aguardando revisão.",
-        });
-
-        // Evento no draft (rastreia origem)
-        await supabase.from("assessment_contract_event").insert({
-          contract_id: draft.id,
-          event_type:  "created",
-          payload: {
-            via:                  "auto_renewal_draft",
-            parent_contract_id:   parent.id,
-            parent_contract_num:  parent.contract_number,
-            plan_id:              parent.plan_id,
-            installments:         parent.installments,
-            due_date:             newDueDate,
-          },
-          notes: `Rascunho de renovação de ${parent.contract_number}`,
-        });
-
-        draftsCreated++;
-        results.push({
-          parent_id:          parent.id,
-          parent_number:      parent.contract_number,
-          draft_id:           draft.id,
-          draft_number:       draft.contract_number,
-          new_start:          newStart,
-          new_end:            newEnd,
-        });
-      } catch (e: any) {
-        errors.push({
-          contract_id:     parent.id,
-          contract_number: parent.contract_number,
-          error:           String(e?.message || e),
-        });
-      }
-    }
-
-    return jsonResponse({
+    const normalized = normalizeRenewalRequest(body);
+    const { data, error } = await supabase.rpc(
+      "process_internal_assessment_renewals",
+      {
+        p_horizon_days: normalized.horizonDays,
+        p_auto_horizon_days: normalized.autoHorizonDays,
+        p_contract_ids: normalized.contractIds,
+      },
+    );
+    if (error) throw error;
+    return jsonResponse(data ?? {
       ok: true,
-      processed:      candidates.length,
-      drafts_created: draftsCreated,
-      results,
-      errors,
+      processed: 0,
+      contracts_created: 0,
+      drafts_created: 0,
+      automatic_renewals_scheduled: 0,
+      automatic_renewals_activated: 0,
+      automatic_drafts_approved: 0,
+      scheduled_renewals_activated: 0,
+      results: [],
+      errors: [],
+      message: "Nenhum contrato dentro da janela de renovação.",
     });
-  } catch (e: any) {
-    return jsonResponse({ error: String(e?.message || e) }, 500);
+  } catch (error: unknown) {
+    if (error instanceof RenewalRequestValidationError) {
+      return jsonResponse({ error: error.message }, 400);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return jsonResponse({ error: message }, 500);
   }
 });
