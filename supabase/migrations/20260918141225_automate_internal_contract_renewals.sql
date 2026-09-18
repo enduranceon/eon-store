@@ -2,7 +2,7 @@
 -- charge in Asaas. Manual renewals keep the review flow; auto-renewals become
 -- scheduled five days before the next term and open an internal receivable.
 
-CREATE OR REPLACE FUNCTION public.process_internal_assessment_renewals(
+CREATE OR REPLACE FUNCTION eon_private.process_internal_assessment_renewals(
   p_horizon_days integer,
   p_auto_horizon_days integer,
   p_contract_ids uuid[]
@@ -572,6 +572,30 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION eon_private.process_internal_assessment_renewals(
+  integer, integer, uuid[]
+) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION eon_private.process_internal_assessment_renewals(
+  integer, integer, uuid[]
+) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.process_internal_assessment_renewals(
+  p_horizon_days integer,
+  p_auto_horizon_days integer,
+  p_contract_ids uuid[]
+)
+RETURNS jsonb
+LANGUAGE sql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+  SELECT eon_private.process_internal_assessment_renewals(
+    p_horizon_days,
+    p_auto_horizon_days,
+    p_contract_ids
+  );
+$$;
+
 REVOKE ALL ON FUNCTION public.process_internal_assessment_renewals(
   integer, integer, uuid[]
 ) FROM PUBLIC, anon, authenticated;
@@ -580,6 +604,11 @@ GRANT EXECUTE ON FUNCTION public.process_internal_assessment_renewals(
 ) TO service_role;
 
 COMMENT ON FUNCTION public.process_internal_assessment_renewals(
+  integer, integer, uuid[]
+) IS
+  'Service-only wrapper for internal assessment renewal processing.';
+
+COMMENT ON FUNCTION eon_private.process_internal_assessment_renewals(
   integer, integer, uuid[]
 ) IS
   'Creates manual renewal drafts, schedules internal auto-renewals, opens their internal receivables, and activates due renewals without contacting Asaas.';
