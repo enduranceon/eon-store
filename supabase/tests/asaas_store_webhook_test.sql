@@ -9,6 +9,16 @@ SELECT ok(NOT has_function_privilege('authenticated', 'public.process_asaas_stor
 SELECT ok(NOT has_table_privilege('authenticated', 'public.asaas_store_webhook_events', 'SELECT'), 'browser cannot read webhook payloads');
 SELECT ok((SELECT relrowsecurity FROM pg_class WHERE oid = 'public.asaas_store_webhook_events'::regclass), 'inbox has RLS');
 SELECT ok(NOT (SELECT prosecdef FROM pg_proc WHERE oid = 'public.process_asaas_store_webhook(jsonb,uuid[])'::regprocedure), 'RPC does not elevate caller');
+SELECT ok(has_table_privilege('service_role', 'public.stock_orders', 'SELECT')
+  AND has_table_privilege('service_role', 'public.stock_orders', 'UPDATE'),
+  'backend has explicit order projection privileges');
+SELECT ok(has_table_privilege('service_role', 'public.asaas_payments', 'SELECT')
+  AND has_table_privilege('service_role', 'public.asaas_payments', 'UPDATE'),
+  'backend has explicit installment projection privileges');
+SELECT ok(has_table_privilege('service_role', 'public.order_operations', 'SELECT'),
+  'backend can resolve canonical operations');
+SELECT ok(has_table_privilege('service_role', 'public.sales_status_events', 'INSERT'),
+  'backend can record payment status history');
 
 INSERT INTO public.stock_orders(id, order_number, customer_name, total_value, payment_status, asaas_charge_id, asaas_customer_id)
 VALUES ('90000000-0000-4000-a000-000000000001', 'WEBHOOK-TEST', 'Fictitious webhook test', 100, 'charge_sent', 'pay_webhook_test', 'cus_webhook_test');
@@ -145,11 +155,15 @@ $$;
 CREATE FUNCTION pg_temp.apply_card(p_event jsonb) RETURNS jsonb LANGUAGE sql AS $$
   SELECT public.process_asaas_store_webhook(p_event, ARRAY['91000000-0000-4000-a000-000000000001'::uuid]);
 $$;
+SET LOCAL ROLE service_role;
 SELECT is(pg_temp.apply_card(pg_temp.card_event('evt_card_2', 2))->>'status', 'processed', 'secondary installment can arrive first');
+RESET ROLE;
 SELECT is((SELECT payment_status FROM public.stock_orders WHERE order_number='CARD-WEBHOOK-TEST'), 'charge_sent', 'one approved installment does not confirm entire order');
 SELECT is(pg_temp.apply_card(pg_temp.card_event('evt_card_3', 3))->>'status', 'processed', 'third installment preserves exact cent rounding');
 SELECT is((SELECT payment_status FROM public.stock_orders WHERE order_number='CARD-WEBHOOK-TEST'), 'charge_sent', 'missing first approval keeps order open');
+SET LOCAL ROLE service_role;
 SELECT is(pg_temp.apply_card(pg_temp.card_event('evt_card_1', 1))->>'status', 'processed', 'all installments become approved');
+RESET ROLE;
 SELECT is((SELECT payment_status FROM public.stock_orders WHERE order_number='CARD-WEBHOOK-TEST'), 'paid', 'complete approval confirms order before future settlement dates');
 SELECT is((SELECT payment_method FROM public.stock_orders WHERE order_number='CARD-WEBHOOK-TEST'), 'card_3x', 'order preserves card installment count');
 SELECT is((SELECT due_date FROM public.stock_orders WHERE order_number='CARD-WEBHOOK-TEST'), '2026-09-18'::date, 'last installment event does not replace order due date');

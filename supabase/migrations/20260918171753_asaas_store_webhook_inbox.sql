@@ -22,6 +22,12 @@ CREATE POLICY deny_browser_access ON public.asaas_store_webhook_events
 REVOKE ALL ON public.asaas_store_webhook_events FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.asaas_store_webhook_events TO service_role;
 
+-- SECURITY INVOKER needs explicit backend grants on clean installations too.
+-- No browser grants or DELETE permissions are introduced by this receiver.
+GRANT SELECT, UPDATE ON public.stock_orders, public.asaas_payments TO service_role;
+GRANT SELECT ON public.order_operations TO service_role;
+GRANT INSERT ON public.sales_status_events TO service_role;
+
 -- One transaction owns the event, order and financial projection. No HTTP
 -- calls or stock/coupon mutations are inferred from payment notifications.
 CREATE FUNCTION public.process_asaas_store_webhook(p_event jsonb, p_allowed_order_ids uuid[])

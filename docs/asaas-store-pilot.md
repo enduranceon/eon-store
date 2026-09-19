@@ -16,8 +16,12 @@ Nao importar historico, criar clientes ficticios em producao ou apagar lancament
 - 209 testes de backend e 17 unitarios passaram; testes de backend sem acesso de rede.
 - Checagem de tipos das seis funcoes alteradas e build passaram.
 - Lint sem erros, com 12 avisos preexistentes em arquivos de frontend nao alterados.
-- 64 verificacoes SQL haviam passado no esquema reduzido PGlite; a suite agora
-  inclui mais sete verificacoes da visao financeira real, ainda pendentes no CI.
+- 64 verificacoes SQL haviam passado no esquema reduzido PGlite; a suite completa
+  passou a incluir a visao financeira real e permissoes explicitas do backend.
+- A primeira execucao da PR #61 aplicou todas as migrations e passou as suites
+  existentes, mas identificou falta de privilegios de `service_role` para o novo
+  webhook. A migration nao publicada foi corrigida com grants restritos as tabelas
+  necessarias, sem novos acessos para anon/authenticated nem permissao de DELETE.
 - A validacao completa precisa recriar toda a cadeia de migrations e executar
   `supabase test db --local` no job `Validate Supabase migrations` da PR.
 - A branch segue para uma PR de testes. Nao fazer merge em `main`, aplicar a
