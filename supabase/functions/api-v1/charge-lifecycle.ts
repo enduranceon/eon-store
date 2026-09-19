@@ -5,6 +5,7 @@ import {
   cancelExternalCharge,
 } from "../_shared/asaas-cancellation.ts";
 import { jsonResponse } from "../_shared/http.ts";
+import { storePilotOrderIds } from "../_shared/asaas-rollout.ts";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -185,6 +186,28 @@ async function syncChargeStatus(
       error: "Esta venda não possui cobrança Asaas",
       code: "charge_not_found",
     }, 400);
+  }
+
+  // The pilot's webhook transaction owns the entire payment group. Polling
+  // only the primary installment must never bypass its aggregate checks.
+  if (
+    orderType === "stock" && storePilotOrderIds(
+      Deno.env.get("ASAAS_STORE_PILOT_ORDER_IDS"),
+    ).includes(orderId.toLowerCase())
+  ) {
+    const paid = orderRecord.payment_status === "paid";
+    return jsonResponse({
+      data: {
+        status: orderRecord.payment_status,
+        is_paid: paid,
+        color: paid ? "success" : "warning",
+        label: paid
+          ? "Pagamento confirmado"
+          : "Aguardando confirmacao pelo Asaas",
+        payment_status_updated: false,
+        source: "webhook",
+      },
+    });
   }
 
   let lookup;

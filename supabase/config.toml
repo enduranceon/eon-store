@@ -4,6 +4,9 @@ project_id = "bsiljrrodgtmtdilnuxr"
 [functions.asaas-webhook]
 verify_jwt = false
 
+[functions.asaas-store-webhook]
+verify_jwt = false
+
 [functions.get-public-order]
 verify_jwt = false
 

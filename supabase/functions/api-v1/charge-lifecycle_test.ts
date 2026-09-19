@@ -31,12 +31,15 @@ async function withAsaas(test: () => Promise<void>): Promise<void> {
   }
 }
 
-function statusClient() {
+function statusClient(
+  orderTable = "presale_orders",
+  paymentStatus = "charge_sent",
+) {
   const updates: Array<Record<string, unknown>> = [];
   const upserts: Array<Record<string, unknown>> = [];
   const client = {
     from(table: string) {
-      if (table === "presale_orders") {
+      if (table === orderTable) {
         return {
           select() {
             return {
@@ -46,7 +49,7 @@ function statusClient() {
                     Promise.resolve({
                       data: {
                         id: ORDER_ID,
-                        payment_status: "charge_sent",
+                        payment_status: paymentStatus,
                         asaas_charge_id: "pay_1",
                       },
                       error: null,
@@ -190,6 +193,50 @@ Deno.test("Charge status sync confirms payment through api-v1 and refreshes cach
     );
   });
 });
+
+for (const paymentStatus of ["charge_sent", "paid"]) {
+  Deno.test(`Store pilot status uses webhook projection for ${paymentStatus} without polling the primary installment`, async () => {
+    await withAsaas(async () => {
+      const originalAllowlist = Deno.env.get("ASAAS_STORE_PILOT_ORDER_IDS");
+      Deno.env.set("ASAAS_STORE_PILOT_ORDER_IDS", ORDER_ID);
+      try {
+        globalThis.fetch = () => {
+          throw new Error("pilot status must not call the provider");
+        };
+        const { client, updates, upserts } = statusClient(
+          "stock_orders",
+          paymentStatus,
+        );
+        const path = `/orders/stock/${ORDER_ID}/charge/status`;
+        const response = await handleChargeLifecycleRequest(
+          new Request(`https://example.test/api-v1${path}`, { method: "POST" }),
+          path,
+          client,
+          ACTOR_ID,
+        );
+        assert(response?.status === 200, "pilot status failed");
+        const data = (await body(response!)).data as Record<string, unknown>;
+        assert(
+          data.is_paid === (paymentStatus === "paid"),
+          "status differs from the full webhook projection",
+        );
+        assert(data.source === "webhook", "status source was not identified");
+        assert(
+          data.payment_status_updated === false,
+          "read-only status claimed an update",
+        );
+        assert(
+          updates.length === 0 && upserts.length === 0,
+          "status overwrote installment data",
+        );
+      } finally {
+        if (originalAllowlist === undefined) {
+          Deno.env.delete("ASAAS_STORE_PILOT_ORDER_IDS");
+        } else Deno.env.set("ASAAS_STORE_PILOT_ORDER_IDS", originalAllowlist);
+      }
+    });
+  });
+}
 
 Deno.test("Standalone charge cancellation snapshots provider before DELETE and completes", async () => {
   await withAsaas(async () => {

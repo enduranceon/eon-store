@@ -17,7 +17,8 @@ import { isValidIsoDate } from "./payments.ts";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
-const CHARGE_PATH = /^\/orders\/(presale|stock|contract|event)\/([^/]+)\/charge$/;
+const CHARGE_PATH =
+  /^\/orders\/(presale|stock|contract|event)\/([^/]+)\/charge$/;
 const BILLING_TYPES = new Set(["PIX", "BOLETO", "CREDIT_CARD"]);
 const CONTRACT_SOURCES = new Set(["contract_detail", "renewals_page"]);
 const RECOVERABLE_PAYMENT_STATUSES = new Set([
@@ -307,8 +308,12 @@ function normalizePayment(
   const billingType = stringValue(payment.billingType);
   const status = stringValue(payment.status);
   const dueDate = stringValue(payment.dueDate);
-  const paymentDate = stringValue(payment.paymentDate) || null;
-  const creditDate = stringValue(payment.creditDate) || null;
+  const paymentDate = stringValue(payment.paymentDate) ||
+    stringValue(payment.clientPaymentDate) ||
+    (billingType === "CREDIT_CARD" ? stringValue(payment.confirmedDate) : "") ||
+    null;
+  const creditDate = stringValue(payment.creditDate) ||
+    stringValue(payment.estimatedCreditDate) || null;
   const externalReference = stringValue(payment.externalReference);
   const installmentGroupId = stringValue(payment.installment) || null;
   const installmentNumberValue = numericValue(payment.installmentNumber);
@@ -444,6 +449,15 @@ async function recoveredPayments(
   if (totalCents !== centsValue(prepared.total_value)) {
     recoveredPaymentMismatch(
       "A soma das parcelas no Asaas diverge do total desta operação",
+    );
+  }
+  const paidStatuses = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
+  if (
+    normalized.some((payment) => paidStatuses.has(payment.status)) &&
+    !normalized.every((payment) => paidStatuses.has(payment.status))
+  ) {
+    recoveredPaymentMismatch(
+      "O parcelamento ainda possui parcelas sem confirmacao e precisa de conferencia",
     );
   }
   return { primary: normalized[0], payments: normalized };
