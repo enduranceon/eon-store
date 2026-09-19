@@ -255,6 +255,69 @@ Deno.test("Asaas retry recovers a charge already confirmed by the provider", asy
   });
 });
 
+for (const allConfirmed of [false, true]) {
+  Deno.test(`Asaas installment recovery ${allConfirmed ? "preserves full approval and credit dates" : "rejects partial approval"}`, async () => {
+    await withAsaas(async () => {
+      let postCalls = 0;
+      const payments = installmentPayments({
+        1: {
+          status: "CONFIRMED",
+          confirmedDate: "2026-08-19",
+          estimatedCreditDate: "2026-09-19",
+        },
+        2: allConfirmed
+          ? {
+            status: "CONFIRMED",
+            confirmedDate: "2026-08-19",
+            estimatedCreditDate: "2026-10-19",
+          }
+          : {},
+        3: allConfirmed
+          ? {
+            status: "CONFIRMED",
+            confirmedDate: "2026-08-19",
+            estimatedCreditDate: "2026-11-19",
+          }
+          : {},
+      });
+      globalThis.fetch = (input, init) => {
+        const url = requestUrl(input);
+        if (init?.method === "POST") postCalls += 1;
+        const saved = savedCustomerResponse(url);
+        return Promise.resolve(saved ?? Response.json({ data: payments }));
+      };
+      const operation = () =>
+        executeAsaasChargeCreation(
+          prepared({ billing_type: "CREDIT_CARD", installments: 3 }),
+        );
+      if (!allConfirmed) {
+        await expectAsaasError(operation, "asaas_recovered_payment_mismatch");
+      } else {
+        const result = await operation();
+        const normalized = result.payments as Array<Record<string, unknown>>;
+        assert(
+          result.outcome === "recovered",
+          "approved installment group was not recovered",
+        );
+        assert(normalized.length === 3, "installments were lost");
+        assert(
+          normalized.every((item) => item.payment_date === "2026-08-19"),
+          "confirmation dates were lost",
+        );
+        assert(
+          normalized[0].credit_date === "2026-09-19",
+          "first expected credit date was lost",
+        );
+        assert(
+          normalized[2].credit_date === "2026-11-19",
+          "last expected credit date was lost",
+        );
+      }
+      assert(postCalls === 0, "recovery issued a duplicate payment POST");
+    });
+  });
+}
+
 Deno.test("A removed stored customer is replaced by the canonical CPF match", async () => {
   await withAsaas(async () => {
     let customerPosts = 0;

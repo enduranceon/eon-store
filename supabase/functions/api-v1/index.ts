@@ -8,6 +8,7 @@ import { handleAdminOperationRequest } from "./admin-operations.ts";
 import { handleCatalogRequest } from "./catalog.ts";
 import { handleChargeLifecycleRequest } from "./charge-lifecycle.ts";
 import { handleChargeRequest } from "./charges.ts";
+import { checkAsaasChargeRollout } from "../_shared/asaas-rollout.ts";
 import { handleContractRequest } from "./contracts.ts";
 import { handleContractBillingRequest } from "./contract-billing.ts";
 import { handleEventBillingRequest } from "./event-billing.ts";
@@ -158,6 +159,9 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (inventoryResponse) return inventoryResponse;
+
+  const rolloutResponse = await checkAsaasChargeRollout(req, path);
+  if (rolloutResponse) return rolloutResponse;
 
   const chargeResponse = await handleChargeRequest(
     req,
