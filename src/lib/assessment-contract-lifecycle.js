@@ -199,6 +199,7 @@ function hasFutureOrActiveContract(contract, allContracts = []) {
 export function classifyContractLifecycle(contract, context = {}) {
   const allContracts = context.contracts || [];
   const monthStart = context.monthStart || getLifecycleMonthStart();
+  const today = context.today || todayLocalStr();
   const createdLocal = getContractLocalDate(contract.created_at);
   const cancelDate = getContractCancellationDate(contract);
   const reasons = [];
@@ -245,7 +246,9 @@ export function classifyContractLifecycle(contract, context = {}) {
     return base;
   }
 
-  if (SCHEDULED_CONTRACT_STATUSES.has(contract.status)) {
+  const startsInFuture = ACTIVE_CONTRACT_STATUSES.has(contract.status)
+    && getContractLocalDate(contract.start_date) > today;
+  if (SCHEDULED_CONTRACT_STATUSES.has(contract.status) || startsInFuture) {
     base.type = 'scheduled';
     base.severity = OPEN_PAYMENT_STATUSES.has(contract.payment_status) ? 'medium' : 'low';
     reasons.push(contract.parent_contract_id
@@ -274,7 +277,7 @@ export function classifyContractLifecycle(contract, context = {}) {
 
   if (ACTIVE_CONTRACT_STATUSES.has(contract.status) && isContractNonRenewal(contract)) {
     const effectiveEnd = getContractLocalDate(contract.end_date);
-    if (effectiveEnd && effectiveEnd < todayLocalStr()) {
+    if (effectiveEnd && effectiveEnd < today) {
       base.type = 'real_exit';
       base.severity = 'medium';
       base.counts.exit = true;
@@ -392,7 +395,7 @@ export function buildContractLifecycleRows(contracts = [], lookups = {}) {
   return contracts.map(contract => {
     const plan = plansById[contract.plan_id] || null;
     const modality = plan ? modalitiesById[plan.modality_id] : null;
-    const lifecycle = classifyContractLifecycle(contract, { contracts, monthStart });
+    const lifecycle = classifyContractLifecycle(contract, { contracts, monthStart, today: lookups.today });
     return {
       ...contract,
       audit: lifecycle,

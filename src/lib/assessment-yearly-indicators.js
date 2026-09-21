@@ -1,4 +1,5 @@
 import { getContractMonthlyValue } from './assessment-contract-mrr.js';
+import { buildContractLifecycleRows } from './assessment-contract-lifecycle.js';
 
 const OPERATIVE_STATUSES = new Set(['active', 'overdue', 'on_leave', 'finished', 'cancelled']);
 const TERMINAL_PAYMENT_STATUSES = new Set(['cancelled', 'refunded']);
@@ -105,6 +106,16 @@ function isContractActiveAtEnd(contract, referenceDate) {
   // A vigencia encerra na data de fim; por isso o contrato nao entra na base
   // ao fim desse mesmo dia. A mesma regra vale para um cancelamento efetivo.
   return !end || end > referenceDate;
+}
+
+export function getAssessmentMrrSnapshot(contracts, plansById, referenceDate, asOfDate = dateOnly(new Date())) {
+  const rows = referenceDate === asOfDate
+    ? buildContractLifecycleRows(contracts, { plansById, today: asOfDate }).filter(contract => contract.lifecycle.counts.mrr)
+    : contracts.filter(contract => isContractActiveAtEnd(contract, referenceDate));
+  return {
+    mrr: rows.reduce((total, contract) => total + getContractMonthlyValue(contract, plansById), 0),
+    count: rows.length,
+  };
 }
 
 function isNonRenewal(contract) {
@@ -281,6 +292,7 @@ export function buildAssessmentYearlyIndicators(contracts = [], plans = [], opti
     const baseEndRows = operativeContracts.filter(contract =>
       isContractActiveAtEnd(contract, referenceEnd)
     );
+    const mrrSnapshot = getAssessmentMrrSnapshot(contracts, plansById, referenceEnd, asOfDate);
     const entries = startsThisMonth.filter(contract => startKinds.get(contract.id) === 'entry');
     const returns = startsThisMonth.filter(contract => startKinds.get(contract.id) === 'return');
     const renewals = startsThisMonth.filter(contract => startKinds.get(contract.id) === 'renewal');
@@ -309,7 +321,7 @@ export function buildAssessmentYearlyIndicators(contracts = [], plans = [], opti
       netGrowth: entryCount + returnCount - exitCount,
       baseEnd,
       churnRate: baseStart > 0 ? (exitCount / baseStart) * 100 : 0,
-      mrr: baseEndRows.reduce((total, contract) => total + getContractMonthlyValue(contract, plansById), 0),
+      mrr: mrrSnapshot.mrr,
     };
   });
 

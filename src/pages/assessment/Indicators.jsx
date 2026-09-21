@@ -9,7 +9,8 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { toast } from 'sonner';
-import { AssessmentContract, AssessmentPlan } from '@/api/entities';
+import { supabase } from '@/api/db';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,8 +23,8 @@ import { cn, formatCurrency } from '@/lib/utils';
 
 async function loadAssessmentIndicators() {
   const [contracts, plans] = await Promise.all([
-    AssessmentContract.list('-created_at'),
-    AssessmentPlan.list(),
+    loadAssessmentMetricContracts(supabase),
+    loadAssessmentMetricPlans(supabase),
   ]);
   return { contracts, plans };
 }
@@ -247,7 +248,7 @@ export default function Indicators() {
                 <TrendingUp className="w-4 h-4 text-emerald-600" />
                 MRR contratado
               </CardTitle>
-              <span className="text-sm font-semibold text-emerald-700">{formatCompactCurrency(summary.mrr)}</span>
+              <span className="text-sm font-semibold text-emerald-700">{formatCurrency(summary.mrr)}</span>
             </div>
           </CardHeader>
           <CardContent>

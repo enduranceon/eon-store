@@ -21,6 +21,7 @@ import {
   getLifecycleMonthStart,
 } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -217,13 +218,9 @@ export default function CentralFinanceira() {
     const rangeStart = MONTHS[0] + '-01';
     const rangeEnd   = monthEndDate(MONTHS[MONTHS.length - 1]);
 
-    const [contractsRes, plansRes, modalitiesRes, coachesRes, customersRes, paymentsRes] = await Promise.all([
-      supabase
-        .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, manual_payment, start_date, end_date, due_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, enrollment_fee, manual_discount, credit_balance, plan_snapshot, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link')
-        .neq('status', 'draft')
-        .order('created_at', { ascending: false }),
-      supabase.from('assessment_plans').select('id, name, price_monthly, price_total, period, period_months, modality_id'),
+    const [allContracts, plans, modalitiesRes, coachesRes, customersRes, paymentsRes] = await Promise.all([
+      loadAssessmentMetricContracts(supabase),
+      loadAssessmentMetricPlans(supabase),
       supabase.from('assessment_modalities').select('id, name'),
       supabase.from('assessment_coaches').select('id, name, email'),
       supabase.from('presale_customers').select('id, full_name'),
@@ -239,12 +236,12 @@ export default function CentralFinanceira() {
       }),
     ]);
 
-    const contracts = contractsRes.data || [];
+    const contracts = allContracts.filter(contract => contract.status !== 'draft');
     await applyAssessmentContractTransitions(contracts);
 
     setData({
       contracts,
-      plans:     plansRes.data || [],
+      plans,
       modalities: modalitiesRes.data || [],
       coaches:   coachesRes.data || [],
       customers: customersRes.data || [],

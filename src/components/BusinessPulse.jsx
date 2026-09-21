@@ -8,20 +8,16 @@ import { formatCurrency } from '@/lib/utils';
 import { computeAssessmentMetrics } from '@/lib/assessment-metrics';
 import { usePageData } from '@/hooks/usePageData';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 
 // Carrega contratos (todos os status) + planos pra calcular os KPIs.
 async function loadPulseData() {
-  const [contractsRes, plansRes] = await Promise.all([
-    supabase.from('assessment_contracts')
-      .select('id, customer_id, plan_id, plan_snapshot, status, start_date, end_date, created_at, updated_at, cancellation_date, cancellation_reason, parent_contract_id, payment_status, prospect_customer_relationship, prospect_reactivated_at'),
-    supabase.from('assessment_plans').select('id, price_monthly'),
+  const [contracts, plans] = await Promise.all([
+    loadAssessmentMetricContracts(supabase),
+    loadAssessmentMetricPlans(supabase),
   ]);
-  const contracts = contractsRes.data || [];
   await applyAssessmentContractTransitions(contracts);
-  return {
-    contracts,
-    plans: plansRes.data || [],
-  };
+  return { contracts, plans };
 }
 
 function Kpi({ label, value, sub, icon: Icon, iconBg, iconColor, valueColor, trend, to }) {
@@ -39,7 +35,7 @@ function Kpi({ label, value, sub, icon: Icon, iconBg, iconColor, valueColor, tre
         )}
       </div>
       <p className="text-[11px] text-muted-foreground mt-2.5 leading-tight">{label}</p>
-      <p className={`text-xl font-bold mt-0.5 leading-tight ${valueColor || 'text-gray-900'}`}>{value}</p>
+      <p className={`text-xl font-bold mt-0.5 leading-tight break-words ${valueColor || 'text-gray-900'}`}>{value}</p>
       {sub && <p className="text-[11px] text-muted-foreground mt-0.5 leading-tight">{sub}</p>}
     </div>
   );

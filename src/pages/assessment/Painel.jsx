@@ -9,9 +9,11 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
-  AssessmentContract, AssessmentPlan, AssessmentModality,
+  AssessmentModality,
   AssessmentCoach, PreSaleCustomer,
 } from '@/api/entities';
+import { supabase } from '@/api/db';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { computeMrrHistory } from '@/lib/assessment-metrics';
 import {
@@ -84,8 +86,8 @@ export default function Painel() {
     }, 10000);
     try {
       const [c, p, m, co, cu] = await Promise.all([
-        AssessmentContract.list('-created_at').catch(e => { console.error('contracts:', e); return []; }),
-        AssessmentPlan.list().catch(e => { console.error('plans:', e); return []; }),
+        loadAssessmentMetricContracts(supabase),
+        loadAssessmentMetricPlans(supabase),
         AssessmentModality.list().catch(e => { console.error('modalities:', e); return []; }),
         AssessmentCoach.list().catch(e => { console.error('coaches:', e); return []; }),
         PreSaleCustomer.list('full_name').catch(e => { console.error('customers:', e); return []; }),
@@ -294,16 +296,14 @@ export default function Painel() {
         </Card>
 
         <Card>
-          <CardContent className="p-5">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-green-100 rounded-lg flex items-center justify-center">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 shrink-0 bg-green-100 rounded-lg flex items-center justify-center">
                 <TrendingUp className="w-4.5 h-4.5 text-green-600" />
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground">MRR contratado</p>
-                <p className="text-2xl font-bold text-green-700">{formatCurrency(monthlyRevenue)}</p>
-              </div>
+              <p className="text-xs text-muted-foreground">MRR contratado</p>
             </div>
+            <p className="text-xl font-bold text-green-700 mt-2 break-words">{formatCurrency(monthlyRevenue)}</p>
           </CardContent>
         </Card>
 

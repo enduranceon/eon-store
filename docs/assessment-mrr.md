@@ -68,7 +68,7 @@ legado, precisao, renovacoes, estados operacionais, historico, Analytics e
 preservacao de totais financeiros. Rodar tambem os testes de backend com rede
 bloqueada, lint e build antes de publicar esta alteracao separadamente.
 
-Validacao local em 2026-09-21:
+Validacao da primeira correcao, em 2026-09-21 (PR #62):
 
 - 50 testes unitarios aprovados, incluindo 33 novos testes de MRR.
 - 209 testes de backend aprovados com `--deny-net`, incluindo os fluxos
@@ -84,3 +84,77 @@ Validacao local em 2026-09-21:
 
 A previa local continua usando o backend configurado no projeto. Nao criar
 contratos ou pagamentos ficticios nela: frontend local nao isola producao.
+
+## Consistencia entre telas (revisao posterior a PR #62)
+
+A consulta reduzida do componente `BusinessPulse` nao carregava
+`manual_discount`. O calculo central estava correto, mas `/hoje` recebia
+contratos sem desconto. A leitura de planos tambem omitia o prazo e o total
+necessarios ao fallback de contratos legados.
+
+As nove superficies de metricas agora compartilham a leitura completa e
+paginada de contratos/planos em `assessment-metric-data.js`:
+
+- Hoje (`BusinessPulse`).
+- Painel da assessoria, incluindo modalidade e treinador.
+- Central Financeira (MRR contratado; caixa e previsoes continuam separados).
+- Analytics (carteira, segmentos, ticket contratado e base do LTV estimado).
+- Indicadores anuais.
+- Auditoria de contratos.
+- Clientes (recorrencia mensal).
+- Perfil do cliente e perfil do aluno.
+
+O leitor usa o cliente autenticado existente e as mesmas politicas RLS;
+nao introduz credenciais privilegiadas ou endpoints. Busca ate a pagina
+vazia, inclusive quando o servidor limita paginas abaixo de 1000 linhas.
+Falhas de leitura sao propagadas, sem entregar uma carteira parcial.
+
+### Efetivacao e periodo
+
+- Contrato efetivado nao significa necessariamente pagamento quitado.
+  Contratos operacionalmente ativos com cobranca aberta ou em licenca
+  continuam na carteira; nao transformar inadimplencia em churn.
+- Rascunhos, vendas descartadas, cancelados/concluidos e contratos agendados
+  ficam fora do MRR atual. Um registro legado com status ativo e inicio
+  futuro tambem fica fora ate a data inicial, sem gravar novo status.
+- Esse filtro de inicio tambem vale para a base ativa do ticket. Nao contar
+  `customer_id` vazio como um aluno adicional.
+- Mes atual nos graficos = carteira de hoje, igual ao KPI atual. Contratos
+  com fim previsto antes do ultimo dia do mes nao somem antecipadamente.
+- Meses encerrados usam a mesma vigencia historica nos dois graficos:
+  inicio inclusivo e fim exclusivo; vendas canceladas sem evidencia de
+  efetivacao ficam fora. Isso evita duplicar o contrato anterior e sua
+  renovacao na data de troca. Nao altera regras de saida/churn do relatorio.
+- Historicos ainda sao reconstrucoes, nao snapshots mensais imutaveis.
+  A base historica de alunos usa vigencia; a carteira atual usa lifecycle.
+- Filtros de Analytics podem mudar o recorte. Os KPIs de MRR mostram o
+  valor completo; somente os eixos dos graficos abreviam a escala.
+  Ticket recebido e LTV realizado continuam baseados no
+  financeiro; nao sao o ticket contratado ou o LTV estimado.
+- As estimativas de LTV preservam suas bases de churn: Hoje usa o mes e
+  Analytics mensaliza o periodo selecionado. Ambas usam ticket contratado
+  apos descontos, mas nao precisam ser numericamente iguais.
+
+### Auditoria e testes
+
+Consulta somente de leitura em producao encontrou cinco contratos com
+status ativo e inicio em 2026-09-25, ainda futuro em 2026-09-21. Eles deixam
+de antecipar MRR nesta revisao. Nenhum contrato foi atualizado no banco.
+
+- Quatro testes novos reproduziram divergencias dos graficos e de inicio
+  futuro antes da correcao.
+- Testes do SDK Supabase com fetch simulado cobrem campos, fallback, escopo
+  por cliente, falhas e carteiras de 0, 1000, 1001 e 2001 contratos.
+- Comparacao dos modulos de KPI, auditoria, perfis, Analytics e historicos
+  com a mesma carteira ficticia, preservando caixa e os dados de entrada.
+- Conferencia no navegador: nove rotas desktop e tres mobile, contrato
+  ficticio de 200 com desconto de 50 mostrando MRR de 150. Todas as chamadas
+  externas interceptadas; zero requisicoes ao backend real e zero erros JS.
+- Repeticao com valor ficticio de 28.750 para conferir legibilidade.
+  Cards do Painel e Analytics ajustados para nao cortar o MRR no mobile;
+  Analytics e Indicadores exibem o valor completo com centavos no KPI.
+- Sem migrations, alteracoes de cobranca, ativacao Asaas ou deploy nesta
+  revisao local. Testes de backend executados com rede bloqueada.
+- Validacao local: 67 testes unitarios e 209 testes de backend aprovados;
+  lint sem erros (12 avisos preexistentes) e build aprovado. Regressao das
+  metricas verificada em UTC e America/Sao_Paulo.
