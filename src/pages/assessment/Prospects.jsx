@@ -668,17 +668,34 @@ function CreateProspectModal({ onClose, onDone }) {
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
+          <div className="min-w-0">
             <Label htmlFor="prospect-plan">Plano *</Label>
             <Select value={form.plan_id}
               onValueChange={value => setForm(f => ({ ...f, plan_id: value, installments: 1 }))}>
-              <SelectTrigger id="prospect-plan" className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-              <SelectContent>
+              <SelectTrigger id="prospect-plan" className="mt-1 h-auto min-h-9 gap-2 text-left [&>span]:min-w-0 [&>svg]:shrink-0"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+              <SelectContent className="w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-2rem)]">
                 {plans.map(plan => (
-                  <SelectItem key={plan.id} value={plan.id}>{plan.name || `Plano ${plan.period || ''}`}</SelectItem>
+                  <SelectItem key={plan.id} value={plan.id} className="[&>span:last-child]:min-w-0">
+                    <span className="block whitespace-normal break-words">{plan.name || `Plano ${plan.period || ''}`}</span>
+                    <span className="block whitespace-normal text-xs text-muted-foreground">
+                      {formatCurrency(plan.price_total)} total · {getPlanMonths(plan)} {getPlanMonths(plan) === 1 ? 'mês' : 'meses'}
+                    </span>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {Number(selectedPlan?.enrollment_fee) > 0 && (
+              <dl className="mt-2 space-y-1 text-xs" aria-label="Valores do plano">
+                <div className="flex flex-wrap justify-between gap-x-2">
+                  <dt className="text-muted-foreground">Matrícula</dt>
+                  <dd>{formatCurrency(selectedPlan.enrollment_fee)}</dd>
+                </div>
+                <div className="flex flex-wrap justify-between gap-x-2 font-medium">
+                  <dt>Total com matrícula</dt>
+                  <dd>{formatCurrency(Number(selectedPlan.price_total || 0) + Number(selectedPlan.enrollment_fee))}</dd>
+                </div>
+              </dl>
+            )}
           </div>
           <div>
             <Label htmlFor="prospect-coach">Coach *</Label>
