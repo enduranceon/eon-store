@@ -35,11 +35,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
   AssessmentCoach,
-  AssessmentContract,
   AssessmentContractEvent,
   AssessmentLeave,
   AssessmentModality,
-  AssessmentPlan,
   PreSaleCustomer,
   PreSaleOrder,
   StockOrder,
@@ -64,6 +62,7 @@ import {
   isRenewalContract,
 } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
 import { toast } from 'sonner';
 
@@ -508,9 +507,9 @@ export default function StudentDetail() {
           PreSaleCustomer.get(id),
           PreSaleOrder.list().catch(() => []),
           StockOrder.filter({ customer_id: id }, '-created_date').catch(() => []),
-          AssessmentContract.filter({ customer_id: id }, '-created_at').catch(() => []),
+          loadAssessmentMetricContracts(supabase, id),
           AssessmentCoach.list().catch(() => []),
-          AssessmentPlan.list().catch(() => []),
+          loadAssessmentMetricPlans(supabase),
           AssessmentModality.list().catch(() => []),
           supabase.auth.getUser().catch(() => null),
           loadCommunicationConfig().catch(() => null),

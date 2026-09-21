@@ -14,6 +14,7 @@ import {
 import { toast } from 'sonner';
 import { listFinancialMovements } from '@/api/client';
 import { supabase } from '@/api/db';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -66,17 +67,8 @@ async function loadAnalyticsData() {
     contracts, plans, modalities, coaches, customers, financialMovements,
     presaleOrders, stockOrders, eventRegistrations, prospectSubmissions, payoutItems,
   ] = await Promise.all([
-    fetchAllRows('assessment_contracts', [
-      'id', 'customer_id', 'coach_id', 'plan_id', 'status', 'start_date', 'end_date',
-      'created_at', 'updated_at', 'payment_status', 'payment_date', 'manual_payment',
-      'asaas_charge_id', 'enrollment_fee', 'manual_discount', 'credit_balance',
-      'refund_status', 'refund_amount', 'refund_date', 'cancellation_date',
-      'cancellation_reason', 'parent_contract_id', 'due_date', 'plan_snapshot',
-      'prospect_stage', 'prospect_proposal_ready_at', 'prospect_message_sent_at',
-      'prospect_converted_at', 'prospect_lost_at', 'prospect_loss_reason_code',
-      'prospect_customer_relationship', 'prospect_reactivated_at',
-    ].join(',')),
-    fetchAllRows('assessment_plans', 'id,modality_id,name,period,period_months,price_monthly,price_total,active'),
+    loadAssessmentMetricContracts(supabase),
+    loadAssessmentMetricPlans(supabase),
     fetchAllRows('assessment_modalities', 'id,name,active'),
     fetchAllRows('assessment_coaches', 'id,name,role,active'),
     fetchAllRows('presale_customers', 'id,gender,birth_date,address_city,address_state,created_date'),
@@ -127,19 +119,19 @@ function MetricCard({ label, value, sub, icon: Icon, tone = 'blue', trend, help 
               <p className="text-xs font-medium text-muted-foreground">{label}</p>
               {help && <span title={help}><Info className="w-3.5 h-3.5 text-gray-300" /></span>}
             </div>
-            <p className="text-2xl font-bold text-gray-900 mt-1 truncate">{value}</p>
-            <div className="flex items-center gap-1.5 mt-1 min-h-4">
-              {trend != null && (
-                <span className={cn('inline-flex items-center text-[11px] font-semibold', trend > 0 ? 'text-green-600' : trend < 0 ? 'text-red-600' : 'text-gray-400')}>
-                  <TrendIcon className="w-3 h-3" /> {trend > 0 ? '+' : ''}{trend}
-                </span>
-              )}
-              <p className="text-[11px] text-muted-foreground truncate">{sub}</p>
-            </div>
           </div>
           <div className={cn('w-9 h-9 rounded-xl border flex items-center justify-center shrink-0', tones[tone])}>
             <Icon className="w-4 h-4" />
           </div>
+        </div>
+        <p className="text-xl font-bold text-gray-900 mt-2 break-words">{value}</p>
+        <div className="flex items-center gap-1.5 mt-1 min-h-4">
+          {trend != null && (
+            <span className={cn('inline-flex items-center text-[11px] font-semibold', trend > 0 ? 'text-green-600' : trend < 0 ? 'text-red-600' : 'text-gray-400')}>
+              <TrendIcon className="w-3 h-3" /> {trend > 0 ? '+' : ''}{trend}
+            </span>
+          )}
+          <p className="text-[11px] text-muted-foreground break-words">{sub}</p>
         </div>
       </CardContent>
     </Card>
@@ -234,7 +226,7 @@ function OverviewTab({ analytics }) {
     <div className="space-y-5">
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <MetricCard label="Alunos ativos" value={summary.activeStudents} sub={`${summary.activeContracts} contratos ativos`} icon={Users} tone="blue" />
-        <MetricCard label="MRR contratado" value={formatCompactCurrency(summary.mrr)} sub="receita mensal da carteira atual" icon={TrendingUp} tone="green" help="Soma do valor mensal dos contratos ativos." />
+        <MetricCard label="MRR contratado" value={formatCurrency(summary.mrr)} sub="receita mensal da carteira atual" icon={TrendingUp} tone="green" help="Soma do valor mensal dos contratos ativos." />
         <MetricCard label="Ticket contratado" value={formatCurrency(summary.contractedTicket)} sub="MRR ÷ alunos ativos" icon={CircleDollarSign} tone="violet" />
         <MetricCard label="Receita líquida" value={formatCompactCurrency(summary.netRevenue)} sub={`${period.label.toLowerCase()} · após taxas e estornos`} icon={Wallet} tone="green" />
         <MetricCard label="Resultado de caixa" value={formatCompactCurrency(summary.operatingResult)} sub={`${formatCurrency(summary.expenses)} despesas · ${formatCurrency(summary.paidPayouts)} repasses`} icon={CircleDollarSign} tone={summary.operatingResult >= 0 ? 'blue' : 'red'} />

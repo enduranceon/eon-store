@@ -4,7 +4,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Users, Search, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan } from '@/api/entities';
+import { PreSaleCustomer, PreSaleOrder } from '@/api/entities';
+import { supabase } from '@/api/db';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
@@ -15,8 +17,8 @@ async function loadCustomersPage() {
   const [customers, orders, contracts, plans] = await Promise.all([
     PreSaleCustomer.list('full_name'),
     PreSaleOrder.list().catch(() => []),
-    AssessmentContract.list('-created_at').catch(() => []),
-    AssessmentPlan.list().catch(() => []),
+    loadAssessmentMetricContracts(supabase),
+    loadAssessmentMetricPlans(supabase),
   ]);
   await applyAssessmentContractTransitions(contracts);
   return { customers, orders, contracts, plans };

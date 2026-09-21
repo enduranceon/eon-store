@@ -5,11 +5,10 @@
 import { todayLocalStr, toLocalDateStr, utcToLocalDateStr } from './utils.js';
 import {
   buildContractLifecycleRows,
-  getContractMonthlyValue,
   getLifecycleMonthStart,
   isContractPaymentOverdue,
-  isContractVoidedSale,
 } from './assessment-contract-lifecycle.js';
+import { getAssessmentMrrSnapshot } from './assessment-yearly-indicators.js';
 
 // Recebe contratos (todos os status) + lista de planos.
 // Retorna o pacote de KPIs do mês corrente.
@@ -28,7 +27,7 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
   const active = lifecycleRows.filter(c => c.lifecycle.counts.active);
   const overdue = active.filter(c => isContractPaymentOverdue(c, today));
   const overdueStudentIds = new Set(overdue.map(c => c.customer_id).filter(Boolean));
-  const activeStudentIds = new Set(active.map(c => c.customer_id));
+  const activeStudentIds = new Set(active.map(c => c.customer_id).filter(Boolean));
 
   // ── MRR (receita recorrente mensal) ─────────────────────────────
   const mrr = active.reduce((acc, c) => acc + (c.monthly || 0), 0);
@@ -112,13 +111,11 @@ export function computeAssessmentMetrics(contracts = [], plans = []) {
   };
 }
 
-// Reconstrói o MRR histórico dos últimos N meses a partir das datas dos contratos.
-// Para cada mês, considera "ativo" o contrato cuja vigência (start_date → end_date,
-// ou cancelamento, o que vier primeiro) cobre o último dia daquele mês.
-// É uma aproximação — não temos snapshot mensal — mas dá a tendência de crescimento.
+// Closed months share the annual report's effective-date rules. The current
+// month is today's contracted portfolio, not a projection to the month's end.
 export function computeMrrHistory(contracts = [], plans = [], months = 6) {
-  const plansMap = Object.fromEntries(plans.map(p => [p.id, p]));
-
+  const plansById = Object.fromEntries(plans.map(plan => [plan.id, plan]));
+  const today = todayLocalStr();
   const series = [];
   const base = new Date(); base.setDate(1);
 
@@ -129,29 +126,13 @@ export function computeMrrHistory(contracts = [], plans = [], months = 6) {
     const refStr = toLocalDateStr(monthEnd);
     const ym = refStr.slice(0, 7);
 
-    let mrr = 0;
-    let count = 0;
-    for (const c of contracts) {
-      if (c.status === 'draft' || c.status === 'scheduled' || isContractVoidedSale(c)) continue;
-      const start = c.start_date || utcToLocalDateStr(c.created_at);
-      if (!start || start > refStr) continue; // ainda não tinha começado
-
-      // Data efetiva de término: cancelamento (se houve) ou fim de vigência
-      const cancel = c.status === 'cancelled'
-        ? (c.cancellation_date || utcToLocalDateStr(c.updated_at))
-        : null;
-      const endRef = cancel || c.end_date || null;
-      if (endRef && endRef < refStr) continue; // já tinha encerrado antes do mês
-
-      mrr += getContractMonthlyValue(c, plansMap);
-      count += 1;
-    }
+    const snapshot = getAssessmentMrrSnapshot(contracts, plansById, i === 0 ? today : refStr, today);
 
     series.push({
       ym,
       month: monthEnd.toLocaleString('pt-BR', { month: 'short' }).replace('.', ''),
-      mrr,
-      count,
+      mrr: snapshot.mrr,
+      count: snapshot.count,
     });
   }
 

@@ -11,11 +11,11 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AssessmentCoach,
-  AssessmentContract,
   AssessmentModality,
-  AssessmentPlan,
   PreSaleCustomer,
 } from '@/api/entities';
+import { supabase } from '@/api/db';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { usePageData } from '@/hooks/usePageData';
 import { cn, formatCurrency, formatDate } from '@/lib/utils';
 import {
@@ -28,10 +28,10 @@ import {
 
 async function loadContractAuditPage() {
   const [contracts, students, coaches, plans, modalities] = await Promise.all([
-    AssessmentContract.list('-created_at').catch(() => []),
+    loadAssessmentMetricContracts(supabase),
     PreSaleCustomer.list().catch(() => []),
     AssessmentCoach.list().catch(() => []),
-    AssessmentPlan.list().catch(() => []),
+    loadAssessmentMetricPlans(supabase),
     AssessmentModality.list().catch(() => []),
   ]);
 

@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { PreSaleCustomer, PreSaleOrder, AssessmentContract, AssessmentPlan, AssessmentModality, AssessmentCoach, StockOrder } from '@/api/entities';
+import { PreSaleCustomer, PreSaleOrder, AssessmentModality, AssessmentCoach, StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
+import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { mergeCustomers } from '@/api/client';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
@@ -42,8 +43,8 @@ export default function CustomerDetail() {
         PreSaleCustomer.get(id),
         PreSaleOrder.list().catch(() => []),
         StockOrder.filter({ customer_id: id }, '-created_date').catch(() => []),
-        AssessmentContract.filter({ customer_id: id }, '-created_at').catch(() => []),
-        AssessmentPlan.list().catch(() => []),
+        loadAssessmentMetricContracts(supabase, id),
+        loadAssessmentMetricPlans(supabase),
         AssessmentModality.list().catch(() => []),
         AssessmentCoach.list().catch(() => []),
       ]);

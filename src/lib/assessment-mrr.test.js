@@ -223,3 +223,62 @@ test('changing only the payment schedule does not change any recurring metric', 
     assert.equal(result.ticketMedio, 170);
   }
 });
+
+test('current history uses today, not a future month-end projection', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const rows = [contract({ end_date: '2026-09-25', manual_discount: 50 })];
+  const current = computeAssessmentMetrics(rows).mrr;
+  assert.equal(current, 150);
+  assert.equal(computeMrrHistory(rows, [], 2).at(-1).mrr, current);
+  assert.equal(buildAssessmentYearlyIndicators(rows, [], { year: 2026, asOf: '2026-09-21' }).summary.mrr, current);
+});
+
+test('current graphs retain operational contracts awaiting renewal, including open payments', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const rows = [contract({ status: 'overdue', payment_status: 'awaiting_charge', end_date: '2026-09-20', manual_discount: 50 })];
+  const current = computeAssessmentMetrics(rows).mrr;
+  assert.equal(current, 150);
+  assert.equal(computeMrrHistory(rows, [], 2).at(-1).mrr, current);
+  assert.equal(buildAssessmentYearlyIndicators(rows, [], { year: 2026, asOf: '2026-09-21' }).summary.mrr, current);
+});
+
+test('future starts cannot count as current MRR even with a legacy active status', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const rows = [contract({ start_date: '2026-09-25', manual_discount: 50 })];
+  assert.equal(computeAssessmentMetrics(rows).mrr, 0);
+  assert.equal(computeAssessmentMetrics(rows).activeStudents, 0);
+  assert.equal(computeMrrHistory(rows, [], 2).at(-1).mrr, 0);
+  assert.equal(buildAssessmentYearlyIndicators(rows, [], { year: 2026, asOf: '2026-09-21' }).summary.mrr, 0);
+});
+
+test('closed-month graphs agree on end-date boundaries and exclude unfulfilled cancelled sales', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const rows = [
+    contract({ id: 'old', status: 'finished', end_date: '2026-08-31', manual_discount: 50 }),
+    contract({ id: 'renewal', parent_contract_id: 'old', start_date: '2026-08-31', manual_discount: 25 }),
+    contract({ id: 'unfulfilled', customer_id: 'unfulfilled', status: 'cancelled', payment_status: 'awaiting_charge', cancellation_date: '2026-09-01' }),
+  ];
+  const yearly = buildAssessmentYearlyIndicators(rows, [], { year: 2026, asOf: '2026-09-21' });
+  assert.equal(yearly.months[7].mrr, 175);
+  assert.equal(computeMrrHistory(rows, [], 2)[0].mrr, yearly.months[7].mrr);
+});
+
+test('effective-date guard includes the first day without mutating the stored contract', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  for (const status of ['active', 'overdue', 'on_leave']) {
+    const row = contract({ status, start_date: '2026-09-21', manual_discount: 50 });
+    const before = structuredClone(row);
+    assert.equal(buildContractLifecycleRows([row], { today: '2026-09-20' })[0].lifecycle.counts.mrr, false);
+    assert.equal(buildContractLifecycleRows([row], { today: '2026-09-21' })[0].lifecycle.counts.mrr, true);
+    assert.equal(computeAssessmentMetrics([row]).mrr, 150);
+    assert.deepEqual(row, before);
+  }
+});
+
+test('unknown customer IDs do not create phantom students in the ticket denominator', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const result = computeAssessmentMetrics([contract({ manual_discount: 50 }), contract({ id: 'legacy', customer_id: null, manual_discount: 50 })]);
+  assert.equal(result.mrr, 300);
+  assert.equal(result.activeStudents, 1);
+  assert.equal(result.ticketMedio, 300);
+});
