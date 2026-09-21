@@ -12,6 +12,7 @@ Both failures were reproduced with fictitious contacts in an isolated PostgreSQL
 ## Changes
 
 - Migration `20260921192544` corrects the regex, extends the ledger allowlist, and adds a service-only RPC overload accepting optional gender and birth date. The old signature delegates to the new one, without default-argument ambiguity.
+- The full clean-install CI exposed missing explicit backend table grants. The migration grants only the required SELECT/INSERT/UPDATE privileges to `service_role`; browser roles and RLS policies remain unchanged. Production already had these backend privileges.
 - Existing customer columns store the profile fields. Birth dates must be valid calendar dates from 1900 through today; gender uses the existing masculine/feminine/other values. Both fields remain optional.
 - Missing profile values can be filled on an existing customer. Conflicting values, conflicting CPFs and contacts matching different customers require review instead of silently overwriting or arbitrarily linking records.
 - Contact formatting is normalized for matching. Manual creations lock each supplied identity in a stable order; this does not replace a cross-application customer deduplication policy.

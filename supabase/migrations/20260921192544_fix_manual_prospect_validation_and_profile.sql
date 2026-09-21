@@ -1,6 +1,12 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
+-- SECURITY INVOKER needs explicit backend grants on clean installations too.
+-- These grants do not change browser access or RLS policies.
+GRANT SELECT ON TABLE public.assessment_coaches, public.assessment_plans TO service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.presale_customers, public.assessment_contracts TO service_role;
+GRANT SELECT, INSERT ON TABLE public.assessment_contract_event TO service_role;
+
 -- Extend the existing allowlist without changing operations already recorded.
 ALTER TABLE public.assessment_contract_creation_operations
   DROP CONSTRAINT assessment_contract_creation_operations_operation_scope_check;
