@@ -1,3 +1,5 @@
+import { getContractMonthlyValue } from './assessment-contract-mrr.js';
+
 const OPERATIVE_STATUSES = new Set(['active', 'overdue', 'on_leave', 'finished', 'cancelled']);
 const TERMINAL_PAYMENT_STATUSES = new Set(['cancelled', 'refunded']);
 const MONTH_LABELS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -185,12 +187,6 @@ function getStartKind(contract, contracts) {
   return 'return';
 }
 
-function contractMonthlyValue(contract, plansById) {
-  const snapshot = contract?.plan_snapshot || {};
-  const plan = plansById[contract?.plan_id] || {};
-  return Number(snapshot.price_monthly ?? plan.price_monthly ?? 0) || 0;
-}
-
 function uniqueCustomerCount(contracts) {
   return new Set(contracts.map(contract => contract.customer_id).filter(Boolean)).size;
 }
@@ -313,7 +309,7 @@ export function buildAssessmentYearlyIndicators(contracts = [], plans = [], opti
       netGrowth: entryCount + returnCount - exitCount,
       baseEnd,
       churnRate: baseStart > 0 ? (exitCount / baseStart) * 100 : 0,
-      mrr: baseEndRows.reduce((total, contract) => total + contractMonthlyValue(contract, plansById), 0),
+      mrr: baseEndRows.reduce((total, contract) => total + getContractMonthlyValue(contract, plansById), 0),
     };
   });
 

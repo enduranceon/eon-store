@@ -2,14 +2,14 @@
 // de lifecycle dos contratos. Isso evita que cada tela interprete "cancelado",
 // "descartado", "troca de plano" e "estorno" de um jeito diferente.
 
-import { todayLocalStr, toLocalDateStr, utcToLocalDateStr } from '@/lib/utils';
+import { todayLocalStr, toLocalDateStr, utcToLocalDateStr } from './utils.js';
 import {
   buildContractLifecycleRows,
   getContractMonthlyValue,
   getLifecycleMonthStart,
   isContractPaymentOverdue,
   isContractVoidedSale,
-} from '@/lib/assessment-contract-lifecycle';
+} from './assessment-contract-lifecycle.js';
 
 // Recebe contratos (todos os status) + lista de planos.
 // Retorna o pacote de KPIs do mês corrente.
