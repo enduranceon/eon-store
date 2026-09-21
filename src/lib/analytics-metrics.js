@@ -1,15 +1,15 @@
 import {
   buildContractLifecycleRows,
   isContractPaymentOverdue,
-} from '@/lib/assessment-contract-lifecycle';
-import { computeMrrHistory } from '@/lib/assessment-metrics';
+} from './assessment-contract-lifecycle.js';
+import { computeMrrHistory } from './assessment-metrics.js';
 import {
   financialMovementDate,
   isActualFinancialMovement,
   isOpenReceivable,
-} from '@/lib/financial-dashboard';
-import { FINANCIAL_MOVEMENT_KIND } from '@/lib/financial-ledger';
-import { toLocalDateStr } from '@/lib/utils';
+} from './financial-dashboard.js';
+import { FINANCIAL_MOVEMENT_KIND } from './financial-ledger.js';
+import { toLocalDateStr } from './utils.js';
 
 const OPEN_PROSPECT_STAGES = new Set(['new', 'proposal_ready', 'payment_link_sent']);
 const EFFECTIVE_CONTRACT_STATUSES = new Set(['scheduled', 'active', 'overdue', 'on_leave', 'finished', 'cancelled']);

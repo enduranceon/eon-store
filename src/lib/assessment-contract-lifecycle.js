@@ -1,4 +1,7 @@
-import { todayLocalStr, toLocalDateStr, utcToLocalDateStr } from '@/lib/utils';
+import { todayLocalStr, toLocalDateStr, utcToLocalDateStr } from './utils.js';
+import { getContractMonthlyValue } from './assessment-contract-mrr.js';
+
+export { getContractMonthlyValue };
 
 export const ACTIVE_CONTRACT_STATUSES = new Set(['active', 'overdue', 'on_leave']);
 export const SCHEDULED_CONTRACT_STATUSES = new Set(['scheduled']);
@@ -128,12 +131,6 @@ export function getContractTotalValue(contract, plansById = {}) {
   const discount = Number(contract?.manual_discount) || 0;
   const credit = Number(contract?.credit_balance) || 0;
   return Math.max(0, Number(total) + enroll - discount - credit);
-}
-
-export function getContractMonthlyValue(contract, plansById = {}) {
-  const snap = contract?.plan_snapshot || {};
-  const plan = plansById[contract?.plan_id] || {};
-  return Number(snap.price_monthly ?? plan.price_monthly ?? 0) || 0;
 }
 
 export function isContractVoidedSale(contract) {
