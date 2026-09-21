@@ -1,5 +1,5 @@
 import { studentProfilePath } from '@/lib/customer-profile';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ArchiveX, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
@@ -27,7 +27,8 @@ import { supabase } from '@/api/db';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { formatCustomerAddress } from '@/lib/br-address';
 import { formatCurrency, formatDate, formatDateTime, maskCpf, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { phoneDigitsForWhatsApp, normalizePhone } from '@/lib/phone';
+import { phoneDigitsForWhatsApp } from '@/lib/phone';
+import { prepareManualProspect, PROSPECT_GENDERS } from '@/lib/assessment-prospect-form';
 import { toast } from 'sonner';
 
 const STAGES = {
@@ -222,6 +223,7 @@ function CustomerData({ customer, contract }) {
       {[
         ['Código', customer?.customer_code],
         ['Nome', customer?.full_name],
+        ['Gênero', PROSPECT_GENDERS[customer?.gender] || customer?.gender],
         ['Nascimento', customer?.birth_date ? formatDate(customer.birth_date) : null],
         ['WhatsApp', customer?.whatsapp],
         ['E-mail', customer?.email],
@@ -561,54 +563,55 @@ function CreateProspectModal({ onClose, onDone }) {
   const [plans, setPlans] = useState([]);
   const [coaches, setCoaches] = useState([]);
   const [loadingOptions, setLoadingOptions] = useState(true);
+  const [optionsError, setOptionsError] = useState(false);
+  const [optionsAttempt, setOptionsAttempt] = useState(0);
   const [form, setForm] = useState({
-    full_name: '', whatsapp: '', email: '', cpf: '',
+    full_name: '', whatsapp: '', email: '', cpf: '', gender: '', birth_date: '',
     plan_id: '', coach_id: '', installments: 1, notes: '',
   });
   const [saving, setSaving] = useState(false);
 
+  const operation = useRef(null);
+  const savingRef = useRef(false);
+
   useEffect(() => {
     let active = true;
+    setLoadingOptions(true);
+    setOptionsError(false);
     Promise.all([
-      AssessmentPlan.filter({ active: true }).catch(() => []),
-      AssessmentCoach.filter({ active: true }, 'name').catch(() => []),
+      AssessmentPlan.filter({ active: true }),
+      AssessmentCoach.filter({ active: true }, 'name'),
     ]).then(([planList, coachList]) => {
       if (!active) return;
       setPlans(planList);
       setCoaches(coachList);
+    }).catch(() => {
+      if (active) setOptionsError(true);
     }).finally(() => { if (active) setLoadingOptions(false); });
     return () => { active = false; };
-  }, []);
+  }, [optionsAttempt]);
 
   const selectedPlan = plans.find(plan => plan.id === form.plan_id);
   const maxInstallments = Math.max(1, Number(selectedPlan?.max_installments) || 1);
 
   const save = async () => {
-    const fullName = form.full_name.trim();
-    if (fullName.length < 2) return toast.error('Informe o nome completo');
-    const whatsapp = normalizePhone(form.whatsapp);
-    if (!whatsapp) return toast.error('Informe um WhatsApp válido');
-    if (!form.plan_id) return toast.error('Selecione o plano');
-    if (!form.coach_id) return toast.error('Selecione o coach');
-    const installments = Math.max(1, Math.min(maxInstallments, Number(form.installments) || 1));
-
+    if (savingRef.current || loadingOptions || optionsError) return;
+    const { error, payload } = prepareManualProspect(form, maxInstallments, todayLocalStr());
+    if (error) return toast.error(error);
+    const fingerprint = JSON.stringify(payload);
+    if (operation.current?.fingerprint !== fingerprint) {
+      operation.current = { fingerprint, key: crypto.randomUUID() };
+    }
+    savingRef.current = true;
     setSaving(true);
     try {
-      await createManualAssessmentProspect({
-        fullName,
-        whatsapp,
-        email: form.email.trim() || null,
-        cpf: form.cpf.replace(/\D/g, '') || null,
-        planId: form.plan_id,
-        coachId: form.coach_id,
-        installments,
-        notes: form.notes.trim() || null,
-      });
+      await createManualAssessmentProspect(payload, { idempotencyKey: operation.current.key });
       toast.success('Prospect criado! Ele já aparece na coluna "Novos".');
       onDone();
     } catch (error) {
       toast.error(error.message || 'Não foi possível criar o prospect');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -620,35 +623,56 @@ function CreateProspectModal({ onClose, onDone }) {
           <UserPlus className="w-5 h-5 text-green-600" /> Novo prospect
         </DialogTitle>
       </DialogHeader>
-      <div className="space-y-4 mt-2">
+      <fieldset className="space-y-4 mt-2 min-w-0" disabled={saving}>
+        {optionsError && <div role="alert" className="text-sm text-red-700">
+          Não foi possível carregar os planos e coaches.
+          <Button variant="link" onClick={() => setOptionsAttempt(value => value + 1)}>Tentar novamente</Button>
+        </div>}
         <div>
-          <Label>Nome completo *</Label>
-          <Input className="mt-1" value={form.full_name}
+          <Label htmlFor="prospect-name">Nome completo *</Label>
+          <Input id="prospect-name" className="mt-1" maxLength={200} value={form.full_name}
             onChange={event => setForm(f => ({ ...f, full_name: event.target.value }))} />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label>WhatsApp *</Label>
-            <PhoneInput className="mt-1" value={form.whatsapp}
+            <Label htmlFor="prospect-phone">WhatsApp *</Label>
+            <PhoneInput id="prospect-phone" className="mt-1" value={form.whatsapp}
               onChange={value => setForm(f => ({ ...f, whatsapp: value }))} />
           </div>
           <div>
-            <Label>E-mail</Label>
-            <Input className="mt-1" type="email" value={form.email}
+            <Label htmlFor="prospect-email">E-mail</Label>
+            <Input id="prospect-email" className="mt-1" type="email" maxLength={320} value={form.email}
               onChange={event => setForm(f => ({ ...f, email: event.target.value }))} />
           </div>
         </div>
         <div>
-          <Label>CPF</Label>
-          <Input className="mt-1" value={form.cpf}
+          <Label htmlFor="prospect-cpf">CPF</Label>
+          <Input id="prospect-cpf" className="mt-1" inputMode="numeric" value={form.cpf}
             onChange={event => setForm(f => ({ ...f, cpf: maskCpf(event.target.value) }))} />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <Label>Plano *</Label>
+            <Label htmlFor="prospect-gender">Gênero</Label>
+            <Select value={form.gender || 'unspecified'} onValueChange={value => setForm(f => ({ ...f, gender: value === 'unspecified' ? '' : value }))}>
+              <SelectTrigger id="prospect-gender" className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="unspecified">Não informado</SelectItem>
+                {Object.entries(PROSPECT_GENDERS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="prospect-birth-date">Data de nascimento</Label>
+            <Input id="prospect-birth-date" className="mt-1 min-w-0" type="date" min="1900-01-01" max={todayLocalStr()} value={form.birth_date}
+              onChange={event => setForm(f => ({ ...f, birth_date: event.target.value }))} />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label htmlFor="prospect-plan">Plano *</Label>
             <Select value={form.plan_id}
               onValueChange={value => setForm(f => ({ ...f, plan_id: value, installments: 1 }))}>
-              <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+              <SelectTrigger id="prospect-plan" className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent>
                 {plans.map(plan => (
                   <SelectItem key={plan.id} value={plan.id}>{plan.name || `Plano ${plan.period || ''}`}</SelectItem>
@@ -657,9 +681,9 @@ function CreateProspectModal({ onClose, onDone }) {
             </Select>
           </div>
           <div>
-            <Label>Coach *</Label>
+            <Label htmlFor="prospect-coach">Coach *</Label>
             <Select value={form.coach_id} onValueChange={value => setForm(f => ({ ...f, coach_id: value }))}>
-              <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+              <SelectTrigger id="prospect-coach" className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent>
                 {coaches.map(coach => <SelectItem key={coach.id} value={coach.id}>{coach.name}</SelectItem>)}
               </SelectContent>
@@ -667,27 +691,27 @@ function CreateProspectModal({ onClose, onDone }) {
           </div>
         </div>
         <div>
-          <Label>Parcelas</Label>
-          <Input className="mt-1" type="number" min="1" max={maxInstallments} value={form.installments}
+          <Label htmlFor="prospect-installments">Parcelas</Label>
+          <Input id="prospect-installments" className="mt-1" type="number" min="1" max={maxInstallments} step="1" value={form.installments}
             onChange={event => setForm(f => ({ ...f, installments: event.target.value }))} />
           {selectedPlan && (
             <p className="text-xs text-muted-foreground mt-1">Este plano permite até {maxInstallments}x.</p>
           )}
         </div>
         <div>
-          <Label>Observações</Label>
-          <Textarea className="mt-1" rows={3} maxLength={2000} value={form.notes}
+          <Label htmlFor="prospect-notes">Observações</Label>
+          <Textarea id="prospect-notes" className="mt-1" rows={3} maxLength={2000} value={form.notes}
             onChange={event => setForm(f => ({ ...f, notes: event.target.value }))}
             placeholder="Ex.: veio por indicação, contato prévio por WhatsApp..." />
         </div>
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>Cancelar</Button>
-          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={save} disabled={saving || loadingOptions}>
+          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={save} disabled={saving || loadingOptions || optionsError}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
             Criar prospect
           </Button>
         </div>
-      </div>
+      </fieldset>
     </>
   );
 }
@@ -1081,7 +1105,7 @@ export default function Prospects() {
       const submittedCoachIds = [...new Set((submissionsResult.data || []).map(item => item.coach_id).filter(Boolean))];
       const coachIds = [...new Set([...list.map(item => item.coach_id).filter(Boolean), ...submittedCoachIds])];
       const [customerResult, coachResult, modalityResult, submittedPlanResult] = await Promise.all([
-        customerIds.length ? supabase.from('presale_customers').select('id, customer_code, full_name, birth_date, whatsapp, email, cpf, address_zip, address_street, address_number, address_complement, address_neighborhood, address_city, address_state').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
+        customerIds.length ? supabase.from('presale_customers').select('id, customer_code, full_name, gender, birth_date, whatsapp, email, cpf, address_zip, address_street, address_number, address_complement, address_neighborhood, address_city, address_state').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
         coachIds.length ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds) : Promise.resolve({ data: [], error: null }),
         modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds) : Promise.resolve({ data: [], error: null }),
         submittedPlanIds.length ? supabase.from('assessment_plans').select('id, name, period, period_months, modality_id, price_total, price_monthly, enrollment_fee, max_installments, active').in('id', submittedPlanIds) : Promise.resolve({ data: [], error: null }),

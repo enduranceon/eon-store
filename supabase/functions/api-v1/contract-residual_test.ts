@@ -165,6 +165,62 @@ Deno.test("Manual prospect creation accepts optional email/cpf as null", async (
   assert(response?.status === 201, "prospect without email/cpf was rejected");
   assert(calls[0].args.p_email === null, "email was not forwarded as null");
   assert(calls[0].args.p_cpf === null, "cpf was not forwarded as null");
+  assert(calls[0].args.p_gender === null, "legacy request requires no gender");
+  assert(calls[0].args.p_birth_date === null, "legacy request requires no birth date");
+});
+
+Deno.test("Manual prospect creation forwards profile fields and formatted contacts", async () => {
+  for (const gender of [null, "feminino", "masculino", "outro"]) {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const path = "/assessment/prospects/manual";
+    const response = await handleContractResidualRequest(
+      request(path, "POST", validManualProspectBody({
+        gender, birth_date: "2000-02-29", whatsapp: "+55 (51) 99999-9999", cpf: "123.456.789-09",
+      }), "prospect:profile:test"), path, client(calls), ACTOR_ID,
+    );
+    assert(response?.status === 201, "valid profile was rejected");
+    assert(calls[0].args.p_gender === gender, "gender changed");
+    assert(calls[0].args.p_birth_date === "2000-02-29", "birth date changed");
+  }
+});
+
+for (const [overrides, message] of [
+  [{ whatsapp: "123" }, "WhatsApp"],
+  [{ email: "invalid@" }, "e-mail"],
+  [{ cpf: "123" }, "CPF"],
+  [{ gender: "invalid" }, "gênero"],
+  [{ gender: {} }, "gênero"],
+  [{ birth_date: "2025-02-29" }, "nascimento"],
+  [{ birth_date: "2999-01-01" }, "nascimento"],
+  [{ birth_date: "1899-12-31" }, "nascimento"],
+  [{ birth_date: "" }, "nascimento"],
+  [{ installments: 1.5 }, "parcelas"],
+  [{ installments: "3" }, "parcelas"],
+  [{ plan_id: "invalid" }, "plano"],
+  [{ coach_id: "invalid" }, "coach"],
+  [{ unexpected: "field" }, "Campos"],
+] as const) {
+  Deno.test(`Manual prospect rejects invalid ${Object.keys(overrides)[0]} without calling database: ${JSON.stringify(overrides)}`, async () => {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const path = "/assessment/prospects/manual";
+    const response = await handleContractResidualRequest(
+      request(path, "POST", validManualProspectBody(overrides), "prospect:invalid:test"),
+      path, client(calls), ACTOR_ID,
+    );
+    assert(response?.status === 400, "invalid field was accepted");
+    assert((await response.json()).error.includes(message), "field-specific message missing");
+    assert(calls.length === 0, "invalid field reached database");
+  });
+}
+
+Deno.test("Manual prospect maps duplicate/identity conflicts to a retry-safe 409", async () => {
+  const path = "/assessment/prospects/manual";
+  const response = await handleContractResidualRequest(
+    request(path, "POST", validManualProspectBody(), "prospect:conflict:test"),
+    path, client([], { code: "P0001", message: "Este cliente já possui um prospect em negociação" }), ACTOR_ID,
+  );
+  assert(response?.status === 409, "conflict status changed");
+  assert((await response.json()).error.includes("prospect em negociação"), "conflict message hidden");
 });
 
 Deno.test("Admin contract creation requires a stable idempotency key", async () => {

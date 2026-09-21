@@ -99,13 +99,13 @@ function validAdminCreation(body: Record<string, unknown>): boolean {
         UUID_PATTERN.test(body.replacement_contract_id)));
 }
 
-function validManualProspect(body: Record<string, unknown>): boolean {
+function manualProspectError(body: Record<string, unknown>): string | null {
   const whatsapp = typeof body.whatsapp === "string"
     ? body.whatsapp.replace(/\D/g, "")
     : "";
   const email = typeof body.email === "string" ? body.email.trim() : "";
   const cpf = typeof body.cpf === "string" ? body.cpf.replace(/\D/g, "") : "";
-  return exactKeys(body, [
+  const required = [
     "full_name",
     "whatsapp",
     "email",
@@ -114,17 +114,24 @@ function validManualProspect(body: Record<string, unknown>): boolean {
     "coach_id",
     "installments",
     "notes",
-  ]) && typeof body.full_name === "string" &&
-    body.full_name.trim().length >= 2 && body.full_name.trim().length <= 200 &&
-    whatsapp.length >= 10 && whatsapp.length <= 13 &&
-    (body.email === null ||
-      (email.length > 0 && email.length <= 320 && EMAIL_PATTERN.test(email))) &&
-    (body.cpf === null || cpf.length === 11) &&
-    typeof body.plan_id === "string" && UUID_PATTERN.test(body.plan_id) &&
-    typeof body.coach_id === "string" && UUID_PATTERN.test(body.coach_id) &&
-    typeof body.installments === "number" &&
-    Number.isInteger(body.installments) && body.installments >= 1 &&
-    body.installments <= 120 && nullableText(body.notes, 2000);
+  ];
+  const allowed = [...required, "gender", "birth_date"];
+  if (!required.every((key) => Object.hasOwn(body, key)) ||
+    Object.keys(body).some((key) => !allowed.includes(key))) {
+    return "Campos do prospect inválidos";
+  }
+  if (typeof body.full_name !== "string" || body.full_name.trim().length < 2 || body.full_name.trim().length > 200) return "Informe um nome entre 2 e 200 caracteres";
+  if (whatsapp.length < 10 || whatsapp.length > 13) return "Informe um WhatsApp válido";
+  if (body.email !== null && (!email || email.length > 320 || !EMAIL_PATTERN.test(email))) return "Informe um e-mail válido ou deixe o campo vazio";
+  if (body.cpf !== null && cpf.length !== 11) return "Informe os 11 dígitos do CPF ou deixe o campo vazio";
+  if (body.gender != null && !["masculino", "feminino", "outro"].includes(body.gender as string)) return "Selecione um gênero válido";
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+  if (body.birth_date != null && (!isCalendarDate(body.birth_date) || body.birth_date < "1900-01-01" || body.birth_date > today)) return "Informe uma data de nascimento válida, entre 1900 e hoje";
+  if (typeof body.plan_id !== "string" || !UUID_PATTERN.test(body.plan_id)) return "Selecione um plano válido";
+  if (typeof body.coach_id !== "string" || !UUID_PATTERN.test(body.coach_id)) return "Selecione um coach válido";
+  if (typeof body.installments !== "number" || !Number.isInteger(body.installments) || body.installments < 1 || body.installments > 120) return "Informe uma quantidade válida de parcelas";
+  if (!nullableText(body.notes, 2000)) return "As observações devem ter até 2000 caracteres";
+  return null;
 }
 
 export async function handleContractResidualRequest(
@@ -142,9 +149,10 @@ export async function handleContractResidualRequest(
     }
     const key = operationKey(req);
     const body = await readBody(req);
-    if (!key || !body || !validManualProspect(body)) {
+    const validationError = body ? manualProspectError(body) : "Dados do prospect inválidos";
+    if (!key || !body || validationError) {
       return jsonResponse({
-        error: "Dados do prospect ou chave de idempotência inválidos",
+        error: !key ? "Chave de idempotência inválida" : validationError,
         code: "invalid_request",
       }, 400);
     }
@@ -155,6 +163,8 @@ export async function handleContractResidualRequest(
         p_whatsapp: body.whatsapp,
         p_email: body.email,
         p_cpf: body.cpf,
+        p_gender: body.gender ?? null,
+        p_birth_date: body.birth_date ?? null,
         p_plan_id: body.plan_id,
         p_coach_id: body.coach_id,
         p_installments: body.installments,
