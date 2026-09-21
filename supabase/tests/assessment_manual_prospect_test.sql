@@ -71,7 +71,7 @@ SELECT throws_ok($$SELECT pg_temp.create_prospect('prospect:test:installments', 
 
 -- Reusing an existing customer can fill missing profile fields, never erase them.
 RESET ROLE;
-UPDATE public.assessment_contracts SET prospect_stage = 'lost'
+UPDATE public.assessment_contracts SET prospect_stage = 'lost', prospect_lost_at = now(), prospect_loss_reason_code = 'other'
 WHERE customer_id = (SELECT id FROM public.presale_customers WHERE whatsapp = '+5551999999982');
 SET LOCAL ROLE service_role;
 SELECT lives_ok($$SELECT pg_temp.create_prospect('prospect:test:fill', '{"whatsapp":"+55 (51) 99999-9982","cpf":null,"email":null}')$$, 'formatted phone reuses the existing customer');
@@ -83,7 +83,7 @@ SELECT throws_ok($$SELECT pg_temp.create_prospect('prospect:test:conflictinggend
 SELECT throws_ok($$SELECT pg_temp.create_prospect('prospect:test:conflictingcpf', '{"cpf":"98765432100"}')$$, 'P0001', NULL, 'shared phone with another CPF needs review');
 SELECT throws_ok($$SELECT pg_temp.create_prospect('prospect:test:multiple', '{"whatsapp":"51999999982"}')$$, 'P0001', NULL, 'conflicting contact matches cannot choose a customer arbitrarily');
 RESET ROLE;
-UPDATE public.assessment_contracts SET prospect_stage = 'lost'
+UPDATE public.assessment_contracts SET prospect_stage = 'lost', prospect_lost_at = now(), prospect_loss_reason_code = 'other'
 WHERE customer_id = (SELECT id FROM public.presale_customers WHERE email = 'prospect81@example.test');
 SET LOCAL ROLE service_role;
 SELECT lives_ok($$SELECT pg_temp.create_prospect('prospect:test:preserve', '{"gender":null,"birth_date":null}')$$, 'omitted profile does not require changing the existing customer');
