@@ -15,6 +15,7 @@ const REASON_BY_CHOICE = {
   customer_declined: 'Atleta decidiu não renovar',
   duplicate: 'Renovação criada em duplicidade',
   created_in_error: 'Renovação criada por engano',
+  parent_cancelled: 'Contrato anterior foi cancelado',
 };
 
 export default function RenewalResolutionDialog({
@@ -31,6 +32,7 @@ export default function RenewalResolutionDialog({
   const [resolving, setResolving] = useState(false);
 
   const isNonRenewal = choice === 'customer_declined';
+  const isParentCancellation = choice === 'parent_cancelled';
   const hasExternalReference = !!(
     contract.external_payment_link || contract.external_invoice_number
   );
@@ -77,7 +79,9 @@ export default function RenewalResolutionDialog({
 
       toast.success(isNonRenewal
         ? 'Renovação encerrada e “Não renovou” registrado no contrato anterior.'
-        : 'Venda de renovação descartada sem registrar saída da atleta.');
+        : isParentCancellation
+          ? 'Renovação descartada; o cancelamento anterior foi preservado.'
+          : 'Venda de renovação descartada sem registrar saída da atleta.');
       onClose();
       await onResolved?.(result);
     } catch (error) {
@@ -128,14 +132,26 @@ export default function RenewalResolutionDialog({
                 <SelectValue placeholder="Selecione uma opção" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="customer_declined">Atleta não vai continuar</SelectItem>
-                <SelectItem value="duplicate">Venda criada em duplicidade</SelectItem>
-                <SelectItem value="created_in_error">Venda criada por engano</SelectItem>
+                {parent?.status === 'cancelled' ? (
+                  <SelectItem value="parent_cancelled">Contrato anterior foi cancelado</SelectItem>
+                ) : (
+                  <>
+                    <SelectItem value="customer_declined">Atleta não vai continuar</SelectItem>
+                    <SelectItem value="duplicate">Venda criada em duplicidade</SelectItem>
+                    <SelectItem value="created_in_error">Venda criada por engano</SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              Para mudar plano ou valor, use “Trocar plano”; isso não é uma saída da atleta.
-            </p>
+            {parent?.status === 'cancelled' ? (
+              <p className="text-[11px] text-amber-700 mt-1">
+                O cancelamento anterior já registra a saída da atleta; esta ação apenas descarta a renovação pendente.
+              </p>
+            ) : (
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Para mudar plano ou valor, use “Trocar plano”; isso não é uma saída da atleta.
+              </p>
+            )}
           </div>
 
           {hasMixedCharge && (
