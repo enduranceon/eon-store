@@ -159,6 +159,83 @@ Deno.test("Renewal resolution without a charge records that no provider action w
   );
 });
 
+Deno.test("Cancelled parent can discard an unpaid renewal without recording a second exit", async () => {
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const client = {
+    rpc: (name: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ name, args });
+      if (name === "prepare_assessment_renewal_resolution") {
+        return Promise.resolve({
+          data: {
+            operation_id: OPERATION_ID,
+            status: "prepared",
+            renewal_id: RENEWAL_ID,
+            resolution: "discard",
+            reason_code: "parent_cancelled",
+          },
+          error: null,
+        });
+      }
+      if (name === "claim_assessment_renewal_resolution") {
+        return Promise.resolve({
+          data: {
+            status: "prepared",
+            lease_acquired: true,
+            lease_token: LEASE_TOKEN,
+          },
+          error: null,
+        });
+      }
+      if (name === "record_assessment_renewal_external_result") {
+        return Promise.resolve({
+          data: { external_result: args.p_external_result },
+          error: null,
+        });
+      }
+      if (name === "complete_assessment_renewal_resolution") {
+        return Promise.resolve({
+          data: completedResult({
+            resolution: "discard",
+            reason_code: "parent_cancelled",
+            parent_status: "cancelled",
+            parent_non_renewal: false,
+          }),
+          error: null,
+        });
+      }
+      throw new Error(`unexpected RPC ${name}`);
+    },
+  } as unknown as SupabaseClient;
+
+  const response = await handleRenewalRequest(
+    request(validBody({
+      resolution: "discard",
+      reason_code: "parent_cancelled",
+      reason: "Contrato anterior foi cancelado",
+    }), "renewal:parent-cancelled:0001"),
+    PATH,
+    client,
+    ACTOR_ID,
+  );
+
+  assert(response?.status === 200, "cancelled-parent discard did not complete");
+  assert(
+    rpcCalls[0].args.p_resolution === "discard",
+    "cancelled parent was incorrectly recorded as non-renewal",
+  );
+  assert(
+    rpcCalls[0].args.p_reason_code === "parent_cancelled",
+    "cancelled-parent audit reason was not preserved",
+  );
+  const body = await responseBody(response!);
+  const result = body.data as Record<string, unknown>;
+  assert(result.parent_non_renewal === false, "a second exit was recorded");
+  assert(
+    result.parent_status === "cancelled",
+    "parent cancellation was overwritten",
+  );
+});
+
 Deno.test("External renewal charge requires cancellation confirmation in the prepare RPC", async () => {
   const rpcNames: string[] = [];
   let confirmationValue: unknown;
