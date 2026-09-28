@@ -239,6 +239,13 @@ GRANT EXECUTE ON FUNCTION public.perform_assessment_contract_cancellation(
   public.assessment_contracts, date, numeric, text, uuid, text
 ) TO service_role;
 
+-- A clean local install does not inherit the hosted project's broad
+-- service_role table grants. Keep the helper as SECURITY INVOKER and grant
+-- only the two additional reads required to prove there is no payout before
+-- discarding a renewal draft.
+GRANT SELECT ON TABLE public.payout_monthly_statement_items TO service_role;
+GRANT SELECT ON TABLE public.payout_pending_repasse TO service_role;
+
 -- Extend the existing audited resolution protocol with one precise discard
 -- reason. Dynamic replacement keeps the mature provider-cancellation protocol
 -- intact while failing the migration if its expected source ever drifts.
