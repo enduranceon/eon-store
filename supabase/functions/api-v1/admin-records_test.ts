@@ -81,6 +81,38 @@ Deno.test("admin plans and coupons enforce business-safe states", () => {
     }, "create"), "invalid_date_range");
 });
 
+Deno.test("plan transitions only change the type of an existing pair", async () => {
+  const payload = normalizeAdminRecordPayload("plan-transitions", {
+    transition_type: " not_allowed ",
+  }, "update");
+  assert(payload.transition_type === "not_allowed", "type was not normalized");
+  expectError(() =>
+    normalizeAdminRecordPayload("plan-transitions", {
+      transition_type: "swap",
+    }, "update"), "invalid_field");
+  expectError(() =>
+    normalizeAdminRecordPayload("plan-transitions", {
+      from_plan_id: TARGET_ID,
+    }, "update"), "invalid_field");
+  expectError(() =>
+    normalizeAdminRecordPayload("plan-transitions", {
+      transition_type: "upgrade",
+    }, "create"), "method_not_allowed");
+
+  const databaseClient = {
+    from() {
+      throw new Error("database must not be called");
+    },
+  } as unknown as SupabaseClient;
+  const response = await handleAdminRecordRequest(
+    new Request("https://example.test", { method: "DELETE" }),
+    `/admin-records/plan-transitions/${TARGET_ID}`,
+    databaseClient,
+    ACTOR_ID,
+  );
+  assert(response?.status === 405, "a pair was deleted through the API");
+});
+
 Deno.test("legacy presale updates reject identity fields before the database", async () => {
   const protectedFields: Record<string, unknown>[] = [
     { customer_id: TARGET_ID },

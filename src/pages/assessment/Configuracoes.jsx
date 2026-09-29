@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Plus, Pencil, Save, X, Tag, DollarSign, TrendingUp, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Save, X, Tag, DollarSign, TrendingUp, Trash2, ArrowLeftRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { AssessmentModality, AssessmentPlan, PayoutRoleModalityRate, PayoutGrowthTier } from '@/api/entities';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { AssessmentModality, AssessmentPlan, AssessmentPlanTransition, PayoutRoleModalityRate, PayoutGrowthTier } from '@/api/entities';
 import { formatCurrency } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -260,22 +261,137 @@ function TiersCard({ tiers, refresh }) {
   );
 }
 
+// ─── Trocas de plano no meio do ciclo ────────────────────────────────────────
+const TRANSITION_TYPES = [
+  { value: 'upgrade', label: 'Upgrade', className: 'bg-green-100 text-green-700' },
+  { value: 'lateral', label: 'Lateral', className: 'bg-blue-100 text-blue-700' },
+  { value: 'downgrade', label: 'Downgrade', className: 'bg-amber-100 text-amber-700' },
+  { value: 'not_allowed', label: 'Não permitida', className: 'bg-gray-100 text-gray-600' },
+];
+
+const PERIOD_LABELS = { 1: 'Mensal', 3: 'Trimestral', 6: 'Semestral' };
+
+function periodLabel(months) {
+  return PERIOD_LABELS[months] || `${months} meses`;
+}
+
+function planLabel(plan) {
+  return `${plan.name || 'Plano sem nome'} · ${formatCurrency(plan.price_total)}${plan.active === false ? ' (inativo)' : ''}`;
+}
+
+function PlanTransitionsCard({ plans, transitions, refresh }) {
+  const [fromPlanId, setFromPlanId] = useState('');
+  const [saving, setSaving] = useState(null);
+
+  const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR') || Number(a.price_total) - Number(b.price_total);
+  const periods = [...new Set(plans.map(p => p.period_months).filter(Boolean))].sort((a, b) => a - b);
+  const origin = plans.find(p => p.id === fromPlanId) || null;
+  const rows = origin
+    ? transitions
+      .filter(t => t.from_plan_id === origin.id)
+      .map(t => ({ transition: t, target: plans.find(p => p.id === t.to_plan_id) }))
+      .filter(row => row.target && row.target.period_months === origin.period_months)
+      .sort((a, b) => Number(a.target.price_total) - Number(b.target.price_total) || byName(a.target, b.target))
+    : [];
+
+  const changeType = async (transition, value) => {
+    setSaving(transition.id);
+    try {
+      await AssessmentPlanTransition.update(transition.id, { transition_type: value });
+      toast.success('Tipo da troca atualizado');
+      await refresh();
+    } catch (e) { toast.error(e.message); }
+    setSaving(null);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <ArrowLeftRight className="w-4 h-4 text-violet-600" /> Trocas de plano no meio do ciclo
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Upgrade e lateral valem a partir da data escolhida; downgrade fica para a renovação; não permitida bloqueia a troca.
+          O tipo começou pelo preço de hoje e o preço só define quanto cobrar.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-0 space-y-3">
+        <div className="space-y-1">
+          <Label>Plano atual do aluno</Label>
+          <Select value={fromPlanId} onValueChange={setFromPlanId}>
+            <SelectTrigger className="w-full sm:w-96"><SelectValue placeholder="Escolha o plano de origem" /></SelectTrigger>
+            <SelectContent>
+              {periods.map(months => (
+                <SelectGroup key={months}>
+                  <SelectLabel>{periodLabel(months)}</SelectLabel>
+                  {plans.filter(p => p.period_months === months).sort(byName).map(p => (
+                    <SelectItem key={p.id} value={p.id}>{planLabel(p)}</SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {origin && rows.length === 0 && (
+          <p className="text-sm text-muted-foreground py-2">Nenhum outro plano no ciclo {periodLabel(origin.period_months).toLowerCase()}.</p>
+        )}
+        {rows.length > 0 && (
+          <div className="divide-y text-sm">
+            <div className="hidden sm:grid grid-cols-[1fr_auto_9rem] gap-3 pb-2 text-xs font-medium text-muted-foreground">
+              <span>Para</span>
+              <span className="text-right">Diferença no ciclo</span>
+              <span className="text-right">Tipo</span>
+            </div>
+            {rows.map(({ transition, target }) => {
+              const diff = Number(target.price_total) - Number(origin.price_total);
+              const type = TRANSITION_TYPES.find(tp => tp.value === transition.transition_type);
+              return (
+                <div key={transition.id} className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_auto_9rem] items-center gap-x-3 gap-y-1 py-2">
+                  <span className="col-span-2 sm:col-span-1">{planLabel(target)}</span>
+                  <span className="font-mono whitespace-nowrap sm:text-right">
+                    {diff > 0 ? '+ ' : diff < 0 ? '− ' : ''}{formatCurrency(Math.abs(diff))}
+                  </span>
+                  <Select
+                    value={transition.transition_type}
+                    onValueChange={value => changeType(transition, value)}
+                    disabled={saving === transition.id}
+                  >
+                    <SelectTrigger className={`h-7 w-36 justify-self-end text-xs ${type?.className || ''}`}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {TRANSITION_TYPES.map(tp => (
+                        <SelectItem key={tp.value} value={tp.value}>{tp.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function Configuracoes() {
   const [modalities, setModalities] = useState([]);
   const [plans, setPlans]           = useState([]);
   const [rates, setRates]           = useState([]);
   const [tiers, setTiers]           = useState([]);
+  const [transitions, setTransitions] = useState([]);
 
   const load = async () => {
     try {
-      const [m, p, r, t] = await Promise.all([
+      const [m, p, r, t, tr] = await Promise.all([
         AssessmentModality.list('name').catch(() => []),
         AssessmentPlan.list().catch(() => []),
         PayoutRoleModalityRate.list('role').catch(() => []),
         PayoutGrowthTier.list('min_athletes').catch(() => []),
+        AssessmentPlanTransition.list('from_plan_id').catch(() => []),
       ]);
-      setModalities(m); setPlans(p); setRates(r); setTiers(t);
+      setModalities(m); setPlans(p); setRates(r); setTiers(t); setTransitions(tr);
     } catch (e) {
       console.error('Erro ao carregar configurações:', e);
     }
@@ -287,13 +403,14 @@ export default function Configuracoes() {
     <div className="space-y-5 max-w-5xl mx-auto">
       <div>
         <h2 className="text-xl font-bold text-gray-900">Configurações — Assessoria</h2>
-        <p className="text-sm text-muted-foreground">Modalidades, repasses e faixas de crescimento.</p>
+        <p className="text-sm text-muted-foreground">Modalidades, repasses, faixas de crescimento e trocas de plano.</p>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ModalitiesCard modalities={modalities} plans={plans} refresh={load} />
         <RatesCard rates={rates} modalities={modalities} refresh={load} />
       </div>
       <TiersCard tiers={tiers} refresh={load} />
+      <PlanTransitionsCard plans={plans} transitions={transitions} refresh={load} />
     </div>
   );
 }
