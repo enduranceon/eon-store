@@ -389,6 +389,26 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
     ],
     updatedColumn: "updated_at",
   },
+  // Os pares nascem no banco (planos do mesmo ciclo); a tela só muda o tipo.
+  "plan-transitions": {
+    table: "assessment_plan_transitions",
+    fields: {
+      transition_type: s(20, {
+        required: true,
+        values: ["upgrade", "downgrade", "lateral", "not_allowed"],
+      }),
+    },
+    defaultSort: "from_plan_id",
+    sortFields: [
+      "id",
+      "from_plan_id",
+      "to_plan_id",
+      "transition_type",
+      "created_at",
+      "updated_at",
+    ],
+    updatedColumn: "updated_at",
+  },
   "payout-tiers": {
     table: "payout_growth_tiers",
     fields: {

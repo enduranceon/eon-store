@@ -1,6 +1,15 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
+import {
+  buildGroupedItems,
+  type ClosingContext,
+  competenceBounds,
+  effectiveEndExclusive,
+  groupByContract,
+  mergePendingCollisions,
+  parseDateUTC,
+} from "./calculation.ts";
 
 // Gera o fechamento de repasse de uma competência.
 //
@@ -12,6 +21,9 @@ import { requireAdmin } from "../_shared/requireAdmin.ts";
 //                                          fechamento atual, mas carimbadas com reference = mês original.
 //
 // Body: { competence: "YYYY-MM-01", regenerate?: boolean }. Aprovado/pago nunca recalcula.
+//
+// O valor de cada dia segue o plano e o treinador que valiam naquele dia
+// (históricos de plano e de treinador do contrato); ver calculation.ts.
 //
 // ORDEM DO HANDLER (não reordenar): OPTIONS -> método -> requireAdmin -> corpo.
 // O preflight do navegador não manda Authorization; se o guard vier antes, ele
@@ -32,132 +44,22 @@ const json = (payload: unknown, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
-const DAY_MS = 86400000;
-
-function parseDateUTC(value: string | null | undefined, fallback: Date) {
-  if (!value) return fallback;
-  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
-  if (!year || !month || !day) return fallback;
-  return new Date(Date.UTC(year, month - 1, day));
-}
-
-function dateKeyUTC(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function effectiveEndExclusive(contract: any, fallback: Date) {
-  const start = parseDateUTC(contract.start_date, fallback);
-  let endExclusive = parseDateUTC(contract.end_date, fallback);
-
-  if (contract.end_date && endExclusive.getTime() === start.getTime()) {
-    endExclusive = new Date(endExclusive.getTime() + DAY_MS);
+// Lê a tabela inteira, em páginas ordenadas por id: o PostgREST corta cada
+// resposta no limite de linhas da API, e um fechamento com contratos faltando
+// pagaria errado sem avisar. Erro de leitura interrompe o fechamento.
+// deno-lint-ignore no-explicit-any
+async function fetchAllRows(supabase: any, table: string, columns: string, filter?: (query: any) => any) {
+  // deno-lint-ignore no-explicit-any
+  const rows: any[] = [];
+  for (;;) {
+    let query = supabase.from(table).select(columns).order("id", { ascending: true })
+      .range(rows.length, rows.length + 999);
+    if (filter) query = filter(query);
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data || data.length === 0) return rows;
+    rows.push(...data);
   }
-
-  if (contract.status === "cancelled" && contract.cancellation_date) {
-    const cancellationEndExclusive = new Date(
-      parseDateUTC(contract.cancellation_date, fallback).getTime() + DAY_MS,
-    );
-    if (cancellationEndExclusive < endExclusive) {
-      endExclusive = cancellationEndExclusive;
-    }
-  }
-
-  return endExclusive;
-}
-
-function activeDayKeys(contract: any, leaves: any[], monthStart: Date, monthEndExclusive: Date) {
-  const start = parseDateUTC(contract.start_date, monthStart);
-  const endExclusive = effectiveEndExclusive(contract, monthEndExclusive);
-
-  const current = start > monthStart ? new Date(start) : new Date(monthStart);
-  const end = endExclusive < monthEndExclusive ? endExclusive : monthEndExclusive;
-  const keys = new Set<string>();
-
-  while (current < end) {
-    keys.add(dateKeyUTC(current));
-    current.setTime(current.getTime() + DAY_MS);
-  }
-
-  for (const leave of leaves.filter((l: any) => l.contract_id === contract.id)) {
-    const leaveStart = parseDateUTC(leave.start_date, monthStart);
-    // end_date nulo = licença EM ABERTO (o constraint de assessment_leaves exige
-    // days nulo e status 'active' nesse caso). Ela vale até o fim da competência,
-    // e volta a valer nos meses seguintes enquanto o aluno não retornar.
-    // Antes isto caía no fallback = leaveStart e descontava um único dia: no mês
-    // em que a licença começava perdia-se só 1 dia, e nos meses seguintes o aluno
-    // voltava a contar integralmente mesmo seguindo afastado.
-    const leaveEndExclusive = leave.end_date
-      ? new Date(parseDateUTC(leave.end_date, leaveStart).getTime() + DAY_MS)
-      : new Date(monthEndExclusive);
-    const leaveCurrent = leaveStart > monthStart ? new Date(leaveStart) : new Date(monthStart);
-    const leaveLimit = leaveEndExclusive < monthEndExclusive ? leaveEndExclusive : monthEndExclusive;
-
-    while (leaveCurrent < leaveLimit) {
-      keys.delete(dateKeyUTC(leaveCurrent));
-      leaveCurrent.setTime(leaveCurrent.getTime() + DAY_MS);
-    }
-  }
-
-  return [...keys];
-}
-
-function addContribution(groups: Map<string, any>, key: string, payload: any) {
-  if (!groups.has(key)) {
-    groups.set(key, {
-      coach_id: payload.coach_id,
-      source_type: payload.source_type,
-      contract_id: payload.contract.id,
-      descriptionBase: payload.descriptionBase,
-      month_days: payload.monthDays,
-      tier_applied: payload.tierSnapshot,
-      contracts: new Set<string>(),
-      modalities: new Set<string>(),
-      dailyValues: new Map<string, number>(),
-      rateValues: new Set<number>(),
-    });
-  }
-
-  const group = groups.get(key);
-  group.contracts.add(payload.contract.contract_number || payload.contract.id);
-  group.modalities.add(payload.modalityName);
-  group.rateValues.add(payload.rateApplied);
-
-  for (const dayKey of payload.dayKeys) {
-    group.dailyValues.set(dayKey, Math.max(group.dailyValues.get(dayKey) || 0, payload.dailyAmount));
-  }
-}
-
-function finalizeGroups(groups: Map<string, any>) {
-  return [...groups.values()].map((group: any) => {
-    const values = [...group.dailyValues.values()];
-    const amount = Math.round(values.reduce((s: number, v: number) => s + v, 0) * 100) / 100;
-    const validDays = group.dailyValues.size;
-    const prorata = validDays / group.month_days;
-    const rateValues = [...group.rateValues];
-    const effectiveRate = rateValues.length === 1
-      ? rateValues[0]
-      : Math.round((prorata > 0 ? amount / prorata : 0) * 100) / 100;
-    const contractNumbers = [...group.contracts].join(", ");
-    const modalitiesList = [...group.modalities].filter(Boolean);
-    const modalityLabel = modalitiesList.length > 1
-      ? `${modalitiesList[0]} +${modalitiesList.length - 1}`
-      : modalitiesList[0] || "Assessoria";
-
-    return {
-      coach_id: group.coach_id,
-      source_type: group.source_type,
-      contract_id: group.contract_id,
-      description: `${group.descriptionBase} — ${modalityLabel} (${contractNumbers})`,
-      amount,
-      valid_days: validDays,
-      month_days: group.month_days,
-      prorata_factor: prorata,
-      rate_applied: effectiveRate,
-      tier_applied: group.tier_applied,
-      base_value: effectiveRate,
-      leadership_bonus: group.source_type === "athlete_repasse" ? 0 : effectiveRate,
-    };
-  }).filter((item: any) => item.valid_days > 0 && item.amount > 0);
 }
 
 Deno.serve(async (req: Request) => {
@@ -212,31 +114,24 @@ Deno.serve(async (req: Request) => {
       }, 409);
     }
 
-    const monthStart = new Date(competence + "T00:00:00Z");
-    const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
-    const monthEndExclusive = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
-    const monthDays = monthEnd.getUTCDate();
+    const { monthStart, monthEndExclusive, monthDays } = competenceBounds(competence);
 
-    // Fetch tudo (inclui plan_snapshot pra preservar histórico)
-    const [contractsRes, plansRes, modalitiesRes, coachesRes, customersRes, leavesRes, ratesRes, tiersRes] = await Promise.all([
-      supabase.from("assessment_contracts").select("*"),
-      supabase.from("assessment_plans").select("*"),
-      supabase.from("assessment_modalities").select("*"),
-      supabase.from("assessment_coaches").select("*"),
-      supabase.from("presale_customers").select("id, full_name"),
-      supabase.from("assessment_leaves").select("*"),
-      supabase.from("payout_role_modality_rates").select("*"),
-      supabase.from("payout_growth_tiers").select("*"),
-    ]);
+    // Fetch tudo (inclui plan_snapshot e os históricos pra preservar o que valia em cada dia)
+    const [contracts, plans, modalities, coaches, customers, leaves, rates, tierRows, planHistory, coachHistory] =
+      await Promise.all([
+        fetchAllRows(supabase, "assessment_contracts", "*"),
+        fetchAllRows(supabase, "assessment_plans", "*"),
+        fetchAllRows(supabase, "assessment_modalities", "*"),
+        fetchAllRows(supabase, "assessment_coaches", "*"),
+        fetchAllRows(supabase, "presale_customers", "id, full_name"),
+        fetchAllRows(supabase, "assessment_leaves", "*"),
+        fetchAllRows(supabase, "payout_role_modality_rates", "*"),
+        fetchAllRows(supabase, "payout_growth_tiers", "*"),
+        fetchAllRows(supabase, "assessment_contract_plan_history", "id, contract_id, plan_id, plan_snapshot, valid_from"),
+        fetchAllRows(supabase, "assessment_contract_coach_history", "id, contract_id, coach_id, started_at, ended_at, created_at"),
+      ]);
 
-    const contracts = contractsRes.data || [];
-    const plans = plansRes.data || [];
-    const modalities = modalitiesRes.data || [];
-    const coaches = coachesRes.data || [];
-    const customers = customersRes.data || [];
-    const leaves = leavesRes.data || [];
-    const rates = ratesRes.data || [];
-    const tiers = (tiersRes.data || []).sort((a: any, b: any) => b.min_athletes - a.min_athletes);
+    const tiers = tierRows.sort((a: any, b: any) => b.min_athletes - a.min_athletes);
     const customersById = new Map(customers.map((c: any) => [c.id, c]));
 
     // Contrato tem vigência (dias) dentro da competência?
@@ -277,56 +172,12 @@ Deno.serve(async (req: Request) => {
       snapshot_at:           new Date().toISOString(),
     } : null;
 
-    // Agrupa as contribuições de repasse de uma lista de contratos (athlete + liderança + co-liderança).
-    const buildGroupedItems = (contractList: any[]) => {
-      const groups = new Map<string, any>();
-      for (const contract of contractList) {
-        const dayKeys = activeDayKeys(contract, leaves, monthStart, monthEndExclusive);
-        if (dayKeys.length <= 0) continue;
-
-        const coach = coaches.find((c: any) => c.id === contract.coach_id);
-        if (!coach) continue;
-
-        const modalityId = contract.plan_snapshot?.modality_id
-          || plans.find((p: any) => p.id === contract.plan_id)?.modality_id;
-        const modality = modalities.find((m: any) => m.id === modalityId);
-        if (!modality) continue;
-
-        const rate = rates.find((r: any) => r.role === coach.role && r.modality_id === modality.id);
-        if (!rate) continue;
-
-        const rateValue = Number(rate.rate) || 0;
-        const tierIncrement = Number(tier?.increment_per_athlete || 0);
-        const baseRate = rateValue + tierIncrement;
-        const studentName = customersById.get(contract.customer_id)?.full_name || contract.contract_number || "Aluno";
-
-        addContribution(groups, `athlete_repasse:${coach.id}:${contract.customer_id || contract.id}`, {
-          coach_id: coach.id, source_type: "athlete_repasse", contract,
-          descriptionBase: studentName, modalityName: modality.name, dayKeys, monthDays,
-          dailyAmount: baseRate / monthDays, rateApplied: baseRate, tierSnapshot,
-        });
-
-        const leadershipBonus = Number(tier?.leadership_bonus || 0);
-        if (coach.leader_id && leadershipBonus > 0) {
-          addContribution(groups, `direct_leadership:${coach.leader_id}:${coach.id}:${contract.customer_id || contract.id}`, {
-            coach_id: coach.leader_id, source_type: "direct_leadership", contract,
-            descriptionBase: `Liderança sobre ${coach.name} — ${studentName}`, modalityName: modality.name, dayKeys, monthDays,
-            dailyAmount: leadershipBonus / monthDays, rateApplied: leadershipBonus, tierSnapshot,
-          });
-        }
-
-        const coLeadershipBonus = Number(tier?.co_leadership_bonus || 0);
-        for (const coLeaderId of (coach.co_leader_ids || [])) {
-          if (coLeadershipBonus > 0) {
-            addContribution(groups, `co_leadership:${coLeaderId}:${coach.id}:${contract.customer_id || contract.id}`, {
-              coach_id: coLeaderId, source_type: "co_leadership", contract,
-              descriptionBase: `Co-liderança sobre ${coach.name} — ${studentName}`, modalityName: modality.name, dayKeys, monthDays,
-              dailyAmount: coLeadershipBonus / monthDays, rateApplied: coLeadershipBonus, tierSnapshot,
-            });
-          }
-        }
-      }
-      return finalizeGroups(groups);
+    const closingContext: ClosingContext = {
+      monthStart, monthEndExclusive, monthDays,
+      leaves, coaches, plans, modalities, rates,
+      tier, tierSnapshot, customersById,
+      planHistoryByContract: groupByContract(planHistory),
+      coachHistoryByContract: groupByContract(coachHistory),
     };
 
     // Cria (ou reusa, em recálculo) o fechamento da competência.
@@ -356,21 +207,21 @@ Deno.serve(async (req: Request) => {
     }
 
     // Itens do mês corrente (pagos) e pendências (não pagos).
-    const currentItems = buildGroupedItems(paidContracts)
+    const currentItems = buildGroupedItems(paidContracts, closingContext)
       .map((it: any) => ({ ...it, closing_id: closing.id, reference_competence: competence }));
 
-    const pendingRows = buildGroupedItems(unpaidContracts)
-      .map((it: any) => ({ ...it, reference_competence: competence, status: "open", detected_in_closing_id: closing.id }));
+    const pendingRows = mergePendingCollisions(buildGroupedItems(unpaidContracts, closingContext)
+      .map((it: any) => ({ ...it, reference_competence: competence, status: "open", detected_in_closing_id: closing.id })));
 
     // Resgata pendências de meses anteriores cujo contrato já foi pago.
-    const { data: openPendings } = await supabase.from("payout_pending_repasse")
-      .select("*").eq("status", "open").lt("reference_competence", competence);
+    const openPendings = await fetchAllRows(supabase, "payout_pending_repasse", "*",
+      (query) => query.eq("status", "open").lt("reference_competence", competence));
     const paidContractIds = new Set(
       contracts.filter((c: any) => c.payment_status === "paid").map((c: any) => c.id)
     );
     const carriedItems: any[] = [];
     const resolvedIds: string[] = [];
-    for (const pend of (openPendings || [])) {
+    for (const pend of openPendings) {
       if (!paidContractIds.has(pend.contract_id)) continue;
       carriedItems.push({
         closing_id:  closing.id,
@@ -382,6 +233,7 @@ Deno.serve(async (req: Request) => {
         valid_days:  pend.valid_days, month_days: pend.month_days, prorata_factor: pend.prorata_factor,
         rate_applied: pend.rate_applied, tier_applied: pend.tier_applied,
         base_value: pend.base_value, leadership_bonus: pend.leadership_bonus,
+        segments: pend.segments ?? null,
         reference_competence: pend.reference_competence, // mês original (carimbo do resgate)
       });
       resolvedIds.push(pend.id);
