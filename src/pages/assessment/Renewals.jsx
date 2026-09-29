@@ -641,7 +641,7 @@ export default function Renewals() {
       contract,
       parent,
       customerName: customers[contract.customer_id]?.full_name || '',
-      initialChoice,
+      initialChoice: parent.status === 'cancelled' ? 'parent_cancelled' : initialChoice,
     });
   }, [customers]);
 

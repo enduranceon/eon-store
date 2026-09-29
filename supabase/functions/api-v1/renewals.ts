@@ -23,6 +23,7 @@ const RENEWAL_REASON_TEXT: Record<RenewalReasonCode, string> = {
   customer_declined: "Atleta decidiu não renovar",
   duplicate: "Renovação criada em duplicidade",
   created_in_error: "Renovação criada por engano",
+  parent_cancelled: "Contrato anterior foi cancelado",
 };
 const BODY_KEYS = new Set([
   "resolution",
@@ -40,7 +41,8 @@ type RenewalResolution = "non_renewal" | "discard";
 type RenewalReasonCode =
   | "customer_declined"
   | "duplicate"
-  | "created_in_error";
+  | "created_in_error"
+  | "parent_cancelled";
 
 interface RenewalResolutionBody {
   resolution: RenewalResolution;
@@ -214,7 +216,8 @@ function parseResolutionBody(
   const resolutionMatchesReason =
     (resolution === "non_renewal" && reasonCode === "customer_declined") ||
     (resolution === "discard" &&
-      (reasonCode === "duplicate" || reasonCode === "created_in_error"));
+      (reasonCode === "duplicate" || reasonCode === "created_in_error" ||
+        reasonCode === "parent_cancelled"));
   const canonicalReason = typeof reasonCode === "string" &&
       reasonCode in RENEWAL_REASON_TEXT
     ? RENEWAL_REASON_TEXT[reasonCode as RenewalReasonCode]
