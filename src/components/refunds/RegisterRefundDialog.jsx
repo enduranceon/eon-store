@@ -65,7 +65,8 @@ function installmentLabel(installment) {
 export default function RegisterRefundDialog({ refund, onClose, onSaved }) {
   const calculated = Number(refund.calculated_amount ?? refund.amount) || 0;
   const [method, setMethod] = useState('pix');
-  const [date, setDate] = useState(todayLocalStr());
+  // Em branco de propósito: a data define quais parcelas já tinham caído.
+  const [date, setDate] = useState('');
   const [amount, setAmount] = useState(calculated.toFixed(2));
   const [notes, setNotes] = useState('');
   const [installments, setInstallments] = useState(null);
@@ -172,9 +173,16 @@ export default function RegisterRefundDialog({ refund, onClose, onSaved }) {
                 className="mt-1"
                 max={todayLocalStr()}
                 value={date}
-                onChange={event => setDate(event.target.value)}
+                onChange={event => {
+                  setDate(event.target.value);
+                  // A marcação de "já tinha caído" volta a seguir a nova data.
+                  setCreditedOverrides({});
+                }}
                 disabled={saving}
               />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                O dia em que o dinheiro voltou para o aluno (no Asaas, a data em “Estorno”).
+              </p>
             </div>
             <div>
               <Label>Valor devolvido (R$) *</Label>
@@ -201,10 +209,14 @@ export default function RegisterRefundDialog({ refund, onClose, onSaved }) {
               <div className="bg-blue-50 border-b border-blue-200 px-3 py-2">
                 <p className="text-xs font-semibold text-blue-900">Quanto saiu de cada parcela</p>
                 <p className="text-[11px] text-blue-800 mt-0.5">
-                  Copie o que o Asaas mostra em “Estorno” de cada parcela. Marque “já tinha caído” se a parcela já estava na sua conta quando você estornou (no Asaas: “Recebida”).
+                  Copie o que o Asaas mostra em “Estorno” de cada parcela. “Já tinha caído” vem marcado pela data de crédito de cada parcela; mude só se ela caiu em outro dia.
                 </p>
               </div>
-              {loadError ? (
+              {!date ? (
+                <p className="px-3 py-3 text-sm text-amber-800 bg-amber-50">
+                  Escolha a data do estorno primeiro: ela mostra quais parcelas já tinham caído na conta.
+                </p>
+              ) : loadError ? (
                 <p className="px-3 py-3 text-sm text-red-700 flex items-center gap-1.5">
                   <AlertCircle className="w-4 h-4" /> {loadError}
                 </p>
@@ -261,7 +273,7 @@ export default function RegisterRefundDialog({ refund, onClose, onSaved }) {
                   ))}
                 </div>
               )}
-              {installments?.length > 0 && (
+              {date && installments?.length > 0 && (
                 <div className={`px-3 py-2 text-xs flex items-center justify-between border-t ${
                   split.complete ? 'bg-green-50 text-green-800' : 'bg-gray-50 text-gray-700'
                 }`}>
