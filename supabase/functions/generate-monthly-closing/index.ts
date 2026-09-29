@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
 import {
+  buildClosingGroups,
   buildGroupedItems,
   type ClosingContext,
   competenceBounds,
@@ -24,6 +25,9 @@ import {
 //
 // O valor de cada dia segue o plano e o treinador que valiam naquele dia
 // (históricos de plano e de treinador do contrato); ver calculation.ts.
+// Mudança de plano com cobrança em aberto: o contrato pago recebe pela taxa do
+// plano anterior e a diferença vira pendência ligada ao pedido
+// (plan_change_id), resgatada quando o pedido for pago.
 //
 // ORDEM DO HANDLER (não reordenar): OPTIONS -> método -> requireAdmin -> corpo.
 // O preflight do navegador não manda Authorization; se o guard vier antes, ele
@@ -117,7 +121,10 @@ Deno.serve(async (req: Request) => {
     const { monthStart, monthEndExclusive, monthDays } = competenceBounds(competence);
 
     // Fetch tudo (inclui plan_snapshot e os históricos pra preservar o que valia em cada dia)
-    const [contracts, plans, modalities, coaches, customers, leaves, rates, tierRows, planHistory, coachHistory] =
+    const [
+      contracts, plans, modalities, coaches, customers, leaves, rates, tierRows,
+      planHistory, coachHistory, planChanges,
+    ] =
       await Promise.all([
         fetchAllRows(supabase, "assessment_contracts", "*"),
         fetchAllRows(supabase, "assessment_plans", "*"),
@@ -127,8 +134,13 @@ Deno.serve(async (req: Request) => {
         fetchAllRows(supabase, "assessment_leaves", "*"),
         fetchAllRows(supabase, "payout_role_modality_rates", "*"),
         fetchAllRows(supabase, "payout_growth_tiers", "*"),
-        fetchAllRows(supabase, "assessment_contract_plan_history", "id, contract_id, plan_id, plan_snapshot, valid_from"),
+        fetchAllRows(
+          supabase,
+          "assessment_contract_plan_history",
+          "id, contract_id, plan_id, plan_snapshot, valid_from, change_type, plan_change_id",
+        ),
         fetchAllRows(supabase, "assessment_contract_coach_history", "id, contract_id, coach_id, started_at, ended_at, created_at"),
+        fetchAllRows(supabase, "assessment_contract_plan_changes", "id, contract_id, status, payment_status"),
       ]);
 
     const tiers = tierRows.sort((a: any, b: any) => b.min_athletes - a.min_athletes);
@@ -178,6 +190,7 @@ Deno.serve(async (req: Request) => {
       tier, tierSnapshot, customersById,
       planHistoryByContract: groupByContract(planHistory),
       coachHistoryByContract: groupByContract(coachHistory),
+      planChangesById: new Map(planChanges.map((change: any) => [change.id, change])),
     };
 
     // Cria (ou reusa, em recálculo) o fechamento da competência.
@@ -206,12 +219,16 @@ Deno.serve(async (req: Request) => {
       closing = newClosing;
     }
 
-    // Itens do mês corrente (pagos) e pendências (não pagos).
-    const currentItems = buildGroupedItems(paidContracts, closingContext)
+    // Itens do mês corrente (pagos) e pendências (não pagos e diferenças de
+    // mudanças de plano ainda não pagas).
+    const paidGroups = buildClosingGroups(paidContracts, closingContext, true);
+    const currentItems = paidGroups.items
       .map((it: any) => ({ ...it, closing_id: closing.id, reference_competence: competence }));
 
-    const pendingRows = mergePendingCollisions(buildGroupedItems(unpaidContracts, closingContext)
-      .map((it: any) => ({ ...it, reference_competence: competence, status: "open", detected_in_closing_id: closing.id })));
+    const pendingRows = mergePendingCollisions(
+      [...buildGroupedItems(unpaidContracts, closingContext), ...paidGroups.differences]
+        .map((it: any) => ({ ...it, reference_competence: competence, status: "open", detected_in_closing_id: closing.id })),
+    );
 
     // Resgata pendências de meses anteriores cujo contrato já foi pago.
     const openPendings = await fetchAllRows(supabase, "payout_pending_repasse", "*",
@@ -219,10 +236,18 @@ Deno.serve(async (req: Request) => {
     const paidContractIds = new Set(
       contracts.filter((c: any) => c.payment_status === "paid").map((c: any) => c.id)
     );
+    const settledPlanChangeIds = new Set(
+      planChanges
+        .filter((change: any) => ["paid", "not_required"].includes(change.payment_status))
+        .map((change: any) => change.id),
+    );
     const carriedItems: any[] = [];
     const resolvedIds: string[] = [];
     for (const pend of openPendings) {
-      if (!paidContractIds.has(pend.contract_id)) continue;
+      const releasable = pend.plan_change_id
+        ? settledPlanChangeIds.has(pend.plan_change_id)
+        : paidContractIds.has(pend.contract_id);
+      if (!releasable) continue;
       carriedItems.push({
         closing_id:  closing.id,
         coach_id:    pend.coach_id,

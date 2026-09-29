@@ -11,6 +11,8 @@ export default function ExternalChargeDialog({
   saving,
   onSave,
   preventOutsideClose = false,
+  methods,
+  summary = null,
 }) {
   const close = () => {
     if (!saving) onCancel();
@@ -38,6 +40,8 @@ export default function ExternalChargeDialog({
           saving={saving}
           onSave={onSave}
           onCancel={close}
+          methods={methods}
+          summary={summary}
         />
       </DialogContent>
     </Dialog>

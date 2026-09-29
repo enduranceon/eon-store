@@ -292,6 +292,11 @@ Deno.test("Automatic transitions accept no client-controlled dates", async () =>
     Object.keys(calls[0].args).join() === "p_actor_id",
     "extra transition input forwarded",
   );
+  assert(
+    calls[1]?.name === "apply_due_assessment_plan_changes" &&
+      Object.keys(calls[1].args).join() === "p_actor_id",
+    "due plan changes are not applied with the transitions",
+  );
 });
 
 Deno.test("Discount update validates concurrency and money", async () => {

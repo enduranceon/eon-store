@@ -15,13 +15,14 @@ const CENT = 0.01;
 //   methodGroups = [[groupName, [method, ...]], ...] de loadActivePaymentMethods()
 //   saving       = bool
 //   onSave, onCancel
+//   lockedValue  = bool: o valor vem do pedido e não pode ser editado
 //
 // `installments` fica no próprio `form` (parcela: { number, total, date, value }) para
 // que o `onSave` do componente pai (que lê o form direto) já mande a projeção editada
 // pro backend. Por padrão é recalculada automaticamente a cada troca de método/data/valor;
 // assim que o usuário edita uma parcela na mão, para de recalcular sozinho até ele clicar
 // em "Recalcular automaticamente".
-export default function ManualPaymentForm({ form, setForm, methodGroups, saving, onSave, onCancel }) {
+export default function ManualPaymentForm({ form, setForm, methodGroups, saving, onSave, onCancel, lockedValue = false }) {
   const allMethods = useMemo(() => methodGroups.flatMap(([, list]) => list), [methodGroups]);
   const selected   = useMemo(() => allMethods.find(m => m.id === form.method_id) || null, [allMethods, form.method_id]);
 
@@ -92,6 +93,7 @@ export default function ManualPaymentForm({ form, setForm, methodGroups, saving,
           <Label>Valor recebido (R$) *</Label>
           <Input type="number" step="0.01" className="mt-1"
             value={form.value}
+            readOnly={lockedValue}
             onChange={e => setForm(f => ({ ...f, value: e.target.value }))} />
         </div>
         <div>
