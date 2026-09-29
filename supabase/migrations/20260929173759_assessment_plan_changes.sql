@@ -2612,6 +2612,12 @@ GRANT SELECT ON public.assessment_contract_plan_changes TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE
   ON public.assessment_contract_plan_changes TO service_role;
 
+-- As funções SECURITY INVOKER precisam das permissões explícitas também em
+-- instalações limpas: o pagamento manual da diferença grava e desfaz as
+-- parcelas, e desfazer confere os fechamentos de repasse.
+GRANT INSERT, DELETE ON public.asaas_payments TO service_role;
+GRANT SELECT ON public.payout_monthly_closings TO service_role;
+
 REVOKE ALL ON FUNCTION eon_private.first_open_payout_day() FROM PUBLIC;
 REVOKE ALL ON FUNCTION eon_private.contract_plan_row_on(uuid, date, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION eon_private.contract_coach_on(uuid, date) FROM PUBLIC;
