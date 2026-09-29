@@ -52,6 +52,7 @@ import { loadActivePaymentMethods, createManualInstallments, adjustManualInstall
 import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { isOpenPlanChangeCharge, planChangeUnusedValue } from '@/lib/assessment-plan-change';
+import { refundMethodLabel } from '@/lib/contract-refund';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
@@ -142,6 +143,7 @@ const EVENT_META = {
   sale_replaced:            { icon: RotateCcw,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Venda substituída' },
   cancelled:                { icon: Ban,        color: 'text-red-600',    bg: 'bg-red-50',    label: 'Cancelado' },
   refund_completed:         { icon: HandCoins,  color: 'text-purple-600', bg: 'bg-purple-50', label: 'Estorno realizado' },
+  refund_reopened:          { icon: RotateCcw,  color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Registro do estorno desfeito' },
   dates_changed:            { icon: Calendar,   color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Datas alteradas' },
   enrollment_activated:     { icon: Check,      color: 'text-green-600',  bg: 'bg-green-50',  label: 'Adesão confirmada' },
   renewal_activated:        { icon: Check,      color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovação ativada' },
@@ -204,6 +206,17 @@ function formatEventSummary(ev) {
       return `Estava agendado para ${formatDate(p.previous_scheduled_cancellation_date)}`;
     case 'dates_changed':
       return `${formatDate(p.old_start)} → ${formatDate(p.new_start)} · fim: ${formatDate(p.new_end)}`;
+    case 'refund_completed':
+      return [
+        p.method ? refundMethodLabel(p.method) : null,
+        p.refund_amount != null ? formatCurrency(p.refund_amount) : null,
+        p.refund_date ? formatDate(p.refund_date) : null,
+        Array.isArray(p.allocations) && p.allocations.length
+          ? `${p.allocations.length} parcela${p.allocations.length > 1 ? 's' : ''}`
+          : null,
+      ].filter(Boolean).join(' · ');
+    case 'refund_reopened':
+      return `Volta para pendente: ${formatCurrency(p.refund_amount)}`;
     case 'plan_change_created':
       return `${p.from_plan?.name || '—'} → ${p.to_plan?.name || '—'} · a partir de ${formatDate(p.effective_date)} · `
         + (Number(p.amount) > 0 ? `diferença ${formatCurrency(p.amount)}` : 'sem cobrança');

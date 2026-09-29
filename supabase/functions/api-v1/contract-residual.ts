@@ -30,6 +30,36 @@ function nullableText(value: unknown, max: number): boolean {
     (typeof value === "string" && value.trim().length <= max);
 }
 
+const REFUND_METHODS = new Set([
+  "pix",
+  "bank_transfer",
+  "cash",
+  "card_asaas",
+  "card_machine",
+  "other",
+]);
+const CARD_REFUND_METHODS = new Set(["card_asaas", "card_machine"]);
+
+// Estorno no cartão: quanto saiu de cada parcela e se ela já tinha caído na
+// conta. As regras de valor ficam no banco.
+function validRefundAllocations(value: unknown, method: string): boolean {
+  if (!CARD_REFUND_METHODS.has(method)) return value === null;
+  return Array.isArray(value) && value.length > 0 && value.length <= 60 &&
+    value.every((item) =>
+      item && typeof item === "object" && !Array.isArray(item) &&
+      exactKeys(item as Record<string, unknown>, [
+        "payment_id",
+        "value",
+        "already_credited",
+      ]) &&
+      typeof (item as Record<string, unknown>).payment_id === "string" &&
+      UUID_PATTERN.test((item as Record<string, unknown>).payment_id as string) &&
+      isMoney((item as Record<string, unknown>).value) &&
+      ((item as Record<string, unknown>).value as number) > 0 &&
+      typeof (item as Record<string, unknown>).already_credited === "boolean"
+    );
+}
+
 function exactKeys(body: Record<string, unknown>, allowed: string[]): boolean {
   const keys = Object.keys(body);
   return keys.length === allowed.length &&
@@ -253,7 +283,7 @@ export async function handleContractResidualRequest(
   }
 
   const match = path.match(
-    /^\/orders\/contract\/([^/]+)\/(discount|refund-completion)$/,
+    /^\/orders\/contract\/([^/]+)\/(discount|refund-completion|refund-reopening)$/,
   );
   if (!match) return null;
   const [, contractId, action] = match;
@@ -309,9 +339,44 @@ export async function handleContractResidualRequest(
     return jsonResponse({ data });
   }
 
+  if (action === "refund-reopening") {
+    if (
+      !exactKeys(body, ["reason", "expected_updated_at"]) ||
+      typeof body.reason !== "string" || !body.reason.trim() ||
+      body.reason.length > 500
+    ) {
+      return jsonResponse({
+        error: "Informe o motivo",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc(
+      "reopen_assessment_contract_refund",
+      {
+        p_contract_id: contractId,
+        p_reason: body.reason,
+        p_expected_updated_at: body.expected_updated_at,
+        p_actor_id: actorId,
+      },
+    );
+    if (error) return databaseError(error, "Não foi possível desfazer o estorno");
+    return jsonResponse({ data });
+  }
+
   if (
-    !exactKeys(body, ["refund_date", "refund_notes", "expected_updated_at"]) ||
-    !isCalendarDate(body.refund_date) || !nullableText(body.refund_notes, 1000)
+    !exactKeys(body, [
+      "refund_date",
+      "method",
+      "amount",
+      "allocations",
+      "notes",
+      "expected_updated_at",
+    ]) ||
+    !isCalendarDate(body.refund_date) ||
+    typeof body.method !== "string" || !REFUND_METHODS.has(body.method) ||
+    !isMoney(body.amount) || body.amount <= 0 ||
+    !validRefundAllocations(body.allocations, body.method) ||
+    !nullableText(body.notes, 1000)
   ) {
     return jsonResponse({
       error: "Dados do estorno inválidos",
@@ -319,16 +384,19 @@ export async function handleContractResidualRequest(
     }, 400);
   }
   const { data, error } = await supabase.rpc(
-    "complete_assessment_contract_refund",
+    "register_assessment_contract_refund",
     {
       p_contract_id: contractId,
       p_refund_date: body.refund_date,
-      p_refund_notes: body.refund_notes,
+      p_method: body.method,
+      p_amount: body.amount,
+      p_allocations: body.allocations,
+      p_notes: body.notes,
       p_expected_updated_at: body.expected_updated_at,
       p_actor_id: actorId,
     },
   );
-  if (error) return databaseError(error, "Não foi possível concluir o estorno");
+  if (error) return databaseError(error, "Não foi possível registrar o estorno");
   return jsonResponse({ data });
 }
 

@@ -336,25 +336,123 @@ Deno.test("Discount update validates concurrency and money", async () => {
   );
 });
 
-Deno.test("Refund completion validates the date and optimistic snapshot", async () => {
+Deno.test("Refund registration sends the method and, by card, each installment", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const path = `/orders/contract/${CONTRACT_ID}/refund-completion`;
-  const response = await handleContractResidualRequest(
+  const pix = await handleContractResidualRequest(
     request(path, "POST", {
-      refund_date: "2026-07-27",
-      refund_notes: "Comprovante conferido",
+      refund_date: "2026-08-30",
+      method: "pix",
+      amount: 637.5,
+      allocations: null,
+      notes: "PIX devolvido",
       expected_updated_at: UPDATED_AT,
     }),
     path,
     client(calls),
     ACTOR_ID,
   );
-  assert(response?.status === 200, "valid refund completion failed");
-  assert(
-    calls[0].name === "complete_assessment_contract_refund",
-    "wrong refund RPC",
-  );
+  assert(pix?.status === 200, "valid PIX refund failed");
+  assert(calls[0].name === "register_assessment_contract_refund", "wrong refund RPC");
+  assert(calls[0].args.p_method === "pix", "method changed");
+  assert(calls[0].args.p_allocations === null, "PIX refund sent installments");
   assert(calls[0].args.p_actor_id === ACTOR_ID, "actor changed");
+
+  const card = await handleContractResidualRequest(
+    request(path, "POST", {
+      refund_date: "2026-08-03",
+      method: "card_asaas",
+      amount: 603.87,
+      allocations: [
+        { payment_id: PLAN_ID, value: 373.3, already_credited: true },
+        { payment_id: COACH_ID, value: 230.57, already_credited: false },
+      ],
+      notes: null,
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(card?.status === 200, "valid card refund failed");
+  const allocations = calls[1].args.p_allocations as Array<Record<string, unknown>>;
+  assert(allocations.length === 2, "installments were not forwarded");
+  assert(allocations[1].already_credited === false, "credited flag changed");
+});
+
+Deno.test("Refund registration rejects malformed input before the database", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = `/orders/contract/${CONTRACT_ID}/refund-completion`;
+  const base = {
+    refund_date: "2026-08-03",
+    method: "card_asaas",
+    amount: 603.87,
+    allocations: [{ payment_id: PLAN_ID, value: 603.87, already_credited: false }],
+    notes: null,
+    expected_updated_at: UPDATED_AT,
+  };
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["card without installments", { ...base, allocations: null }],
+    ["card with empty installments", { ...base, allocations: [] }],
+    ["PIX with installments", { ...base, method: "pix" }],
+    ["unknown method", { ...base, method: "boleto" }],
+    ["zero amount", { ...base, amount: 0 }],
+    ["installment with extra field", {
+      ...base,
+      allocations: [{ payment_id: PLAN_ID, value: 1, already_credited: false, note: "x" }],
+    }],
+    ["installment with invalid id", {
+      ...base,
+      allocations: [{ payment_id: "parcela-1", value: 1, already_credited: false }],
+    }],
+    ["invalid date", { ...base, refund_date: "2026-02-30" }],
+    ["legacy body", {
+      refund_date: "2026-08-03",
+      refund_notes: "ok",
+      expected_updated_at: UPDATED_AT,
+    }],
+  ];
+  for (const [label, body] of cases) {
+    const response = await handleContractResidualRequest(
+      request(path, "POST", body),
+      path,
+      client(calls),
+      ACTOR_ID,
+    );
+    assert(response?.status === 400, `${label} was accepted`);
+  }
+  assert(calls.length === 0, "database was called for invalid refunds");
+});
+
+Deno.test("Undoing a refund registration needs a reason", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = `/orders/contract/${CONTRACT_ID}/refund-reopening`;
+  const invalid = await handleContractResidualRequest(
+    request(path, "POST", { reason: "  ", expected_updated_at: UPDATED_AT }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(invalid?.status === 400, "blank reason was accepted");
+  const valid = await handleContractResidualRequest(
+    request(path, "POST", {
+      reason: "Parcelas registradas erradas",
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(valid?.status === 200, "valid undo failed");
+  assert(calls.length === 1, "database called for the blank reason");
+  assert(calls[0].name === "reopen_assessment_contract_refund", "wrong undo RPC");
+  const wrongMethod = await handleContractResidualRequest(
+    new Request(`https://example.test/api-v1${path}`, { method: "GET" }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(wrongMethod?.status === 405, "GET was accepted");
 });
 
 Deno.test("Public enrollment rejects extra fields and malformed contacts", async () => {
