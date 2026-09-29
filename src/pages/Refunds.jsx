@@ -13,9 +13,11 @@ import {
 } from '@/components/ui/dialog';
 import {
   listRefunds, uploadRefundReceipt, getRefundReceiptUrl, deleteRefundReceipt,
-  completeAssessmentContractRefund,
+  reopenAssessmentContractRefund,
 } from '@/api/client';
-import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import RegisterRefundDialog from '@/components/refunds/RegisterRefundDialog';
+import { refundMethodLabel } from '@/lib/contract-refund';
+import { formatCurrency, formatDate } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { invalidatePageCacheByTag } from '@/lib/page-cache';
 import { toast } from 'sonner';
@@ -55,8 +57,9 @@ export default function Refunds() {
   const [search, setSearch] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [doneModal, setDoneModal] = useState(null);
-  const [doneForm, setDoneForm] = useState({ date: todayLocalStr(), notes: '' });
+  const [registerFor, setRegisterFor] = useState(null);
+  const [undoFor, setUndoFor] = useState(null);
+  const [undoReason, setUndoReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [busyReceipt, setBusyReceipt] = useState(null);
   const fileInputs = useRef({});
@@ -85,22 +88,29 @@ export default function Refunds() {
     };
   }, [refunds, filtered]);
 
-  const markDone = async () => {
-    if (!doneForm.date) return toast.error('Informe a data do estorno');
+  const onRegistered = async () => {
+    setRegisterFor(null);
+    invalidatePageCacheByTag('assessment_contracts');
+    await refresh({ force: true });
+  };
+
+  const undoRegistration = async () => {
+    const reason = undoReason.trim();
+    if (!reason) return toast.error('Informe o motivo');
     setSaving(true);
     try {
-      await completeAssessmentContractRefund(doneModal.source_id, {
-        refundDate: doneForm.date,
-        refundNotes: doneForm.notes || null,
-        expectedUpdatedAt: doneModal.updated_at,
+      await reopenAssessmentContractRefund(undoFor.source_id, {
+        reason,
+        expectedUpdatedAt: undoFor.updated_at,
       });
-      toast.success('Estorno marcado como realizado.');
-      setDoneModal(null);
-      setDoneForm({ date: todayLocalStr(), notes: '' });
+      toast.success('Registro desfeito. O estorno voltou para "A fazer".');
+      setUndoFor(null);
+      setUndoReason('');
       invalidatePageCacheByTag('assessment_contracts');
       await refresh({ force: true });
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
+    return undefined;
   };
 
   const pickFile = (row) => fileInputs.current[`${row.source_type}:${row.source_id}`]?.click();
@@ -249,6 +259,12 @@ export default function Refunds() {
                             ? `Estornado em ${formatDate(row.completed_on)}`
                             : `Pedido em ${formatDate(row.requested_on)}`}
                         </p>
+                        {row.status === 'done' && row.method && (
+                          <p className="text-xs text-gray-700">{refundMethodLabel(row.method)}</p>
+                        )}
+                        {row.calculated_amount != null && Number(row.calculated_amount) !== Number(row.amount) && (
+                          <p className="text-[11px] text-amber-700">calculado {formatCurrency(row.calculated_amount)}</p>
+                        )}
                       </div>
                     </div>
 
@@ -316,9 +332,19 @@ export default function Refunds() {
                           <Button
                             size="sm"
                             className="bg-green-600 hover:bg-green-700 text-white"
-                            onClick={() => { setDoneModal(row); setDoneForm({ date: todayLocalStr(), notes: '' }); }}
+                            onClick={() => setRegisterFor(row)}
                           >
-                            Marcar como feito
+                            Registrar estorno
+                          </Button>
+                        )}
+                        {row.status === 'done' && row.kind === 'manual' && row.source_type === 'assessment_contract' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-amber-700 hover:bg-amber-50"
+                            onClick={() => { setUndoReason(''); setUndoFor(row); }}
+                          >
+                            Desfazer registro
                           </Button>
                         )}
                       </div>
@@ -331,64 +357,46 @@ export default function Refunds() {
         </>
       )}
 
-      <Dialog open={!!doneModal} onOpenChange={open => !open && !saving && setDoneModal(null)}>
+      {registerFor && (
+        <RegisterRefundDialog
+          refund={registerFor}
+          onClose={() => setRegisterFor(null)}
+          onSaved={onRegistered}
+        />
+      )}
+
+      <Dialog open={!!undoFor} onOpenChange={open => !open && !saving && setUndoFor(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-green-700">
-              <CheckCircle2 className="w-5 h-5" /> Confirmar estorno
-            </DialogTitle>
+            <DialogTitle>Desfazer registro do estorno</DialogTitle>
           </DialogHeader>
-          {doneModal && (
+          {undoFor && (
             <div className="space-y-3">
-              <div className="bg-gray-50 border rounded-xl p-3 text-sm space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Contrato</span>
-                  <span className="font-mono font-semibold">{doneModal.reference}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Cliente</span>
-                  <span className="font-medium">{doneModal.customer_name}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Valor</span>
-                  <span className="font-bold text-green-700">{formatCurrency(doneModal.amount)}</span>
-                </div>
-              </div>
+              <p className="text-sm text-muted-foreground">
+                O estorno de {undoFor.reference} volta para "A fazer" com o valor calculado. A forma, a data e o que foi estornado em cada parcela são apagados; os comprovantes continuam anexados.
+              </p>
               <div>
-                <Label>Data do estorno</Label>
-                <Input
-                  type="date"
-                  className="mt-1"
-                  max={todayLocalStr()}
-                  value={doneForm.date}
-                  onChange={e => setDoneForm(f => ({ ...f, date: e.target.value }))}
-                />
-              </div>
-              <div>
-                <Label>Observação</Label>
+                <Label>Motivo *</Label>
                 <Textarea
                   rows={2}
                   className="mt-1"
-                  placeholder="Ex.: PIX devolvido, comprovante anexado"
-                  value={doneForm.notes}
-                  onChange={e => setDoneForm(f => ({ ...f, notes: e.target.value }))}
+                  maxLength={500}
+                  placeholder="Ex.: parcelas registradas erradas"
+                  value={undoReason}
+                  onChange={e => setUndoReason(e.target.value)}
+                  disabled={saving}
                 />
               </div>
-              {(doneModal.receipts || []).length === 0 && (
-                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  Este estorno ainda não tem comprovante anexado. Dá para marcar como feito assim mesmo e anexar depois.
-                </p>
-              )}
               <div className="flex gap-2 pt-1">
-                <Button variant="outline" className="flex-1" onClick={() => setDoneModal(null)} disabled={saving}>
+                <Button variant="outline" className="flex-1" onClick={() => setUndoFor(null)} disabled={saving}>
                   Voltar
                 </Button>
                 <Button
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                  onClick={markDone}
-                  disabled={saving}
+                  className="flex-1"
+                  onClick={undoRegistration}
+                  disabled={saving || !undoReason.trim()}
                 >
-                  {saving ? 'Salvando...' : 'Confirmar'}
+                  {saving ? 'Salvando...' : 'Desfazer registro'}
                 </Button>
               </div>
             </div>

@@ -799,9 +799,11 @@ export async function updateAssessmentContractDiscount(
   return response.data;
 }
 
-export async function completeAssessmentContractRefund(
+// Registra o estorno feito: forma, data, valor devolvido e, no cartão, quanto
+// saiu de cada parcela ({ payment_id, value, already_credited }).
+export async function registerAssessmentContractRefund(
   contractId,
-  { refundDate, refundNotes, expectedUpdatedAt },
+  { refundDate, method, amount, allocations = null, notes = null, expectedUpdatedAt },
   options = {},
 ) {
   const response = await apiRequest(
@@ -811,12 +813,36 @@ export async function completeAssessmentContractRefund(
       method: 'POST',
       body: {
         refund_date: refundDate,
-        refund_notes: refundNotes,
+        method,
+        amount,
+        allocations,
+        notes,
         expected_updated_at: expectedUpdatedAt,
       },
     },
   );
   invalidateAssessmentContractLifecycle();
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('financial_movements');
+  return response.data;
+}
+
+export async function reopenAssessmentContractRefund(
+  contractId,
+  { reason, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/refund-reopening`,
+    {
+      ...options,
+      method: 'POST',
+      body: { reason, expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  invalidatePageCacheByTag('asaas_payments');
+  invalidatePageCacheByTag('financial_movements');
   return response.data;
 }
 
