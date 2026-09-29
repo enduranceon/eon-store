@@ -17,6 +17,10 @@
 // No item do fechamento, os dias com a mesma taxa mensal formam um trecho:
 // valor = taxa ÷ dias do mês, somado dia a dia e arredondado em centavos. O
 // valor do item é a soma dos trechos, para a tela bater centavo a centavo.
+//
+// Mudança de plano ainda não paga (upgrade com cobrança em aberto): num
+// contrato pago, os dias do trecho novo entram pela taxa do plano anterior e
+// a diferença vira pendência ligada ao pedido, liberada quando ele for pago.
 
 export const DAY_MS = 86400000;
 
@@ -37,6 +41,7 @@ export interface ClosingContext {
   customersById: Map<string, Row>;
   planHistoryByContract: Map<string, Row[]>;
   coachHistoryByContract: Map<string, Row[]>;
+  planChangesById?: Map<string, Row>;
 }
 
 export interface PayoutSegment {
@@ -130,25 +135,60 @@ function dayOf(value: string) {
   return String(value).slice(0, 10);
 }
 
-// Plano de cada dia. Devolve { plan_id, plan_snapshot }.
+export interface PlanSource {
+  plan_id: string;
+  plan_snapshot: Row;
+  plan_change_id: string | null;
+  // Plano que valia antes do trecho de uma mudança (nulo fora de mudança).
+  base: { plan_id: string; plan_snapshot: Row } | null;
+}
+
+// Plano de cada dia. No mesmo dia, a linha de uma mudança vale por cima da
+// original.
 export function planSourceByDay(contract: Row, historyRows: Row[] | undefined) {
   const rows = (historyRows || [])
     .filter((row: Row) => row.plan_id && row.valid_from)
-    .sort((a: Row, b: Row) => dayOf(a.valid_from).localeCompare(dayOf(b.valid_from)));
+    .sort((a: Row, b: Row) =>
+      dayOf(a.valid_from).localeCompare(dayOf(b.valid_from)) ||
+      (a.change_type === "original" ? 0 : 1) - (b.change_type === "original" ? 0 : 1)
+    );
 
   if (rows.length <= 1) {
-    const own = { plan_id: contract.plan_id, plan_snapshot: contract.plan_snapshot };
+    const own: PlanSource = {
+      plan_id: contract.plan_id,
+      plan_snapshot: contract.plan_snapshot,
+      plan_change_id: null,
+      base: null,
+    };
     return (_dayKey: string) => own;
   }
 
-  return (dayKey: string) => {
-    let current = rows[0];
-    for (const row of rows) {
-      if (dayOf(row.valid_from) > dayKey) break;
-      current = row;
+  return (dayKey: string): PlanSource => {
+    let index = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (dayOf(rows[i].valid_from) > dayKey) break;
+      index = i;
     }
-    return { plan_id: current.plan_id, plan_snapshot: current.plan_snapshot };
+    const current = rows[index];
+    const previous = index > 0 ? rows[index - 1] : null;
+    return {
+      plan_id: current.plan_id,
+      plan_snapshot: current.plan_snapshot,
+      plan_change_id: current.plan_change_id || null,
+      base: current.plan_change_id && previous
+        ? { plan_id: previous.plan_id, plan_snapshot: previous.plan_snapshot }
+        : null,
+    };
   };
+}
+
+const OPEN_CHARGE_STATUSES = new Set(["awaiting_charge", "charge_sent"]);
+
+// Mudança com cobrança em aberto. Pedido desconhecido conta como pago.
+function isUnsettledPlanChange(ctx: ClosingContext, planChangeId: string | null) {
+  if (!planChangeId) return false;
+  const change = ctx.planChangesById?.get(planChangeId);
+  return Boolean(change && OPEN_CHARGE_STATUSES.has(change.payment_status));
 }
 
 // Ordem de registro das trocas de treinador. No mesmo instante, a linha já
@@ -190,17 +230,44 @@ function modalityIdOf(planSource: Row, plans: Row[]) {
     || plans.find((p: Row) => p.id === planSource.plan_id)?.modality_id;
 }
 
-// Dias do contrato agrupados por treinador e modalidade, na ordem do primeiro dia.
-export function contractSlices(contract: Row, dayKeys: string[], ctx: ClosingContext) {
+interface ContractSlice {
+  coachId: string;
+  modalityId: string;
+  // Mudança não paga: modalidade do plano novo, paga à parte quando o
+  // pedido for pago.
+  heldPlanChangeId: string | null;
+  heldModalityId: string | null;
+  dayKeys: string[];
+}
+
+// Dias do contrato agrupados por treinador e modalidade, na ordem do primeiro
+// dia. Com holdUnsettled, os dias de uma mudança não paga usam a modalidade do
+// plano anterior e guardam a do plano novo.
+export function contractSlices(
+  contract: Row,
+  dayKeys: string[],
+  ctx: ClosingContext,
+  holdUnsettled = false,
+) {
   const planOf = planSourceByDay(contract, ctx.planHistoryByContract.get(contract.id));
   const coachOf = coachIdByDay(contract, ctx.coachHistoryByContract.get(contract.id));
-  const slices = new Map<string, { coachId: string; modalityId: string; dayKeys: string[] }>();
+  const slices = new Map<string, ContractSlice>();
 
   for (const dayKey of dayKeys) {
     const coachId = coachOf(dayKey);
-    const modalityId = modalityIdOf(planOf(dayKey), ctx.plans);
-    const key = `${coachId}|${modalityId}`;
-    if (!slices.has(key)) slices.set(key, { coachId, modalityId, dayKeys: [] });
+    const source = planOf(dayKey);
+    let modalityId = modalityIdOf(source, ctx.plans);
+    let heldPlanChangeId: string | null = null;
+    let heldModalityId: string | null = null;
+    if (holdUnsettled && source.base && isUnsettledPlanChange(ctx, source.plan_change_id)) {
+      heldPlanChangeId = source.plan_change_id;
+      heldModalityId = modalityId;
+      modalityId = modalityIdOf(source.base, ctx.plans);
+    }
+    const key = `${coachId}|${modalityId}|${heldPlanChangeId}|${heldModalityId}`;
+    if (!slices.has(key)) {
+      slices.set(key, { coachId, modalityId, heldPlanChangeId, heldModalityId, dayKeys: [] });
+    }
     slices.get(key)!.dayKeys.push(dayKey);
   }
 
@@ -218,6 +285,7 @@ interface ContributionPayload {
   dailyAmount: number;
   rateApplied: number;
   tierSnapshot: Row | null;
+  planChangeId?: string | null;
 }
 
 function addContribution(groups: Map<string, Row>, key: string, payload: ContributionPayload) {
@@ -229,6 +297,7 @@ function addContribution(groups: Map<string, Row>, key: string, payload: Contrib
       descriptionBase: payload.descriptionBase,
       month_days: payload.monthDays,
       tier_applied: payload.tierSnapshot,
+      plan_change_id: payload.planChangeId ?? null,
       contracts: new Set<string>(),
       modalities: new Set<string>(),
       dailyValues: new Map<string, { daily: number; rate: number; modalityName: string }>(),
@@ -301,6 +370,7 @@ function finalizeGroups(groups: Map<string, Row>) {
       : modalitiesList[0] || "Assessoria";
 
     return {
+      ...(group.plan_change_id ? { plan_change_id: group.plan_change_id } : {}),
       coach_id: group.coach_id,
       source_type: group.source_type,
       contract_id: group.contract_id,
@@ -321,8 +391,15 @@ function finalizeGroups(groups: Map<string, Row>) {
 // Agrupa as contribuições de repasse de uma lista de contratos (atleta +
 // liderança + co-liderança).
 export function buildGroupedItems(contractList: Row[], ctx: ClosingContext) {
+  return buildClosingGroups(contractList, ctx, false).items;
+}
+
+// Com holdUnsettled (contratos pagos), devolve também as diferenças de
+// mudanças não pagas, que viram pendência ligada ao pedido (plan_change_id).
+export function buildClosingGroups(contractList: Row[], ctx: ClosingContext, holdUnsettled: boolean) {
   const { monthDays, tier, tierSnapshot } = ctx;
   const groups = new Map<string, Row>();
+  const differences = new Map<string, Row>();
 
   for (const contract of contractList) {
     const contractDayKeys = activeDayKeys(contract, ctx.leaves, ctx.monthStart, ctx.monthEndExclusive);
@@ -331,7 +408,7 @@ export function buildGroupedItems(contractList: Row[], ctx: ClosingContext) {
     const studentName = ctx.customersById.get(contract.customer_id)?.full_name
       || contract.contract_number || "Aluno";
 
-    for (const slice of contractSlices(contract, contractDayKeys, ctx)) {
+    for (const slice of contractSlices(contract, contractDayKeys, ctx, holdUnsettled)) {
       const dayKeys = slice.dayKeys;
 
       const coach = ctx.coaches.find((c: Row) => c.id === slice.coachId);
@@ -352,6 +429,27 @@ export function buildGroupedItems(contractList: Row[], ctx: ClosingContext) {
         descriptionBase: studentName, modalityName: modality.name, dayKeys, monthDays,
         dailyAmount: baseRate / monthDays, rateApplied: baseRate, tierSnapshot,
       });
+
+      if (slice.heldPlanChangeId) {
+        const heldModality = ctx.modalities.find((m: Row) => m.id === slice.heldModalityId);
+        const heldRate = heldModality && ctx.rates.find((r: Row) =>
+          r.role === coach.role && r.modality_id === heldModality.id
+        );
+        const difference = heldRate ? (Number(heldRate.rate) || 0) - rateValue : 0;
+        if (heldModality && difference > 0) {
+          addContribution(
+            differences,
+            `upgrade_difference:${slice.heldPlanChangeId}:${coach.id}:${contract.customer_id || contract.id}`,
+            {
+              coach_id: coach.id, source_type: "athlete_repasse", contract,
+              descriptionBase: `Diferença da mudança de plano — ${studentName}`,
+              modalityName: heldModality.name, dayKeys, monthDays,
+              dailyAmount: difference / monthDays, rateApplied: difference, tierSnapshot,
+              planChangeId: slice.heldPlanChangeId,
+            },
+          );
+        }
+      }
 
       const leadershipBonus = Number(tier?.leadership_bonus || 0);
       if (coach.leader_id && leadershipBonus > 0) {
@@ -375,18 +473,18 @@ export function buildGroupedItems(contractList: Row[], ctx: ClosingContext) {
     }
   }
 
-  return finalizeGroups(groups);
+  return { items: finalizeGroups(groups), differences: finalizeGroups(differences) };
 }
 
 // payout_pending_repasse aceita uma pendência por contrato + recebedor + tipo
-// + competência. Um contrato não pago que trocou de treinador no mês gera um
+// + competência + mudança de plano. Um contrato não pago que trocou de treinador no mês gera um
 // grupo de liderança por treinador para o mesmo líder: esses grupos viram uma
 // pendência só, com a soma dos valores e todos os trechos.
 export function mergePendingCollisions(rows: Row[]) {
   const merged = new Map<string, Row>();
 
   for (const row of rows) {
-    const key = [row.contract_id, row.coach_id, row.source_type, row.reference_competence].join("|");
+    const key = [row.contract_id, row.coach_id, row.source_type, row.reference_competence, row.plan_change_id ?? ""].join("|");
     const current = merged.get(key);
     if (!current) {
       merged.set(key, row);

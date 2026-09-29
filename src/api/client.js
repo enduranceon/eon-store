@@ -670,6 +670,106 @@ export async function submitPublicAssessmentEnrollment(
   return response.data;
 }
 
+function invalidateAssessmentPlanChanges() {
+  invalidateAssessmentContractLifecycle();
+  invalidatePageCacheByTag('assessment_contract_plan_changes');
+  invalidatePageCacheByTag('assessment_contract_plan_history');
+  invalidatePageCacheByTag('payout_pending_repasse');
+}
+
+// Mudança de plano no meio do ciclo (upgrade ou lateral).
+export async function previewAssessmentPlanChange(
+  contractId,
+  { toPlanId, effectiveDate, toCoachId = null, planChangeId = null },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/plan-changes/preview`, {
+    ...options,
+    method: 'POST',
+    body: {
+      to_plan_id: toPlanId,
+      effective_date: effectiveDate,
+      to_coach_id: toCoachId,
+      plan_change_id: planChangeId,
+    },
+  });
+  return response.data;
+}
+
+export async function createAssessmentPlanChange(
+  contractId,
+  { toPlanId, effectiveDate, toCoachId = null, notes = null, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/plan-changes`, {
+    ...options,
+    method: 'POST',
+    body: {
+      to_plan_id: toPlanId,
+      effective_date: effectiveDate,
+      to_coach_id: toCoachId,
+      notes,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidateAssessmentPlanChanges();
+  return response.data;
+}
+
+export async function updateAssessmentPlanChange(
+  planChangeId,
+  { toPlanId, effectiveDate, toCoachId = null, reason, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/plan-changes/${planChangeId}`, {
+    ...options,
+    method: 'PATCH',
+    body: {
+      to_plan_id: toPlanId,
+      effective_date: effectiveDate,
+      to_coach_id: toCoachId,
+      reason,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidateAssessmentPlanChanges();
+  return response.data;
+}
+
+export async function cancelAssessmentPlanChange(
+  planChangeId,
+  { reason, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/plan-changes/${planChangeId}/cancellation`, {
+    ...options,
+    method: 'POST',
+    body: { reason, expected_updated_at: expectedUpdatedAt },
+  });
+  invalidateAssessmentPlanChanges();
+  return response.data;
+}
+
+export async function saveAssessmentPlanChangeExternalCharge(
+  planChangeId,
+  { externalLink, dueDate, paymentMethod, invoiceNumber = null, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/plan-changes/${planChangeId}/external-charge`, {
+    ...options,
+    method: 'PUT',
+    body: {
+      external_link: externalLink,
+      due_date: dueDate,
+      payment_method: paymentMethod,
+      invoice_number: invoiceNumber,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidateAssessmentPlanChanges();
+  return response.data;
+}
+
 export async function runAssessmentContractTransitions(options = {}) {
   const response = await apiRequest('/orders/contracts/transitions', {
     ...options,
@@ -1386,6 +1486,7 @@ export async function recordManualPayment(
     stock: 'stock_orders',
     contract: 'assessment_contracts',
     event: 'event_registrations',
+    'plan-change': 'assessment_contract_plan_changes',
   };
   if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
   invalidatePageCacheByTag('asaas_payments');
@@ -1431,6 +1532,7 @@ export async function reopenManualPayment(orderType, orderId, options = {}) {
     stock: 'stock_orders',
     contract: 'assessment_contracts',
     event: 'event_registrations',
+    'plan-change': 'assessment_contract_plan_changes',
   };
   if (tableByType[orderType]) invalidatePageCacheByTag(tableByType[orderType]);
   invalidatePageCacheByTag('asaas_payments');

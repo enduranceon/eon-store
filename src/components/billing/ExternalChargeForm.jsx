@@ -5,7 +5,13 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EXTERNAL_CHARGE_METHODS } from '@/lib/external-charge';
 
-export function ExternalChargeFields({ form, setForm, saving, autoFocus = false }) {
+export function ExternalChargeFields({
+  form,
+  setForm,
+  saving,
+  autoFocus = false,
+  methods = EXTERNAL_CHARGE_METHODS,
+}) {
   return (
     <>
       <div>
@@ -19,7 +25,7 @@ export function ExternalChargeFields({ form, setForm, saving, autoFocus = false 
             <SelectValue placeholder="Selecione a forma" />
           </SelectTrigger>
           <SelectContent>
-            {EXTERNAL_CHARGE_METHODS.map(method => (
+            {methods.map(method => (
               <SelectItem key={method.value} value={method.value}>
                 {method.label}
               </SelectItem>
@@ -72,14 +78,17 @@ export default function ExternalChargeForm({
   onSave,
   onCancel,
   submitLabel = 'Salvar cobrança',
+  methods,
+  summary = null,
 }) {
   return (
     <div className="space-y-3">
+      {summary}
       <p className="text-xs text-muted-foreground">
         Use quando a cobrança foi criada fora da plataforma. Salvar a cobrança não registra envio nem pagamento.
       </p>
 
-      <ExternalChargeFields form={form} setForm={setForm} saving={saving} autoFocus />
+      <ExternalChargeFields form={form} setForm={setForm} saving={saving} autoFocus methods={methods} />
 
       <div className="flex gap-2 pt-2">
         <Button variant="outline" className="flex-1" onClick={onCancel} disabled={saving}>

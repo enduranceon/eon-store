@@ -233,7 +233,23 @@ export async function handleContractResidualRequest(
       { p_actor_id: actorId },
     );
     if (error) return databaseError(error);
-    return jsonResponse({ data });
+    // Mudanças de plano cuja data efetiva chegou entram junto.
+    const { data: planChanges, error: planChangeError } = await supabase.rpc(
+      "apply_due_assessment_plan_changes",
+      { p_actor_id: actorId },
+    );
+    if (planChangeError) return databaseError(planChangeError);
+    return jsonResponse({
+      data: {
+        ...(data || {}),
+        changed: [
+          ...((data as { changed?: unknown[] } | null)?.changed || []),
+          ...((planChanges as { changed?: unknown[] } | null)?.changed || []),
+        ],
+        plan_change_failures:
+          (planChanges as { failed?: unknown[] } | null)?.failed || [],
+      },
+    });
   }
 
   const match = path.match(

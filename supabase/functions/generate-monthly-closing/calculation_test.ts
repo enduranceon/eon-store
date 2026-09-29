@@ -1,5 +1,6 @@
 import {
   activeDayKeys,
+  buildClosingGroups,
   buildGroupedItems,
   type ClosingContext,
   coachIdByDay,
@@ -277,6 +278,107 @@ Deno.test("pendings with distinct keys are kept as they are", () => {
     { contract_id: "c1", coach_id: "y", source_type: "athlete_repasse", reference_competence: "2026-09-01", amount: 20 },
   ];
   assertEquals(mergePendingCollisions(rows), rows, "no merge without a collision");
+});
+
+// Mudança de plano ainda não paga -------------------------------------------------
+
+function upgradeHistory(contractId: string, upgradeFrom: string, planChangeId = "chg-1", originalFrom = "2026-09-01") {
+  return groupByContract([
+    { contract_id: contractId, plan_id: "plan-corrida", plan_snapshot: { modality_id: CORRIDA.id }, valid_from: originalFrom, change_type: "original" },
+    {
+      contract_id: contractId, plan_id: "plan-triathlon", plan_snapshot: { modality_id: TRIATHLON.id },
+      valid_from: upgradeFrom, change_type: "upgrade", plan_change_id: planChangeId,
+    },
+  ]);
+}
+
+function planChanges(status: string) {
+  return new Map([["chg-1", { id: "chg-1", payment_status: status, status: "applied" }]]);
+}
+
+Deno.test("an unpaid upgrade pays the previous rate and holds the difference", () => {
+  const upgraded = contract({ plan_id: "plan-triathlon" });
+  const ctx = context("2026-10-01", {
+    planHistoryByContract: upgradeHistory(upgraded.id, "2026-10-11"),
+    planChangesById: planChanges("charge_sent"),
+  });
+
+  const { items, differences } = buildClosingGroups([upgraded], ctx, true);
+  const [athlete] = athleteItems(items);
+
+  assertEquals([athlete.amount, athlete.valid_days, athlete.segments.length], [70, 31, 1],
+    "the coach is paid the corrida rate for the whole month");
+  assertEquals(differences.map((row) => [row.plan_change_id, row.coach_id, row.valid_days, row.amount, row.rate_applied]),
+    [["chg-1", PLENO_A.id, 21, 27.1, 40]], "21 days of (110 - 70) / 31 wait for the upgrade payment");
+  assertEquals(differences[0].description, "Diferença da mudança de plano — Aluno Um — Triathlon (ASS-1)",
+    "the pending explains where it comes from");
+});
+
+Deno.test("a paid upgrade pays the new rate right away", () => {
+  const upgraded = contract({ plan_id: "plan-triathlon" });
+  const ctx = context("2026-10-01", {
+    planHistoryByContract: upgradeHistory(upgraded.id, "2026-10-11"),
+    planChangesById: planChanges("paid"),
+  });
+
+  const { items, differences } = buildClosingGroups([upgraded], ctx, true);
+  const [athlete] = athleteItems(items);
+
+  assertEquals(athlete.segments.map((s: Row) => [s.rate, s.valid_days, s.amount]), [[70, 10, 22.58], [110, 21, 74.52]],
+    "paid upgrade: the approved example");
+  assertEquals(differences.length, 0, "nothing waits");
+});
+
+Deno.test("an unpaid contract keeps the full rate of each day", () => {
+  const unpaid = contract({ plan_id: "plan-triathlon", payment_status: "pending" });
+  const ctx = context("2026-10-01", {
+    planHistoryByContract: upgradeHistory(unpaid.id, "2026-10-11"),
+    planChangesById: planChanges("charge_sent"),
+  });
+
+  const [athlete] = athleteItems(buildGroupedItems([unpaid], ctx));
+
+  assertEquals(athlete.amount, 97.1, "the contract pending already covers every day at its plan");
+});
+
+Deno.test("the held difference follows the coach of each day", () => {
+  const moved = contract({ plan_id: "plan-triathlon", coach_id: PLENO_B.id });
+  const ctx = context("2026-10-01", {
+    planHistoryByContract: upgradeHistory(moved.id, "2026-10-11"),
+    coachHistoryByContract: groupByContract([
+      { id: "h1", contract_id: moved.id, coach_id: PLENO_A.id, started_at: "2026-09-01", ended_at: null, created_at: "2026-09-01T10:00:00+00:00" },
+      { id: "h2", contract_id: moved.id, coach_id: PLENO_B.id, started_at: "2026-10-11", ended_at: null, created_at: "2026-10-05T10:00:00+00:00" },
+    ]),
+    planChangesById: planChanges("awaiting_charge"),
+  });
+
+  const { items, differences } = buildClosingGroups([moved], ctx, true);
+
+  assertEquals(athleteItems(items).map((item) => [item.coach_id, item.valid_days, item.amount]),
+    [[PLENO_A.id, 10, 22.58], [PLENO_B.id, 21, 47.42]], "both coaches are paid the corrida rate");
+  assertEquals(differences.map((row) => [row.coach_id, row.valid_days, row.amount]), [[PLENO_B.id, 21, 27.1]],
+    "the new coach waits for the difference");
+});
+
+Deno.test("an upgrade from the first day holds the whole month", () => {
+  const upgraded = contract({ plan_id: "plan-triathlon", start_date: "2026-10-01" });
+  const ctx = context("2026-10-01", {
+    planHistoryByContract: upgradeHistory(upgraded.id, "2026-10-01", "chg-1", "2026-10-01"),
+    planChangesById: planChanges("charge_sent"),
+  });
+
+  const { items, differences } = buildClosingGroups([upgraded], ctx, true);
+
+  assertEquals(athleteItems(items)[0].amount, 70, "the change row wins over the original on the same day");
+  assertEquals(differences.map((row) => [row.valid_days, row.amount]), [[31, 40]], "the whole month waits");
+});
+
+Deno.test("an upgrade pending and a contract pending never collide", () => {
+  const rows = [
+    { contract_id: "c1", coach_id: "x", source_type: "athlete_repasse", reference_competence: "2026-10-01", amount: 10 },
+    { contract_id: "c1", coach_id: "x", source_type: "athlete_repasse", reference_competence: "2026-10-01", amount: 5, plan_change_id: "chg-1" },
+  ];
+  assertEquals(mergePendingCollisions(rows).length, 2, "the plan change is part of the pending key");
 });
 
 // Equivalência com o cálculo anterior ---------------------------------------------

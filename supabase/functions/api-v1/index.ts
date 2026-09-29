@@ -12,6 +12,7 @@ import { checkAsaasChargeRollout } from "../_shared/asaas-rollout.ts";
 import { handleContractRequest } from "./contracts.ts";
 import { handleContractBillingRequest } from "./contract-billing.ts";
 import { handleEventBillingRequest } from "./event-billing.ts";
+import { handlePlanChangeRequest } from "./plan-changes.ts";
 import { handleOrderExternalBillingRequest } from "./order-external-billing.ts";
 import { handleContractLifecycleRequest } from "./contract-lifecycle.ts";
 import { handleContractMembershipRequest } from "./contract-membership.ts";
@@ -194,6 +195,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (contractBillingResponse) return contractBillingResponse;
+
+  const planChangeResponse = await handlePlanChangeRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (planChangeResponse) return planChangeResponse;
 
   const eventBillingResponse = await handleEventBillingRequest(
     req,

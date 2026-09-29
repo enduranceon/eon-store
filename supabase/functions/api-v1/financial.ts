@@ -52,7 +52,7 @@ const BUSINESS_UNITS = new Set([
   "loja",
   "pre_venda",
 ]);
-const ORDER_TYPES = new Set(["contract", "event", "presale", "stock"]);
+const ORDER_TYPES = new Set(["contract", "event", "plan_change", "presale", "stock"]);
 const MOVEMENT_KINDS = new Set([
   "expense",
   "payout",

@@ -4,7 +4,7 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   Link2, QrCode, RefreshCw, History, Pause, XCircle, RotateCcw,
-  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, AlertCircle, Clock,
+  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, AlertCircle, Clock, TrendingUp,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import {
   AssessmentContract, PreSaleCustomer, AssessmentCoach, AssessmentPlan, AssessmentModality,
   AssessmentLeave, AssessmentContractCoachHist, AssessmentContractEvent,
+  AssessmentContractPlanChange, AssessmentContractPlanHistory, AssessmentPlanTransitionRead,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import {
@@ -39,7 +40,7 @@ import {
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
-import { normalizeExternalChargeMethod } from '@/lib/external-charge';
+import { externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
 import {
   generateAssessmentContractCharge,
@@ -49,10 +50,13 @@ import {
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel, reopenManualPayment } from '@/lib/manual-payment';
 import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
+import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
+import { isOpenPlanChangeCharge, planChangeUnusedValue } from '@/lib/assessment-plan-change';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import DiscountInput from '@/components/DiscountInput';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
 import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
+import PlanChangesCard from '@/components/assessment/PlanChangesCard';
 
 function addPeriod(startStr, plan) {
   const d = new Date(startStr + 'T12:00:00');
@@ -147,7 +151,18 @@ const EVENT_META = {
   charge_cancelled:         { icon: XCircle,    color: 'text-red-500',    bg: 'bg-red-50',    label: 'Cobrança cancelada' },
   cancellation_scheduled:       { icon: Clock,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Cancelamento agendado' },
   cancellation_schedule_removed:{ icon: RotateCcw, color: 'text-gray-600', bg: 'bg-gray-50',  label: 'Agendamento desfeito' },
+  plan_change_created:          { icon: TrendingUp, color: 'text-indigo-600', bg: 'bg-indigo-50', label: 'Mudança de plano registrada' },
+  plan_change_applied:          { icon: Check,      color: 'text-indigo-600', bg: 'bg-indigo-50', label: 'Mudança de plano aplicada' },
+  plan_change_updated:          { icon: PenLine,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Mudança de plano corrigida' },
+  plan_change_cancelled:        { icon: XCircle,    color: 'text-gray-600',   bg: 'bg-gray-100',  label: 'Mudança de plano cancelada' },
+  plan_change_charge_registered:{ icon: Link2,      color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Cobrança da diferença registrada' },
+  plan_change_charge_updated:   { icon: Link2,      color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Cobrança da diferença alterada' },
+  plan_change_payment_recorded: { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Diferença paga' },
+  plan_change_payment_reverted: { icon: RotateCcw,  color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Pagamento da diferença desfeito' },
 };
+
+// Eventos cujo texto de observação é gerado pelo sistema e repete o rótulo.
+const EVENTS_WITH_SYSTEM_NOTES = new Set(['leave_started', 'plan_change_applied', 'plan_change_payment_reverted']);
 
 function formatEventSummary(ev) {
   const p = ev.payload || {};
@@ -181,13 +196,36 @@ function formatEventSummary(ev) {
     case 'sale_replaced':
       return `Novo contrato ${p.new_contract_number || ''}`;
     case 'cancelled':
-      return `${p.source === 'scheduled' ? 'Agendado · ' : ''}Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`;
+      return `${p.source === 'scheduled' ? 'Agendado · ' : ''}Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`
+        + (Number(p.upgrade_unused_value) > 0 ? ` · inclui ${formatCurrency(p.upgrade_unused_value)} de upgrade não usado` : '');
     case 'cancellation_scheduled':
       return `Sai em ${formatDate(p.scheduled_cancellation_date)}${Number(p.cancellation_fee_pct) > 0 ? ` · multa ${p.cancellation_fee_pct}%` : ' · sem multa'}`;
     case 'cancellation_schedule_removed':
       return `Estava agendado para ${formatDate(p.previous_scheduled_cancellation_date)}`;
     case 'dates_changed':
       return `${formatDate(p.old_start)} → ${formatDate(p.new_start)} · fim: ${formatDate(p.new_end)}`;
+    case 'plan_change_created':
+      return `${p.from_plan?.name || '—'} → ${p.to_plan?.name || '—'} · a partir de ${formatDate(p.effective_date)} · `
+        + (Number(p.amount) > 0 ? `diferença ${formatCurrency(p.amount)}` : 'sem cobrança');
+    case 'plan_change_applied':
+      return `Vale desde ${formatDate(p.effective_date)}`;
+    case 'plan_change_updated':
+      return `A partir de ${formatDate(p.before?.effective_date)} → ${formatDate(p.after?.effective_date)} · `
+        + `${formatCurrency(p.before?.amount)} → ${formatCurrency(p.after?.amount)}`
+        + (p.charge_reset ? ' · cobrança refeita' : '');
+    case 'plan_change_cancelled':
+      return (Number(p.amount) > 0 ? `Diferença de ${formatCurrency(p.amount)} não cobrada` : 'Troca desfeita')
+        + (p.source === 'contract_cancellation' ? ' · junto com o contrato' : '');
+    case 'plan_change_charge_registered':
+      return `${externalChargeMethodLabel(p.payment_method)} · ${formatCurrency(p.amount)}${p.due_date ? ' · vence ' + formatDate(p.due_date) : ''}`;
+    case 'plan_change_charge_updated':
+      return `${externalChargeMethodLabel(p.previous_payment_method)} → ${externalChargeMethodLabel(p.payment_method)}${p.due_date ? ' · vence ' + formatDate(p.due_date) : ''}`;
+    case 'plan_change_payment_recorded':
+      return `${p.method_name || p.method || ''} · ${formatCurrency(p.value)}${Number(p.installments) > 1 ? ` · ${p.installments}x` : ''}`;
+    case 'plan_change_payment_reverted':
+      return p.payment_status_after === 'charge_sent'
+        ? 'Cobrança da diferença volta a ficar em aberto'
+        : 'Diferença volta a aguardar cobrança';
     default:
       return ev.notes || '';
   }
@@ -222,7 +260,7 @@ function ContractTimeline({ events }) {
               </span>
             </div>
             {summary && <p className="text-xs text-muted-foreground mt-0.5">{summary}</p>}
-            {ev.notes && ev.event_type !== 'leave_started' && (
+            {ev.notes && !EVENTS_WITH_SYSTEM_NOTES.has(ev.event_type) && (
               <p className="text-xs text-gray-700 italic mt-0.5">"{ev.notes}"</p>
             )}
           </li>
@@ -251,6 +289,13 @@ export default function ContractDetail() {
   const [leaves, setLeaves]     = useState([]);
   const [events, setEvents]     = useState([]);
   const [parentContract, setParentContract] = useState(null);
+  // Mudança de plano no meio do ciclo: pedidos, trechos de plano e a matriz.
+  // allPlans/allCoaches incluem inativos, para nomes em históricos.
+  const [planChanges, setPlanChanges] = useState([]);
+  const [planHistory, setPlanHistory] = useState([]);
+  const [planTransitions, setPlanTransitions] = useState([]);
+  const [allPlans, setAllPlans] = useState([]);
+  const [allCoaches, setAllCoaches] = useState([]);
   const [loading, setLoading]   = useState(true);
 
   // Modais
@@ -306,25 +351,43 @@ export default function ContractDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const c = await AssessmentContract.get(id);
+      const loadPlanChanges = () => AssessmentContractPlanChange
+        .filter({ contract_id: id }, 'effective_date')
+        .catch(() => []);
+      let [c, changeRows] = await Promise.all([AssessmentContract.get(id), loadPlanChanges()]);
+      // Mudança agendada cuja data já chegou: aplica antes de mostrar o contrato.
+      if (['scheduled', 'active', 'overdue', 'on_leave'].includes(c.status)
+        && changeRows.some(row => row.status === 'scheduled' && row.effective_date <= todayLocalStr())) {
+        await applyAssessmentContractTransitions();
+        [c, changeRows] = await Promise.all([AssessmentContract.get(id), loadPlanChanges()]);
+      }
       setContract(c);
-      const [s, co, p, allC, h, l, ev, allPlans, allModalities] = await Promise.all([
+      setPlanChanges(changeRows);
+      const [s, co, p, coachRows, h, l, ev, planRows, allModalities, planHistoryRows, transitionRows] = await Promise.all([
         PreSaleCustomer.get(c.customer_id).catch(() => null),
         c.coach_id ? AssessmentCoach.get(c.coach_id).catch(() => null) : Promise.resolve(null),
         AssessmentPlan.get(c.plan_id).catch(() => null),
-        AssessmentCoach.filter({ active: true }, 'name').catch(() => []),
+        AssessmentCoach.list('name').catch(() => []),
         AssessmentContractCoachHist.filter({ contract_id: id }).catch(() => []),
         AssessmentLeave.filter({ contract_id: id }, '-start_date').catch(() => []),
         AssessmentContractEvent.filter({ contract_id: id }, '-created_at').catch(() => []),
-        AssessmentPlan.filter({ active: true }).catch(() => []),
+        AssessmentPlan.list().catch(() => []),
         AssessmentModality.filter({ active: true }).catch(() => []),
+        AssessmentContractPlanHistory.filter({ contract_id: id }, 'valid_from').catch(() => []),
+        AssessmentPlanTransitionRead.list('from_plan_id').catch(() => []),
       ]);
-      setStudent(s); setCoach(co); setPlan(p); setCoaches(allC);
-      setPlans(allPlans || []);
+      setStudent(s); setCoach(co); setPlan(p);
+      setAllCoaches(coachRows || []);
+      setCoaches((coachRows || []).filter(row => row.active === true));
+      setAllPlans(planRows || []);
+      setPlans((planRows || []).filter(row => row.active === true));
       setModalities(allModalities || []);
-      setHistory(h.sort((a, b) => (a.started_at || '').localeCompare(b.started_at || '')));
+      setHistory(h.sort((a, b) => (a.started_at || '').localeCompare(b.started_at || '')
+        || (a.created_at || '').localeCompare(b.created_at || '')));
       setLeaves(l);
       setEvents(ev);
+      setPlanHistory(planHistoryRows || []);
+      setPlanTransitions(transitionRows || []);
       if (p) {
         const mod = await AssessmentModality.get(p.modality_id).catch(() => null);
         setModality(mod);
@@ -492,20 +555,33 @@ export default function ContractDetail() {
   };
 
   // Calcula valor restante proporcional aos dias não usufruídos
-  // Usa cancelDate (data de cancelamento, pode ser retroativa) ou today como data de corte
+  // Usa cancelDate (data de cancelamento, pode ser retroativa) ou today como data de corte.
+  // Mesma conta do banco: venda original + parte não usada dos upgrades pagos,
+  // arredonda o restante e calcula a multa sobre ele.
   const cancellationCalc = (cancelDateStr = null) => {
-    if (!contract || !plan) return { remaining: 0, fee: 0, refund: 0 };
+    const empty = { remainingDays: 0, saleRemaining: 0, upgradeRemaining: 0, remaining: 0, fee: 0, refund: 0 };
+    if (!contract || !plan) return empty;
     const cutoffDate = cancelDateStr ? new Date(cancelDateStr + 'T00:00:00') : new Date();
     cutoffDate.setHours(0, 0, 0, 0);
     const start = new Date(contract.start_date + 'T00:00:00');
     const end   = new Date(contract.end_date + 'T00:00:00');
-    if (cutoffDate >= end) return { remainingDays: 0, remaining: 0, fee: 0, refund: 0 };
+    if (cutoffDate >= end) return empty;
+    const round2 = value => Math.round(value * 100) / 100;
     const totalDays   = Math.max(1, Math.round((end - start) / 86400000) + 1);
     const remainingDays = Math.max(0, Math.round((end - cutoffDate) / 86400000) + 1);
-    const remaining = Number(planVal('price_total') || 0) * (remainingDays / totalDays);
-    const fee = remaining * (Number(cancelFeePct) / 100);
-    const refund = Math.max(0, remaining - fee);
-    return { remainingDays, remaining: Math.round(remaining * 100) / 100, fee: Math.round(fee * 100) / 100, refund: Math.round(refund * 100) / 100 };
+    const saleRemaining = Number(planVal('price_total') || 0) * (remainingDays / totalDays);
+    const upgradeRemaining = planChangeUnusedValue(planChanges, contract, toLocalDateStr(cutoffDate));
+    const remaining = round2(saleRemaining + upgradeRemaining);
+    const fee = round2(remaining * (Number(cancelFeePct) / 100));
+    const refund = Math.max(0, round2(remaining - fee));
+    return {
+      remainingDays,
+      saleRemaining: round2(saleRemaining),
+      upgradeRemaining: round2(upgradeRemaining),
+      remaining,
+      fee,
+      refund,
+    };
   };
 
   // Abre modal de cancelamento e já busca parcelas do Asaas
@@ -996,6 +1072,13 @@ export default function ContractDetail() {
     || ['draft', 'scheduled', 'active', 'overdue'].includes(contract.status)
   );
   const cancelDateAtOrAfterEnd = !!(contract.end_date && cancelDate >= contract.end_date);
+  const latestAppliedChange = planChanges
+    .filter(change => change.status === 'applied')
+    .sort((a, b) => String(b.effective_date).localeCompare(String(a.effective_date)))[0] || null;
+  const openPlanChangeCharges = planChanges.filter(change => change.status !== 'cancelled' && isOpenPlanChangeCharge(change));
+  const hasActivePlanChanges = planChanges.some(change => change.status !== 'cancelled');
+  const showPlanChanges = planChanges.length > 0
+    || (contract.payment_status === 'paid' && ['active', 'on_leave', 'scheduled'].includes(contract.status));
   // Data futura dentro da vigência não cancela agora: agenda.
   const isScheduledCancellation = cancelDate > todayLocalStr() && !cancelDateAtOrAfterEnd;
 
@@ -1131,6 +1214,12 @@ export default function ContractDetail() {
             )}
             {contract.credit_balance > 0 && <div><p className="text-xs text-muted-foreground">Crédito</p><p className="font-semibold text-green-600">-{formatCurrency(contract.credit_balance)}</p></div>}
           </div>
+          {latestAppliedChange && (
+            <p className="mt-3 text-xs text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+              Plano atual: <b>{plan?.name || '—'}</b>, desde {formatDate(latestAppliedChange.effective_date)}.
+              {' '}Mensal e total acima são da venda original{contract.plan_snapshot?.name ? ` (${contract.plan_snapshot.name})` : ''}; a diferença do upgrade está em Mudanças de plano.
+            </p>
+          )}
           <div className="border-t mt-4 pt-3 flex items-center justify-between text-sm flex-wrap gap-2">
             <span className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 inline" /> {formatDate(contract.start_date)} → {formatDate(contract.end_date)}
@@ -1176,6 +1265,18 @@ export default function ContractDetail() {
           )}
         </CardContent>
       </Card>
+
+      {showPlanChanges && (
+        <PlanChangesCard
+          contract={contract}
+          changes={planChanges}
+          history={planHistory}
+          plans={allPlans}
+          transitions={planTransitions}
+          coaches={allCoaches}
+          onChanged={load}
+        />
+      )}
 
       {/* Desconto manual */}
       <DiscountInput
@@ -1329,7 +1430,7 @@ export default function ContractDetail() {
                       size="sm"
                       className="text-blue-700 border-blue-300 hover:bg-blue-50"
                       onClick={convertToAsaas}
-                      disabled={reopenLoading}
+                      disabled={reopenLoading || hasActivePlanChanges}
                     >
                       <Zap className="w-3.5 h-3.5 mr-1.5" /> Converter pra cobrança Asaas
                     </Button>
@@ -1338,15 +1439,21 @@ export default function ContractDetail() {
                       size="sm"
                       className="text-amber-700 border-amber-300 hover:bg-amber-50"
                       onClick={() => setReopenModal(true)}
-                      disabled={reopenLoading}
+                      disabled={reopenLoading || hasActivePlanChanges}
                     >
                       <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reabrir pagamento
                     </Button>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    <strong>Converter:</strong> desfaz o registro manual e libera o card de cobrança Asaas. ·{' '}
-                    <strong>Reabrir:</strong> só desfaz (use se foi erro de registro).
-                  </p>
+                  {hasActivePlanChanges ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Com mudança de plano registrada, desfaça o pagamento da diferença e cancele a mudança antes de reabrir o pagamento do contrato.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      <strong>Converter:</strong> desfaz o registro manual e libera o card de cobrança Asaas. ·{' '}
+                      <strong>Reabrir:</strong> só desfaz (use se foi erro de registro).
+                    </p>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -1492,12 +1599,21 @@ export default function ContractDetail() {
           <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><History className="w-4 h-4" /> Histórico de coaches</CardTitle></CardHeader>
           <CardContent>
             <div className="space-y-2 text-sm">
-              {history.map(h => {
-                const c = coaches.find(x => x.id === h.coach_id);
+              {history.map((h, index) => {
+                const c = allCoaches.find(x => x.id === h.coach_id);
+                const next = history[index + 1];
+                const endLabel = h.ended_at
+                  ? formatDate(h.ended_at)
+                  : next ? formatDate(next.started_at) : 'atual';
+                const scheduled = String(h.started_at || '').slice(0, 10) > todayLocalStr();
                 return (
                   <div key={h.id} className="flex items-center justify-between">
                     <span className="font-medium">{c?.name || '—'}</span>
-                    <span className="text-xs text-muted-foreground">{formatDate(h.started_at)} → {h.ended_at ? formatDate(h.ended_at) : 'atual'}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {scheduled
+                        ? `a partir de ${formatDate(h.started_at)} (agendado)`
+                        : `${formatDate(h.started_at)} → ${endLabel}`}
+                    </span>
                   </div>
                 );
               })}
@@ -2136,9 +2252,27 @@ export default function ContractDetail() {
             <div className="bg-gray-50 border rounded-xl p-3 text-sm grid grid-cols-2 gap-y-1">
               <span className="text-muted-foreground">Dias restantes</span>
               <span className="font-semibold text-right">{calc.remainingDays}</span>
-              <span className="text-muted-foreground">Valor proporcional</span>
-              <span className="font-semibold text-right">{formatCurrency(calc.remaining)}</span>
+              {calc.upgradeRemaining > 0 ? (
+                <>
+                  <span className="text-muted-foreground">Venda original</span>
+                  <span className="font-semibold text-right">{formatCurrency(calc.saleRemaining)}</span>
+                  <span className="text-muted-foreground">Upgrade não usado</span>
+                  <span className="font-semibold text-right">{formatCurrency(calc.upgradeRemaining)}</span>
+                  <span className="text-muted-foreground">Valor proporcional</span>
+                  <span className="font-semibold text-right">{formatCurrency(calc.remaining)}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-muted-foreground">Valor proporcional</span>
+                  <span className="font-semibold text-right">{formatCurrency(calc.remaining)}</span>
+                </>
+              )}
             </div>
+            {openPlanChangeCharges.length > 0 && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                A mudança de plano com a diferença sem pagamento é cancelada junto: o plano anterior volta desde {formatDate(openPlanChangeCharges[0].effective_date)} e a cobrança da diferença deixa de valer.
+              </p>
+            )}
 
             {/* Multa */}
             <div>
