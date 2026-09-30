@@ -56,6 +56,7 @@ import { isOpenPlanChangeCharge, planChangeUnusedValue } from '@/lib/assessment-
 import { refundMethodLabel } from '@/lib/contract-refund';
 import { coachHistorySegments, pendingCoachChange } from '@/lib/assessment-coach-history';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import DiscountInput from '@/components/DiscountInput';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
 import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
@@ -324,6 +325,9 @@ export default function ContractDetail() {
   const [newCoachId, setNewCoachId] = useState('');
   const [newCoachDate, setNewCoachDate] = useState(todayLocalStr());
   const [coachSaving, setCoachSaving] = useState(false);
+  const [cancelCoachChangeModal, setCancelCoachChangeModal] = useState(false);
+  const [noRenewalModal, setNoRenewalModal] = useState(false);
+  const [noRenewalSaving, setNoRenewalSaving] = useState(false);
   const [leaveModal, setLeaveModal] = useState(false);
   const [leaveForm, setLeaveForm] = useState({ start_date: todayLocalStr(), end_date: todayLocalStr(), open_ended: false, reason: '' });
   const [cancelModal, setCancelModal]   = useState(false);
@@ -548,11 +552,14 @@ export default function ContractDetail() {
   };
 
   const cancelScheduledCoachChange = async () => {
-    if (!window.confirm('Cancelar a troca de coach agendada?')) return;
+    setCoachSaving(true);
     try {
       await cancelAssessmentContractCoachChange(id, { expectedUpdatedAt: contract.updated_at });
-      toast.success('Troca de coach cancelada'); load();
+      toast.success('Troca de coach cancelada');
+      setCancelCoachChangeModal(false);
+      load();
     } catch (e) { toast.error(e.message); }
+    finally { setCoachSaving(false); }
   };
 
   const addLeave = async () => {
@@ -719,17 +726,12 @@ export default function ContractDetail() {
       return;
     }
 
+    setNoRenewalModal(true);
+  };
+
+  const confirmNoRenewal = async () => {
     const shouldFinishNow = contract.end_date <= todayLocalStr();
-    const statusText = shouldFinishNow
-      ? 'O contrato será marcado como concluído agora.'
-      : `O contrato permanece ativo até ${formatDate(contract.end_date)}.`;
-
-    if (!confirm(
-      `Registrar que ${contract.contract_number} não será renovado?\n\n` +
-      `${statusText}\n\n` +
-      'Não haverá multa, estorno ou nova cobrança.'
-    )) return;
-
+    setNoRenewalSaving(true);
     try {
       await markAssessmentContractNonRenewal({
         contract,
@@ -738,9 +740,12 @@ export default function ContractDetail() {
       toast.success(shouldFinishNow
         ? 'Contrato concluído por não renovação.'
         : 'Não renovação registrada. O contrato segue ativo até o fim da vigência.');
+      setNoRenewalModal(false);
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao registrar não renovação');
+    } finally {
+      setNoRenewalSaving(false);
     }
   };
 
@@ -1257,7 +1262,7 @@ export default function ContractDetail() {
             {scheduledCoachChange && (
               <div className="mt-2 rounded-md border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs text-purple-900">
                 <p>Troca agendada: <strong>{scheduledCoach?.name || '—'}</strong> a partir de {formatDate(scheduledCoachChange.started_at)}</p>
-                {canCancel && <button onClick={cancelScheduledCoachChange} className="mt-1 text-purple-700 hover:underline">Cancelar troca</button>}
+                {canCancel && <button onClick={() => setCancelCoachChangeModal(true)} className="mt-1 text-purple-700 hover:underline">Cancelar troca</button>}
               </div>
             )}
             {canCancel && !scheduledCoachChange && <button onClick={() => { setNewCoachId(coach?.id || ''); setNewCoachDate(defaultCoachDate); setChangeCoachModal(true); }} className="text-xs text-blue-600 hover:underline mt-1.5 inline-flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Trocar coach</button>}
@@ -1961,6 +1966,50 @@ export default function ContractDetail() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={cancelCoachChangeModal}
+        onOpenChange={setCancelCoachChangeModal}
+        title="Cancelar troca de coach"
+        icon={XCircle}
+        iconClassName="text-purple-600"
+        confirmLabel="Cancelar troca"
+        confirmClassName="bg-purple-600 hover:bg-purple-700 text-white"
+        busy={coachSaving}
+        onConfirm={cancelScheduledCoachChange}
+      >
+        {scheduledCoachChange && (
+          <p>
+            A troca para <b>{scheduledCoach?.name || '—'}</b> a partir de{' '}
+            <b>{formatDate(scheduledCoachChange.started_at)}</b> deixa de existir.
+            O contrato continua com <b>{coach?.name || '—'}</b>.
+          </p>
+        )}
+      </ConfirmDialog>
+
+      {/* MODAL: não renovar */}
+      <ConfirmDialog
+        open={noRenewalModal}
+        onOpenChange={setNoRenewalModal}
+        title="Não renovar"
+        icon={Ban}
+        iconClassName="text-amber-600"
+        confirmLabel="Confirmar não renovação"
+        confirmClassName="bg-amber-600 hover:bg-amber-700 text-white"
+        busy={noRenewalSaving}
+        busyLabel="Registrando..."
+        onConfirm={confirmNoRenewal}
+      >
+        <p>Registrar que <b>{contract.contract_number}</b> não será renovado?</p>
+        <div className="rounded-xl border bg-gray-50 px-3 py-2 space-y-1">
+          <p>
+            {contract.end_date && contract.end_date <= todayLocalStr()
+              ? 'O contrato será marcado como concluído agora.'
+              : <>O contrato permanece ativo até <b>{formatDate(contract.end_date)}</b>.</>}
+          </p>
+          <p className="text-muted-foreground">Não haverá multa, estorno ou nova cobrança.</p>
+        </div>
+      </ConfirmDialog>
 
       {/* MODAL: licença */}
       <Dialog open={leaveModal} onOpenChange={setLeaveModal}>
