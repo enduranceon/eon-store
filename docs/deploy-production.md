@@ -13,7 +13,7 @@
 1. Validar as migrações em um banco local descartável e executar lint, testes e build.
 2. Somente se as duas validações passarem e a origem for `main`, conferir as credenciais, vincular o projeto Supabase canônico `bsiljrrodgtmtdilnuxr` e validar o plano remoto de migrações sem escrita.
 3. Aplicar as migrações pendentes sem seed, roles ou Vault e confirmar no banco remoto o histórico, as RPCs, os triggers e suas permissões.
-4. Publicar todas as Edge Functions (`api-v1` e as demais) somente depois que o readback do banco concluir com sucesso.
+4. Publicar todas as Edge Functions (`api-v1` e as demais) somente depois que o readback do banco concluir com sucesso. O passo tenta até 3 vezes antes de falhar, porque o empacotamento depende da imagem Docker do edge-runtime e já caiu por limite do registro de imagens e queda do empacotador (exit 135); função sem mudança é pulada, então repetir é seguro.
 5. Publicar o frontend na Netlify (`9a9edc3b-04e4-431f-8927-f946900b0b27`) somente depois da API.
 
 `NETLIFY_AUTH_TOKEN`, `SUPABASE_ACCESS_TOKEN` ou `SUPABASE_DB_PASSWORD` ausentes interrompem o release com erro. Não tratar uma etapa pulada por falta de credencial como publicação bem-sucedida. A Netlify CLI está fixada em `27.5.2`, a versão registrada no último deploy auditado (run `34629189530`, commit `2bbcfc4`); atualizar essa versão em alteração separada, com validação de build e prévia.
