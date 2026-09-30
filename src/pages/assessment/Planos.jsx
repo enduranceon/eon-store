@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AssessmentModality, AssessmentPlan, RevenueCenter } from '@/api/entities';
 import { formatCurrency } from '@/lib/utils';
+import { defaultRevenueCenterId } from '@/lib/revenue-centers';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
@@ -155,7 +156,7 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
   const blank = {
     name: '', modality_id: '', period_months: 1, price_monthly: '',
     price_total: '', max_installments: 1, enrollment_fee: 0,
-    revenue_center_id: centers.find(c => c.name?.includes('Mensalidades'))?.id || '',
+    revenue_center_id: defaultRevenueCenterId(centers, 'assessoria'),
     active: true, available_online: false,
   };
   const [form, setForm] = useState(() => {
@@ -218,6 +219,8 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
     };
     if (!payload.modality_id)                                   return toast.error('Selecione a modalidade');
     if (payload.price_monthly <= 0 || payload.price_total <= 0) return toast.error('Preencha mensalidade e total');
+    // Sem centro, os recebimentos do plano caem em "Sem centro atribuído".
+    if (!payload.revenue_center_id)                             return toast.error('Escolha o centro de receita');
     try {
       if (editing?.id) await AssessmentPlan.update(editing.id, payload);
       else             await AssessmentPlan.create(payload);
