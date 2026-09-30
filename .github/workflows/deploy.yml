@@ -353,4 +353,16 @@ jobs:
           ' >/dev/null
 
       - name: Deploy Edge Functions
-        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_ID"
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if supabase functions deploy --project-ref "$SUPABASE_PROJECT_ID"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::Edge Functions deploy failed (attempt $attempt of 3, e.g. image registry rate limit or bundler crash); retrying. Unchanged functions are skipped."
+              sleep $((attempt * 20))
+            fi
+          done
+          echo "::error::Edge Functions deploy failed after 3 attempts."
+          exit 1
