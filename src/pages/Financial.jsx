@@ -539,7 +539,7 @@ export default function Financial() {
         sevenMonthsAgo.setDate(1);
         const apFromStr = toLocalDateStr(sevenMonthsAgo);
 
-        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, stockProductsRes, eventRegsRes, eventTypesRes, eventsRes, paymentsRes, qualityRes] = await Promise.all([
+        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, eventRegsRes, eventTypesRes, eventsRes, paymentsRes, qualityRes] = await Promise.all([
           supabase.from('presale_orders')
             .select('id, order_number, checkout_name, checkout_whatsapp, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
@@ -552,7 +552,6 @@ export default function Financial() {
           supabase.from('assessment_plans').select('id, price_total, price_monthly, name, revenue_center_id'),
           supabase.from('presale_customers').select('id, full_name, whatsapp, email, cpf'),
           supabase.from('revenue_centers').select('id, name, color'),
-          supabase.from('stock_products').select('id, revenue_center_id'),
           supabase.from('event_registrations')
             .select('id, registration_number, event_id, registration_type_id, customer_id, coach_id, payment_status, payment_method, payment_date, due_date, manual_payment, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, customer_link_confirmed_at, customer_link_confirmed_by, created_at, updated_at')
             .neq('payment_status', 'cancelled')
@@ -578,22 +577,16 @@ export default function Financial() {
 
         const plansMap         = Object.fromEntries((plansRes.data         || []).map(p => [p.id, p]));
         const customersMap     = Object.fromEntries((customersRes.data     || []).map(c => [c.id, c]));
-        const stockProductsMap = Object.fromEntries((stockProductsRes.data || []).map(p => [p.id, p]));
         const eventTypesMap    = Object.fromEntries((eventTypesRes.data    || []).map(t => [t.id, t]));
         const eventsMap        = Object.fromEntries((eventsRes.data        || []).map(e => [e.id, e]));
-        const orderCenter = (items) => {
-          if (!items?.length) return null;
-          return stockProductsMap[items[0].product_id]?.revenue_center_id || null;
-        };
 
         const presale   = (presaleRes.data   || []).map(o => ({
           ...o,
           type: 'presale',
           customer: o.checkout_name,
           customer_whatsapp: o.checkout_whatsapp || o.customer_whatsapp || null,
-          revenue_center_id: orderCenter(o.items),
         }));
-        const stock     = (stockRes.data     || []).map(o => ({ ...o, type: 'stock',    customer: o.customer_name,  revenue_center_id: orderCenter(o.items) }));
+        const stock     = (stockRes.data     || []).map(o => ({ ...o, type: 'stock',    customer: o.customer_name }));
         const contractRows = contractRes.data || [];
         await applyAssessmentContractTransitions(contractRows);
         const contracts = buildContractLifecycleRows(contractRows, { plansById: plansMap })
@@ -607,7 +600,6 @@ export default function Financial() {
             );
           })
           .map(c => {
-            const plan = plansMap[c.plan_id];
             return {
               id: c.id, order_number: c.contract_number,
               customer: customersMap[c.customer_id]?.full_name || '—',
@@ -628,7 +620,6 @@ export default function Financial() {
               prospect_stage: c.prospect_stage,
               is_prospect: isBillableProspectOpenSale(c),
               type: 'contract',
-              revenue_center_id: c.plan_snapshot?.revenue_center_id || plan?.revenue_center_id || null,
               installments: c.installments || 1,
             };
           });
@@ -661,7 +652,6 @@ export default function Financial() {
               event_id: reg.event_id,
               event_name: eventRecord.name || 'Evento',
               registration_type_name: type.name || 'Inscrição',
-              revenue_center_id: eventRecord.revenue_center_id || null,
               customer_link_confirmed_at: reg.customer_link_confirmed_at || null,
               items: [{
                 name: [eventRecord.name, type.name].filter(Boolean).join(' - ') || 'Inscrição de evento',
@@ -762,7 +752,8 @@ export default function Financial() {
         payment_status: 'paid',
         payment_date: payment.credit_date,
         type: payment.order_type || order?.type,
-        revenue_center_id: payment.revenue_center_id || order?.revenue_center_id || null,
+        // O centro vem do extrato, a mesma regra do resto do financeiro.
+        revenue_center_id: payment.revenue_center_id || null,
       };
     })
     .sort((a, b) => b.payment_date.localeCompare(a.payment_date));

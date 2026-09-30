@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Plus, Pencil, Palette, Check, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Palette, Check, Trash2, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { RevenueCenter } from '@/api/entities';
+import { supabase } from '@/api/db';
+import { revenueCenterLinksLabel, summarizeRevenueCenterLinks } from '@/lib/revenue-centers';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
 
@@ -27,18 +29,42 @@ const COLORS = [
   '#6b7280', // cinza
 ];
 
+async function readCenterLinks(table) {
+  const { data, error } = await supabase.from(table).select('revenue_center_id');
+  if (error) throw error;
+  return data || [];
+}
+
+// O que está ligado a cada centro, e o que ficou sem centro.
+async function loadCenterLinks() {
+  try {
+    const [plans, presaleProducts, stockProducts, events] = await Promise.all(
+      ['assessment_plans', 'presale_products', 'stock_products', 'events'].map(readCenterLinks),
+    );
+    return summarizeRevenueCenterLinks({ plans, products: [...presaleProducts, ...stockProducts], events });
+  } catch (error) {
+    console.error('Erro ao contar o que está ligado aos centros:', error);
+    return null;
+  }
+}
+
 async function loadRevenueCentersPage() {
-  return RevenueCenter.list('name').catch(() => []);
+  const [centers, links] = await Promise.all([
+    RevenueCenter.list('name').catch(() => []),
+    loadCenterLinks(),
+  ]);
+  return { centers, links };
 }
 
 export default function RevenueCenters() {
-  const { data: centers, loading, refresh } = usePageData({
-    key: 'revenue-centers:list',
+  const { data: { centers, links }, loading, refresh } = usePageData({
+    key: 'revenue-centers:overview',
     loader: loadRevenueCentersPage,
-    initialData: [],
-    tags: ['revenue_centers'],
+    initialData: { centers: [], links: null },
+    tags: ['revenue_centers', 'assessment_plans', 'presale_products', 'stock_products', 'events'],
     onError: error => console.error('Erro ao carregar centros de receita:', error),
   });
+  const unassignedLabel = revenueCenterLinksLabel(links?.unassigned);
   const [modal, setModal]     = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({});
@@ -108,6 +134,16 @@ export default function RevenueCenters() {
         </Button>
       </div>
 
+      {unassignedLabel && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <p>
+            Sem centro de receita: {unassignedLabel}. Os recebimentos desses cadastros aparecem
+            como “Sem centro atribuído” no Financeiro.
+          </p>
+        </div>
+      )}
+
       {centers.length === 0 ? (
         <Card>
           <CardContent className="py-16 text-center">
@@ -142,6 +178,11 @@ export default function RevenueCenters() {
                   <div className="pr-14">
                     <p className="font-semibold text-gray-900">{c.name}</p>
                     {c.description && <p className="text-xs text-muted-foreground mt-1">{c.description}</p>}
+                    {links && (
+                      <p className="text-xs text-gray-600 mt-1">
+                        {revenueCenterLinksLabel(links.byCenter[c.id]) || 'Nada ligado a este centro'}
+                      </p>
+                    )}
                   </div>
 
                   <div className="mt-3 flex items-center gap-3">
