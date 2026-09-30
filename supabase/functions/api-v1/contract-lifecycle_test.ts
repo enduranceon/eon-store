@@ -71,6 +71,69 @@ Deno.test("Coach change sends only the selected coach and version", async () => 
   assert(response?.status === 200, "coach change failed");
   assert(calls[0].name === "change_assessment_contract_coach", "wrong RPC");
   assert(calls[0].args.p_coach_id === COACH_ID, "coach id changed");
+  assert(calls[0].args.p_effective_date === null, "a change without date must start today");
+});
+
+Deno.test("Coach change forwards the day the new coach starts", async () => {
+  const { fake, calls } = client();
+  const path = `/orders/contract/${CONTRACT_ID}/coach`;
+  const response = await handleContractLifecycleRequest(
+    request(path, "PATCH", {
+      coach_id: COACH_ID,
+      effective_date: "2026-11-01",
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "dated coach change failed");
+  assert(calls[0].name === "change_assessment_contract_coach", "wrong RPC");
+  assert(calls[0].args.p_effective_date === "2026-11-01", "start date was lost");
+  assert(calls[0].args.p_actor_id === ACTOR_ID, "actor was not recorded");
+
+  const invalid = await handleContractLifecycleRequest(
+    request(path, "PATCH", {
+      coach_id: COACH_ID,
+      effective_date: "2026-02-30",
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(invalid?.status === 400, "an impossible date was accepted");
+  assert(calls.length === 1, "database was called for an invalid date");
+});
+
+Deno.test("Cancelling a scheduled coach change sends only the version", async () => {
+  const { fake, calls } = client();
+  const path = `/orders/contract/${CONTRACT_ID}/coach`;
+  const response = await handleContractLifecycleRequest(
+    request(path, "DELETE", { expected_updated_at: UPDATED_AT }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "cancelling the scheduled change failed");
+  assert(calls[0].name === "cancel_assessment_contract_coach_change", "wrong RPC");
+  assert(
+    Object.keys(calls[0].args).sort().join() ===
+      "p_actor_id,p_contract_id,p_expected_updated_at",
+    "extra input forwarded",
+  );
+
+  const invalid = await handleContractLifecycleRequest(
+    request(path, "DELETE", {
+      coach_id: COACH_ID,
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(invalid?.status === 400, "unexpected fields were accepted");
+  assert(calls.length === 1, "database was called for invalid input");
 });
 
 Deno.test("Starting a leave preserves dates, reason, actor and version", async () => {
