@@ -25,6 +25,7 @@ import {
   scheduleAssessmentContractCancellation,
   unscheduleAssessmentContractCancellation,
   cancelOrderCharge,
+  cancelAssessmentContractCoachChange,
   changeAssessmentContractCoach,
   changeAssessmentContractPlan,
   createAssessmentContractRenewal,
@@ -53,7 +54,9 @@ import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contra
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { isOpenPlanChangeCharge, planChangeUnusedValue } from '@/lib/assessment-plan-change';
 import { refundMethodLabel } from '@/lib/contract-refund';
+import { coachHistorySegments, pendingCoachChange } from '@/lib/assessment-coach-history';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import DiscountInput from '@/components/DiscountInput';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
 import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
@@ -128,6 +131,8 @@ function leavePeriodLabel(leave) {
 const EVENT_META = {
   created:                  { icon: Plus,       color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Contrato criado' },
   coach_changed:            { icon: UserCheck,  color: 'text-purple-600', bg: 'bg-purple-50', label: 'Coach trocado' },
+  coach_change_scheduled:   { icon: Clock,      color: 'text-purple-600', bg: 'bg-purple-50', label: 'Troca de coach agendada' },
+  coach_change_cancelled:   { icon: XCircle,    color: 'text-gray-600',   bg: 'bg-gray-100',  label: 'Troca de coach cancelada' },
   plan_changed:             { icon: PenLine,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Plano alterado' },
   discount_applied:         { icon: HandCoins,  color: 'text-green-600',  bg: 'bg-green-50',  label: 'Desconto aplicado' },
   leave_started:            { icon: Pause,      color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Licença iniciada' },
@@ -174,7 +179,11 @@ function formatEventSummary(ev) {
         ? `Criado como renovação de ${p.parent_contract_num || '—'}`
         : (p.prior_cancelled > 0 ? `Aluno já cancelou ${p.prior_cancelled}x antes` : 'Contrato inicial');
     case 'coach_changed':
-      return `${p.from_coach_name || '—'} → ${p.to_coach_name || '—'}`;
+    case 'coach_change_scheduled':
+      return `${p.from_coach_name || '—'} → ${p.to_coach_name || '—'}`
+        + (p.effective_date ? ` · a partir de ${formatDate(p.effective_date)}` : '');
+    case 'coach_change_cancelled':
+      return `${p.coach_name || '—'} começaria em ${formatDate(p.effective_date)}`;
     case 'leave_started':
       return `${p.open_ended || p.days == null ? 'Sem data definida' : `${p.days} dia${p.days !== 1 ? 's' : ''}`}${p.reason ? ' · ' + p.reason : ''}`;
     case 'leave_ended':
@@ -314,6 +323,11 @@ export default function ContractDetail() {
   // Modais
   const [changeCoachModal, setChangeCoachModal] = useState(false);
   const [newCoachId, setNewCoachId] = useState('');
+  const [newCoachDate, setNewCoachDate] = useState(todayLocalStr());
+  const [coachSaving, setCoachSaving] = useState(false);
+  const [cancelCoachChangeModal, setCancelCoachChangeModal] = useState(false);
+  const [noRenewalModal, setNoRenewalModal] = useState(false);
+  const [noRenewalSaving, setNoRenewalSaving] = useState(false);
   const [leaveModal, setLeaveModal] = useState(false);
   const [leaveForm, setLeaveForm] = useState({ start_date: todayLocalStr(), end_date: todayLocalStr(), open_ended: false, reason: '' });
   const [cancelModal, setCancelModal]   = useState(false);
@@ -518,13 +532,34 @@ export default function ContractDetail() {
 
   const changeCoach = async () => {
     if (!newCoachId || newCoachId === contract.coach_id) return setChangeCoachModal(false);
+    if (!newCoachDate) return toast.error('Informe a data em que o novo coach começa');
+    setCoachSaving(true);
     try {
-      await changeAssessmentContractCoach(id, {
+      const result = await changeAssessmentContractCoach(id, {
         coachId: newCoachId,
+        effectiveDate: newCoachDate,
         expectedUpdatedAt: contract.updated_at,
       });
-      toast.success('Coach trocado!'); setChangeCoachModal(false); load();
+      toast.success(result?.applies_now === false
+        ? `Troca agendada: o novo coach começa em ${formatDate(newCoachDate)}`
+        : 'Coach trocado!');
+      if (result?.regenerate_competence) {
+        toast.warning(`O fechamento de ${formatDate(result.regenerate_competence).slice(3)} precisa ser gerado de novo.`);
+      }
+      setChangeCoachModal(false); load();
     } catch (e) { toast.error(e.message); }
+    finally { setCoachSaving(false); }
+  };
+
+  const cancelScheduledCoachChange = async () => {
+    setCoachSaving(true);
+    try {
+      await cancelAssessmentContractCoachChange(id, { expectedUpdatedAt: contract.updated_at });
+      toast.success('Troca de coach cancelada');
+      setCancelCoachChangeModal(false);
+      load();
+    } catch (e) { toast.error(e.message); }
+    finally { setCoachSaving(false); }
   };
 
   const addLeave = async () => {
@@ -691,17 +726,12 @@ export default function ContractDetail() {
       return;
     }
 
+    setNoRenewalModal(true);
+  };
+
+  const confirmNoRenewal = async () => {
     const shouldFinishNow = contract.end_date <= todayLocalStr();
-    const statusText = shouldFinishNow
-      ? 'O contrato será marcado como concluído agora.'
-      : `O contrato permanece ativo até ${formatDate(contract.end_date)}.`;
-
-    if (!confirm(
-      `Registrar que ${contract.contract_number} não será renovado?\n\n` +
-      `${statusText}\n\n` +
-      'Não haverá multa, estorno ou nova cobrança.'
-    )) return;
-
+    setNoRenewalSaving(true);
     try {
       await markAssessmentContractNonRenewal({
         contract,
@@ -710,9 +740,12 @@ export default function ContractDetail() {
       toast.success(shouldFinishNow
         ? 'Contrato concluído por não renovação.'
         : 'Não renovação registrada. O contrato segue ativo até o fim da vigência.');
+      setNoRenewalModal(false);
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao registrar não renovação');
+    } finally {
+      setNoRenewalSaving(false);
     }
   };
 
@@ -1064,6 +1097,25 @@ export default function ContractDetail() {
   const calc = cancelModal ? cancellationCalc(cancelDate) : cancellationCalc();
   const canCancel = !['cancelled', 'finished', 'voided'].includes(contract.status);
   const compatibleCoaches = coaches.filter(c => (c.modality_ids || []).includes(plan?.modality_id));
+  // Troca de coach com data: trechos pela regra do repasse e a troca agendada.
+  const coachToday = todayLocalStr();
+  const coachSegments = coachHistorySegments(history, {
+    startDate: contract.start_date, endDate: contract.end_date, today: coachToday,
+  });
+  const scheduledCoachChange = pendingCoachChange(history, { startDate: contract.start_date, today: coachToday });
+  const scheduledCoach = scheduledCoachChange
+    ? allCoaches.find(c => c.id === scheduledCoachChange.coach_id)
+    : null;
+  const coachReferenceDay = contract.start_date > coachToday ? contract.start_date : coachToday;
+  const coachSegmentNow = coachSegments.find(segment => segment.from <= coachReferenceDay
+    && (!segment.to || segment.to >= coachReferenceDay));
+  // O novo coach começa entre o início do coach atual e o último dia do contrato.
+  const coachDateMin = coachSegmentNow?.from || contract.start_date;
+  const contractLastDay = contract.end_date
+    ? toLocalDateStr(new Date(new Date(`${contract.end_date}T12:00:00`).getTime() - 86400000))
+    : undefined;
+  const defaultCoachDate = coachDateMin > coachToday ? coachDateMin : coachToday;
+  const coachFromFirstDay = newCoachDate === contract.start_date && contract.start_date > coachToday;
   const canCreateRenewal = !contract.parent_contract_id
     && !contract.renewal_generated
     && !isNonRenewalReason(contract.cancellation_reason)
@@ -1207,7 +1259,13 @@ export default function ContractDetail() {
           <CardContent>
             <p className="font-semibold">{coach?.name}</p>
             <p className="text-xs text-muted-foreground capitalize">{coach?.role}</p>
-            {canCancel && <button onClick={() => { setNewCoachId(coach?.id || ''); setChangeCoachModal(true); }} className="text-xs text-blue-600 hover:underline mt-1.5 inline-flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Trocar coach</button>}
+            {scheduledCoachChange && (
+              <div className="mt-2 rounded-md border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs text-purple-900">
+                <p>Troca agendada: <strong>{scheduledCoach?.name || '—'}</strong> a partir de {formatDate(scheduledCoachChange.started_at)}</p>
+                {canCancel && <button onClick={() => setCancelCoachChangeModal(true)} className="mt-1 text-purple-700 hover:underline">Cancelar troca</button>}
+              </div>
+            )}
+            {canCancel && !scheduledCoachChange && <button onClick={() => { setNewCoachId(coach?.id || ''); setNewCoachDate(defaultCoachDate); setChangeCoachModal(true); }} className="text-xs text-blue-600 hover:underline mt-1.5 inline-flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Trocar coach</button>}
           </CardContent>
         </Card>
       </div>
@@ -1607,25 +1665,20 @@ export default function ContractDetail() {
       </Card>
 
       {/* Histórico de coaches */}
-      {history.length > 1 && (
+      {coachSegments.length > 1 && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><History className="w-4 h-4" /> Histórico de coaches</CardTitle></CardHeader>
           <CardContent>
             <div className="space-y-2 text-sm">
-              {history.map((h, index) => {
-                const c = allCoaches.find(x => x.id === h.coach_id);
-                const next = history[index + 1];
-                const endLabel = h.ended_at
-                  ? formatDate(h.ended_at)
-                  : next ? formatDate(next.started_at) : 'atual';
-                const scheduled = String(h.started_at || '').slice(0, 10) > todayLocalStr();
+              {coachSegments.map(segment => {
+                const c = allCoaches.find(x => x.id === segment.coachId);
                 return (
-                  <div key={h.id} className="flex items-center justify-between">
+                  <div key={`${segment.coachId}-${segment.from}`} className="flex items-center justify-between">
                     <span className="font-medium">{c?.name || '—'}</span>
                     <span className="text-xs text-muted-foreground">
-                      {scheduled
-                        ? `a partir de ${formatDate(h.started_at)} (agendado)`
-                        : `${formatDate(h.started_at)} → ${endLabel}`}
+                      {segment.scheduled
+                        ? `a partir de ${formatDate(segment.from)} (agendado)`
+                        : `${formatDate(segment.from)} → ${segment.current ? 'atual' : formatDate(segment.to)}`}
                     </span>
                   </div>
                 );
@@ -1887,13 +1940,76 @@ export default function ContractDetail() {
               {compatibleCoaches.map(c => <SelectItem key={c.id} value={c.id}>{c.name} ({c.role})</SelectItem>)}
             </SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">A troca é registrada no histórico. No fechamento mensal cada coach recebe proporcional aos dias.</p>
+          <Label>O novo coach começa em</Label>
+          <Input
+            type="date"
+            value={newCoachDate}
+            min={coachDateMin}
+            max={contractLastDay}
+            onChange={event => setNewCoachDate(event.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            {coachFromFirstDay
+              ? 'O contrato ainda não começou: o novo coach assume desde o primeiro dia.'
+              : newCoachDate > coachToday
+                ? 'A troca fica agendada: o coach do contrato muda sozinho nessa data.'
+                : newCoachDate < coachToday
+                  ? 'Troca para trás: até o dia anterior, os dias ficam com o coach atual.'
+                  : 'A troca vale a partir de hoje.'}
+            {' '}No fechamento mensal, cada coach recebe pelos dias dele.
+          </p>
           <div className="flex gap-2 pt-2">
             <Button variant="outline" className="flex-1" onClick={() => setChangeCoachModal(false)}>Cancelar</Button>
-            <Button className="flex-1" onClick={changeCoach}>Confirmar troca</Button>
+            <Button className="flex-1" onClick={changeCoach} disabled={coachSaving || !newCoachDate}>
+              {coachSaving ? 'Salvando...' : newCoachDate > coachToday && !coachFromFirstDay ? 'Agendar troca' : 'Confirmar troca'}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={cancelCoachChangeModal}
+        onOpenChange={setCancelCoachChangeModal}
+        title="Cancelar troca de coach"
+        icon={XCircle}
+        iconClassName="text-purple-600"
+        confirmLabel="Cancelar troca"
+        confirmClassName="bg-purple-600 hover:bg-purple-700 text-white"
+        busy={coachSaving}
+        onConfirm={cancelScheduledCoachChange}
+      >
+        {scheduledCoachChange && (
+          <p>
+            A troca para <b>{scheduledCoach?.name || '—'}</b> a partir de{' '}
+            <b>{formatDate(scheduledCoachChange.started_at)}</b> deixa de existir.
+            O contrato continua com <b>{coach?.name || '—'}</b>.
+          </p>
+        )}
+      </ConfirmDialog>
+
+      {/* MODAL: não renovar */}
+      <ConfirmDialog
+        open={noRenewalModal}
+        onOpenChange={setNoRenewalModal}
+        title="Não renovar"
+        icon={Ban}
+        iconClassName="text-amber-600"
+        confirmLabel="Confirmar não renovação"
+        confirmClassName="bg-amber-600 hover:bg-amber-700 text-white"
+        busy={noRenewalSaving}
+        busyLabel="Registrando..."
+        onConfirm={confirmNoRenewal}
+      >
+        <p>Registrar que <b>{contract.contract_number}</b> não será renovado?</p>
+        <div className="rounded-xl border bg-gray-50 px-3 py-2 space-y-1">
+          <p>
+            {contract.end_date && contract.end_date <= todayLocalStr()
+              ? 'O contrato será marcado como concluído agora.'
+              : <>O contrato permanece ativo até <b>{formatDate(contract.end_date)}</b>.</>}
+          </p>
+          <p className="text-muted-foreground">Não haverá multa, estorno ou nova cobrança.</p>
+        </div>
+      </ConfirmDialog>
 
       {/* MODAL: licença */}
       <Dialog open={leaveModal} onOpenChange={setLeaveModal}>

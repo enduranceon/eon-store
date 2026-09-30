@@ -269,15 +269,24 @@ export async function handleContractResidualRequest(
       { p_actor_id: actorId },
     );
     if (planChangeError) return databaseError(planChangeError);
+    // Trocas de coach agendadas cuja data chegou, depois das mudanças de plano.
+    const { data: coachChanges, error: coachChangeError } = await supabase.rpc(
+      "apply_due_assessment_coach_changes",
+      { p_actor_id: actorId },
+    );
+    if (coachChangeError) return databaseError(coachChangeError);
     return jsonResponse({
       data: {
         ...(data || {}),
         changed: [
           ...((data as { changed?: unknown[] } | null)?.changed || []),
           ...((planChanges as { changed?: unknown[] } | null)?.changed || []),
+          ...((coachChanges as { changed?: unknown[] } | null)?.changed || []),
         ],
         plan_change_failures:
           (planChanges as { failed?: unknown[] } | null)?.failed || [],
+        coach_change_failures:
+          (coachChanges as { failed?: unknown[] } | null)?.failed || [],
       },
     });
   }

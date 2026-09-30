@@ -929,15 +929,35 @@ export async function updateAssessmentContractDates(
   return response.data;
 }
 
+// A data é o dia em que o novo coach começa: hoje ou antes vale na hora;
+// depois de hoje, a troca fica agendada.
 export async function changeAssessmentContractCoach(
   contractId,
-  { coachId, expectedUpdatedAt },
+  { coachId, effectiveDate, expectedUpdatedAt },
   options = {},
 ) {
   const response = await apiRequest(`/orders/contract/${contractId}/coach`, {
     ...options,
     method: 'PATCH',
-    body: { coach_id: coachId, expected_updated_at: expectedUpdatedAt },
+    body: {
+      coach_id: coachId,
+      effective_date: effectiveDate,
+      expected_updated_at: expectedUpdatedAt,
+    },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function cancelAssessmentContractCoachChange(
+  contractId,
+  { expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/contract/${contractId}/coach`, {
+    ...options,
+    method: 'DELETE',
+    body: { expected_updated_at: expectedUpdatedAt },
   });
   invalidateAssessmentContractLifecycle();
   return response.data;

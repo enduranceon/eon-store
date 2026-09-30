@@ -12,7 +12,8 @@ type LifecycleAction =
   | "finish_leave"
   | "cancel"
   | "schedule_cancel"
-  | "unschedule_cancel";
+  | "unschedule_cancel"
+  | "unschedule_coach";
 
 function isCalendarDate(value: unknown): value is string {
   if (typeof value !== "string" || !DATE_PATTERN.test(value)) return false;
@@ -96,10 +97,13 @@ export async function handleContractLifecycleRequest(
     : baseMatch![2] === "cancellation-schedule"
     // Mesmo recurso, dois verbos: POST agenda, DELETE desfaz o agendamento.
     ? (req.method === "DELETE" ? "unschedule_cancel" : "schedule_cancel")
+    // Mesmo recurso: PATCH troca o coach, DELETE cancela a troca agendada.
+    : baseMatch![2] === "coach" && req.method === "DELETE"
+    ? "unschedule_coach"
     : baseMatch![2] as LifecycleAction;
   const expectedMethod = ["dates", "coach"].includes(action)
     ? "PATCH"
-    : action === "unschedule_cancel"
+    : ["unschedule_cancel", "unschedule_coach"].includes(action)
     ? "DELETE"
     : "POST";
   if (req.method !== expectedMethod) {
@@ -141,8 +145,15 @@ export async function handleContractLifecycleRequest(
     rpc = "update_assessment_contract_dates";
     args = { p_start_date: body.start_date, p_end_date: body.end_date };
   } else if (action === "coach") {
+    // Sem data (versão anterior da tela), a troca vale a partir de hoje.
+    const hasDate = "effective_date" in body;
     if (
-      !exactKeys(body, ["coach_id", "expected_updated_at"]) ||
+      !exactKeys(
+        body,
+        hasDate
+          ? ["coach_id", "effective_date", "expected_updated_at"]
+          : ["coach_id", "expected_updated_at"],
+      ) ||
       typeof body.coach_id !== "string" || !UUID_PATTERN.test(body.coach_id)
     ) {
       return jsonResponse({
@@ -150,8 +161,26 @@ export async function handleContractLifecycleRequest(
         code: "invalid_request",
       }, 400);
     }
+    if (hasDate && !isCalendarDate(body.effective_date)) {
+      return jsonResponse({
+        error: "Informe a data em que o novo coach começa",
+        code: "invalid_request",
+      }, 400);
+    }
     rpc = "change_assessment_contract_coach";
-    args = { p_coach_id: body.coach_id };
+    args = {
+      p_coach_id: body.coach_id,
+      p_effective_date: hasDate ? body.effective_date : null,
+    };
+  } else if (action === "unschedule_coach") {
+    if (!exactKeys(body, ["expected_updated_at"])) {
+      return jsonResponse({
+        error: "Requisição inválida",
+        code: "invalid_request",
+      }, 400);
+    }
+    rpc = "cancel_assessment_contract_coach_change";
+    args = {};
   } else if (action === "start_leave") {
     if (
       !exactKeys(body, [
