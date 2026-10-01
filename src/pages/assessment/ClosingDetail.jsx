@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
-  ArrowLeft, CheckCircle2, User, Plus, ChevronDown, ChevronRight, Printer,
+  ArrowLeft, CheckCircle2, User, Plus, Minus, Receipt, ChevronDown, ChevronRight, Printer,
   Lock, Banknote, Info, AlertTriangle, RotateCcw, Trash2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -23,14 +23,38 @@ import {
 import { formatCurrency, formatDate, formatCompetence, todayLocalStr } from '@/lib/utils';
 import { monthHasEnded, monthOpensOn } from '@/lib/closing-months';
 import { functionErrorMessage } from '@/lib/function-error';
-import { EXPENSE_CATEGORIES, expenseCategoryLabel } from '@/lib/payout-expenses';
+import {
+  EXPENSE_CATEGORIES, MANUAL_ENTRY_KINDS, expenseCategoryLabel, manualEntryKind, signedManualAmount,
+} from '@/lib/payout-expenses';
 import { toast } from 'sonner';
 
 const SOURCE = {
   athlete_repasse:    { label: 'Repasse atleta',    cls: 'bg-blue-100 text-blue-700' },
   direct_leadership:  { label: 'Liderança',         cls: 'bg-purple-100 text-purple-700' },
   co_leadership:      { label: 'Co-liderança',      cls: 'bg-indigo-100 text-indigo-700' },
-  manual_adjustment:  { label: 'Ajuste / reembolso', cls: 'bg-amber-100 text-amber-700' },
+};
+
+// Lançamentos manuais (source_type manual_adjustment), pelo tipo.
+const MANUAL_KIND = {
+  repasse_extra: {
+    label: 'Repasse extra', cls: 'bg-emerald-100 text-emerald-700', Icon: Plus,
+    hint: 'Soma ao repasse do coach. Use para o que o cálculo automático não pegou, como dias de um plano anterior.',
+    placeholder: 'Ex.: dias 01 a 09/09 do plano anterior do aluno (sistema antigo)',
+  },
+  desconto: {
+    label: 'Desconto', cls: 'bg-red-100 text-red-700', Icon: Minus,
+    hint: 'Tira do repasse do coach. O valor não é repassado neste fechamento.',
+    placeholder: 'Ex.: aula do dia 12/09 não foi dada',
+  },
+  gasto: {
+    label: 'Gasto / reembolso', cls: 'bg-amber-100 text-amber-700', Icon: Receipt,
+    hint: 'Combustível, insumos, escalas e outros gastos do coach.',
+    placeholder: 'Ex.: reembolso da gasolina do treino de sábado',
+  },
+};
+
+const EMPTY_ENTRY = {
+  kind: 'repasse_extra', coach_id: '', category: 'reembolso_combustivel', amount: '', description: '', adjustment_reason: '',
 };
 
 const STATUS = {
@@ -48,7 +72,7 @@ export default function ClosingDetail() {
   const [expanded, setExpanded] = useState({}); // coach_id → bool
   const [expandedItem, setExpandedItem] = useState({}); // item_id → bool
   const [adjustModal, setAdjustModal] = useState(false);
-  const [adjustForm, setAdjustForm] = useState({ coach_id: '', category: 'reembolso_combustivel', amount: '', description: '', adjustment_reason: '' });
+  const [adjustForm, setAdjustForm] = useState(EMPTY_ENTRY);
   const [savingAdjust, setSavingAdjust] = useState(false);
   const [approving, setApproving] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(false);
@@ -144,7 +168,7 @@ export default function ClosingDetail() {
   };
 
   const recalculate = async () => {
-    if (!confirm('Recalcular este fechamento?\n\nOs itens automáticos são regerados a partir dos contratos pagos de agora. Seus ajustes manuais são preservados.')) return;
+    if (!confirm('Recalcular este fechamento?\n\nOs itens automáticos são regerados a partir dos contratos pagos de agora. Repasses extras, descontos e gastos lançados à mão são preservados.')) return;
     setRecalculating(true);
     try {
       const { data, error } = await supabase.functions.invoke('generate-monthly-closing', {
@@ -158,32 +182,41 @@ export default function ClosingDetail() {
     finally { setRecalculating(false); }
   };
 
+  const openEntry = (kind) => {
+    setAdjustForm({ ...EMPTY_ENTRY, kind });
+    setAdjustModal(true);
+  };
+
   const addAdjust = async () => {
+    const { kind } = adjustForm;
+    const value = Math.round(Number(adjustForm.amount) * 100) / 100;
     if (!adjustForm.coach_id) return toast.error('Selecione o coach');
-    if (!adjustForm.amount || isNaN(Number(adjustForm.amount))) return toast.error('Valor inválido');
-    if (!adjustForm.adjustment_reason?.trim()) return toast.error('Motivo do ajuste é obrigatório');
+    if (!Number.isFinite(value) || value <= 0) return toast.error('Informe um valor maior que zero');
+    if (!adjustForm.adjustment_reason?.trim()) return toast.error('Escreva a explicação do lançamento');
+    const category = kind === 'gasto' ? (adjustForm.category || 'outros') : kind;
     setSavingAdjust(true);
     try {
       await createPayoutAdjustment(id, {
         coach_id:    adjustForm.coach_id,
-        expense_category: adjustForm.category || 'outros',
-        description: adjustForm.description?.trim() || expenseCategoryLabel(adjustForm.category),
-        amount:      Number(adjustForm.amount),
+        expense_category: category,
+        description: (kind === 'gasto' && adjustForm.description?.trim()) || expenseCategoryLabel(category),
+        amount:      signedManualAmount(kind, value),
         adjustment_reason: adjustForm.adjustment_reason.trim(),
       });
-      toast.success('Lançamento adicionado!');
+      toast.success(`${MANUAL_KIND[kind].label} lançado no extrato!`);
       setAdjustModal(false);
-      setAdjustForm({ coach_id: '', category: 'reembolso_combustivel', amount: '', description: '', adjustment_reason: '' });
+      setAdjustForm(EMPTY_ENTRY);
       load();
     } catch (e) { toast.error(e.message); }
     finally { setSavingAdjust(false); }
   };
 
   const removeAdjust = async (item) => {
-    if (!confirm(`Remover ajuste de ${formatCurrency(item.amount)}?`)) return;
+    const label = MANUAL_KIND[manualEntryKind(item.expense_category)].label;
+    if (!confirm(`Remover ${label.toLowerCase()} de ${formatCurrency(item.amount)}?`)) return;
     try {
       await deletePayoutAdjustment(id, item.id);
-      toast.success('Ajuste removido'); load();
+      toast.success('Lançamento removido'); load();
     } catch (e) {
       // Mensagem do trigger é amigável
       toast.error(e.message?.replace(/^.*Não/, 'Não') || 'Erro ao remover');
@@ -275,7 +308,7 @@ export default function ClosingDetail() {
           <p className="text-2xl font-bold text-green-600">{formatCurrency(total)}</p>
           <p className="text-[11px] text-muted-foreground mt-0.5">
             Automático {formatCurrency(total - adjustmentsTotal)}
-            {adjustmentsTotal !== 0 && ` + ajustes ${adjustmentsTotal >= 0 ? '+' : ''}${formatCurrency(adjustmentsTotal)}`}
+            {adjustmentsTotal !== 0 && ` · lançamentos ${adjustmentsTotal >= 0 ? '+' : ''}${formatCurrency(adjustmentsTotal)}`}
           </p>
         </CardContent></Card>
         <Card><CardContent className="p-4">
@@ -289,12 +322,12 @@ export default function ClosingDetail() {
           <p className="text-[11px] text-muted-foreground mt-0.5">alunos/bônus processados</p>
         </CardContent></Card>
         <Card><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">Ajustes manuais</p>
+          <p className="text-xs text-muted-foreground">Lançamentos manuais</p>
           <p className={`text-2xl font-bold ${adjustmentsTotal > 0 ? 'text-amber-700' : adjustmentsTotal < 0 ? 'text-red-700' : 'text-gray-400'}`}>
             {adjustmentsTotal !== 0 ? `${adjustmentsTotal > 0 ? '+' : ''}${formatCurrency(adjustmentsTotal)}` : '—'}
           </p>
           <p className="text-[11px] text-muted-foreground mt-0.5">
-            {items.filter(i => i.source_type === 'manual_adjustment').length} ajuste(s)
+            {items.filter(i => i.source_type === 'manual_adjustment').length} lançamento(s)
           </p>
         </CardContent></Card>
       </div>
@@ -302,7 +335,7 @@ export default function ClosingDetail() {
       {/* Legenda de tipos */}
       <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
         <span className="font-medium text-gray-700">Tipos de item:</span>
-        {Object.entries(SOURCE).map(([k, v]) => (
+        {[...Object.entries(SOURCE), ...Object.entries(MANUAL_KIND)].map(([k, v]) => (
           <span key={k} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold ${v.cls}`}>
             {v.label}
           </span>
@@ -310,9 +343,17 @@ export default function ClosingDetail() {
       </div>
 
       {isDraft && (
-        <div className="flex justify-end">
-          <Button size="sm" variant="outline" onClick={() => setAdjustModal(true)}>
-            <Plus className="w-3.5 h-3.5 mr-1" /> Gasto / reembolso
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={() => openEntry('repasse_extra')}
+            className="text-emerald-700 border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800">
+            <Plus className="w-3.5 h-3.5 mr-1" /> Repasse extra
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => openEntry('desconto')}
+            className="text-red-700 border-red-200 hover:bg-red-50 hover:text-red-800">
+            <Minus className="w-3.5 h-3.5 mr-1" /> Desconto
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => openEntry('gasto')}>
+            <Receipt className="w-3.5 h-3.5 mr-1" /> Gasto / reembolso
           </Button>
         </div>
       )}
@@ -347,8 +388,13 @@ export default function ClosingDetail() {
                   <CardContent className="pt-0">
                     <div className="divide-y border-t">
                       {list.map(it => {
-                        const so = SOURCE[it.source_type] || { label: it.source_type, cls: '' };
                         const isManual = it.source_type === 'manual_adjustment';
+                        const kind = isManual ? manualEntryKind(it.expense_category) : null;
+                        const so = isManual ? MANUAL_KIND[kind] : (SOURCE[it.source_type] || { label: it.source_type, cls: '' });
+                        // Lançamento manual: a explicação é o texto da linha, a não ser que a
+                        // descrição diga algo além do tipo/categoria.
+                        const explainsItself = isManual && !!it.adjustment_reason
+                          && (!it.description || it.description === expenseCategoryLabel(it.expense_category));
                         const itemOpen = expandedItem[it.id];
                         const hasSnapshot = it.rate_applied != null || it.tier_applied != null || it.base_value != null;
                         return (
@@ -360,13 +406,15 @@ export default function ClosingDetail() {
                                   ref. {refLabel(it.reference_competence)}
                                 </span>
                               )}
-                              {isManual && it.expense_category && (
+                              {isManual && kind === 'gasto' && it.expense_category && (
                                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 bg-amber-50 text-amber-700 border border-amber-200" title="Categoria do gasto/reembolso">
                                   {expenseCategoryLabel(it.expense_category)}
                                 </span>
                               )}
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm truncate">{it.description}</p>
+                                <p className={`text-sm ${explainsItself ? 'break-words' : 'truncate'}`}>
+                                  {explainsItself ? it.adjustment_reason : it.description}
+                                </p>
                                 {it.valid_days != null && (
                                   <p className="text-[11px] text-muted-foreground">
                                     {it.valid_days}/{it.month_days} dias
@@ -390,7 +438,7 @@ export default function ClosingDetail() {
                                 <button
                                   onClick={() => removeAdjust(it)}
                                   className="text-red-500 hover:bg-red-50 p-1 rounded"
-                                  title="Remover ajuste"
+                                  title="Remover lançamento"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -450,8 +498,8 @@ export default function ClosingDetail() {
                                 )}
                               </div>
                             )}
-                            {/* Ajuste manual: motivo sempre visível resumido */}
-                            {isManual && it.adjustment_reason && !itemOpen && (
+                            {/* Lançamento com descrição própria: explicação resumida embaixo */}
+                            {isManual && !explainsItself && it.adjustment_reason && !itemOpen && (
                               <p className="ml-12 mt-0.5 text-[11px] text-amber-700 italic truncate">
                                 "{it.adjustment_reason}"
                               </p>
@@ -521,73 +569,115 @@ export default function ClosingDetail() {
         </Card>
       )}
 
-      {/* Modal ajuste */}
+      {/* Lançamento manual: repasse extra, desconto ou gasto/reembolso */}
       <Dialog open={adjustModal} onOpenChange={open => !open && !savingAdjust && setAdjustModal(false)}>
         <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Plus className="w-5 h-5 text-amber-600" /> Gasto / reembolso
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-900">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>Reembolsos, escalas e ajustes entram como item separado no extrato do treinador e mantêm o cálculo automático intacto.</span>
-            </div>
-            <div>
-              <Label>Coach *</Label>
-              <Select value={adjustForm.coach_id} onValueChange={v => setAdjustForm(f => ({ ...f, coach_id: v }))}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  {coaches.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Categoria *</Label>
-              <Select value={adjustForm.category} onValueChange={v => setAdjustForm(f => ({ ...f, category: v }))}>
-                <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  {EXPENSE_CATEGORIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Valor *</Label>
-              <Input className="mt-1" type="number" step="0.01"
-                value={adjustForm.amount}
-                onChange={e => setAdjustForm(f => ({ ...f, amount: e.target.value }))}
-                placeholder="Use negativo para descontar"
-              />
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Valor positivo soma ao extrato. Valor negativo desconta.
-              </p>
-            </div>
-            <div>
-              <Label>Motivo do ajuste *</Label>
-              <Textarea rows={2} className="mt-1"
-                value={adjustForm.adjustment_reason}
-                onChange={e => setAdjustForm(f => ({ ...f, adjustment_reason: e.target.value }))}
-                placeholder="Ex: Reembolso de aula extra, correção do mês anterior..."
-              />
-            </div>
-            <div>
-              <Label>Descrição (curta)</Label>
-              <Input className="mt-1"
-                value={adjustForm.description}
-                onChange={e => setAdjustForm(f => ({ ...f, description: e.target.value }))}
-                placeholder="Resumo que aparece no extrato"
-              />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <Button variant="outline" className="flex-1" onClick={() => setAdjustModal(false)} disabled={savingAdjust}>
-                Cancelar
-              </Button>
-              <Button className="flex-1" onClick={addAdjust} disabled={savingAdjust}>
-                {savingAdjust ? 'Salvando...' : 'Adicionar'}
-              </Button>
-            </div>
-          </div>
+          {(() => {
+            const kind = MANUAL_KIND[adjustForm.kind];
+            const KindIcon = kind.Icon;
+            const value = Number(adjustForm.amount);
+            const coachGroup = grouped.find(g => g.coach.id === adjustForm.coach_id);
+            const coachName = coaches.find(c => c.id === adjustForm.coach_id)?.name;
+            const current = coachGroup?.subtotal ?? 0;
+            const after = current + (Number.isFinite(value) && value > 0 ? signedManualAmount(adjustForm.kind, value) : 0);
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <KindIcon className={`w-5 h-5 ${adjustForm.kind === 'desconto' ? 'text-red-600' : adjustForm.kind === 'repasse_extra' ? 'text-emerald-600' : 'text-amber-600'}`} />
+                    {kind.label}
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1" role="radiogroup" aria-label="Tipo do lançamento">
+                    {MANUAL_ENTRY_KINDS.map(k => (
+                      <button
+                        key={k.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={adjustForm.kind === k.value}
+                        onClick={() => setAdjustForm(f => ({ ...f, kind: k.value }))}
+                        className={`rounded-md px-2 py-1.5 text-xs font-semibold transition-colors ${
+                          adjustForm.kind === k.value ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-800'
+                        }`}
+                      >
+                        {k.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-start gap-2 bg-gray-50 border rounded-lg p-2.5 text-xs text-gray-700">
+                    <Info className="w-4 h-4 shrink-0 mt-0.5 text-gray-500" />
+                    <span>{kind.hint} Entra como item separado no extrato do coach; o cálculo automático não muda.</span>
+                  </div>
+                  <div>
+                    <Label>Coach *</Label>
+                    <Select value={adjustForm.coach_id} onValueChange={v => setAdjustForm(f => ({ ...f, coach_id: v }))}>
+                      <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                      <SelectContent>
+                        {coaches.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {adjustForm.kind === 'gasto' && (
+                    <div>
+                      <Label>Categoria *</Label>
+                      <Select value={adjustForm.category} onValueChange={v => setAdjustForm(f => ({ ...f, category: v }))}>
+                        <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                        <SelectContent>
+                          {EXPENSE_CATEGORIES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div>
+                    <Label>{adjustForm.kind === 'desconto' ? 'Valor a descontar (R$) *' : 'Valor (R$) *'}</Label>
+                    <Input className="mt-1" type="number" step="0.01" min="0.01" inputMode="decimal"
+                      value={adjustForm.amount}
+                      onChange={e => setAdjustForm(f => ({ ...f, amount: e.target.value }))}
+                      placeholder="0,00"
+                    />
+                  </div>
+                  <div>
+                    <Label>Explicação *</Label>
+                    <Textarea rows={2} className="mt-1"
+                      value={adjustForm.adjustment_reason}
+                      onChange={e => setAdjustForm(f => ({ ...f, adjustment_reason: e.target.value }))}
+                      placeholder={kind.placeholder}
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1">Aparece no extrato do coach.</p>
+                  </div>
+                  {adjustForm.kind === 'gasto' && (
+                    <div>
+                      <Label>Descrição (curta)</Label>
+                      <Input className="mt-1"
+                        value={adjustForm.description}
+                        onChange={e => setAdjustForm(f => ({ ...f, description: e.target.value }))}
+                        placeholder="Resumo que aparece no extrato"
+                      />
+                    </div>
+                  )}
+                  {coachName && Number.isFinite(value) && value > 0 && (
+                    <div className={`rounded-lg border px-3 py-2 text-xs ${after < 0 ? 'bg-red-50 border-red-200 text-red-800' : 'bg-gray-50 text-gray-700'}`}>
+                      Extrato de {coachName}: {formatCurrency(current)} → <b>{formatCurrency(after)}</b>
+                      {after < 0 && <span className="block mt-0.5">O extrato fica negativo.</span>}
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <Button variant="outline" className="flex-1" onClick={() => setAdjustModal(false)} disabled={savingAdjust}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      className={`flex-1 ${adjustForm.kind === 'desconto' ? 'bg-red-600 hover:bg-red-700' : adjustForm.kind === 'repasse_extra' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
+                      onClick={addAdjust}
+                      disabled={savingAdjust}
+                    >
+                      {savingAdjust ? 'Salvando...' : `Lançar ${kind.label.toLowerCase()}`}
+                    </Button>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

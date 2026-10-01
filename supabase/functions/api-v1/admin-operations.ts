@@ -328,7 +328,7 @@ async function handlePayout(
     return invalid("Lançamento inválido");
   }
   const { data: closing } = await supabase.from("payout_monthly_closings")
-    .select("id,status").eq("id", closingId).maybeSingle();
+    .select("id,status,competence").eq("id", closingId).maybeSingle();
   if (!closing) {
     return jsonResponse({
       error: "Fechamento não encontrado",
@@ -359,6 +359,18 @@ async function handlePayout(
     ) {
       return invalid("Dados do lançamento inválidos");
     }
+    const category = typeof body.expense_category === "string" &&
+        body.expense_category.trim()
+      ? body.expense_category.trim().slice(0, 100)
+      : "outros";
+    // Desconto tira do repasse do coach; repasse extra e gasto/reembolso somam.
+    if (category === "desconto" ? amount > 0 : amount < 0) {
+      return invalid(
+        category === "desconto"
+          ? "Desconto precisa ter valor negativo"
+          : "O valor precisa ser maior que zero",
+      );
+    }
     const { data, error } = await supabase.from(
       "payout_monthly_statement_items",
     ).insert({
@@ -370,9 +382,9 @@ async function handlePayout(
         ? body.description.trim().slice(0, 2_000)
         : null,
       adjustment_reason: body.adjustment_reason.trim(),
-      expense_category: typeof body.expense_category === "string"
-        ? body.expense_category.trim().slice(0, 100)
-        : "outros",
+      expense_category: category,
+      // O lançamento é do mês do fechamento, mesmo lançado no mês seguinte.
+      reference_competence: closing.competence,
     }).select("*").single();
     if (error) return databaseError(error, "add payout adjustment");
     return jsonResponse({ data }, 201);

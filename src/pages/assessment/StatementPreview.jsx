@@ -94,15 +94,18 @@ export default function StatementPreview({ view: v }) {
         </div>
       ))}
 
-      {v.ajustes.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
+      {[
+        { titulo: `Repasse extra e descontos (${(v.extras || []).length})`, cor: '#059669', lista: v.extras || [] },
+        { titulo: `Gastos e reembolsos (${(v.gastos || []).length})`, cor: '#d97706', lista: v.gastos || [] },
+      ].filter((s) => s.lista.length > 0).map((s) => (
+        <div key={s.titulo} style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-            <span style={{ width: 3, height: 13, borderRadius: 2, background: '#d97706', display: 'inline-block' }} />
-            <strong style={{ fontSize: 13, color: '#0f172a' }}>Ajustes e reembolsos ({v.ajustes.length})</strong>
+            <span style={{ width: 3, height: 13, borderRadius: 2, background: s.cor, display: 'inline-block' }} />
+            <strong style={{ fontSize: 13, color: '#0f172a' }}>{s.titulo}</strong>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <tbody>
-              {v.ajustes.map((a) => (
+              {s.lista.map((a) => (
                 <tr key={a.id} style={{ borderBottom: '1px solid #eef2f7' }}>
                   <td style={{ padding: '6px 0' }}>
                     {a.categoria}
@@ -117,7 +120,7 @@ export default function StatementPreview({ view: v }) {
             </tbody>
           </table>
         </div>
-      )}
+      ))}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: 14, marginTop: 16 }}>

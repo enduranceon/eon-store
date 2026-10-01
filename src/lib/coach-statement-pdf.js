@@ -187,19 +187,25 @@ export function downloadCoachStatementPdf(view, fileName, title = fileName) {
     foot: ['', '', 'Subtotal', money((view.resgatados || []).reduce((sum, item) => sum + Number(item.amount), 0))],
   });
 
-  const ajusteBody = (view.ajustes || []).map((item) => [
-    safe(item.categoria),
-    [item.descricao, item.reason].filter(Boolean).join(' - '),
-    money(item.amount),
-  ]);
-  y = drawRowsSection(doc, {
-    title: `Ajustes e reembolsos (${view.ajustes?.length || 0})`,
-    y,
-    color: [217, 119, 6],
-    head: ['Categoria', 'Descricao', 'Valor'],
-    body: ajusteBody,
-    foot: ['', 'Subtotal', money((view.ajustes || []).reduce((sum, item) => sum + Number(item.amount), 0))],
-  });
+  // Lançamentos manuais: repasse extra e desconto, depois gasto e reembolso.
+  const manualSections = [
+    { title: 'Repasse extra e descontos', color: [5, 150, 105], head: ['Tipo', 'Explicacao', 'Valor'], list: view.extras || [] },
+    { title: 'Gastos e reembolsos', color: [217, 119, 6], head: ['Categoria', 'Descricao', 'Valor'], list: view.gastos || [] },
+  ];
+  for (const section of manualSections) {
+    y = drawRowsSection(doc, {
+      title: `${section.title} (${section.list.length})`,
+      y,
+      color: section.color,
+      head: section.head,
+      body: section.list.map((item) => [
+        safe(item.categoria),
+        [item.descricao, item.reason].filter(Boolean).join(' - '),
+        money(item.amount),
+      ]),
+      foot: ['', 'Subtotal', money(section.list.reduce((sum, item) => sum + Number(item.amount), 0))],
+    });
+  }
 
   if (y > 704) {
     doc.addPage();
