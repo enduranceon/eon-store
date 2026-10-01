@@ -4,7 +4,7 @@ CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
 SET LOCAL timezone = 'America/Sao_Paulo';
 
-SELECT plan(12);
+SELECT plan(24);
 
 SELECT has_trigger('public', 'payout_monthly_closings', 'guard_payout_closing_month',
   'closings have the month lock');
@@ -90,6 +90,149 @@ SELECT is(
   1,
   'only the closing of the ended month is left'
 );
+
+-- Remoção dos fechamentos gerados antes do fim do mês -------------------------
+
+SELECT ok(
+  NOT has_function_privilege('authenticated', 'eon_private.remove_premature_payout_closings()', 'EXECUTE')
+  AND NOT has_table_privilege('authenticated', 'eon_private.payout_closing_removal_backups', 'SELECT'),
+  'the removal and its backups are not exposed'
+);
+
+-- A: mês atual, gerado agora. B: dois meses atrás, gerado no meio daquele mês.
+-- C: três meses atrás, gerado depois que o mês terminou. Todos em revisão.
+ALTER TABLE public.payout_monthly_closings DISABLE TRIGGER guard_payout_closing_month;
+INSERT INTO public.payout_monthly_closings (id, competence, status, generated_at)
+SELECT '81000000-0000-4000-a000-00000000000a'::uuid, current_month, 'pending_approval', now() FROM lock_months
+UNION ALL
+SELECT '81000000-0000-4000-a000-00000000000b'::uuid, (current_month - interval '2 months')::date, 'pending_approval',
+       (current_month - interval '2 months' + interval '14 days') AT TIME ZONE 'America/Sao_Paulo' FROM lock_months
+UNION ALL
+SELECT '81000000-0000-4000-a000-00000000000c'::uuid, (current_month - interval '3 months')::date, 'pending_approval',
+       (current_month - interval '2 months' + interval '7 days') AT TIME ZONE 'America/Sao_Paulo' FROM lock_months;
+ALTER TABLE public.payout_monthly_closings ENABLE TRIGGER guard_payout_closing_month;
+
+-- Pendências e item de um contrato e um coach fictícios.
+INSERT INTO public.assessment_modalities (id, name) VALUES
+  ('84000000-0000-4000-a000-000000000011', 'trava-fechamento-corrida-test');
+INSERT INTO public.assessment_plans (
+  id, modality_id, name, period, period_months, price_monthly, price_total, max_installments, enrollment_fee
+) VALUES
+  ('84000000-0000-4000-a000-000000000012', '84000000-0000-4000-a000-000000000011',
+   'Trava fechamento mensal', 'mensal', 1, 200, 200, 1, 0);
+INSERT INTO public.assessment_coaches (id, name, email, role, modality_ids, active) VALUES
+  ('84000000-0000-4000-a000-000000000001', 'Coach trava fechamento', 'trava-fechamento@example.test', 'pleno',
+   ARRAY['84000000-0000-4000-a000-000000000011'::uuid], true);
+INSERT INTO public.presale_customers (id, full_name, whatsapp) VALUES
+  ('84000000-0000-4000-a000-000000000031', 'Aluno trava fechamento', '11900008431');
+INSERT INTO public.assessment_contracts (
+  id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, status,
+  start_date, end_date, original_end_date, installments, payment_status, payment_date,
+  manual_payment, auto_renewal, renewal_generated
+) VALUES
+  ('83000000-0000-4000-a000-000000000001', 'ASS-984001', '84000000-0000-4000-a000-000000000031',
+   '84000000-0000-4000-a000-000000000001', '84000000-0000-4000-a000-000000000012',
+   '{"plan_id":"84000000-0000-4000-a000-000000000012","name":"Trava fechamento mensal","period_months":1,"price_total":200,"modality_id":"84000000-0000-4000-a000-000000000011"}'::jsonb,
+   'active', current_date - 150, current_date + 30, current_date + 30, 1, 'paid', current_date - 150, true, false, false),
+  ('83000000-0000-4000-a000-000000000002', 'ASS-984002', '84000000-0000-4000-a000-000000000031',
+   '84000000-0000-4000-a000-000000000001', '84000000-0000-4000-a000-000000000012',
+   '{"plan_id":"84000000-0000-4000-a000-000000000012","name":"Trava fechamento mensal","period_months":1,"price_total":200,"modality_id":"84000000-0000-4000-a000-000000000011"}'::jsonb,
+   'active', current_date - 150, current_date + 30, current_date + 30, 1, 'paid', current_date - 150, true, false, false);
+
+INSERT INTO public.payout_pending_repasse (
+  id, contract_id, coach_id, source_type, reference_competence, amount, status,
+  detected_in_closing_id, resolved_in_closing_id, resolved_at
+)
+SELECT '82000000-0000-4000-a000-000000000001'::uuid, '83000000-0000-4000-a000-000000000001'::uuid, '84000000-0000-4000-a000-000000000001'::uuid,
+       'athlete_repasse', (current_month - interval '4 months')::date, 10.00, 'resolved',
+       NULL::uuid, '81000000-0000-4000-a000-00000000000a'::uuid, now() FROM lock_months
+UNION ALL
+SELECT '82000000-0000-4000-a000-000000000002'::uuid, '83000000-0000-4000-a000-000000000001'::uuid, '84000000-0000-4000-a000-000000000001'::uuid,
+       'direct_leadership', current_month, 20.00, 'open',
+       '81000000-0000-4000-a000-00000000000a'::uuid, NULL::uuid, NULL FROM lock_months
+UNION ALL
+SELECT '82000000-0000-4000-a000-000000000003'::uuid, '83000000-0000-4000-a000-000000000001'::uuid, '84000000-0000-4000-a000-000000000001'::uuid,
+       'athlete_repasse', current_month, 30.00, 'resolved',
+       '81000000-0000-4000-a000-00000000000a'::uuid, '81000000-0000-4000-a000-00000000000c'::uuid, now() FROM lock_months
+UNION ALL
+SELECT '82000000-0000-4000-a000-000000000004'::uuid, '83000000-0000-4000-a000-000000000001'::uuid, '84000000-0000-4000-a000-000000000001'::uuid,
+       'athlete_repasse', (current_month - interval '3 months')::date, 40.00, 'open',
+       '81000000-0000-4000-a000-00000000000c'::uuid, NULL::uuid, NULL FROM lock_months;
+INSERT INTO public.payout_monthly_statement_items (closing_id, coach_id, source_type, amount)
+VALUES ('81000000-0000-4000-a000-00000000000a', '84000000-0000-4000-a000-000000000001', 'athlete_repasse', 70.00);
+
+-- Pendência de um contrato pago que depois foi cancelado, resgatada por A, e
+-- uma pendência que A detectou e o gatilho já tinha cancelado.
+INSERT INTO public.payout_pending_repasse (
+  id, contract_id, coach_id, source_type, reference_competence, amount, status,
+  detected_in_closing_id, resolved_in_closing_id, resolved_at
+)
+SELECT '82000000-0000-4000-a000-000000000005'::uuid, '83000000-0000-4000-a000-000000000002'::uuid, '84000000-0000-4000-a000-000000000001'::uuid,
+       'athlete_repasse', (current_month - interval '4 months')::date, 50.00, 'resolved',
+       NULL::uuid, '81000000-0000-4000-a000-00000000000a'::uuid, now() FROM lock_months
+UNION ALL
+SELECT '82000000-0000-4000-a000-000000000006'::uuid, '83000000-0000-4000-a000-000000000002'::uuid, '84000000-0000-4000-a000-000000000001'::uuid,
+       'athlete_repasse', current_month, 60.00, 'cancelled',
+       '81000000-0000-4000-a000-00000000000a'::uuid, NULL::uuid, now() FROM lock_months;
+UPDATE public.assessment_contracts
+SET status = 'cancelled', cancellation_date = current_date - 10
+WHERE id = '83000000-0000-4000-a000-000000000002';
+
+SELECT is(eon_private.remove_premature_payout_closings(), 2, 'the two closings generated before their month ended are removed');
+SELECT is(
+  (SELECT array_agg(competence ORDER BY competence) FROM public.payout_monthly_closings),
+  (SELECT ARRAY[(current_month - interval '3 months')::date, (current_month - interval '1 month')::date] FROM lock_months),
+  'closings generated after the month ended stay'
+);
+SELECT is(
+  (SELECT jsonb_build_object('status', status, 'resolved_in', resolved_in_closing_id, 'resolved_at', resolved_at)
+   FROM public.payout_pending_repasse WHERE id = '82000000-0000-4000-a000-000000000001'),
+  jsonb_build_object('status', 'open', 'resolved_in', NULL, 'resolved_at', NULL),
+  'a pending it had taken is open again'
+);
+SELECT is(
+  (SELECT count(*)::int FROM public.payout_pending_repasse WHERE id = '82000000-0000-4000-a000-000000000002'),
+  0,
+  'a pending it had detected and still open is removed'
+);
+SELECT is(
+  (SELECT status FROM public.payout_pending_repasse WHERE id = '82000000-0000-4000-a000-000000000005'),
+  'open',
+  'a pending of a contract cancelled later goes back to open, as it was'
+);
+SELECT is(
+  (SELECT count(*)::int FROM public.payout_pending_repasse WHERE id = '82000000-0000-4000-a000-000000000006'),
+  0,
+  'a pending it had detected and the guard had cancelled is removed too'
+);
+SELECT is(
+  (SELECT jsonb_build_object('status', status, 'detected_in', detected_in_closing_id)
+   FROM public.payout_pending_repasse WHERE id = '82000000-0000-4000-a000-000000000003'),
+  jsonb_build_object('status', 'resolved', 'detected_in', NULL),
+  'a pending it detected but another closing already paid is kept'
+);
+SELECT is(
+  (SELECT status FROM public.payout_pending_repasse WHERE id = '82000000-0000-4000-a000-000000000004'),
+  'open',
+  'pendings of other closings are untouched'
+);
+SELECT is(
+  (SELECT count(*)::int FROM public.payout_monthly_statement_items WHERE closing_id = '81000000-0000-4000-a000-00000000000a'),
+  0,
+  'its items go with it'
+);
+SELECT is(
+  (SELECT jsonb_build_object(
+     'items', jsonb_array_length(snapshot->'items'),
+     'detected', jsonb_array_length(snapshot->'detected_pendings'),
+     'resolved', jsonb_array_length(snapshot->'resolved_pendings'),
+     'closing', snapshot->'closing'->>'id')
+   FROM eon_private.payout_closing_removal_backups
+   WHERE removal_key LIKE 'premature-closing-%-81000000-0000-4000-a000-00000000000a'),
+  jsonb_build_object('items', 1, 'detected', 3, 'resolved', 2, 'closing', '81000000-0000-4000-a000-00000000000a'),
+  'everything it had is copied before the removal'
+);
+SELECT is(eon_private.remove_premature_payout_closings(), 0, 'running it again changes nothing');
 
 SELECT * FROM finish();
 ROLLBACK;
