@@ -500,8 +500,10 @@ SELECT is(
 
 -- Cancelar (não pago) --------------------------------------------------------------------
 
+-- O fechamento só segura a pendência; fica num mês já encerrado por causa da
+-- trava de mês em aberto (guard_payout_closing_month).
 INSERT INTO public.payout_monthly_closings (id, competence, status)
-VALUES ('40000000-0000-4000-a000-000000000201', date_trunc('month', current_date + 400)::date, 'pending_approval');
+VALUES ('40000000-0000-4000-a000-000000000201', date_trunc('month', current_date - 400)::date, 'pending_approval');
 INSERT INTO public.payout_pending_repasse (
   contract_id, coach_id, source_type, reference_competence, amount, status,
   detected_in_closing_id, plan_change_id
@@ -776,8 +778,12 @@ INSERT INTO plan_change_results VALUES ('k5_create', public.create_assessment_pl
 ));
 RESET ROLE;
 
+-- A partir do dia 6, current_date - 5 cai no mês em aberto, que a trava não
+-- deixa fechar; o cenário (dias já aprovados) é montado com ela desligada.
+ALTER TABLE public.payout_monthly_closings DISABLE TRIGGER guard_payout_closing_month;
 INSERT INTO public.payout_monthly_closings (id, competence, status)
 VALUES ('40000000-0000-4000-a000-000000000202', date_trunc('month', current_date - 5)::date, 'approved');
+ALTER TABLE public.payout_monthly_closings ENABLE TRIGGER guard_payout_closing_month;
 
 SET LOCAL ROLE service_role;
 SELECT is(

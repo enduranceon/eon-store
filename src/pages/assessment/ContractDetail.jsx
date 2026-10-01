@@ -207,7 +207,7 @@ function formatEventSummary(ev) {
     case 'sale_replaced':
       return `Novo contrato ${p.new_contract_number || ''}`;
     case 'cancelled':
-      return `${p.source === 'scheduled' ? 'Agendado · ' : ''}Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`
+      return `${p.source === 'scheduled' ? 'Agendado · ' : ''}${p.cancellation_date ? `Último dia ${formatDate(p.cancellation_date)} · ` : ''}Multa R$ ${Number(p.cancellation_fee || 0).toFixed(2)} · Estorno R$ ${Number(p.refund_amount || 0).toFixed(2)}`
         + (Number(p.upgrade_unused_value) > 0 ? ` · inclui ${formatCurrency(p.upgrade_unused_value)} de upgrade não usado` : '');
     case 'cancellation_scheduled':
       return `Sai em ${formatDate(p.scheduled_cancellation_date)}${Number(p.cancellation_fee_pct) > 0 ? ` · multa ${p.cancellation_fee_pct}%` : ' · sem multa'}`;
@@ -1315,6 +1315,14 @@ export default function ContractDetail() {
               </button>
             </div>
           </div>
+
+          {contract.status === 'cancelled' && contract.cancellation_date && (
+            <div className="mt-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-sm text-red-900">
+              <Ban className="w-3.5 h-3.5 inline mr-1" />
+              Cancelado · último dia <b>{formatDate(contract.cancellation_date)}</b>
+              <span className="block text-xs text-red-700 mt-0.5">O aluno conta no repasse até esse dia.</span>
+            </div>
+          )}
 
           {contract.scheduled_cancellation_date && (
             <div className="mt-3 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 flex items-center justify-between gap-3 flex-wrap">

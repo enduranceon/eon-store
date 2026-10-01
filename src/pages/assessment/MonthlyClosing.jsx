@@ -3,12 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Calendar, ChevronRight, Info } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { PayoutMonthlyClosing, PayoutMonthlyStatementItem } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, formatCompetence } from '@/lib/utils';
+import { formatCurrency, formatDate, formatCompetence, todayLocalStr } from '@/lib/utils';
+import { endedMonths, lastEndedMonth, monthHasEnded, monthOpensOn } from '@/lib/closing-months';
+import { functionErrorMessage } from '@/lib/function-error';
 import { toast } from 'sonner';
 
 const STATUS = {
@@ -22,10 +24,8 @@ export default function MonthlyClosing() {
   const [closings, setClosings] = useState([]);
   const [items, setItems] = useState([]);
   const [modal, setModal] = useState(false);
-  const [competence, setCompetence] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-  });
+  // Só mês encerrado: começa no último mês que já terminou.
+  const [month, setMonth] = useState(() => lastEndedMonth(todayLocalStr()));
   const [generating, setGenerating] = useState(false);
 
   const load = async () => {
@@ -41,13 +41,21 @@ export default function MonthlyClosing() {
   };
   useEffect(() => { load(); }, []);
 
+  const openModal = (target = lastEndedMonth(todayLocalStr())) => {
+    setMonth(target);
+    setModal(true);
+  };
+
   const generate = async () => {
+    if (!monthHasEnded(month, todayLocalStr())) {
+      return toast.error(`${formatCompetence(`${month}-01`)} ainda não terminou`);
+    }
     setGenerating(true);
     try {
       const { data, error } = await supabase.functions.invoke('generate-monthly-closing', {
-        body: { competence },
+        body: { competence: `${month}-01` },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, 'Erro ao gerar'));
       if (data?.error) throw new Error(data.error);
       toast.success(`Fechamento gerado! ${data.items_count} itens, total ${formatCurrency(data.total_amount)}`);
       setModal(false);
@@ -59,11 +67,15 @@ export default function MonthlyClosing() {
 
   const totalByClosing = (id) => items.filter(i => i.closing_id === id).reduce((s, i) => s + Number(i.amount), 0);
 
-  // Mês atual e se já tem fechamento gerado
-  const curMonthPrefix = competence.slice(0, 7); // yyyy-mm
-  const curMonthClosing = closings.find(c => c.competence?.startsWith(curMonthPrefix));
-  const curMonthLabel = new Date(Number(curMonthPrefix.split('-')[0]), Number(curMonthPrefix.split('-')[1]) - 1, 1)
-    .toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+  // O mês a fechar é o último que já terminou; o mês atual só fecha no dia 1º
+  // do mês seguinte (a mesma trava existe na função e no banco).
+  const today = todayLocalStr();
+  const pendingMonth = lastEndedMonth(today);
+  const pendingClosing = closings.find(c => c.competence?.startsWith(pendingMonth));
+  const pendingLabel = formatCompetence(`${pendingMonth}-01`);
+  const currentMonth = today.slice(0, 7);
+  const monthOptions = endedMonths(today);
+  const selectedClosing = closings.find(c => c.competence?.startsWith(month));
 
   return (
     <div className="space-y-5">
@@ -72,7 +84,7 @@ export default function MonthlyClosing() {
           <h2 className="text-xl font-bold text-gray-900">Fechamento Mensal</h2>
           <p className="text-sm text-muted-foreground">Registro oficial de repasse por competência</p>
         </div>
-        <Button onClick={() => setModal(true)}><Plus className="w-4 h-4 mr-2" /> Gerar fechamento</Button>
+        <Button onClick={() => openModal()}><Plus className="w-4 h-4 mr-2" /> Gerar fechamento</Button>
       </div>
 
       {/* Explicação do fluxo */}
@@ -96,30 +108,30 @@ export default function MonthlyClosing() {
         </div>
       </div>
 
-      {/* Status do mês atual */}
-      {curMonthClosing ? (
+      {/* Mês a fechar: o último que já terminou */}
+      {pendingClosing ? (
         <div
           className={`rounded-xl border px-4 py-3 flex items-center justify-between gap-3 cursor-pointer hover:opacity-90 transition-opacity ${
-            curMonthClosing.status === 'paid'             ? 'bg-green-50 border-green-200' :
-            curMonthClosing.status === 'approved'         ? 'bg-blue-50 border-blue-200' :
-                                                            'bg-amber-50 border-amber-200'
+            pendingClosing.status === 'paid'             ? 'bg-green-50 border-green-200' :
+            pendingClosing.status === 'approved'         ? 'bg-blue-50 border-blue-200' :
+                                                           'bg-amber-50 border-amber-200'
           }`}
-          onClick={() => navigate(`/assessoria/fechamento/${curMonthClosing.id}`)}
+          onClick={() => navigate(`/assessoria/fechamento/${pendingClosing.id}`)}
         >
           <div>
-            <p className={`text-sm font-semibold capitalize ${
-              curMonthClosing.status === 'paid' ? 'text-green-900' :
-              curMonthClosing.status === 'approved' ? 'text-blue-900' : 'text-amber-900'
+            <p className={`text-sm font-semibold ${
+              pendingClosing.status === 'paid' ? 'text-green-900' :
+              pendingClosing.status === 'approved' ? 'text-blue-900' : 'text-amber-900'
             }`}>
-              Mês atual ({curMonthLabel}): {STATUS[curMonthClosing.status]?.label}
+              {pendingLabel}: {STATUS[pendingClosing.status]?.label}
             </p>
             <p className={`text-xs mt-0.5 ${
-              curMonthClosing.status === 'paid' ? 'text-green-700' :
-              curMonthClosing.status === 'approved' ? 'text-blue-700' : 'text-amber-700'
+              pendingClosing.status === 'paid' ? 'text-green-700' :
+              pendingClosing.status === 'approved' ? 'text-blue-700' : 'text-amber-700'
             }`}>
-              {curMonthClosing.status === 'paid'
-                ? 'Repasses já foram efetivados neste mês.'
-                : curMonthClosing.status === 'approved'
+              {pendingClosing.status === 'paid'
+                ? 'Repasses deste mês já foram efetivados.'
+                : pendingClosing.status === 'approved'
                 ? 'Fechamento aprovado. Clique para marcar como pago quando efetuar os repasses.'
                 : 'Fechamento gerado e aguardando revisão. Clique para conferir e aprovar.'}
             </p>
@@ -129,24 +141,25 @@ export default function MonthlyClosing() {
       ) : (
         <div className="rounded-xl border border-dashed border-gray-300 bg-white px-4 py-3 flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-gray-700 capitalize">Mês atual ({curMonthLabel}): sem fechamento</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Confira a previsão na tela de{' '}
-              <Link to="/assessoria/repasse" className="text-blue-600 hover:underline">Repasse</Link>
-              {' '}e gere o fechamento oficial quando o mês encerrar.
-            </p>
+            <p className="text-sm font-semibold text-gray-700">{pendingLabel}: sem fechamento</p>
+            <p className="text-xs text-muted-foreground mt-0.5">O mês já terminou. Gere o fechamento oficial para revisar e aprovar.</p>
           </div>
-          <Button size="sm" onClick={() => setModal(true)}>
-            <Plus className="w-3.5 h-3.5 mr-1" /> Gerar agora
+          <Button size="sm" onClick={() => openModal(pendingMonth)}>
+            <Plus className="w-3.5 h-3.5 mr-1" /> Gerar {pendingLabel}
           </Button>
         </div>
       )}
+      <p className="text-xs text-muted-foreground -mt-2 px-1">
+        {formatCompetence(`${currentMonth}-01`)} está em andamento: acompanhe a previsão em{' '}
+        <Link to="/assessoria/repasse" className="text-blue-600 hover:underline">Repasse</Link>.
+        {' '}O fechamento dele fica disponível a partir de {formatDate(monthOpensOn(currentMonth))}.
+      </p>
 
       {closings.length === 0 ? (
         <Card><CardContent className="flex flex-col items-center py-16 text-center">
           <Calendar className="w-10 h-10 text-muted-foreground mb-3" />
           <p className="text-sm text-muted-foreground">Nenhum fechamento gerado ainda</p>
-          <Button className="mt-4" onClick={() => setModal(true)}>Gerar primeiro fechamento</Button>
+          <Button className="mt-4" onClick={() => openModal()}>Gerar primeiro fechamento</Button>
         </CardContent></Card>
       ) : (
         <div className="overflow-x-auto rounded-lg border bg-white">
@@ -182,12 +195,30 @@ export default function MonthlyClosing() {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Gerar fechamento</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <Label>Competência (1º dia do mês)</Label>
-            <Input type="date" value={competence} onChange={e => setCompetence(e.target.value)} />
-            <p className="text-xs text-muted-foreground">O sistema busca contratos pagos e ativos no mês, calcula pró-rata por dias e gera os itens de cada coach.</p>
+            <Label>Mês do fechamento</Label>
+            <Select value={month} onValueChange={setMonth}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {monthOptions.map(option => (
+                  <SelectItem key={option} value={option}>{formatCompetence(`${option}-01`)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Só aparecem meses já encerrados: {formatCompetence(`${currentMonth}-01`)} fica disponível a partir de {formatDate(monthOpensOn(currentMonth))}.
+              O sistema busca os contratos pagos do mês, calcula os dias de cada coach e gera os itens.
+            </p>
+            {selectedClosing && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                {formatCompetence(`${month}-01`)} já tem fechamento ({STATUS[selectedClosing.status]?.label}).{' '}
+                <Link to={`/assessoria/fechamento/${selectedClosing.id}`} className="font-semibold underline">Abrir</Link>
+              </p>
+            )}
             <div className="flex gap-2 pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setModal(false)}>Cancelar</Button>
-              <Button className="flex-1" onClick={generate} disabled={generating}>{generating ? 'Gerando...' : 'Gerar'}</Button>
+              <Button className="flex-1" onClick={generate} disabled={generating || Boolean(selectedClosing)}>
+                {generating ? 'Gerando...' : `Gerar ${formatCompetence(`${month}-01`)}`}
+              </Button>
             </div>
           </div>
         </DialogContent>

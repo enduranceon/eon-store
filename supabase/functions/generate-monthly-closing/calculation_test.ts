@@ -5,8 +5,11 @@ import {
   type ClosingContext,
   coachIdByDay,
   competenceBounds,
+  competenceHasEnded,
+  competenceOpensOn,
   groupByContract,
   mergePendingCollisions,
+  monthNotEndedMessage,
   planSourceByDay,
   roundCents,
 } from "./calculation.ts";
@@ -619,4 +622,24 @@ Deno.test("mixed rates in one group differ from the previous rounding by at most
     }
   }
   assert(mixedGroups > 40, `too few mixed groups exercised: ${mixedGroups}`);
+});
+
+Deno.test("a competence only closes from the first day of the next month", () => {
+  assertEquals(competenceOpensOn("2026-09-01"), "2026-10-01", "september opens on october 1st");
+  assertEquals(competenceOpensOn("2026-12-01"), "2027-01-01", "december opens in the next year");
+  assertEquals(competenceHasEnded("2026-09-01", "2026-10-01"), true, "september can close on october 1st");
+  assertEquals(competenceHasEnded("2026-10-01", "2026-10-01"), false, "october cannot close during october");
+  assertEquals(competenceHasEnded("2026-10-01", "2026-10-31"), false, "october cannot close on its last day");
+  assertEquals(competenceHasEnded("2026-11-01", "2026-10-15"), false, "a future month cannot close");
+  assertEquals(competenceHasEnded("2026-10-01", "2026-11-01"), true, "october closes on november 1st");
+  assertEquals(
+    monthNotEndedMessage("2026-10-01"),
+    "Outubro de 2026 ainda não terminou. O fechamento fica disponível a partir de 01/11/2026.",
+    "message names the month and the first allowed day",
+  );
+  assertEquals(
+    monthNotEndedMessage("2026-12-01"),
+    "Dezembro de 2026 ainda não terminou. O fechamento fica disponível a partir de 01/01/2027.",
+    "message crosses the year",
+  );
 });

@@ -6,9 +6,11 @@ import {
   buildGroupedItems,
   type ClosingContext,
   competenceBounds,
+  competenceHasEnded,
   effectiveEndExclusive,
   groupByContract,
   mergePendingCollisions,
+  monthNotEndedMessage,
   parseDateUTC,
 } from "./calculation.ts";
 
@@ -94,6 +96,13 @@ Deno.serve(async (req: Request) => {
     // (Era o default silencioso que fez um preflight gerar um fechamento fantasma.)
     if (!competence || !/^\d{4}-\d{2}-01$/.test(competence)) {
       return json({ error: "Informe a competência no formato YYYY-MM-01." }, 400);
+    }
+
+    // Mês em andamento (ou futuro) não fecha: gerar ou recalcular só depois
+    // que o mês termina, pela data de Brasília.
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+    if (!competenceHasEnded(competence, today)) {
+      return json({ error: monthNotEndedMessage(competence), code: "month_not_ended" }, 400);
     }
 
     const regenerate = body?.regenerate === true;
