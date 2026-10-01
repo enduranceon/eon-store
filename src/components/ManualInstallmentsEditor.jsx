@@ -20,11 +20,11 @@ export default function ManualInstallmentsEditor({ orderType, order, installment
 
   const total = original.reduce((sum, p) => sum + cents(p.value), 0);
   const sum = rows.reduce((acc, p) => acc + cents(p.value), 0);
-  const valid = rows.length > 0 && sum === total && rows.every(p => p.credit_date && Number(p.value) > 0);
+  const valid = rows.length > 0 && sum === total && rows.every(p => p.credit_date && Number(p.value) > 0 && Math.abs(Number(p.value) * 100 - cents(p.value)) < 0.000001);
   const start = () => {
     const snapshot = installments.map(p => ({ id: p.id, value: Number(p.value), due_date: p.due_date, credit_date: p.credit_date }));
     setOriginal(snapshot);
-    setRows(snapshot.map(p => ({ ...p, credit_date: p.credit_date || p.due_date || '' })));
+    setRows(snapshot.map(p => ({ ...p, due_date: p.due_date || p.credit_date || '', credit_date: p.credit_date || p.due_date || '' })));
     setOpen(true);
   };
   const change = (index, patch) => setRows(current => current.map((row, i) => i === index ? { ...row, ...patch } : row));
