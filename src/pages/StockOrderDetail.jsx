@@ -1,3 +1,4 @@
+import ManualInstallmentsEditor from '@/components/ManualInstallmentsEditor';
 import { studentProfilePath } from '@/lib/customer-profile';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -1433,6 +1434,7 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
                             ? 'Recebimento no fluxo de caixa'
                             : `${activeInstallments.length} parcelas no fluxo de caixa`}
                         </div>
+                        <ManualInstallmentsEditor orderType="stock" order={order} installments={paymentInstallments} onSaved={load} />
                         <div className="divide-y">
                           {activeInstallments.map(p => {
                             const isPaid = ['RECEIVED','CONFIRMED','RECEIVED_IN_CASH'].includes(p.status);

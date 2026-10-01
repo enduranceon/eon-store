@@ -285,3 +285,42 @@ Deno.test("manual payment adjustment forwards discount data atomically", async (
   assert(rpcArguments.p_manual_discount === 10, "manual discount changed");
   assert(rpcArguments.p_discount_recurring === true, "recurring flag changed");
 });
+
+const editId = '80000000-0000-4000-a000-000000000001';
+const editRows = [{ id: editId, value: 100, due_date: '2026-10-01', credit_date: '2026-10-01' }];
+Deno.test('editing installments forwards snapshot and authenticated actor to the transaction', async () => {
+  let called = false;
+  const db = { rpc(name: string, args: Record<string, unknown>) {
+    assert(name === 'api_edit_manual_payment_installments', 'wrong operation');
+    assert(args.p_actor_id === 'trusted-admin' && args.p_order_type === 'stock', 'actor or type lost');
+    assert(JSON.stringify(args.p_expected) === JSON.stringify(editRows), 'snapshot lost');
+    called = true;
+    return Promise.resolve({ data: { total: 100 }, error: null });
+  } };
+  const response = await handlePaymentsRequest(new Request('http://local', {
+    method: 'PATCH', body: JSON.stringify({ installments: editRows, expected: editRows, actor_id: 'untrusted' }),
+  }), `/orders/stock/${editId}/manual-payment/installments`, db as never, 'trusted-admin');
+  assert(called && response?.status === 200, 'edit failed');
+});
+
+for (const [name, rows] of [
+  ['negative amount', [{ ...editRows[0], value: -1 }]],
+  ['fractional cent', [{ ...editRows[0], value: 1.001 }]],
+  ['invalid date', [{ ...editRows[0], credit_date: '2026-02-30' }]],
+  ['missing credit date', [{ ...editRows[0], credit_date: null }]],
+  ['duplicate IDs', [...editRows, ...editRows]],
+  ['empty list', []],
+]) Deno.test(`installment edit rejects ${name} before database access`, async () => {
+  const response = await handlePaymentsRequest(new Request('http://local', {
+    method: 'PATCH', body: JSON.stringify({ installments: rows, expected: editRows }),
+  }), `/orders/stock/${editId}/manual-payment/installments`, {} as never, 'admin');
+  assert(response?.status === 400, 'invalid input accepted');
+});
+
+Deno.test('installment edit reports concurrent modification as a conflict', async () => {
+  const db = { rpc() { return Promise.resolve({ data: null, error: { code: 'P0001', message: 'Atualize a página' } }); } };
+  const response = await handlePaymentsRequest(new Request('http://local', {
+    method: 'PATCH', body: JSON.stringify({ installments: editRows, expected: editRows }),
+  }), `/orders/stock/${editId}/manual-payment/installments`, db as never, 'admin');
+  assert(response?.status === 409, 'conflict was hidden');
+});

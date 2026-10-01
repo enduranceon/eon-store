@@ -1,3 +1,4 @@
+import ManualInstallmentsEditor from '@/components/ManualInstallmentsEditor';
 import { studentProfilePath } from '@/lib/customer-profile';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
@@ -142,6 +143,7 @@ const EVENT_META = {
   external_charge_updated:    { icon: Link2,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Cobrança externa alterada' },
   external_charge_removed:    { icon: Link2,    color: 'text-gray-500',   bg: 'bg-gray-100',  label: 'Cobrança externa removida' },
   payment_message_sent:       { icon: MessageCircle, color: 'text-green-600', bg: 'bg-green-50', label: 'Mensagem de cobrança enviada' },
+  manual_payment_installments_edited: { icon: Banknote, color: 'text-blue-700', bg: 'bg-blue-50', label: 'Parcelas editadas' },
   manual_payment_recorded:  { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Pagamento manual' },
   renewed:                  { icon: RefreshCcw, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovado' },
   sale_voided:              { icon: XCircle,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Venda descartada' },
@@ -1474,6 +1476,7 @@ export default function ContractDetail() {
                       ? 'Recebimento no fluxo de caixa'
                       : `${activeInstallments.length} parcelas no fluxo de caixa`}
                   </div>
+                  <ManualInstallmentsEditor orderType="contract" order={contract} installments={paymentInstallments} onSaved={load} />
                   <div className="divide-y">
                     {activeInstallments.map(p => {
                       const isPaid = ['RECEIVED','CONFIRMED','RECEIVED_IN_CASH'].includes(p.status);
