@@ -317,6 +317,36 @@ export async function handlePaymentsRequest(
   supabase: SupabaseClient,
   actorId: string,
 ): Promise<Response | null> {
+  const editMatch = path.match(/^\/orders\/(presale|stock|contract)\/([^/]+)\/manual-payment\/installments$/);
+  if (editMatch) {
+    if (req.method !== "PATCH") return jsonResponse({ error: "Método não permitido" }, 405);
+    const [, orderType, orderId] = editMatch;
+    const body = await parseBody(req);
+    const rows = body?.installments;
+    const expected = body?.expected;
+    const validRows = (items: unknown): items is Record<string, unknown>[] => Array.isArray(items)
+      && items.length > 0 && items.length <= 120
+      && new Set(items.map(item => parseObject(item)?.id)).size === items.length
+      && items.every(item => {
+        const row = parseObject(item);
+        return row && typeof row.id === "string" && UUID_PATTERN.test(row.id)
+          && typeof row.value === "number" && Number.isFinite(row.value) && row.value > 0 && row.value <= 100_000_000
+          && Math.abs(row.value * 100 - Math.round(row.value * 100)) < 0.000001
+          && (row.due_date === null || (typeof row.due_date === "string" && isValidIsoDate(row.due_date)))
+          && (row.credit_date === null || (typeof row.credit_date === "string" && isValidIsoDate(row.credit_date)));
+      });
+    if (!UUID_PATTERN.test(orderId) || !validRows(rows) || !validRows(expected)
+      || rows.length !== expected.length || rows.some(row => !row.credit_date || !row.due_date)) {
+      return jsonResponse({ error: "Parcelas inválidas", code: "invalid_request" }, 400);
+    }
+    const { data, error } = await supabase.rpc("api_edit_manual_payment_installments", {
+      p_order_type: orderType, p_order_id: orderId, p_installments: rows,
+      p_expected: expected, p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "edit installments");
+    return jsonResponse({ data });
+  }
+
   if (path === "/payments/methods") {
     if (req.method !== "GET") {
       return jsonResponse({

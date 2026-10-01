@@ -1907,3 +1907,14 @@ export async function importLegacyPresaleOrder(payload, options = {}) {
   invalidatePageCacheByTag('presale_orders');
   return response.data;
 }
+
+export async function editManualPaymentInstallments(orderType, orderId, installments, expected) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/manual-payment/installments`, {
+    method: 'PATCH', body: { installments, expected },
+  });
+  for (const tag of ['asaas_payments', 'sales_status_events', 'assessment_contract_event',
+    { presale: 'presale_orders', stock: 'stock_orders', contract: 'assessment_contracts' }[orderType]]) {
+    if (tag) invalidatePageCacheByTag(tag);
+  }
+  return response.data;
+}
