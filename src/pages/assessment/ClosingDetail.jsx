@@ -20,7 +20,9 @@ import {
   deletePayoutAdjustment,
   transitionPayoutClosing,
 } from '@/api/client';
-import { formatCurrency, formatDate, formatCompetence } from '@/lib/utils';
+import { formatCurrency, formatDate, formatCompetence, todayLocalStr } from '@/lib/utils';
+import { monthHasEnded, monthOpensOn } from '@/lib/closing-months';
+import { functionErrorMessage } from '@/lib/function-error';
 import { EXPENSE_CATEGORIES, expenseCategoryLabel } from '@/lib/payout-expenses';
 import { toast } from 'sonner';
 
@@ -148,7 +150,7 @@ export default function ClosingDetail() {
       const { data, error } = await supabase.functions.invoke('generate-monthly-closing', {
         body: { competence: closing.competence, regenerate: true },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, 'Erro ao recalcular'));
       if (data?.error) throw new Error(data.error);
       toast.success(`Fechamento recalculado! ${data.items_count} itens · total ${formatCurrency(data.total_amount)}`);
       load();
@@ -195,6 +197,9 @@ export default function ClosingDetail() {
   const isLocked = closing.status === 'approved' || closing.status === 'paid';
   const isDraft  = closing.status === 'pending_approval';
   const isPaid   = closing.status === 'paid';
+  // Fechamento de mês que ainda não terminou não recalcula nem aprova (trava
+  // também na função e no banco).
+  const monthOpen = !monthHasEnded(closing.competence, todayLocalStr());
 
   return (
     <div className="max-w-4xl mx-auto space-y-5">
@@ -215,7 +220,12 @@ export default function ClosingDetail() {
               <Lock className="w-3 h-3" /> Imutável
             </span>
           )}
-          {isDraft && (
+          {isDraft && monthOpen && (
+            <span className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
+              Mês em andamento: recalcular e aprovar a partir de {formatDate(monthOpensOn(closing.competence))}
+            </span>
+          )}
+          {isDraft && !monthOpen && (
             <>
               <Button onClick={recalculate} disabled={recalculating || approving} variant="outline" size="sm">
                 <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> {recalculating ? 'Recalculando...' : 'Recalcular'}

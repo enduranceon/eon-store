@@ -75,6 +75,31 @@ export function competenceBounds(competence: string) {
   return { monthStart, monthEndExclusive, monthDays: monthEnd.getUTCDate() };
 }
 
+const MONTH_NAMES = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+
+// O fechamento de um mês só existe depois que o mês termina: a partir do
+// 1º dia do mês seguinte, pela data de Brasília (todayKey = "YYYY-MM-DD").
+// O banco tem a mesma trava (eon_private.guard_payout_closing_month).
+export function competenceOpensOn(competence: string) {
+  const [year, month] = competence.slice(0, 7).split("-").map(Number);
+  return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+}
+
+export function competenceHasEnded(competence: string, todayKey: string) {
+  return todayKey >= competenceOpensOn(competence);
+}
+
+export function monthNotEndedMessage(competence: string) {
+  const [year, month] = competence.slice(0, 7).split("-").map(Number);
+  const [openYear, openMonth, openDay] = competenceOpensOn(competence).split("-");
+  const monthName = MONTH_NAMES[month - 1];
+  return `${monthName[0].toUpperCase()}${monthName.slice(1)} de ${year} ainda não terminou. ` +
+    `O fechamento fica disponível a partir de ${openDay}/${openMonth}/${openYear}.`;
+}
+
 export function effectiveEndExclusive(contract: Row, fallback: Date) {
   const start = parseDateUTC(contract.start_date, fallback);
   let endExclusive = parseDateUTC(contract.end_date, fallback);
