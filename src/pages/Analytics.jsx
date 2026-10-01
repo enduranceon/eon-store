@@ -80,7 +80,7 @@ async function loadAnalyticsData() {
     fetchAllRows('stock_orders', 'id,customer_id,payment_status,payment_date,manual_payment,asaas_charge_id,total_value,created_date'),
     fetchAllRows('event_registrations', 'id,customer_id,event_id'),
     fetchAllRows('assessment_prospect_submissions', 'id,contract_id,customer_id,source,region,landing_page,utm,submitted_at'),
-    fetchAllRows('payout_monthly_statement_items', 'id,coach_id,contract_id,amount,reference_competence,source_type,expense_category,created_at'),
+    fetchAllRows('payout_monthly_statement_items', 'id,coach_id,contract_id,amount,reference_competence,source_type,expense_category,created_at,closing:payout_monthly_closings(competence)'),
   ]);
 
   return {

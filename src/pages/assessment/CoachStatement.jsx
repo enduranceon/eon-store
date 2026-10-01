@@ -8,7 +8,7 @@ import {
 } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { formatCompetence, formatDate } from '@/lib/utils';
-import { expenseCategoryLabel } from '@/lib/payout-expenses';
+import { expenseCategoryLabel, manualEntryKind } from '@/lib/payout-expenses';
 import { toast } from 'sonner';
 
 const SOURCE_LABEL = { direct_leadership: 'Liderança', co_leadership: 'Co-liderança', manual_adjustment: 'Ajuste' };
@@ -118,15 +118,24 @@ export default function CoachStatement() {
     const alunos = enriched.filter((i) => i.source_type === 'athlete_repasse' && !isCarried(i));
     const liderancas = enriched.filter((i) => ['direct_leadership', 'co_leadership'].includes(i.source_type) && !isCarried(i));
     const resgatados = enriched.filter(isCarried);
+    // Lançamentos manuais: repasse extra e desconto mexem no repasse; gasto e
+    // reembolso vêm à parte. A descrição só aparece quando diz algo além do tipo.
     const ajustes = items
       .filter((i) => i.source_type === 'manual_adjustment')
-      .map((i) => ({
-        id: i.id,
-        categoria: expenseCategoryLabel(i.expense_category),
-        descricao: (i.description || '').trim(),
-        reason: (i.adjustment_reason || '').trim(),
-        amount: Number(i.amount),
-      }));
+      .map((i) => {
+        const categoria = expenseCategoryLabel(i.expense_category);
+        const descricao = (i.description || '').trim();
+        return {
+          id: i.id,
+          kind: manualEntryKind(i.expense_category),
+          categoria,
+          descricao: descricao === categoria ? '' : descricao,
+          reason: (i.adjustment_reason || '').trim(),
+          amount: Number(i.amount),
+        };
+      });
+    const extras = ajustes.filter((a) => a.kind !== 'gasto');
+    const gastos = ajustes.filter((a) => a.kind === 'gasto');
     const pends = pendings.map((p) => {
       const e = enrich(p);
       const due = dueByContract[p.contract_id];
@@ -179,7 +188,7 @@ export default function CoachStatement() {
       generatedAt: formatDate(closing.generated_at?.split('T')[0]),
       statusLabel: closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão',
       porModalidade,
-      alunos, liderancas, resgatados, ajustes, pendings: pends, total,
+      alunos, liderancas, resgatados, ajustes, extras, gastos, pendings: pends, total,
     };
   }, [data, coachId]);
 

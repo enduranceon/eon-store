@@ -129,6 +129,13 @@ function normalizeGender(value) {
   return 'unknown';
 }
 
+// Mês de um item de fechamento: a referência gravada no item ou, nos
+// lançamentos manuais antigos (sem referência), o mês do próprio fechamento.
+export function payoutItemReference(item) {
+  const competence = item.reference_competence || item.closing?.competence;
+  return competence ? `${String(competence).slice(0, 7)}-01` : item.created_at;
+}
+
 function inPeriod(value, period) {
   const date = dateOnly(value);
   return !!date && date >= period.from && date <= period.to;
@@ -615,8 +622,7 @@ export function buildAnalytics(data, filters, now = new Date()) {
 
   const breakdowns = metricBreakdowns(filteredRows, receipts, refunds, period, context, data);
   const payouts = data.payoutItems.filter(item => {
-    const reference = item.reference_competence ? `${String(item.reference_competence).slice(0, 7)}-01` : item.created_at;
-    if (!inPeriod(reference, period)) return false;
+    if (!inPeriod(payoutItemReference(item), period)) return false;
     if (filters.coach !== 'all' && item.coach_id !== filters.coach) return false;
     if (item.contract_id) {
       const contract = maps.contractsById[item.contract_id];
