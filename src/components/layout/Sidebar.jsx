@@ -255,8 +255,10 @@ export default function Sidebar({ open, onClose, onSignOut }) {
             .eq('status', 'active').lte('end_date', renewalWindowEndStr).gte('end_date', todayStr),
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('refund_status', 'pending'),
+          // Renovações que dependem do time (antes da cobrança), como no quadro.
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
-            .eq('status', 'draft').not('parent_contract_id', 'is', null),
+            .not('parent_contract_id', 'is', null)
+            .in('renewal_stage', ['contact_pending', 'waiting_response', 'charge_pending']),
           supabase.from('assessment_contracts').select('id', { count: 'exact', head: true })
             .eq('status', 'draft').is('parent_contract_id', null),
           supabase.from('assessment_contracts')
