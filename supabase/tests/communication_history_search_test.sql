@@ -55,6 +55,17 @@ SELECT is((SELECT jsonb_array_length(result->'items') FROM history_page_3),5,
 SELECT is((SELECT result->>'next_cursor' FROM history_page_3),NULL,
   'last page has no cursor');
 
+-- The unfiltered path enriches only one page, while retaining its keyset.
+CREATE TEMP TABLE global_history_page_1 AS SELECT public.search_communication_history(
+  NULL,NULL,NULL,NULL,'2026-09-15','2026-09-15',NULL,100) AS result;
+CREATE TEMP TABLE global_history_page_2 AS SELECT public.search_communication_history(
+  NULL,NULL,NULL,NULL,'2026-09-15','2026-09-15',
+  (SELECT result->>'next_cursor' FROM global_history_page_1),100) AS result;
+SELECT is((SELECT jsonb_array_length(result->'items') FROM global_history_page_1),100,
+  'unfiltered first page has 100 historical events');
+SELECT is((SELECT jsonb_array_length(result->'items') FROM global_history_page_2),100,
+  'unfiltered cursor reaches the next 100 events');
+
 -- A legacy communication event remains searchable even when the source has
 -- no current case. 02:30 UTC is still Aug 1 in Sao Paulo.
 INSERT INTO public.sales_status_events(order_type,order_id,previous_status,new_status,

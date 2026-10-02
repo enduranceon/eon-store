@@ -103,10 +103,10 @@ SELECT is((eon_private.communication_case_suggestion(c,
   'OVERRIDE Pessoa Exemplo 3'||E'\n\nLink de pagamento:\nhttps://example.test/pay/3',
   'simulation override uses the same production resolver and payment method')
 FROM public.communication_cases c WHERE c.id=pg_temp.case_for(pg_temp.order_id(3));
-SELECT like((eon_private.communication_case_suggestion(c,
+SELECT ok((eon_private.communication_case_suggestion(c,
     eon_private.communication_source_context(c.source_type,c.source_id)
       || jsonb_build_object('payment_link',NULL,'pix_copy','000201PIXONLY'),
-    NULL,NULL)->>'message'),'%PIX Copia e Cola:%000201PIXONLY%',
+    NULL,NULL)->>'message') LIKE '%PIX Copia e Cola:%000201PIXONLY%',
   'PIX-only billing suggestion includes the source payment method')
 FROM public.communication_cases c WHERE c.id=pg_temp.case_for(pg_temp.order_id(5));
 

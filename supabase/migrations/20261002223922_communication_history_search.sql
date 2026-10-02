@@ -60,7 +60,7 @@ BEGIN
     END;
   END IF;
 
-  WITH raw AS MATERIALIZED (
+  WITH raw AS (
     SELECT e.id, 'case:' || e.id::text AS event_identifier,
       'case'::text AS origin, e.case_id, c.source_type, c.source_id,
       e.event_type, e.created_at, e.actor_id, e.source_ui,
@@ -72,6 +72,7 @@ BEGIN
       AND (v_until IS NULL OR e.created_at < v_until)
       AND (p_source_type IS NULL OR c.source_type=p_source_type)
       AND (p_source_id IS NULL OR c.source_id=p_source_id)
+      AND (v_identifier IS NULL OR (e.created_at,'case:' || e.id::text)<(v_at,v_identifier))
     UNION ALL
     SELECT e.id, 'contract:' || e.id::text, 'contract_history',
       NULL::uuid, 'contract', e.contract_id, e.event_type, e.created_at,
@@ -90,6 +91,7 @@ BEGIN
       AND (v_until IS NULL OR e.created_at < v_until)
       AND (p_source_type IS NULL OR p_source_type='contract')
       AND (p_source_id IS NULL OR e.contract_id=p_source_id)
+      AND (v_identifier IS NULL OR (e.created_at,'contract:' || e.id::text)<(v_at,v_identifier))
       AND NOT EXISTS (
         SELECT 1 FROM public.communication_case_events ce
         JOIN public.communication_cases cc ON cc.id=ce.case_id
@@ -116,6 +118,7 @@ BEGIN
       AND (v_until IS NULL OR e.created_at < v_until)
       AND (p_source_type IS NULL OR e.order_type=p_source_type)
       AND (p_source_id IS NULL OR e.order_id=p_source_id)
+      AND (v_identifier IS NULL OR (e.created_at,'sales:' || e.id::text)<(v_at,v_identifier))
       AND NOT EXISTS (
         SELECT 1 FROM public.communication_case_events ce
         JOIN public.communication_cases cc ON cc.id=ce.case_id
@@ -125,10 +128,19 @@ BEGIN
             OR (e.metadata->>'idempotency_key' IS NOT NULL
               AND ce.action_key=e.metadata->>'idempotency_key'))
       )
+  ), candidate_raw AS MATERIALIZED (
+    -- Without a person/text filter, only one page needs source enrichment.
+    SELECT * FROM raw ORDER BY created_at DESC,event_identifier DESC
+    LIMIT CASE WHEN p_customer_id IS NULL AND v_query IS NULL THEN p_limit+1 END
+  ), source_contexts AS MATERIALIZED (
+    -- A person may have hundreds of actions against one sale. Resolve its
+    -- current identity/reference once per source, not once per event.
+    SELECT sources.source_type,sources.source_id,
+      eon_private.communication_source_context(sources.source_type,sources.source_id) AS source_context
+    FROM (SELECT DISTINCT source_type,source_id FROM candidate_raw) sources
   ), enriched AS MATERIALIZED (
-    SELECT raw.*, eon_private.communication_source_context(raw.source_type,raw.source_id) AS source_context
-    FROM raw
-    WHERE v_identifier IS NULL OR (raw.created_at,raw.event_identifier)<(v_at,v_identifier)
+    SELECT candidate_raw.*,source_contexts.source_context
+    FROM candidate_raw JOIN source_contexts USING (source_type,source_id)
   ), filtered AS MATERIALIZED (
     SELECT id,event_identifier,origin,case_id,source_type,source_id,
       source_context->>'person_id' AS person_id, source_context->>'person_name' AS person_name,
