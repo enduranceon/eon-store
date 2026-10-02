@@ -4,7 +4,7 @@
 CREATE OR REPLACE FUNCTION public.apply_communication_case_action(
   p_case_id uuid,p_request jsonb,p_idempotency_key text,p_actor_id uuid
 )
-RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_case public.communication_cases%ROWTYPE;
   v_command public.communication_case_commands%ROWTYPE;
@@ -81,6 +81,7 @@ BEGIN
   IF v_case.status<>'open' THEN
     RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='Acompanhamento encerrado';
   END IF;
+  v_case_block := v_case.blocked_reason;
   v_context := eon_private.communication_source_context(v_case.source_type,v_case.source_id);
   IF v_context IS NULL OR eon_private.communication_source_fingerprint(v_context)
      IS DISTINCT FROM p_request->>'expected_source_fingerprint' THEN
@@ -210,7 +211,7 @@ BEGIN
     v_hold:='explicit_schedule';
     v_case_block:='review_requested';
   ELSIF v_action='review_completed' THEN
-    IF v_note IS NULL OR v_case.blocked_reason NOT IN
+    IF v_note IS NULL OR v_case.blocked_reason IS NULL OR v_case.blocked_reason NOT IN
       ('review_requested','payment_review','dispute','needs_agent',
        'renewal_review','source_reopened_review') THEN
       RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='Revisão e observação obrigatórias';

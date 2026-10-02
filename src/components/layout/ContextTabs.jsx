@@ -27,7 +27,7 @@ export default function ContextTabs({ group, current }) {
         const selected = tab.to === current;
         return (
           <Link key={tab.to} to={tab.to} aria-current={selected ? 'page' : undefined}
-            className={cn('inline-flex min-h-10 shrink-0 items-center rounded-lg px-3 text-sm font-medium transition-colors',
+            className={cn('inline-flex min-h-11 shrink-0 items-center rounded-lg px-3 text-sm font-medium transition-colors',
               selected ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900')}>
             {tab.label}
           </Link>

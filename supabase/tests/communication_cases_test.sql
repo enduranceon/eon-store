@@ -28,6 +28,11 @@ INSERT INTO public.stock_orders(id,order_number,customer_name,customer_whatsapp,
 VALUES('b1000000-0000-4000-a000-000000000009','EST-CASE-9',
   'Pessoa Exemplo Parcial','11999990009',150,'partially_paid',current_date-8,
   'https://example.test/pay/9');
+INSERT INTO public.stock_orders(id,order_number,customer_name,customer_whatsapp,total_value,
+  payment_status,due_date,asaas_payment_link)
+VALUES('b1000000-0000-4000-a000-000000000010','EST-CASE-10',
+  'Pessoa Exemplo Automática','11999990010',150,'pending',current_date+1,
+  'https://example.test/pay/10');
 
 CREATE FUNCTION pg_temp.case_for(p_id uuid) RETURNS uuid LANGUAGE sql AS $$
   SELECT id FROM public.communication_cases
@@ -45,6 +50,16 @@ $$;
 CREATE FUNCTION pg_temp.order_id(p_n int) RETURNS uuid LANGUAGE sql AS $$
   SELECT ('b1000000-0000-4000-a000-00000000000'||p_n::text)::uuid;
 $$;
+CREATE FUNCTION pg_temp.auto_suggest(p_due date) RETURNS jsonb LANGUAGE sql AS $$
+  SELECT eon_private.communication_case_suggestion(c,
+    eon_private.communication_source_context(c.source_type,c.source_id) ||
+      jsonb_build_object('source_type','contract',
+        'parent_contract_id','b2000000-0000-4000-a000-000000000001',
+        'auto_renewal',true,'period_months',1,'due_date',p_due),NULL,NULL)
+  FROM public.communication_cases c
+  WHERE c.source_id='b1000000-0000-4000-a000-000000000010'
+    AND c.purpose='billing' AND c.status='open' LIMIT 1;
+$$;
 
 SELECT is((pg_temp.suggest(pg_temp.order_id(2))->>'eligible_at')::date,
   current_date+1,'D+2 schedules first overdue contact at D+3');
@@ -58,6 +73,12 @@ SELECT is(pg_temp.suggest(pg_temp.order_id(8))->>'rule_slug',
   'billing-charge-overdue-daily','D+8 resolves to daily model');
 SELECT is((pg_temp.suggest(pg_temp.order_id(8))->>'proposed_next_action_at')::date,
   current_date+1,'after D+7 next contact is tomorrow');
+SELECT is((pg_temp.auto_suggest(current_date+1)->>'eligible_at')::date,
+  current_date+4,'monthly automatic renewal waits for D+3 rather than initial contact');
+SELECT is(pg_temp.auto_suggest(current_date+1)->>'blocked_reason',
+  'not_due_yet','monthly automatic renewal has no pre-due contact by default');
+SELECT is(pg_temp.auto_suggest(current_date-3)->>'rule_slug',
+  'billing-charge-overdue','automatic renewal enters the ordinary D+3 overdue cadence');
 SELECT is((eon_private.communication_case_suggestion(c,
     eon_private.communication_source_context(c.source_type,c.source_id)
       || jsonb_build_object('source_status','finished','due_date',current_date-90),
@@ -232,6 +253,16 @@ SELECT ok((SELECT result->>'next_cursor' IS NOT NULL FROM history_page_2),
 CREATE TEMP TABLE review_before AS SELECT public.get_communication_case(
   pg_temp.case_for(pg_temp.order_id(8))) AS result;
 GRANT SELECT ON review_before TO service_role;
+SELECT throws_ok($$SELECT public.apply_communication_case_action(
+  pg_temp.case_for(pg_temp.order_id(8)),
+  jsonb_build_object('action','review_completed','expected_version',
+    (SELECT (result->'case'->>'version')::bigint FROM review_before),
+    'expected_source_fingerprint',
+    (SELECT result->'case'->>'source_fingerprint' FROM review_before),
+    'source_ui','sql_test','note','Tentativa sem revisão'),
+  'case:test:review00','a1000000-0000-4000-a000-000000000001')$$,
+  '22023','Revisão e observação obrigatórias',
+  'review cannot be completed when no review is pending');
 SET LOCAL ROLE service_role;
 INSERT INTO case_results VALUES('review_requested',public.apply_communication_case_action(
   pg_temp.case_for(pg_temp.order_id(8)),
@@ -245,6 +276,22 @@ INSERT INTO case_results VALUES('review_requested',public.apply_communication_ca
 RESET ROLE;
 SELECT is(pg_temp.suggest(pg_temp.order_id(8))->>'blocked_reason',
   'review_requested','review request persists as a send block');
+
+CREATE TEMP TABLE review_request_state AS SELECT public.get_communication_case(
+  pg_temp.case_for(pg_temp.order_id(8))) AS result;
+GRANT SELECT ON review_request_state TO service_role;
+SET LOCAL ROLE service_role;
+INSERT INTO case_results VALUES('review_scheduled',public.apply_communication_case_action(
+  pg_temp.case_for(pg_temp.order_id(8)),
+  jsonb_build_object('action','return_scheduled','expected_version',
+    (SELECT (result->'case'->>'version')::bigint FROM review_request_state),
+    'expected_source_fingerprint',
+    (SELECT result->'case'->>'source_fingerprint' FROM review_request_state),
+    'source_ui','sql_test','next_action_at',current_date+3),
+  'case:test:review03','a1000000-0000-4000-a000-000000000001'));
+RESET ROLE;
+SELECT is(pg_temp.suggest(pg_temp.order_id(8))->>'blocked_reason',
+  'review_requested','rescheduling a review does not clear its send block');
 
 CREATE TEMP TABLE review_after AS SELECT public.get_communication_case(
   pg_temp.case_for(pg_temp.order_id(8))) AS result;

@@ -189,7 +189,10 @@ BEGIN
     ELSIF p_context->>'source_status' IN ('cancelled', 'voided') THEN
       v_block := 'source_closed_review';
     END IF;
-    IF v_last IS NULL AND p_context->>'payment_status'<>'partially_paid' THEN
+    IF v_last IS NULL AND p_context->>'payment_status'<>'partially_paid'
+       AND NOT (p_context->>'source_type'='contract'
+         AND p_context->>'parent_contract_id' IS NOT NULL
+         AND COALESCE(p_context->>'auto_renewal','false')='true') THEN
       v_slug := 'billing-charge-send'; v_action := 'initial_charge';
       v_next := CASE WHEN v_due IS NULL THEN NULL
         ELSE GREATEST(v_due+3,v_today+1) END;
