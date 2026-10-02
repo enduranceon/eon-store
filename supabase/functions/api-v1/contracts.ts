@@ -84,6 +84,11 @@ function databaseError(
   }, 500);
 }
 
+function localFailureMessage(error: { message?: string }): string {
+  const message = String(error.message || "").trim();
+  return (message || "A alteração do contrato falhou").slice(0, 500);
+}
+
 function externalError(error: unknown): Response {
   if (error instanceof AsaasApiError) {
     return jsonResponse(
@@ -383,16 +388,21 @@ async function runContractMutation(
     );
     if (completeError) {
       const response = databaseError(completeError, "complete mutation");
+      // Só há o que conferir quando o Asaas já cancelou a cobrança. Sem ação no
+      // provedor nada mudou fora do banco: a operação fica como falha comum e
+      // a alteração pode ser feita de novo depois de corrigir o motivo.
+      const providerActed = Boolean(chargeId);
       const { error: finalizeError } = await supabase.rpc(
         "finalize_assessment_contract_mutation_failure",
         {
           p_operation_id: prepared.operation_id,
           p_lease_token: prepared.lease_token,
           p_error_code: "local_completion_failed",
-          p_error_message:
-            "O Asaas confirmou o cancelamento, mas a alteração local falhou",
-          p_requires_reconciliation: true,
-          p_external_result: externalResult,
+          p_error_message: providerActed
+            ? "O Asaas confirmou o cancelamento, mas a alteração local falhou"
+            : localFailureMessage(completeError),
+          p_requires_reconciliation: providerActed,
+          p_external_result: providerActed ? externalResult : {},
         },
       );
       if (finalizeError) {

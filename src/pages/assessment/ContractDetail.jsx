@@ -791,6 +791,18 @@ export default function ContractDetail() {
 
   const selectedAdjustPlan = plans.find(p => p.id === adjustPlanForm.plan_id) || null;
   const selectedAdjustModality = modalities.find(m => m.id === selectedAdjustPlan?.modality_id) || null;
+  // O banco só aceita o plano se o treinador atual atende a modalidade dele;
+  // avisa antes de enviar, para a troca não falhar no meio.
+  const adjustModalityLabel = selectedAdjustModality?.name
+    ? selectedAdjustModality.name.charAt(0).toUpperCase() + selectedAdjustModality.name.slice(1)
+    : 'a modalidade deste plano';
+  const adjustCoachIssue = !selectedAdjustPlan || !coach
+    ? ''
+    : coach.active !== true
+      ? `O treinador atual (${coach.name}) está inativo. Troque o treinador do contrato antes de trocar o plano.`
+      : !(coach.modality_ids || []).includes(selectedAdjustPlan.modality_id)
+        ? `O treinador atual (${coach.name}) não atende ${adjustModalityLabel}. Troque o treinador do contrato antes de trocar o plano.`
+        : '';
   const adjustedEndDate = selectedAdjustPlan && adjustPlanForm.start_date
     ? addPeriod(adjustPlanForm.start_date, selectedAdjustPlan)
     : '';
@@ -826,6 +838,7 @@ export default function ContractDetail() {
     if (!isUnpaid) return toast.error('Só é possível ajustar plano antes do pagamento');
     if (!selectedAdjustPlan) return toast.error('Selecione um plano');
     if (!adjustPlanForm.start_date) return toast.error('Informe a data de início');
+    if (adjustCoachIssue) return toast.error(adjustCoachIssue);
 
     const installments = Math.min(
       Math.max(Number(adjustPlanForm.installments) || 1, 1),
@@ -2273,6 +2286,12 @@ export default function ContractDetail() {
               </div>
             )}
 
+            {adjustCoachIssue && (
+              <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {adjustCoachIssue}
+              </p>
+            )}
+
             {(contract?.asaas_charge_id || contract?.external_payment_link || contract?.asaas_payment_link) && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 Ao salvar, a cobrança/link atual será removida para evitar cobrança duplicada.
@@ -2283,7 +2302,7 @@ export default function ContractDetail() {
               <Button variant="outline" className="flex-1" onClick={() => setAdjustPlanModal(false)} disabled={adjustPlanSaving}>
                 Voltar
               </Button>
-              <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={savePlanAdjustment} disabled={adjustPlanSaving}>
+              <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={savePlanAdjustment} disabled={adjustPlanSaving || Boolean(adjustCoachIssue)}>
                 {adjustPlanSaving ? 'Salvando...' : 'Salvar ajuste'}
               </Button>
             </div>

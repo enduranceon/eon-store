@@ -32,10 +32,15 @@ const PAYMENT_LABELS = {
 function actionsFor(contract, state) {
   const stage = contract.renewal_stage;
   const resolvable = canResolveAssessmentRenewal(contract);
-  const closing = resolvable ? [
-    { key: 'decline', label: 'Não vai renovar', Icon: Ban, tone: 'amber' },
-    { key: 'discard', label: 'Descartar venda (engano/duplicada)', Icon: XCircle, tone: 'gray' },
-  ] : [];
+  // Renovação aberta ainda não foi paga: o plano pode ser trocado no contrato.
+  const changePlan = { key: 'change_plan', label: 'Trocar plano', Icon: PenLine };
+  const closing = [
+    changePlan,
+    ...(resolvable ? [
+      { key: 'decline', label: 'Não vai renovar', Icon: Ban, tone: 'amber' },
+      { key: 'discard', label: 'Descartar venda (engano/duplicada)', Icon: XCircle, tone: 'gray' },
+    ] : []),
+  ];
 
   if (stage === RENEWAL_STAGE.CONTACT_PENDING) {
     return [
@@ -53,7 +58,7 @@ function actionsFor(contract, state) {
       { key: 'response', label: 'Registrar resposta', Icon: CheckCircle2, primary: !change },
       { key: 'message', label: 'Enviar nova mensagem', Icon: MessageCircle },
       { key: 'followup', label: contract.renewal_follow_up_at ? 'Mudar follow-up' : 'Marcar follow-up', Icon: CalendarClock },
-      ...closing,
+      ...(change ? closing.filter(action => action.key !== 'change_plan') : closing),
     ];
   }
   if (stage === RENEWAL_STAGE.CHARGE_PENDING) {
