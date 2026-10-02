@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Plus, Search, Pencil, Users, Phone, Mail, ChevronRight, Filter,
   UserCheck, Clock, UserX, Database, Loader2, MapPin,
@@ -9,13 +9,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { PreSaleCustomer, AssessmentContract } from '@/api/entities';
+import { PreSaleCustomer, AssessmentContract, PreSaleOrder, StockOrder, EventRegistration } from '@/api/entities';
 import { normalizePhone } from '@/api/db';
 import { usePageData } from '@/hooks/usePageData';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { formatCep, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import { toast } from 'sonner';
+import { studentProfilePath } from '@/lib/customer-profile';
 
 const empty = {
   full_name: '',
@@ -41,7 +42,7 @@ const SITUATION = {
   base:      { label: 'Base sem contrato', cls: 'bg-slate-100 text-slate-600' },
 };
 
-function classifyStudent(customer, lifecycleRows) {
+function classifyStudent(customer, lifecycleRows, storeOrdersCount = 0, eventRegistrationsCount = 0) {
   const rows = lifecycleRows.filter(c => c.customer_id === customer.id);
   const activeContracts = rows.filter(c => c.lifecycle?.counts?.active);
   const scheduledContracts = rows.filter(c => c.lifecycle?.type === 'scheduled');
@@ -67,32 +68,51 @@ function classifyStudent(customer, lifecycleRows) {
     allContracts: rows,
     situation: SITUATION[key],
     situationKey: key,
+    storeOrdersCount,
+    eventRegistrationsCount,
   };
 }
 
 async function loadStudentsPage() {
-  const [customers, contracts] = await Promise.all([
-    PreSaleCustomer.list('full_name').catch(() => []),
-    AssessmentContract.list('-created_at').catch(() => []),
+  const [customers, contracts, presaleOrders, stockOrders, eventRegistrations] = await Promise.all([
+    PreSaleCustomer.list('full_name'),
+    AssessmentContract.list('-created_at'),
+    PreSaleOrder.list(),
+    StockOrder.list(),
+    EventRegistration.list(),
   ]);
   await applyAssessmentContractTransitions(contracts);
-  return { customers, contracts };
+  return { customers, contracts, presaleOrders, stockOrders, eventRegistrations };
 }
 
 export default function Students() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
-    data: { customers, contracts },
+    data: { customers, contracts, presaleOrders, stockOrders, eventRegistrations },
+    loading, error,
     refresh,
   } = usePageData({
-    key: 'assessment-students:list',
+    key: 'people:list',
     loader: loadStudentsPage,
-    initialData: { customers: [], contracts: [] },
-    tags: ['presale_customers', 'assessment_contracts'],
-    onError: error => console.error('Erro ao carregar alunos:', error),
+    initialData: { customers: [], contracts: [], presaleOrders: [], stockOrders: [], eventRegistrations: [] },
+    tags: ['presale_customers', 'assessment_contracts', 'presale_orders', 'stock_orders', 'event_registrations'],
+    onError: cause => console.error('Erro ao carregar pessoas:', cause),
   });
-  const [search, setSearch] = useState('');
-  const [viewFilter, setViewFilter] = useState('all');
+  const search = searchParams.get('busca') || searchParams.get('q') || '';
+  const requestedFilter = searchParams.get('vinculo') || searchParams.get('tipo') || (searchParams.get('filtro') === 'sem-cpf' ? 'missing_cpf' : 'all');
+  const viewFilter = requestedFilter === 'store-only' ? 'store'
+    : requestedFilter === 'history' ? 'assessment'
+    : requestedFilter;
+  const updateQuery = (field, value) => {
+    const next = new URLSearchParams(searchParams);
+    if (field === 'busca') next.delete('q');
+    if (field === 'vinculo') { next.delete('tipo'); next.delete('filtro'); }
+    if (!value || value === 'all') next.delete(field);
+    else next.set(field, value);
+    setSearchParams(next, { replace: true });
+  };
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
@@ -102,9 +122,29 @@ export default function Students() {
     () => buildContractLifecycleRows(contracts),
     [contracts]
   );
+  const storeOrdersByCustomer = useMemo(() => {
+    const counts = new Map();
+    for (const order of [...presaleOrders, ...stockOrders]) {
+      if (!order.customer_id || ['cancelled', 'voided', 'refunded'].includes(order.payment_status)) continue;
+      counts.set(order.customer_id, (counts.get(order.customer_id) || 0) + 1);
+    }
+    return counts;
+  }, [presaleOrders, stockOrders]);
+  const eventsByCustomer = useMemo(() => {
+    const counts = new Map();
+    for (const registration of eventRegistrations) {
+      if (!registration.customer_id || registration.payment_status === 'cancelled') continue;
+      counts.set(registration.customer_id, (counts.get(registration.customer_id) || 0) + 1);
+    }
+    return counts;
+  }, [eventRegistrations]);
   const studentRows = useMemo(
-    () => customers.map(customer => classifyStudent(customer, lifecycleRows)),
-    [customers, lifecycleRows]
+    () => customers.map(customer => classifyStudent(
+      customer, lifecycleRows,
+      storeOrdersByCustomer.get(customer.id) || 0,
+      eventsByCustomer.get(customer.id) || 0,
+    )),
+    [customers, lifecycleRows, storeOrdersByCustomer, eventsByCustomer]
   );
 
   const summary = useMemo(() => ({
@@ -115,14 +155,21 @@ export default function Students() {
     prospects: studentRows.filter(row => row.situationKey === 'prospect').length,
     base: studentRows.filter(row => row.situationKey === 'base').length,
     withHistory: studentRows.filter(row => ['active', 'scheduled', 'former'].includes(row.situationKey)).length,
+    store: studentRows.filter(row => row.storeOrdersCount > 0).length,
+    events: studentRows.filter(row => row.eventRegistrationsCount > 0).length,
+    missingCpf: studentRows.filter(row => !row.customer.cpf).length,
   }), [studentRows]);
 
   const viewFilters = [
-    { key: 'all', label: 'Toda base', count: summary.total },
-    { key: 'active', label: 'Ativos', count: summary.active },
-    { key: 'history', label: 'Com histórico', count: summary.withHistory },
+    { key: 'all', label: 'Todas', count: summary.total },
+    { key: 'active', label: 'Alunos ativos', count: summary.active },
+    { key: 'assessment', label: 'Assessoria', count: summary.withHistory },
+    { key: 'former', label: 'Ex-alunos', count: summary.former },
+    { key: 'store', label: 'Loja', count: summary.store },
+    { key: 'events', label: 'Eventos', count: summary.events },
     { key: 'base', label: 'Sem contrato', count: summary.base },
     ...(summary.prospects > 0 ? [{ key: 'prospect', label: 'Prospects', count: summary.prospects }] : []),
+    ...(summary.missingCpf > 0 ? [{ key: 'missing_cpf', label: 'Sem CPF', count: summary.missingCpf }] : []),
   ];
 
   const open = (s) => {
@@ -188,9 +235,13 @@ export default function Students() {
   const filtered = studentRows.filter(row => {
     const c = row.customer;
     if (viewFilter === 'active' && row.situationKey !== 'active') return false;
-    if (viewFilter === 'history' && !['active', 'scheduled', 'former'].includes(row.situationKey)) return false;
+    if (['history', 'assessment'].includes(viewFilter) && !['active', 'scheduled', 'former'].includes(row.situationKey)) return false;
+    if (viewFilter === 'former' && row.situationKey !== 'former') return false;
+    if (viewFilter === 'store' && row.storeOrdersCount === 0) return false;
+    if (viewFilter === 'events' && row.eventRegistrationsCount === 0) return false;
     if (viewFilter === 'base' && row.situationKey !== 'base') return false;
     if (viewFilter === 'prospect' && row.situationKey !== 'prospect') return false;
+    if (viewFilter === 'missing_cpf' && c.cpf) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     // Só compara telefone/CPF quando o termo tem dígitos: includes('') é sempre
@@ -203,12 +254,24 @@ export default function Students() {
            (digits && c.cpf?.includes(digits));
   });
 
+  const reload = async () => {
+    try { await refresh({ force: true }); }
+    catch { /* usePageData reports the error above. */ }
+  };
+
+  if (loading) return <div className="p-8 text-center text-muted-foreground">Carregando pessoas...</div>;
+  if (error) return (
+    <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
+      Não foi possível carregar a base de pessoas. <Button variant="outline" className="ml-2" onClick={reload}>Tentar novamente</Button>
+    </div>
+  );
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Alunos</h2>
-          <p className="text-sm text-muted-foreground">{filtered.length} pessoa{filtered.length !== 1 ? 's' : ''} na visão selecionada</p>
+          <h2 className="text-xl font-bold text-gray-900">Pessoas</h2>
+          <p className="text-sm text-muted-foreground">Uma busca para alunos, ex-alunos, compradores e participantes · {filtered.length} na visão selecionada</p>
         </div>
         <Button onClick={() => open(null)}><Plus className="w-4 h-4 mr-2" /> Nova pessoa</Button>
       </div>
@@ -243,12 +306,12 @@ export default function Students() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative max-w-sm flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Buscar por nome, telefone, CPF, email..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
+          <Input placeholder="Buscar por nome, código, telefone, CPF ou e-mail" className="pl-9" value={search} onChange={e => updateQuery('busca', e.target.value)} />
         </div>
         {viewFilters.map(filter => (
           <button
             key={filter.key}
-            onClick={() => setViewFilter(filter.key)}
+            onClick={() => updateQuery('vinculo', filter.key)}
             className={`text-xs font-medium px-3 py-2 rounded-lg border flex items-center gap-1.5 ${viewFilter === filter.key ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-600'}`}
           >
             <Filter className="w-3.5 h-3.5" />
@@ -258,7 +321,7 @@ export default function Students() {
       </div>
 
       <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
-        A base de pessoas é unificada com <strong>Clientes</strong>. A situação de assessoria abaixo vem dos contratos, não do cadastro da pessoa.
+        Cada pessoa mantém seu ID. Os vínculos com assessoria, loja e eventos vêm dos registros existentes; nenhuma ficha é mesclada automaticamente.
       </div>
 
       {filtered.length === 0 ? (
@@ -270,18 +333,58 @@ export default function Students() {
               : 'Nenhuma pessoa nesta visão'}
           </p>
           {viewFilter !== 'all' && (
-            <button onClick={() => setViewFilter('all')} className="text-sm text-blue-600 hover:underline mt-2">
+            <button onClick={() => updateQuery('vinculo', 'all')} className="text-sm text-blue-600 hover:underline mt-2">
               Ver toda a base
             </button>
           )}
         </CardContent></Card>
       ) : (
-        <div className="overflow-x-auto rounded-lg border bg-white">
+        <>
+          <div className="grid gap-3 md:hidden">
+            {filtered.map(row => {
+              const person = row.customer;
+              return (
+                <div key={person.id} className="rounded-lg border bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => navigate(studentProfilePath(person.id), { state: { returnTo: `${location.pathname}${location.search}${location.hash}` } })}
+                    >
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-slate-900">{person.full_name}</span>
+                        {person.customer_code && <span className="rounded border border-blue-100 bg-blue-50 px-1.5 py-0.5 font-mono text-[11px] font-bold text-blue-700">{person.customer_code}</span>}
+                      </span>
+                      <span className={`mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${row.situation.cls}`}>{row.situation.label}</span>
+                    </button>
+                    <button type="button" onClick={() => open(person)} aria-label={`Editar ${person.full_name}`} className="rounded p-2 text-slate-500 hover:bg-slate-100">
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+                    {row.situationKey !== 'base' && <span className="rounded bg-blue-50 px-2 py-1 text-blue-700">Assessoria</span>}
+                    {row.storeOrdersCount > 0 && <span className="rounded bg-amber-50 px-2 py-1 text-amber-700">Loja</span>}
+                    {row.eventRegistrationsCount > 0 && <span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">Eventos</span>}
+                    {row.situationKey === 'base' && row.storeOrdersCount === 0 && row.eventRegistrationsCount === 0 && <span className="text-slate-500">Sem vínculo registrado</span>}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs text-slate-600">
+                    <span>{person.whatsapp || person.email || 'Sem contato cadastrado'}</span>
+                    <span>{row.activeContracts.length} ativo(s) · {row.effectiveContracts.length} contrato(s)</span>
+                  </div>
+                  <button type="button" onClick={() => navigate(studentProfilePath(person.id), { state: { returnTo: `${location.pathname}${location.search}${location.hash}` } })} className="mt-3 flex items-center gap-1 text-sm font-semibold text-blue-700">
+                    Abrir ficha <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="hidden overflow-x-auto rounded-lg border bg-white md:block">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Nome</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Contato</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Vínculos</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Contratos ativos</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Total contratos</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Situação assessoria</th>
@@ -294,7 +397,7 @@ export default function Students() {
                 const activeC = row.activeContracts;
                 const totalC = row.effectiveContracts;
                 return (
-                  <tr key={s.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/assessoria/alunos/${s.id}`)}>
+                  <tr key={s.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(studentProfilePath(s.id), { state: { returnTo: `${location.pathname}${location.search}${location.hash}` } })}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         {s.customer_code && (
@@ -308,6 +411,12 @@ export default function Students() {
                     <td className="px-4 py-3 text-xs text-muted-foreground space-y-0.5">
                       {s.whatsapp && <p className="flex items-center gap-1"><Phone className="w-3 h-3" /> {s.whatsapp}</p>}
                       {s.email && <p className="flex items-center gap-1"><Mail className="w-3 h-3" /> {s.email}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {row.situationKey !== 'base' && <span className="mr-1 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">Assessoria</span>}
+                      {row.storeOrdersCount > 0 && <span className="mr-1 inline-block rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">Loja</span>}
+                      {row.eventRegistrationsCount > 0 && <span className="inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">Eventos</span>}
+                      {row.situationKey === 'base' && row.storeOrdersCount === 0 && row.eventRegistrationsCount === 0 && 'Sem vínculo registrado'}
                     </td>
                     <td className="px-4 py-3 text-center font-bold text-blue-700">{activeC.length}</td>
                     <td className="px-4 py-3 text-center text-muted-foreground">{totalC.length}</td>
@@ -326,7 +435,8 @@ export default function Students() {
               })}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
 
       <Dialog open={modal} onOpenChange={setModal}>

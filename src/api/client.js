@@ -1921,6 +1921,76 @@ export async function recordCommunicationEvent(payload, options = {}) {
   return response.data;
 }
 
+function communicationCaseQuery(filters = {}) {
+  const params = new URLSearchParams();
+  const values = { ...filters, q: filters.query ?? filters.q };
+  delete values.query;
+  for (const key of ['state', 'purpose', 'source_type', 'source_id', 'customer_id', 'q', 'cursor', 'limit']) {
+    const value = values[key];
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  }
+  return params.size ? `?${params.toString()}` : '';
+}
+
+export async function listCommunicationCases(filters = {}, options = {}) {
+  const response = await apiRequest(`/communications/cases${communicationCaseQuery(filters)}`, options);
+  return response.data ?? response;
+}
+
+export async function getCommunicationCase(id, options = {}) {
+  const response = await apiRequest(`/communications/cases/${encodeURIComponent(id)}`, options);
+  return response.data ?? response;
+}
+
+export async function listCommunicationCaseEvents(id, filters = {}, options = {}) {
+  const response = await apiRequest(`/communications/cases/${encodeURIComponent(id)}/events${communicationCaseQuery(filters)}`, options);
+  return response.data ?? response;
+}
+
+export async function prepareCommunicationCase(payload, options = {}) {
+  const response = await apiRequest('/communications/cases/prepare', { ...options, method: 'POST', body: payload });
+  invalidatePageCacheByTag('communication_cases');
+  return response.data ?? response;
+}
+
+export async function actOnCommunicationCase(id, payload, options = {}) {
+  const { idempotency_key, ...body } = payload;
+  const response = await apiRequest(`/communications/cases/${encodeURIComponent(id)}/actions`, {
+    ...options, method: 'POST', body, idempotencyKey: idempotency_key ?? options.idempotencyKey,
+  });
+  for (const tag of ['communication_cases', 'communication_case_events', 'assessment_contracts',
+    'assessment_contract_event', 'sales_status_events', 'presale_orders', 'stock_orders', 'event_registrations']) {
+    invalidatePageCacheByTag(tag);
+  }
+  return response.data ?? response;
+}
+
+export async function getCommunicationModels(options = {}) {
+  const response = await apiRequest('/communications/models', options);
+  return response.data ?? response;
+}
+
+export async function saveCommunicationDraft(payload, options = {}) {
+  const response = await apiRequest('/communications/models/drafts', { ...options, method: 'POST', body: payload });
+  return response.data ?? response;
+}
+
+export async function simulateCommunicationDraft(id, options = {}) {
+  const response = await apiRequest(`/communications/models/drafts/${encodeURIComponent(id)}/simulate`, { ...options, method: 'POST', body: {} });
+  return response.data ?? response;
+}
+
+export async function publishCommunicationDraft(id, payload, options = {}) {
+  const response = await apiRequest(`/communications/models/drafts/${encodeURIComponent(id)}/publish`, { ...options, method: 'POST', body: payload });
+  for (const tag of ['communication_rules', 'communication_cases', 'communication_cadence_policies']) invalidatePageCacheByTag(tag);
+  return response.data ?? response;
+}
+
+export async function listCommunicationModelVersions(id, filters = {}, options = {}) {
+  const response = await apiRequest(`/communications/models/${encodeURIComponent(id)}/versions${communicationCaseQuery(filters)}`, options);
+  return response.data ?? response;
+}
+
 export async function transitionPayoutClosing(closingId, action, options = {}) {
   const response = await apiRequest(`/payouts/closings/${closingId}/${action}`, {
     ...options,

@@ -1,976 +1,366 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, Calendar, CheckCircle2, Clock3, Link2, Loader2, MessageCircle,
-  PhoneOff, RefreshCw, Search, SendHorizontal, Settings, WalletCards, XCircle,
+  AlertTriangle, CalendarClock, Clock3, History, Loader2, MessageCircle,
+  RefreshCw, Search, Settings,
 } from 'lucide-react';
-import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { supabase } from '@/api/db';
-import { DEFAULT_COMMUNITY_LINK, loadCommunicationConfig } from '@/lib/communication-config';
-import {
-  COMMUNICATION_EVENT_TYPES,
-  TASK_BUCKET,
-  TASK_KIND,
-  buildCommunicationTasks,
-  taskChannelLabel,
-} from '@/lib/communication-tasks';
-import { hasNativePaymentInfo, registerCommunicationIgnore } from '@/lib/communication-send';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
-import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
-import { formatPhoneDisplay } from '@/lib/phone';
-import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
+import { listCommunicationCases } from '@/api/client';
+import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 
-const TAB_INFO = [
-  { value: 'pending', label: 'Pendentes' },
-  { value: TASK_BUCKET.CHARGES, label: 'Cobranças' },
-  { value: TASK_BUCKET.ONBOARDING, label: 'Onboarding' },
-  { value: TASK_BUCKET.RENEWAL, label: 'Renovação' },
-  { value: 'history', label: 'Histórico' },
+const STATES = [
+  { value: 'to_do', label: 'A fazer' },
+  { value: 'following_up', label: 'Em acompanhamento' },
+  { value: 'scheduled', label: 'Agendadas' },
+  { value: 'resolved', label: 'Histórico' },
 ];
 
-const QUICK_FILTERS = [
-  { value: 'all', label: 'Todas' },
-  { value: 'overdue', label: 'Vencidas', tabs: ['pending', TASK_BUCKET.CHARGES] },
-  { value: 'blocked', label: 'Bloqueios' },
-  { value: 'missing_link', label: 'Sem link', tabs: ['pending', TASK_BUCKET.CHARGES] },
-  { value: 'ready', label: 'Prontas' },
+const PURPOSES = [
+  { value: '', label: 'Todas as finalidades' },
+  { value: 'billing', label: 'Cobranças' },
+  { value: 'renewal', label: 'Renovações' },
+  { value: 'onboarding', label: 'Boas-vindas' },
 ];
 
-function mapById(rows = []) {
-  return new Map(rows.map(row => [row.id, row]));
+const PURPOSE_LABEL = {
+  billing: 'Cobrança',
+  renewal: 'Renovação',
+  onboarding: 'Boas-vindas',
+};
+
+const EMPTY_COUNTS = {
+  to_do: 0,
+  following_up: 0,
+  scheduled: 0,
+  resolved: 0,
+  open: 0,
+};
+
+function readableDate(value) {
+  if (!value) return 'Não definida';
+  return String(value).includes('T') ? formatDateTime(value) : formatDate(value);
 }
 
-function historyPayload(event = {}) {
-  return { ...(event.metadata || {}), ...(event.payload || {}) };
+function caseActionLabel(item) {
+  if (item.blocked_reason) return 'Revisar bloqueio';
+  if (item.workflow_stage === 'resolved') return 'Ver histórico';
+  if (item.workflow_stage === 'scheduled') return 'Ver combinado';
+  if (item.workflow_stage === 'following_up') return 'Ver acompanhamento';
+  if (item.purpose === 'renewal') return 'Retomar conversa';
+  if (item.purpose === 'billing') return 'Preparar mensagem';
+  return 'Abrir acompanhamento';
 }
 
-function bucketFromTaskKind(kind, eventType = '') {
-  if ([TASK_KIND.ONBOARDING_WELCOME, TASK_KIND.ONBOARDING_CHECKIN].includes(kind)) return TASK_BUCKET.ONBOARDING;
-  if (kind === TASK_KIND.RENEWAL_REMINDER) return TASK_BUCKET.RENEWAL;
-  if ([TASK_KIND.CHARGE_SEND, TASK_KIND.CHARGE_OVERDUE].includes(kind)) return TASK_BUCKET.CHARGES;
-  if (eventType === 'renewal_message_sent') return TASK_BUCKET.RENEWAL;
-  if (String(eventType).startsWith('onboarding')) return TASK_BUCKET.ONBOARDING;
-  if (eventType === 'payment_message_sent') return TASK_BUCKET.CHARGES;
-  return TASK_BUCKET.CHARGES;
-}
-
-function historyStatus(event = {}) {
-  const payload = historyPayload(event);
-  if (payload.action === 'snoozed') return { label: 'Adiada', tone: 'warning' };
-  if (payload.action === 'ignored' || event.event_type === 'communication_task_ignored') {
-    return { label: 'Descartada', tone: 'destructive' };
-  }
-  return { label: 'Enviada', tone: 'success' };
-}
-
-function historyTitle(event = {}) {
-  const payload = historyPayload(event);
-  if (payload.rule_name) return payload.rule_name;
-  if (payload.task_kind === TASK_KIND.CHARGE_OVERDUE) return 'Cobrança vencida';
-  if (payload.task_kind === TASK_KIND.CHARGE_SEND) return 'Enviar cobrança';
-  if (payload.task_kind === TASK_KIND.ONBOARDING_WELCOME) return 'Boas-vindas pós-pagamento';
-  if (payload.task_kind === TASK_KIND.ONBOARDING_CHECKIN) return 'Check-in inicial';
-  if (payload.task_kind === TASK_KIND.RENEWAL_REMINDER) return 'Renovação';
-  if (event.event_type === 'payment_message_sent') return 'Cobrança';
-  if (event.event_type === 'onboarding_welcome_sent') return 'Boas-vindas pós-pagamento';
-  if (event.event_type === 'onboarding_checkin_sent') return 'Check-in inicial';
-  if (event.event_type === 'renewal_message_sent') return 'Renovação';
-  return 'Comunicação';
-}
-
-function historyType(event = {}) {
-  const payload = historyPayload(event);
-  return taskChannelLabel({ bucket: bucketFromTaskKind(payload.task_kind, event.event_type) });
-}
-
-function communicationTone(task) {
-  if (task.kind === TASK_KIND.CHARGE_OVERDUE) return 'destructive';
-  if (task.bucket === TASK_BUCKET.CHARGES) return 'info';
-  if (task.bucket === TASK_BUCKET.ONBOARDING) return 'success';
-  if (task.bucket === TASK_BUCKET.RENEWAL) return 'purple';
-  return 'secondary';
-}
-
-function taskHasWhatsapp(task) {
-  return Boolean(String(task?.customerWhatsapp || '').replace(/\D/g, ''));
-}
-
-function taskHasPaymentLink(task) {
-  return Boolean(task?.asaasPaymentLink || task?.asaasPixCopy || task?.externalPaymentLink);
-}
-
-function taskMissingPaymentLink(task) {
-  return task?.bucket === TASK_BUCKET.CHARGES && !taskHasPaymentLink(task);
-}
-
-function taskIsBlocked(task) {
-  return !taskHasWhatsapp(task) || taskMissingPaymentLink(task);
-}
-
-function taskIsReady(task) {
-  if (!taskHasWhatsapp(task)) return false;
-  if (task.bucket === TASK_BUCKET.CHARGES) return taskHasPaymentLink(task);
-  return true;
-}
-
-function filtersForTab(tab) {
-  return QUICK_FILTERS.filter(filter => !filter.tabs || filter.tabs.includes(tab));
-}
-
-function taskMatchesQuickFilter(task, filter) {
-  if (filter === 'overdue') return task.kind === TASK_KIND.CHARGE_OVERDUE;
-  if (filter === 'blocked') return taskIsBlocked(task);
-  if (filter === 'missing_link') return taskMissingPaymentLink(task);
-  if (filter === 'ready') return taskIsReady(task);
-  return true;
-}
-
-function taskAccentClass(task) {
-  if (task.kind === TASK_KIND.CHARGE_OVERDUE) return 'bg-red-500';
-  if (taskIsBlocked(task)) return 'bg-amber-400';
-  if (task.bucket === TASK_BUCKET.ONBOARDING) return 'bg-green-500';
-  if (task.bucket === TASK_BUCKET.RENEWAL) return 'bg-purple-500';
-  return 'bg-blue-500';
-}
-
-function taskActionMeta(task) {
-  if (!taskHasWhatsapp(task)) return { label: 'Resolver contato', icon: PhoneOff, variant: 'outline' };
-  if (taskMissingPaymentLink(task)) return { label: 'Resolver link', icon: Link2, variant: 'outline' };
-  if (task.kind === TASK_KIND.CHARGE_OVERDUE) return { label: 'Reenviar', icon: SendHorizontal, variant: 'default' };
-  if (task.kind === TASK_KIND.CHARGE_SEND) return { label: 'Enviar cobrança', icon: MessageCircle, variant: 'default' };
-  if (task.bucket === TASK_BUCKET.ONBOARDING) return { label: 'Enviar onboarding', icon: MessageCircle, variant: 'default' };
-  if (task.bucket === TASK_BUCKET.RENEWAL) return { label: 'Enviar renovação', icon: MessageCircle, variant: 'default' };
-  return { label: 'Preparar', icon: MessageCircle, variant: 'default' };
-}
-
-function taskDiscardDetails(task) {
-  const context = [
-    task.customerName,
-    task.orderNumber,
-    task.title,
-  ].filter(Boolean).join(' · ');
-  const timelineNote = task.ruleSlug
-    ? 'Apenas esta etapa da régua será marcada como descartada. Se houver uma próxima mensagem, ela aparecerá quando chegar a data.'
-    : 'Esta tarefa será removida da fila manual.';
-
-  return { context, timelineNote };
-}
-
-function buildWorkSections(tasks = [], activeTab = 'pending') {
-  const blocked = tasks.filter(taskIsBlocked);
-  const available = tasks.filter(task => !taskIsBlocked(task));
-
-  const sectionDefs = activeTab === TASK_BUCKET.CHARGES
-    ? [
-        {
-          id: 'blocked',
-          title: 'Resolver bloqueios',
-          detail: 'Falta WhatsApp ou link antes de enviar.',
-          tone: 'amber',
-          tasks: blocked,
-        },
-        {
-          id: 'overdue',
-          title: 'Cobranças vencidas',
-          detail: 'Prioridade de cobrança e reenvio.',
-          tone: 'red',
-          tasks: available.filter(task => task.kind === TASK_KIND.CHARGE_OVERDUE),
-        },
-        {
-          id: 'ready',
-          title: 'Cobranças prontas',
-          detail: 'Já têm contato e link para envio.',
-          tone: 'blue',
-          tasks: available.filter(task => task.kind !== TASK_KIND.CHARGE_OVERDUE),
-        },
-      ]
-    : activeTab === TASK_BUCKET.ONBOARDING
-      ? [
-          {
-            id: 'blocked',
-            title: 'Onboarding bloqueado',
-            detail: 'Falta contato para iniciar a jornada.',
-            tone: 'amber',
-            tasks: blocked,
-          },
-          {
-            id: 'ready',
-            title: 'Onboarding pronto',
-            detail: 'Boas-vindas e check-ins para enviar.',
-            tone: 'green',
-            tasks: available,
-          },
-        ]
-      : activeTab === TASK_BUCKET.RENEWAL
-        ? [
-            {
-              id: 'blocked',
-              title: 'Renovações bloqueadas',
-              detail: 'Falta contato para seguir.',
-              tone: 'amber',
-              tasks: blocked,
-            },
-            {
-              id: 'ready',
-              title: 'Renovações prontas',
-              detail: 'Alunos próximos do fim do contrato.',
-              tone: 'purple',
-              tasks: available,
-            },
-          ]
-        : [
-            {
-              id: 'blocked',
-              title: '1. Resolver bloqueios',
-              detail: 'Sem WhatsApp, sem link ou cobrança incompleta.',
-              tone: 'amber',
-              tasks: blocked,
-            },
-            {
-              id: 'overdue',
-              title: '2. Cobranças vencidas',
-              detail: 'Comece pelas cobranças já atrasadas.',
-              tone: 'red',
-              tasks: available.filter(task => task.kind === TASK_KIND.CHARGE_OVERDUE),
-            },
-            {
-              id: 'ready_charges',
-              title: '3. Cobranças prontas',
-              detail: 'Cobranças com contato e link disponíveis.',
-              tone: 'blue',
-              tasks: available.filter(task => task.bucket === TASK_BUCKET.CHARGES && task.kind !== TASK_KIND.CHARGE_OVERDUE),
-            },
-            {
-              id: 'onboarding',
-              title: '4. Onboarding',
-              detail: 'Boas-vindas e check-ins iniciais.',
-              tone: 'green',
-              tasks: available.filter(task => task.bucket === TASK_BUCKET.ONBOARDING),
-            },
-            {
-              id: 'renewal',
-              title: '5. Renovações',
-              detail: 'Continuidade de contrato e retenção.',
-              tone: 'purple',
-              tasks: available.filter(task => task.bucket === TASK_BUCKET.RENEWAL),
-            },
-          ];
-
-  return sectionDefs.filter(section => section.tasks.length > 0);
-}
-
-function SummaryCard({ icon: Icon, label, value, tone = 'blue', detail }) {
-  const tones = {
-    gray: 'text-gray-700 bg-gray-50 border-gray-200',
-    red: 'text-red-700 bg-red-50 border-red-200',
-    amber: 'text-amber-700 bg-amber-50 border-amber-200',
-    green: 'text-green-700 bg-green-50 border-green-200',
-    blue: 'text-blue-700 bg-blue-50 border-blue-200',
-  };
+function CaseRow({ item, onOpen }) {
+  const sourceHref = item.source_href;
   return (
-    <Card className="border-gray-200 shadow-sm">
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-medium text-muted-foreground">{label}</p>
-            <p className="text-2xl font-bold text-gray-950 mt-1">{value}</p>
-            {detail && <p className="text-xs text-muted-foreground mt-1">{detail}</p>}
+    <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1.7fr)_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={item.purpose === 'billing' ? 'info' : item.purpose === 'renewal' ? 'purple' : 'success'}>
+              {PURPOSE_LABEL[item.purpose] || item.purpose || 'Contato'}
+            </Badge>
+            {item.blocked_reason && <Badge variant="warning">Bloqueio</Badge>}
           </div>
-          <div className={`rounded-lg border p-2 ${tones[tone] || tones.blue}`}>
-            <Icon className="w-4 h-4" />
-          </div>
+          {sourceHref ? (
+            <Link to={sourceHref} className="mt-1 block break-words font-semibold text-blue-700 hover:underline">
+              {item.person_name || 'Pessoa sem nome'}
+            </Link>
+          ) : (
+            <p className="mt-1 break-words font-semibold text-gray-900">{item.person_name || 'Pessoa sem nome'}</p>
+          )}
+          <p className="text-xs text-muted-foreground">{item.reference || 'Referência indisponível'}</p>
         </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function normalizeSaleHistory(ev, presaleMap, stockMap, eventMap, customersMap) {
-  const row = ev.order_type === 'stock'
-    ? stockMap.get(ev.order_id)
-    : ev.order_type === 'event'
-    ? eventMap.get(ev.order_id)
-    : presaleMap.get(ev.order_id);
-  if (!row) return null;
-  const eventCustomer = ev.order_type === 'event' ? customersMap.get(row.customer_id) || {} : {};
-  const customerName = ev.order_type === 'stock'
-    ? row.customer_name
-    : ev.order_type === 'event'
-    ? eventCustomer.full_name
-    : row.checkout_name;
-  const customerWhatsapp = ev.order_type === 'stock'
-    ? row.customer_whatsapp
-    : ev.order_type === 'event'
-    ? eventCustomer.whatsapp
-    : row.checkout_whatsapp;
-  const status = historyStatus(ev);
-  return {
-    id: `sale:${ev.id}`,
-    type: historyType(ev),
-    title: historyTitle(ev),
-    statusLabel: status.label,
-    statusTone: status.tone,
-    customerName: customerName || 'Cliente',
-    customerWhatsapp,
-    orderNumber: ev.order_type === 'event' ? row.registration_number : row.order_number,
-    createdAt: ev.created_at,
-    href: ev.order_type === 'stock'
-      ? `/estoque/pedidos/${row.id}`
-      : ev.order_type === 'event'
-      ? `/eventos/${row.event_id}`
-      : `/pedidos/${row.id}`,
-  };
-}
-
-function buildHistory(data) {
-  const customers = mapById(data.customers || []);
-  const contracts = mapById(data.contracts || []);
-  const presale = mapById(data.presaleOrders || []);
-  const stock = mapById(data.stockOrders || []);
-  const events = mapById(data.eventRegistrations || []);
-  const contractRows = (data.contractEvents || []).map(ev => {
-    const contract = contracts.get(ev.contract_id);
-    if (!contract) return null;
-    const customer = customers.get(contract.customer_id) || {};
-    const status = historyStatus(ev);
-    return {
-      id: `contract:${ev.id}`,
-      type: historyType(ev),
-      title: historyTitle(ev),
-      statusLabel: status.label,
-      statusTone: status.tone,
-      customerName: customer.full_name || 'Aluno',
-      customerWhatsapp: customer.whatsapp,
-      orderNumber: contract.contract_number,
-      createdAt: ev.created_at,
-      href: `/assessoria/contratos/${contract.id}`,
-    };
-  }).filter(Boolean);
-
-  const saleRows = (data.saleEvents || [])
-    .filter(ev => ev.new_status === 'charge_sent' || ev.metadata?.source === 'communication_center')
-    .map(ev => normalizeSaleHistory(ev, presale, stock, events, customers))
-    .filter(Boolean);
-
-  return [...contractRows, ...saleRows]
-    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
-    .slice(0, 120);
-}
-
-async function fetchCommunicationData() {
-  const [
-    presaleOrders,
-    stockOrders,
-    contracts,
-    renewalContracts,
-    customers,
-    plans,
-    modalities,
-    coaches,
-    eventRegistrations,
-    eventTypes,
-    events,
-    contractEvents,
-    saleEvents,
-    communicationConfig,
-  ] = await Promise.all([
-    supabase.from('presale_orders')
-      .select('id, order_number, checkout_name, checkout_whatsapp, checkout_email, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, payment_preference, items, created_date, status_changed_at, delivery_status')
-      .neq('payment_status', 'cancelled')
-      .neq('payment_status', 'refunded'),
-    supabase.from('stock_orders')
-      .select('id, order_number, customer_name, customer_whatsapp, customer_email, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, payment_preference, items, created_date, status_changed_at, delivery_status')
-      .neq('payment_status', 'cancelled')
-      .neq('payment_status', 'refunded'),
-    supabase.from('assessment_contracts')
-      .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, discount_recurring, credit_balance, installments, plan_snapshot')
-      .not('status', 'in', '("cancelled","draft","voided")')
-      .neq('payment_status', 'refunded'),
-    // Renovações em "Enviar mensagem" ou "Aguardando decisão" no quadro: a
-    // maioria ainda é rascunho, por isso fora da consulta acima.
-    supabase.from('assessment_contracts')
-      .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, discount_recurring, credit_balance, installments, plan_snapshot, renewal_stage, renewal_follow_up_at, renewal_stage_updated_at, renewal_last_contact_at')
-      .not('parent_contract_id', 'is', null)
-      .in('renewal_stage', ['contact_pending', 'waiting_response']),
-    supabase.from('presale_customers').select('id, full_name, whatsapp, email'),
-    supabase.from('assessment_plans').select('id, name, modality_id, period, period_months, price_total, price_monthly'),
-    supabase.from('assessment_modalities').select('id, name'),
-    supabase.from('assessment_coaches').select('id, name'),
-    supabase.from('event_registrations')
-      .select('id, registration_number, event_id, registration_type_id, customer_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, customer_link_confirmed_at, customer_link_confirmed_by, created_at, updated_at')
-      .neq('payment_status', 'cancelled')
-      .neq('payment_status', 'refunded'),
-    supabase.from('event_registration_types').select('id, event_id, name, price'),
-    supabase.from('events').select('id, name'),
-    supabase.from('assessment_contract_event')
-      .select('id, contract_id, event_type, payload, notes, created_at')
-      .in('event_type', COMMUNICATION_EVENT_TYPES)
-      .order('created_at', { ascending: false }),
-    supabase.from('sales_status_events')
-      .select('id, order_type, order_id, previous_status, new_status, reason, metadata, created_at')
-      .order('created_at', { ascending: false })
-      .limit(200),
-    loadCommunicationConfig(),
-  ]);
-
-  const responses = {
-    presaleOrders,
-    stockOrders,
-    contracts,
-    renewalContracts,
-    customers,
-    plans,
-    modalities,
-    coaches,
-    eventRegistrations,
-    eventTypes,
-    events,
-    contractEvents,
-    saleEvents,
-  };
-  for (const [name, res] of Object.entries(responses)) {
-    if (res.error) throw new Error(`${name}: ${res.error.message}`);
-  }
-  await applyAssessmentContractTransitions(contracts.data || []);
-
-  return {
-    ...Object.fromEntries(
-      Object.entries(responses).map(([name, res]) => [name, res.data || []])
-    ),
-    communicationConfig,
-    communicationRules: communicationConfig.rules,
-    communityLink: communicationConfig.communityLink,
-  };
-}
-
-function TaskCard({ task, onOpen, onDiscard, discarding }) {
-  const hasWhatsapp = taskHasWhatsapp(task);
-  const missingLink = taskMissingPaymentLink(task);
-  const hasExternalLink = Boolean(task.externalPaymentLink);
-  const nativePaymentInfo = hasNativePaymentInfo(task);
-  const isOverdue = task.kind === TASK_KIND.CHARGE_OVERDUE;
-  const isReady = taskIsReady(task);
-  const action = taskActionMeta(task);
-  const ActionIcon = action.icon;
-
-  return (
-    <div className="relative overflow-hidden rounded-lg border bg-white shadow-sm transition-shadow hover:shadow-md">
-      <div className={`absolute left-0 top-0 h-full w-1 ${taskAccentClass(task)}`} />
-      <div className="grid gap-4 px-4 py-4 pl-5 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
-        <div className="min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant={communicationTone(task)}>{taskChannelLabel(task)}</Badge>
-            {isOverdue && task.statusLabel && (
-              <Badge variant="destructive" className="gap-1">
-                <Clock3 className="w-3 h-3" />
-                {task.statusLabel}
-              </Badge>
-            )}
-            {missingLink && (
-              <Badge variant="warning" className="gap-1">
-                <Link2 className="w-3 h-3" />
-                Sem link
-              </Badge>
-            )}
-            {!hasWhatsapp && (
-              <Badge variant="warning" className="gap-1">
-                <PhoneOff className="w-3 h-3" />
-                Sem WhatsApp
-              </Badge>
-            )}
-            {nativePaymentInfo && <Badge variant="info">Asaas</Badge>}
-            {!nativePaymentInfo && hasExternalLink && <Badge variant="outline">Link externo</Badge>}
-            {isReady && <Badge variant="success">Pronta</Badge>}
-          </div>
-
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <Link to={task.href} className="min-w-0 break-words text-base font-semibold leading-tight text-blue-700 hover:underline">
-                {task.customerName}
-              </Link>
-              <span className="text-muted-foreground">·</span>
-              <span className="font-mono text-xs text-gray-700">{task.orderNumber}</span>
-              {task.totalValue > 0 && (
-                <>
-                  <span className="text-muted-foreground">·</span>
-                  <span className="font-semibold text-gray-950">{formatCurrency(task.totalValue)}</span>
-                </>
-              )}
-            </div>
-            {task.itemSummary && (
-              <p className="text-xs text-muted-foreground truncate mt-0.5">{task.itemSummary}</p>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-            {task.scheduledDate && (
-              <span className="flex items-center gap-1">
-                <Calendar className="w-3 h-3" />
-                {formatDate(task.scheduledDate)}
-              </span>
-            )}
-            {hasWhatsapp && <span>{formatPhoneDisplay(task.customerWhatsapp)}</span>}
-          </div>
+        <div className="min-w-0 text-sm">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Situação</p>
+          <p className="mt-1 break-words text-gray-900">
+            {item.blocked_reason || item.action_label || item.status_label || (item.purpose === 'billing' ? 'Cobrança em acompanhamento' : 'Contato em acompanhamento')}
+          </p>
+          {item.purpose === 'billing' && item.balance != null && (
+            <p className="mt-1 font-semibold text-gray-900">Saldo pendente: {formatCurrency(Number(item.balance) || 0)}</p>
+          )}
         </div>
-
-        <div className="min-w-0 rounded-lg border border-gray-100 bg-gray-50 p-3">
-          <div className="min-w-0">
-            <p className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground">Etapa</p>
-            <p className="mt-0.5 text-sm font-semibold leading-snug text-gray-950">{task.title}</p>
-            {!isOverdue && task.statusLabel && (
-              <p className="mt-0.5 text-xs text-muted-foreground">{task.statusLabel}</p>
-            )}
-          </div>
-
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-            <Button
-              size="sm"
-              variant={action.variant}
-              onClick={() => onOpen(task)}
-              disabled={discarding}
-              className="w-full gap-1.5"
-            >
-              <ActionIcon className="w-4 h-4" />
-              {action.label}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onDiscard(task)}
-              disabled={discarding}
-              className="w-full gap-1.5 border-gray-200 text-gray-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
-            >
-              {discarding ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-              Descartar
-            </Button>
-          </div>
+        <div className="text-sm">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Último contato</p>
+          <p className="mt-1 text-gray-900">{readableDate(item.last_contact_at)}</p>
         </div>
+        <div className="text-sm">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Próxima ação</p>
+          <p className="mt-1 font-medium text-gray-900">{readableDate(item.next_action_at)}</p>
+        </div>
+        <Button
+          type="button"
+          variant={item.blocked_reason || item.workflow_stage === 'resolved' ? 'outline' : 'default'}
+          className="min-h-11 w-full md:w-auto"
+          onClick={() => onOpen(item)}
+          aria-label={`${caseActionLabel(item)}: ${item.person_name || item.reference || 'contato'}`}
+        >
+          {caseActionLabel(item)}
+        </Button>
       </div>
-    </div>
-  );
-}
-
-function TaskSection({ section, onOpen, onDiscard, discardingTaskId }) {
-  const toneClass = {
-    amber: 'border-amber-200 bg-amber-50 text-amber-800',
-    red: 'border-red-200 bg-red-50 text-red-800',
-    blue: 'border-blue-200 bg-blue-50 text-blue-800',
-    green: 'border-green-200 bg-green-50 text-green-800',
-    purple: 'border-purple-200 bg-purple-50 text-purple-800',
-  }[section.tone] || 'border-gray-200 bg-gray-50 text-gray-800';
-  const dotClass = {
-    amber: 'bg-amber-400',
-    red: 'bg-red-500',
-    blue: 'bg-blue-500',
-    green: 'bg-green-500',
-    purple: 'bg-purple-500',
-  }[section.tone] || 'bg-gray-400';
-
-  return (
-    <section className="space-y-2">
-      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-2">
-            <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
-            <div className="min-w-0">
-              <h3 className="text-sm font-bold">{section.title}</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">{section.detail}</p>
-            </div>
-          </div>
-          <span className={`rounded-full border px-2 py-0.5 text-xs font-bold ${toneClass}`}>
-            {section.tasks.length}
-          </span>
-        </div>
-      </div>
-      <div className="space-y-2">
-        {section.tasks.map(task => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            onOpen={onOpen}
-            onDiscard={onDiscard}
-            discarding={discardingTaskId === task.id}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function DiscardTaskDialog({ task, saving, onClose, onConfirm }) {
-  if (!task) return null;
-  const { context, timelineNote } = taskDiscardDetails(task);
-
-  return (
-    <Dialog open={!!task} onOpenChange={open => !open && !saving && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-red-700">
-            <XCircle className="h-5 w-5" />
-            Descartar etapa
-          </DialogTitle>
-          <DialogDescription>
-            Essa ação remove esta tarefa da fila manual, sem cancelar cliente, contrato ou cobrança.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-3">
-          <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3">
-            <p className="text-sm font-semibold text-red-900">
-              Tem certeza que quer descartar esse contato?
-            </p>
-            <p className="mt-2 text-sm text-red-800">{context}</p>
-          </div>
-
-          <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-            {timelineNote}
-          </div>
-        </div>
-
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="outline" onClick={onClose} disabled={saving}>
-            Cancelar
-          </Button>
-          <Button variant="destructive" onClick={onConfirm} disabled={saving} className="gap-1.5">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-            Descartar etapa
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function HistoryRow({ row }) {
-  return (
-    <div className="rounded-lg border bg-white px-4 py-3 flex items-center justify-between gap-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="secondary">{row.type}</Badge>
-          {row.statusLabel && <Badge variant={row.statusTone || 'outline'}>{row.statusLabel}</Badge>}
-          <span className="font-semibold text-sm">{row.title}</span>
-          <span className="font-mono text-xs text-muted-foreground">{row.orderNumber}</span>
-        </div>
-        <Link to={row.href} className="text-sm text-blue-700 hover:underline truncate block mt-1">
-          {row.customerName}
-        </Link>
-      </div>
-      <span className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(row.createdAt)}</span>
-    </div>
+    </article>
   );
 }
 
 export default function CommunicationCenter() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const stateParam = searchParams.get('state');
+  const state = STATES.some(tab => tab.value === stateParam) ? stateParam : 'to_do';
+  const purposeParam = searchParams.get('purpose');
+  const purpose = PURPOSES.some(filter => filter.value === purposeParam) ? purposeParam : '';
+  const search = searchParams.get('q') || '';
+  const caseId = searchParams.get('case');
+  const sourceType = searchParams.get('source_type') || '';
+  const sourceId = searchParams.get('source_id') || '';
+  const customerId = searchParams.get('customer_id') || '';
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [items, setItems] = useState([]);
+  const [counts, setCounts] = useState(EMPTY_COUNTS);
+  const [rollout, setRollout] = useState(null);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [selectedCase, setSelectedCase] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [data, setData] = useState(null);
-  const [activeTab, setActiveTab] = useState('pending');
-  const [quickFilter, setQuickFilter] = useState('all');
-  const [search, setSearch] = useState('');
-  const [selectedTask, setSelectedTask] = useState(null);
-  const [discardTask, setDiscardTask] = useState(null);
-  const [discardingTaskId, setDiscardingTaskId] = useState(null);
-  const [communityLink, setCommunityLink] = useState(DEFAULT_COMMUNITY_LINK);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState('');
+  const requestVersion = useRef(0);
+  const restoredPages = useRef(Math.min(10, Math.max(1, Number(searchParams.get('pages')) || 1)));
 
-  const handleTabChange = useCallback((value) => {
-    setActiveTab(value);
-    setQuickFilter('all');
-  }, []);
-
-  const load = useCallback(async ({ quiet = false } = {}) => {
-    if (quiet) setRefreshing(true);
-    else setLoading(true);
-    try {
-      const nextData = await fetchCommunicationData();
-      setData(nextData);
-      setCommunityLink(nextData.communityLink || DEFAULT_COMMUNITY_LINK);
-    } catch (e) {
-      toast.error(e.message || 'Erro ao carregar comunicação');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+  const updateQuery = useCallback((key, value, { replace = false } = {}) => {
+    if (['state', 'purpose', 'q'].includes(key)) restoredPages.current = 1;
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (value === null || value === undefined || value === '') next.delete(key);
+      else next.set(key, value);
+      if (['state', 'purpose', 'q'].includes(key)) next.delete('pages');
+      return next;
+    }, { replace });
+  }, [setSearchParams]);
 
   useEffect(() => {
-    let active = true;
-    fetchCommunicationData()
-      .then(nextData => {
-        if (!active) return;
-        setData(nextData);
-        setCommunityLink(nextData.communityLink || DEFAULT_COMMUNITY_LINK);
-      })
-      .catch(e => {
-        if (active) toast.error(e.message || 'Erro ao carregar comunicação');
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => { active = false; };
-  }, []);
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
-  const tasks = useMemo(() => data ? buildCommunicationTasks(data, { rules: data.communicationRules }) : [], [data]);
-  const history = useMemo(() => data ? buildHistory(data) : [], [data]);
+  const load = useCallback(async ({ cursor = null, append = false } = {}) => {
+    const requestId = ++requestVersion.current;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    setError('');
+    try {
+      const pagesToLoad = append ? 1 : restoredPages.current;
+      let next = cursor;
+      let collected = [];
+      let lastPage = null;
+      for (let index = 0; index < pagesToLoad; index += 1) {
+        const page = await listCommunicationCases({
+          state,
+          purpose: purpose || undefined,
+          source_type: sourceType || undefined,
+          source_id: sourceId || undefined,
+          customer_id: customerId || undefined,
+          q: debouncedSearch || undefined,
+          cursor: next || undefined,
+          limit: 30,
+        });
+        if (requestId !== requestVersion.current) return false;
+        collected = [...collected, ...(page.items || [])];
+        lastPage = page;
+        next = page.next_cursor || null;
+        if (!next) break;
+      }
+      setItems(current => append ? [...current, ...collected] : collected);
+      setCounts({ ...EMPTY_COUNTS, ...(lastPage?.counts || {}) });
+      setRollout(lastPage?.rollout || null);
+      setNextCursor(next);
+      if (append) {
+        restoredPages.current += 1;
+        updateQuery('pages', String(restoredPages.current), { replace: true });
+      }
+      return true;
+    } catch (cause) {
+      if (requestId !== requestVersion.current) return;
+      setError(cause?.message || 'Não foi possível carregar os acompanhamentos.');
+      if (!append) {
+        setItems([]);
+        setNextCursor(null);
+      }
+      return false;
+    } finally {
+      if (requestId === requestVersion.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    }
+  }, [state, purpose, sourceType, sourceId, customerId, debouncedSearch, updateQuery]);
 
-  const counts = useMemo(() => ({
-    pending: tasks.length,
-    [TASK_BUCKET.CHARGES]: tasks.filter(t => t.bucket === TASK_BUCKET.CHARGES).length,
-    [TASK_BUCKET.ONBOARDING]: tasks.filter(t => t.bucket === TASK_BUCKET.ONBOARDING).length,
-    [TASK_BUCKET.RENEWAL]: tasks.filter(t => t.bucket === TASK_BUCKET.RENEWAL).length,
-    history: history.length,
-  }), [tasks, history]);
-
-  const historyTodayCount = useMemo(() => (
-    history.filter(row => String(row.createdAt || '').slice(0, 10) === todayLocalStr()).length
-  ), [history]);
-
-  const operationCounts = useMemo(() => ({
-    overdue: tasks.filter(t => t.kind === TASK_KIND.CHARGE_OVERDUE).length,
-    blocked: tasks.filter(taskIsBlocked).length,
-    missing_link: tasks.filter(taskMissingPaymentLink).length,
-    ready: tasks.filter(taskIsReady).length,
-  }), [tasks]);
-
-  const tabTasks = useMemo(() => (
-    activeTab === 'pending' ? tasks : tasks.filter(task => task.bucket === activeTab)
-  ), [tasks, activeTab]);
-
-  const quickCounts = useMemo(() => ({
-    all: tabTasks.length,
-    overdue: tabTasks.filter(t => t.kind === TASK_KIND.CHARGE_OVERDUE).length,
-    blocked: tabTasks.filter(taskIsBlocked).length,
-    missing_link: tabTasks.filter(taskMissingPaymentLink).length,
-    ready: tabTasks.filter(taskIsReady).length,
-  }), [tabTasks]);
-
-  const availableQuickFilters = useMemo(() => filtersForTab(activeTab), [activeTab]);
-
-  const visibleTasks = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return tabTasks.filter(task => {
-      if (!taskMatchesQuickFilter(task, quickFilter)) return false;
-      if (!q) return true;
-      return [
-        task.title,
-        task.customerName,
-        task.customerWhatsapp,
-        task.orderNumber,
-        task.statusLabel,
-        task.itemSummary,
-      ].some(value => String(value || '').toLowerCase().includes(q));
-    });
-  }, [tabTasks, quickFilter, search]);
-
-  const visibleHistory = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return history;
-    return history.filter(row => [
-      row.title,
-      row.customerName,
-      row.customerWhatsapp,
-      row.orderNumber,
-      row.type,
-      row.statusLabel,
-    ].some(value => String(value || '').toLowerCase().includes(q)));
-  }, [history, search]);
-
-  const workSections = useMemo(() => (
-    activeTab === 'history' ? [] : buildWorkSections(visibleTasks, activeTab)
-  ), [activeTab, visibleTasks]);
-
-  const handleSent = useCallback(() => {
-    setSelectedTask(null);
-    load({ quiet: true });
+  useEffect(() => {
+    load();
+    return () => { requestVersion.current += 1; };
   }, [load]);
 
-  const handleRequestDiscard = useCallback((task) => {
-    setDiscardTask(task);
-  }, []);
+  const openCount = useMemo(
+    () => Number(counts.open),
+    [counts],
+  );
 
-  const handleConfirmDiscard = useCallback(async () => {
-    const task = discardTask;
-    if (!task) return;
-    setDiscardingTaskId(task.id);
-    try {
-      await registerCommunicationIgnore(task, {
-        reason: 'Descartado pela fila da Central de Comunicação',
-      });
-      toast.success('Etapa descartada');
-      setDiscardTask(null);
-      await load({ quiet: true });
-    } catch (e) {
-      toast.error(e.message || 'Erro ao descartar contato');
-    } finally {
-      setDiscardingTaskId(null);
-    }
-  }, [discardTask, load]);
+  const handleChanged = useCallback(() => {
+    load();
+  }, [load]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center space-y-2">
-          <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-sm text-muted-foreground">Carregando comunicação...</p>
-        </div>
-      </div>
-    );
-  }
+  const openCase = useCallback((item) => {
+    setSelectedCase(item);
+    updateQuery('case', item.id);
+  }, [updateQuery]);
+
+  const closeCase = useCallback(() => {
+    setSelectedCase(null);
+    updateQuery('case', null, { replace: true });
+  }, [updateQuery]);
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <MessageCircle className="w-5 h-5 text-blue-600" />
-            Central de Comunicação
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Cobranças, onboarding e renovações em uma fila manual.
+          <h1 className="flex items-center gap-2 text-xl font-bold text-gray-900">
+            <MessageCircle className="h-5 w-5 text-blue-600" aria-hidden="true" />
+            Comunicação
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Cada pendência tem um próximo passo. Abrir o WhatsApp não registra o envio.
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" asChild className="gap-1.5">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" asChild className="min-h-11 gap-2">
             <Link to="/comunicacao/configuracoes">
-              <Settings className="w-4 h-4" />
-              Configurar mensagens
+              <Settings className="h-4 w-4" aria-hidden="true" />
+              Modelos e regras
             </Link>
           </Button>
-          <Button variant="outline" onClick={() => load({ quiet: true })} disabled={refreshing} className="gap-1.5">
-            {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          <Button variant="outline" onClick={() => load()} disabled={loading} className="min-h-11 gap-2">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
             Atualizar
           </Button>
         </div>
-      </div>
+      </header>
 
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <SummaryCard
-          icon={WalletCards}
-          label="Pendentes"
-          value={counts.pending}
-          tone="blue"
-          detail={`${counts[TASK_BUCKET.CHARGES]} cobrança${counts[TASK_BUCKET.CHARGES] === 1 ? '' : 's'} · ${historyTodayCount} hoje`}
-        />
-        <SummaryCard
-          icon={Clock3}
-          label="Vencidas"
-          value={operationCounts.overdue}
-          tone={operationCounts.overdue ? 'red' : 'gray'}
-          detail="com lembrete ativo"
-        />
-        <SummaryCard
-          icon={AlertTriangle}
-          label="Bloqueios"
-          value={operationCounts.blocked}
-          tone={operationCounts.blocked ? 'amber' : 'gray'}
-          detail={`${operationCounts.missing_link} sem link`}
-        />
-        <SummaryCard
-          icon={SendHorizontal}
-          label="Prontas"
-          value={operationCounts.ready}
-          tone="green"
-          detail="com contato e link"
-        />
-      </div>
-
-      <div className="rounded-lg border bg-white p-3 shadow-sm space-y-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <Tabs value={activeTab} onValueChange={handleTabChange}>
-            <TabsList className="h-auto flex-wrap justify-start">
-              {TAB_INFO.map(tab => (
-                <TabsTrigger key={tab.value} value={tab.value} className="gap-1.5">
-                  {tab.label}
-                  <span className="text-[10px] rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-600">
-                    {counts[tab.value] || 0}
-                  </span>
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-          <div className="relative w-full xl:w-80">
-            <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-            <Input
-              className="pl-9"
-              placeholder="Buscar cliente, pedido, item..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {activeTab !== 'history' && (
-          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
-            {availableQuickFilters.map(filter => {
-              const active = quickFilter === filter.value;
-              return (
-                <button
-                  key={filter.value}
-                  type="button"
-                  onClick={() => setQuickFilter(filter.value)}
-                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    active
-                      ? 'border-blue-600 bg-blue-600 text-white'
-                      : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-blue-200 hover:bg-blue-50'
-                  }`}
-                >
-                  {filter.label}
-                  <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] ${
-                    active ? 'bg-white/20 text-white' : 'bg-white text-gray-600'
-                  }`}>
-                    {quickCounts[filter.value] || 0}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {activeTab === 'history' ? (
-        <div className="space-y-2">
-          {visibleHistory.length === 0 ? (
-            <div className="rounded-lg border bg-white p-10 text-center text-sm text-muted-foreground">
-              Nenhum envio registrado ainda.
-            </div>
-          ) : visibleHistory.map(row => <HistoryRow key={row.id} row={row} />)}
-        </div>
-      ) : (
-        <div className="space-y-5">
-          {visibleTasks.length === 0 ? (
-            <div className="rounded-lg border bg-white p-10 text-center">
-              <CheckCircle2 className="w-8 h-8 text-green-600 mx-auto mb-2" />
-              <p className="font-semibold text-gray-900">Nada pendente nessa fila</p>
-            </div>
-          ) : workSections.map(section => (
-            <TaskSection
-              key={section.id}
-              section={section}
-              onOpen={setSelectedTask}
-              onDiscard={handleRequestDiscard}
-              discardingTaskId={discardingTaskId}
-            />
-          ))}
+      {error && rollout?.enabled === false && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          {error}
+          <Button variant="outline" onClick={() => load()} className="mt-2 min-h-11">Tentar novamente</Button>
         </div>
       )}
 
+      {!loading && rollout?.enabled === false && (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-950">
+          <p className="font-semibold">Acompanhamentos em preparação</p>
+          <p className="mt-1 text-sm">
+            A equipe está conferindo os vínculos e o histórico antes de liberar esta fila.
+            Nenhuma ação de contato está disponível aqui por enquanto. Atualize a página mais tarde.
+          </p>
+        </div>
+      )}
+
+      {rollout?.enabled !== false && <section aria-label="Resumo dos acompanhamentos" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border bg-white p-3">
+          <p className="text-xs text-muted-foreground">Acompanhamentos abertos</p>
+          <p className="mt-1 text-2xl font-bold">{openCount}</p>
+        </div>
+        <div className="rounded-lg border bg-white p-3">
+          <p className="flex items-center gap-1 text-xs text-muted-foreground"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /> A fazer</p>
+          <p className="mt-1 text-2xl font-bold">{counts.to_do}</p>
+        </div>
+        <div className="rounded-lg border bg-white p-3">
+          <p className="flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" /> Em acompanhamento</p>
+          <p className="mt-1 text-2xl font-bold">{counts.following_up}</p>
+        </div>
+        <div className="rounded-lg border bg-white p-3">
+          <p className="flex items-center gap-1 text-xs text-muted-foreground"><CalendarClock className="h-3.5 w-3.5" aria-hidden="true" /> Agendadas</p>
+          <p className="mt-1 text-2xl font-bold">{counts.scheduled}</p>
+        </div>
+      </section>}
+
+      {rollout?.enabled !== false && <div className="space-y-3 rounded-lg border bg-white p-3 shadow-sm">
+        <div role="tablist" aria-label="Estado do acompanhamento" className="flex gap-1 overflow-x-auto border-b pb-2">
+          {STATES.map(tab => (
+            <button
+              key={tab.value}
+              id={`communication-tab-${tab.value}`}
+              type="button"
+              role="tab"
+              aria-selected={state === tab.value}
+              aria-controls="communication-list"
+              onClick={() => updateQuery('state', tab.value)}
+              className={`min-h-11 shrink-0 rounded-md px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${state === tab.value ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              {tab.label} <span className="ml-1 text-xs">({counts[tab.value] || 0})</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {PURPOSES.map(filter => (
+            <button
+              key={filter.value}
+              type="button"
+              aria-pressed={purpose === filter.value}
+              onClick={() => updateQuery('purpose', filter.value)}
+              className={`min-h-11 rounded-md border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${purpose === filter.value ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <label className="relative block">
+          <span className="sr-only">Buscar pessoa ou referência</span>
+          <Search className="absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          <Input
+            className="min-h-11 pl-9"
+            placeholder="Buscar pessoa ou referência"
+            value={search}
+            onChange={event => updateQuery('q', event.target.value, { replace: true })}
+          />
+        </label>
+      </div>}
+
+      {rollout?.enabled !== false && <div id="communication-list" role="tabpanel" aria-labelledby={`communication-tab-${state}`} className="space-y-2">
+        {error && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <span>{error}</span>
+            <Button variant="outline" onClick={() => load()} className="min-h-11">Tentar novamente</Button>
+          </div>
+        )}
+        {loading ? (
+          <div className="rounded-lg border bg-white p-8 text-center text-sm text-muted-foreground" role="status">
+            <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" aria-hidden="true" />
+            Carregando acompanhamentos...
+          </div>
+        ) : !error && items.length === 0 ? (
+          <div className="rounded-lg border bg-white p-8 text-center text-sm text-muted-foreground">
+            {state === 'to_do' && !purpose && !debouncedSearch
+              ? 'Nenhuma ação agora. Verifique Em acompanhamento e Agendadas para os próximos retornos.'
+              : state === 'resolved'
+                ? 'Nenhum caso resolvido corresponde aos filtros.'
+                : 'Nenhum acompanhamento corresponde aos filtros.'}
+          </div>
+        ) : items.map(item => <CaseRow key={item.id} item={item} onOpen={openCase} />)}
+        {nextCursor && !loading && (
+          <div className="flex justify-center pt-2">
+            <Button variant="outline" disabled={loadingMore} onClick={() => load({ cursor: nextCursor, append: true })} className="min-h-11">
+              {loadingMore ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <History className="mr-2 h-4 w-4" aria-hidden="true" />}
+              Carregar mais
+            </Button>
+          </div>
+        )}
+      </div>}
+
       <CommunicationSendDialog
-        key={selectedTask?.id || 'none'}
-        task={selectedTask}
-        communityLink={communityLink}
-        onClose={() => setSelectedTask(null)}
-        onSent={handleSent}
-      />
-      <DiscardTaskDialog
-        task={discardTask}
-        saving={Boolean(discardingTaskId)}
-        onClose={() => setDiscardTask(null)}
-        onConfirm={handleConfirmDiscard}
+        caseId={caseId}
+        communicationCase={selectedCase?.id === caseId ? selectedCase : null}
+        onClose={closeCase}
+        onChanged={handleChanged}
       />
     </div>
   );

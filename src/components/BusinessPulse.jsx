@@ -50,7 +50,7 @@ function churnTrend(churnRate) {
   return { Icon: ArrowUpRight, color: 'text-red-600', label: 'alto' };
 }
 
-// Banda de KPIs executivos da assessoria. Aparece no topo do "Hoje".
+// Banda de KPIs atuais da assessoria exibida em Indicadores.
 export default function BusinessPulse() {
   const { data, loading } = usePageData({
     key: 'business-pulse',

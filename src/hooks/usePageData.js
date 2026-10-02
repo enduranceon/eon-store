@@ -23,6 +23,7 @@ export function usePageData({
   const [data, setDataState] = useState(() => hasCachedData ? initialEntry.data : initialData);
   const [loading, setLoading] = useState(!hasCachedData);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
   const mountedRef = useRef(false);
 
   const refresh = useCallback(async ({ force = false } = {}) => {
@@ -39,9 +40,11 @@ export function usePageData({
       });
       if (mountedRef.current) {
         setDataState(next);
+        setError(null);
       }
       return next;
     } catch (error) {
+      if (mountedRef.current) setError(error);
       onErrorRef.current?.(error);
       throw error;
     } finally {
@@ -73,5 +76,5 @@ export function usePageData({
     };
   }, [forceOnMount, refresh]);
 
-  return { data, setData, loading, refreshing, refresh };
+  return { data, setData, loading, refreshing, refresh, error };
 }

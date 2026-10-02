@@ -1986,6 +1986,8 @@ export default function EventDetail() {
         <CommunicationSendDialog
           key={messageTask.id}
           task={messageTask}
+          sourceUi="event_detail"
+          onChanged={() => refresh({ force: true })}
           onClose={() => setMessageTask(null)}
           onSent={() => {
             setMessageTask(null);

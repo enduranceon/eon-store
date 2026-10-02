@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { usePageData } from '@/hooks/usePageData';
+import BusinessPulse from '@/components/BusinessPulse';
 import {
   buildAssessmentYearlyIndicators,
   getAssessmentIndicatorYears,
@@ -186,6 +187,11 @@ export default function Indicators() {
           </Button>
         </div>
       </div>
+
+      <section aria-label="Panorama atual da assessoria" className="space-y-2">
+        <h3 className="text-sm font-semibold text-slate-800">Panorama atual</h3>
+        <BusinessPulse />
+      </section>
 
       <div className="flex flex-wrap items-end justify-between gap-3 border-b pb-4">
         <div className="w-full sm:w-48">

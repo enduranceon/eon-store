@@ -27,6 +27,9 @@ import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
 import { handleRenewalStageRequest } from "./renewal-stage.ts";
+import { handleCommunicationModelRequest } from "./communication-models.ts";
+import { handleCommunicationCaseRequest } from "./communication-cases.ts";
+import { gateLegacyCommunication } from "./communication-legacy-gate.ts";
 import { handleRefundsRequest } from "./refunds.ts";
 import { handleReturnsRequest } from "./returns.ts";
 
@@ -90,7 +93,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const gate = await requireAdmin(req);
-  if (!gate.ok) {
+  if (!gate.ok || !gate.userId) {
     const code = gate.error || "unauthorized";
     const message = gate.status === 403
       ? "Esta conta não tem acesso ao painel"
@@ -116,6 +119,13 @@ Deno.serve(async (req: Request) => {
       code: "api_misconfigured",
     }, 500);
   }
+
+  const modelResponse = await handleCommunicationModelRequest(req, path, serviceClient, gate.userId);
+  if (modelResponse) return modelResponse;
+  const communicationResponse = await handleCommunicationCaseRequest(req, path, serviceClient, gate.userId);
+  if (communicationResponse) return communicationResponse;
+  const legacyContactResponse = await gateLegacyCommunication(req, path, serviceClient);
+  if (legacyContactResponse) return legacyContactResponse;
 
   const financialResponse = await handleFinancialRequest(
     req,

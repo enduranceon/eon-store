@@ -725,6 +725,8 @@ export default function Renewals() {
         <CommunicationSendDialog
           key={messageTask.id}
           task={messageTask}
+          sourceUi="renewals"
+          onChanged={() => load()}
           showQueueActions={false}
           onClose={() => setMessageTask(null)}
           onSent={() => { setMessageTask(null); load(); }}

@@ -14,7 +14,6 @@ import { Input } from '@/components/ui/input';
 import { PreSaleCustomer, StockOrder } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { cn, formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
-import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import {
   loadActivePaymentMethods,
   createManualInstallments,
@@ -22,7 +21,7 @@ import {
   reopenManualPayment,
   findPreferredPaymentMethod,
 } from '@/lib/manual-payment';
-import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
+import { isSafePaymentUrl } from '@/lib/sales';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
 import {
   fulfillmentDefinition,
@@ -32,18 +31,18 @@ import {
   LEGACY_DELIVERY_STATUS,
 } from '@/lib/order-fulfillment';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
 import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
 import DiscountInput from '@/components/DiscountInput';
 import StockOrderItemEditorDialog from '@/components/StockOrderItemEditorDialog';
-import { externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
+import { normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { toast } from 'sonner';
 import {
   cancelOrder,
   cancelOrderCharge,
   cancelOrderItem,
   createOrderCharge,
-  markOrderPaymentMessageSent,
   removeOrderExternalCharge,
   refundOrder,
   saveOrderExternalCharge,
@@ -88,8 +87,6 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
   const [order, setOrder] = useState(null);
   const [saving, setSaving] = useState(false);
   const [whatsappModal, setWhatsappModal] = useState(false);
-  const [whatsappMsg, setWhatsappMsg] = useState('');
-  const [copied, setCopied] = useState(false);
   const [deliveryStatus, setDeliveryStatus] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
@@ -380,80 +377,6 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
     }
   };
 
-  const buildMessage = useCallback((
-    externalLink = order?.external_payment_link,
-    dueDate = order?.due_date,
-    paymentMethod = order?.payment_method,
-  ) => {
-    if (!order) return '';
-    const itemLines = (order.items || []).filter(it => !it.cancelled).map(item => {
-      const label = item.variation ? `${item.product_name} - ${item.variation}` : item.product_name;
-      return `• ${label} x${item.quantity} → ${formatCurrency((item.sale_price || 0) * item.quantity)}`;
-    }).join('\n');
-    const total = order.total_value || 0;
-    const trackingLink = `${window.location.origin}/p/${publicTrackingToken(order)}`;
-    const trackingLine = `\n\n🔍 *Acompanhe seu pedido:*\n${trackingLink}`;
-    const dueLine = dueDate ? `📅 *Vencimento:* ${formatDate(dueDate)}\n\n` : '';
-
-    // Modo Asaas: tem link ou PIX do gateway
-    const chargeLink = order.asaas_payment_link;
-    const pixCopy    = order.asaas_pix_copy;
-    if (chargeLink || pixCopy) {
-      return (
-        `Olá, ${order.customer_name}! 👋\n\n` +
-        `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
-        `📦 *Itens:*\n${itemLines}\n\n` +
-        `💰 *Total: ${formatCurrency(total)}*\n\n` +
-        (pixCopy ? `📲 *PIX Copia e Cola:*\n\`${pixCopy}\`\n\n` : '') +
-        (chargeLink ? `🔗 *Link de pagamento:*\n${chargeLink}` : '') +
-        trackingLine
-      );
-    }
-
-    // A mensagem externa sempre usa os dados já registrados na cobrança.
-    const linkTrim = externalLink?.trim();
-    if (linkTrim) {
-      const payLabel = externalChargeMethodLabel(
-        normalizeExternalChargeMethod(paymentMethod),
-      );
-      return (
-        `Olá, ${order.customer_name}! 👋\n\n` +
-        `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
-        `📦 *Itens:*\n${itemLines}\n\n` +
-        `💰 *Total: ${formatCurrency(total)}*\n\n` +
-        `💳 *Forma de pagamento:* ${payLabel}\n\n` +
-        dueLine +
-        `🔗 *Link de pagamento:*\n${linkTrim}` +
-        trackingLine
-      );
-    }
-
-    // Mantém a prévia informativa para atalhos legados sem cobrança cadastrada.
-    const preferredMethod = order.payment_preference || order.payment_method;
-    const payLabel = PAYMENT_METHOD_LABEL[preferredMethod] || preferredMethod || null;
-    if (payLabel) {
-      return (
-        `Olá, ${order.customer_name}! 👋\n\n` +
-        `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
-        `📦 *Itens:*\n${itemLines}\n\n` +
-        `💰 *Total: ${formatCurrency(total)}*\n\n` +
-        `💳 *Forma de pagamento:* ${payLabel}\n\n` +
-        `Em breve envio o link/QR para você finalizar o pagamento. 👍` +
-        trackingLine
-      );
-    }
-
-    // Fallback: sem preferência de pagamento registrada
-    return (
-      `Olá, ${order.customer_name}! 👋\n\n` +
-      `Segue o resumo do seu pedido *${order.order_number}*:\n\n` +
-      `📦 *Itens:*\n${itemLines}\n\n` +
-      `💰 *Total: ${formatCurrency(total)}*\n\n` +
-      `Como você prefere pagar?\n• PIX (à vista) — ${formatCurrency(total)}\n• Cartão (em até 12x)` +
-      trackingLine
-    );
-  }, [order]);
-
   const openExternalCharge = useCallback(() => {
     setExternalChargeForm({
       link: order?.external_payment_link || '',
@@ -477,17 +400,8 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
       openExternalCharge();
       return;
     }
-    const savedExternalLink = order.external_payment_link || '';
-    setWhatsappMsg(buildMessage(savedExternalLink, order.due_date, order.payment_method));
-    setCopied(false);
     setWhatsappModal(true);
-  }, [buildMessage, openExternalCharge, order]);
-  const copyMessage = () => { navigator.clipboard.writeText(whatsappMsg).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
-  const openWhatsAppDirect = () => {
-    const phone = phoneDigitsForWhatsApp(order.customer_whatsapp);
-    if (!phone || phone === '55') return toast.error('WhatsApp do cliente não cadastrado');
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(whatsappMsg)}`, '_blank');
-  };
+  }, [openExternalCharge, order]);
 
   useEffect(() => {
     if (!order || searchParams.get('cobrar') !== '1') return;
@@ -507,32 +421,6 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
     const timer = window.setTimeout(openManualPay, 0);
     return () => window.clearTimeout(timer);
   }, [openManualPay, order, searchParams, setSearchParams]);
-
-  const markMessageSent = async () => {
-    try {
-      const hasNativeCharge = Boolean(
-        order.asaas_charge_id ||
-        order.asaas_payment_link ||
-        order.asaas_pix_copy,
-      );
-      const hasChargeDetails = hasNativeCharge || Boolean(order.external_payment_link);
-      if (!hasChargeDetails) {
-        toast.error('Cadastre uma cobrança antes de enviar a mensagem.');
-        return;
-      }
-      if (!hasNativeCharge && !order.due_date) {
-        toast.error('A cobrança externa está sem vencimento. Edite a cobrança antes de enviar.');
-        return;
-      }
-      await markOrderPaymentMessageSent('stock', id, {
-        externalPaymentLink: hasNativeCharge ? null : order.external_payment_link,
-        dueDate: order.due_date || null,
-      });
-      toast.success(['charge_sent', 'overdue'].includes(order.payment_status) ? 'Reenvio registrado!' : 'Mensagem marcada como enviada!');
-      setWhatsappModal(false);
-      await load();
-    } catch (e) { toast.error(e.message); }
-  };
 
   const saveExternalCharge = async () => {
     const link = externalChargeForm.link.trim();
@@ -964,71 +852,17 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
         onSave={saveExternalCharge}
       />
 
-      {/* Modal WhatsApp */}
-      <Dialog open={whatsappModal} onOpenChange={setWhatsappModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <MessageCircle className="w-5 h-5 text-green-600" /> Mensagem de cobrança
-            </DialogTitle>
-          </DialogHeader>
-
-          {/* Cobrança e envio são etapas independentes. */}
-          {order.asaas_charge_id ? (
-            <div className="flex items-center gap-2 text-xs bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-              <Zap className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-              <span className="text-blue-800"><strong>Cobrança Asaas</strong> — link/PIX incluído automaticamente na mensagem</span>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                <Link2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span className="text-amber-800"><strong>Cobrança externa registrada.</strong> Esta etapa só prepara e registra o envio da mensagem.</span>
-              </div>
-              {order.external_payment_link ? (
-                <div className="rounded-lg border border-amber-200 px-3 py-2 text-xs text-amber-800 space-y-1">
-                  <p className="font-medium truncate">{order.external_payment_link}</p>
-                  <p>
-                    {externalChargeMethodLabel(normalizeExternalChargeMethod(order.payment_method))}
-                    {order.due_date && ` · vence em ${formatDate(order.due_date)}`}
-                  </p>
-                </div>
-              ) : (
-                <p className="text-xs text-amber-800">Cadastre a cobrança externa antes de registrar o envio.</p>
-              )}
-            </div>
-          )}
-
-          {/* Preview da mensagem */}
-          <div className="bg-gray-50 rounded-xl p-4 text-sm whitespace-pre-wrap font-mono border max-h-64 overflow-y-auto">
-            {whatsappMsg || <span className="text-muted-foreground italic">Cadastre uma cobrança para gerar a prévia da mensagem.</span>}
-          </div>
-
-          <div className="flex gap-2">
-            <Button className="flex-1" variant="outline" onClick={copyMessage} disabled={!whatsappMsg}>
-              {copied ? <><Check className="w-4 h-4 mr-1.5 text-green-600" />Copiado!</> : <><Copy className="w-4 h-4 mr-1.5" />Copiar</>}
-            </Button>
-            <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsAppDirect} disabled={!whatsappMsg}>
-              <ExternalLink className="w-4 h-4 mr-1.5" /> Abrir no WhatsApp
-            </Button>
-          </div>
-          {['awaiting_charge', 'pending', 'charge_sent', 'overdue'].includes(order.payment_status) && (
-            <Button
-              className="w-full bg-orange-500 hover:bg-orange-600 text-white"
-              onClick={markMessageSent}
-              disabled={!whatsappMsg || !(
-                order.asaas_charge_id ||
-                order.asaas_payment_link ||
-                order.asaas_pix_copy ||
-                order.external_payment_link
-              )}
-            >
-              <Check className="w-4 h-4 mr-1.5" />
-              {['charge_sent', 'overdue'].includes(order.payment_status) ? 'Registrar reenvio da cobrança' : 'Registrar envio da cobrança'}
-            </Button>
-          )}
-        </DialogContent>
-      </Dialog>
+      <CommunicationSendDialog
+        task={whatsappModal && order ? {
+          sourceType: 'stock',
+          sourceId: id,
+          kind: 'charge_send',
+          sourceUi: 'stock_order_detail',
+        } : null}
+        onClose={() => setWhatsappModal(false)}
+        onChanged={() => { load(); onChanged?.(); }}
+        onSent={() => setWhatsappModal(false)}
+      />
 
       {/* Modal cancelar PEDIDO (devolve o estoque) */}
       <Dialog open={cancelOrderModal} onOpenChange={setCancelOrderModal}>

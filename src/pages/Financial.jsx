@@ -27,8 +27,6 @@ import {
   isBillableProspectOpenSale,
   isOpenCollectionSale,
 } from '@/lib/sales';
-import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
-import { DEFAULT_COMMUNICATION_RULES, loadCommunicationConfig } from '@/lib/communication-config';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
@@ -139,93 +137,9 @@ function PaymentStageChip({ status, hasAsaasCharge }) {
   );
 }
 
-function addDaysStr(dateStr, days) {
-  if (!dateStr) return '';
-  const d = new Date(`${dateStr}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return '';
-  d.setDate(d.getDate() + days);
-  return toLocalDateStr(d);
-}
-
-// Constrói a task de cobrança desta venda no MESMO formato da Central de
-// Comunicação: mesmo texto (regras configuráveis), mesmo registro de histórico
-// e mesma baixa de etapa na fila. O botão daqui é só um atalho contextual —
-// a fila da Central reconhece o envio e não oferece a mesma etapa de novo.
-function collectionTaskFor(order, rules = DEFAULT_COMMUNICATION_RULES) {
-  const todayStr = todayLocalStr();
-  const isOverdue = Boolean(order.due_date && order.due_date < todayStr);
-  const lastSent = order.payment_message_sent_at ? toLocalDateStr(order.payment_message_sent_at) : '';
-  const activeRules = (rules || []).filter(r => r.active !== false);
-
-  let kind = TASK_KIND.CHARGE_SEND;
-  let rule = activeRules.find(r => r.task_kind === 'charge_send') || null;
-  let title = order.payment_message_sent_at ? 'Reenviar cobrança' : 'Enviar cobrança';
-  if (isOverdue) {
-    kind = TASK_KIND.CHARGE_OVERDUE;
-    rule = activeRules
-      .filter(r => r.task_kind === 'charge_overdue')
-      .sort((a, b) => (Number(a.days_offset) || 0) - (Number(b.days_offset) || 0))
-      .find(r => {
-        const trigger = addDaysStr(order.due_date, Math.max(0, Number(r.days_offset) || 0));
-        return trigger && trigger <= todayStr && (!lastSent || lastSent < trigger);
-      }) || null;
-    title = rule?.name || 'Reenviar cobrança vencida';
-  }
-
-  const items = (order.items || [])
-    .filter(it => it && !it.cancelled)
-    .map((it, i) => {
-      const quantity = Math.max(1, Number(it.quantity) || 1);
-      const name = String(it.product_name || it.name || `Item ${i + 1}`).trim();
-      const variation = String(it.variation || '').trim();
-      const label = variation && !name.toLowerCase().includes(variation.toLowerCase()) ? `${name} - ${variation}` : name;
-      const unit = (Number(it.sale_price ?? it.price ?? 0) || 0) + (Number(it.extras_total) || 0);
-      return { label, quantity, lineTotal: Math.max(0, unit * quantity) };
-    });
-
-  const tableByType = {
-    presale: 'presale_orders',
-    stock: 'stock_orders',
-    contract: 'assessment_contracts',
-    event: 'event_registrations',
-  };
-  const hrefByType = {
-    presale: `/pedidos/${order.id}`,
-    stock: `/estoque/pedidos/${order.id}`,
-    contract: `/assessoria/contratos/${order.id}`,
-    event: `/eventos/${order.event_id || ''}`,
-  };
-
-  return {
-    id: `open-sale:${order.type}:${order.id}:${order.payment_message_sent_at || ''}`,
-    kind,
-    bucket: TASK_BUCKET.CHARGES,
-    sourceType: order.type,
-    tableName: tableByType[order.type],
-    sourceId: order.id,
-    sourceLabel: order.type === 'contract' ? 'Contrato' : order.type === 'event' ? 'Inscrição de evento' : 'Pedido',
-    orderNumber: order.order_number,
-    customerName: order.customer || 'Cliente',
-    customerWhatsapp: order.customer_whatsapp || '',
-    totalValue: Number(order.total_value) || 0,
-    paymentStatus: order.payment_status,
-    dueDate: order.due_date || '',
-    asaasChargeId: order.asaas_charge_id,
-    asaasPaymentLink: order.asaas_payment_link,
-    asaasPixCopy: order.asaas_pix_copy,
-    externalPaymentLink: order.external_payment_link,
-    paymentMessageSentAt: order.payment_message_sent_at,
-    updatedAt: order.updated_at,
-    items,
-    itemSummary: items[0]?.label || '',
-    href: hrefByType[order.type],
-    title,
-    statusLabel: order.due_date ? `vence em ${formatDate(order.due_date)}` : 'definir vencimento',
-    ruleId: rule?.id || null,
-    ruleSlug: rule?.slug || null,
-    ruleName: rule?.name || null,
-    messageTemplate: rule?.message_template || '',
-  };
+// O diálogo resolve o caso no servidor antes de sugerir mensagem ou próxima ação.
+function collectionTaskFor(order) {
+  return { sourceType: order.type, sourceId: order.id, kind: 'charge_send', sourceUi: 'financial' };
 }
 
 
@@ -475,15 +389,6 @@ export default function Financial() {
   const [payMethodGroups, setPayMethodGroups] = useState([]);
   const [payForm, setPayForm]             = useState({ method_id: '', date: '', value: '' });
   const [paySaving, setPaySaving]         = useState(false);
-  const [commConfig, setCommConfig] = useState({ rules: DEFAULT_COMMUNICATION_RULES, communityLink: '' });
-
-  useEffect(() => {
-    let alive = true;
-    loadCommunicationConfig()
-      .then(cfg => { if (alive) setCommConfig({ rules: cfg.rules || DEFAULT_COMMUNICATION_RULES, communityLink: cfg.communityLink || '' }); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
   const [financialMovements, setFinancialMovements] = useState(() => cachedFinancialData?.financialMovements || []);
   const [syncingAsaas, setSyncingAsaas]   = useState(false);
 
@@ -958,29 +863,13 @@ export default function Financial() {
   };
 
   const openCollectionEditor = (order) => {
-    setCollectionTask(collectionTaskFor(order, commConfig.rules));
+    setCollectionTask(collectionTaskFor(order));
   };
 
-  // Pós-envio: o registro no banco (link, vencimento, status, evento de histórico)
-  // é feito pelo registerCommunicationSend dentro do diálogo compartilhado — aqui
-  // só refletimos na lista local o que o backend já gravou.
-  const handleCollectionSent = () => {
-    const t = collectionTask;
+  // Relê a fonte: enviar mensagem não significa receber nem emitir cobrança.
+  const handleCollectionSent = async () => {
     setCollectionTask(null);
-    if (!t) return;
-    const nowIso = new Date().toISOString();
-    setOrders(prev => {
-      const next = prev.map(o => (o.id === t.sourceId && o.type === t.sourceType)
-        ? {
-            ...o,
-            payment_message_sent_at: nowIso,
-            payment_status: ['awaiting_charge', 'pending'].includes(o.payment_status) ? 'charge_sent' : o.payment_status,
-            due_date: o.due_date || defaultPaymentDueDate(),
-          }
-        : o);
-      patchFinancialPageCache({ orders: next });
-      return next;
-    });
+    await load(true);
   };
 
   if (loading) return (
@@ -1272,9 +1161,9 @@ export default function Financial() {
 
       {/* ── Cobrança: mesmo diálogo/motor da Central de Comunicação ── */}
       <CommunicationSendDialog
+        onChanged={() => load(true)}
         key={collectionTask?.id || 'none'}
         task={collectionTask}
-        communityLink={commConfig.communityLink}
         onClose={() => setCollectionTask(null)}
         onSent={handleCollectionSent}
       />
