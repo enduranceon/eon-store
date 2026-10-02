@@ -1091,6 +1091,31 @@ export async function activateAssessmentContractRenewal(
   return response.data;
 }
 
+export async function transitionAssessmentRenewalStage(
+  renewalId,
+  { action, responseCode = null, followUpAt = null, subscriptionLink = null, expectedUpdatedAt },
+  options = {},
+) {
+  const body = {
+    action,
+    expected_updated_at: expectedUpdatedAt,
+  };
+  if (action === 'register_response') body.response_code = responseCode;
+  if (action === 'register_response' || action === 'set_follow_up') body.follow_up_at = followUpAt;
+  if (action === 'register_subscription_link') body.subscription_link = subscriptionLink;
+  const response = await apiRequest(
+    `/orders/contract/${renewalId}/renewal-stage`,
+    {
+      ...options,
+      method: 'POST',
+      idempotencyKey: options.idempotencyKey || crypto.randomUUID(),
+      body,
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function setAssessmentContractAutoRenewal(
   contractId,
   autoRenewal,

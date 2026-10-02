@@ -358,6 +358,7 @@ export default function ContractDetail() {
   const [chargeDueDate, setChargeDueDate] = useState(defaultAsaasDueDate);
   const [renewModal, setRenewModal]         = useState(false);
   const [renewLoading, setRenewLoading]     = useState(false);
+  const [autoRenewalSaving, setAutoRenewalSaving] = useState(false);
   const [manualPayModal, setManualPayModal] = useState(false);
   const [manualPayForm, setManualPayForm]   = useState({ method_id: '', date: '', value: '' });
   const [manualPaySaving, setManualPaySaving] = useState(false);
@@ -919,6 +920,12 @@ export default function ContractDetail() {
   };
 
   const toggleAutoRenewal = async () => {
+    if (autoRenewalSaving) return;
+    if (!contract.auto_renewal && Number(contract.plan_snapshot?.period_months ?? plan?.period_months) !== 1) {
+      toast.error('Renovação automática está disponível apenas para planos mensais');
+      return;
+    }
+    setAutoRenewalSaving(true);
     try {
       await setAssessmentContractAutoRenewal(
         id,
@@ -928,6 +935,7 @@ export default function ContractDetail() {
       toast.success(contract.auto_renewal ? 'Renovação automática desativada' : 'Renovação automática ativada!');
       load();
     } catch (e) { toast.error(e.message); }
+    finally { setAutoRenewalSaving(false); }
   };
 
   const openManualPay = async () => {
@@ -1148,6 +1156,7 @@ export default function ContractDetail() {
     || (contract.payment_status === 'paid' && ['active', 'on_leave', 'scheduled'].includes(contract.status));
   // Data futura dentro da vigência não cancela agora: agenda.
   const isScheduledCancellation = cancelDate > todayLocalStr() && !cancelDateAtOrAfterEnd;
+  const autoRenewalEligible = Number(contract.plan_snapshot?.period_months ?? plan?.period_months) === 1;
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
@@ -1306,10 +1315,13 @@ export default function ContractDetail() {
               )}
               <button
                 onClick={toggleAutoRenewal}
+                disabled={autoRenewalSaving || (!contract.auto_renewal && !autoRenewalEligible)}
+                title={!contract.auto_renewal && !autoRenewalEligible
+                  ? 'Renovação automática disponível apenas para planos mensais' : undefined}
                 className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-all ${
                   contract.auto_renewal
                     ? 'bg-green-100 text-green-700 border-green-300 hover:bg-green-200'
-                    : 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200'
+                    : 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed'
                 }`}
               >
                 <RotateCcw className="w-3 h-3 inline mr-1" />

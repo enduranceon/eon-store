@@ -9,13 +9,12 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { activateAssessmentContractRenewal } from '@/api/client';
+import { activateAssessmentContractRenewal, transitionAssessmentRenewalStage } from '@/api/client';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
+import { formatCurrency, formatDate, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 import { getActivationStatusForContract } from '@/lib/assessment-contract-lifecycle';
-import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import { normalizeExternalChargeMethod } from '@/lib/external-charge';
@@ -28,6 +27,10 @@ import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import RenewalResolutionDialog from '@/components/RenewalResolutionDialog';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
 import { canResolveAssessmentRenewal } from '@/lib/assessment-renewal-resolution';
+import {
+  hasRenewalPaymentLink, isVisibleOnRenewalBoard, needsRenewalReview,
+  renewalDaysUntilEnd, renewalTerminalDaysRemaining, saoPauloDate, todaySaoPaulo,
+} from '@/lib/assessment-renewal-board';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -45,7 +48,8 @@ function contractTotal(contract) {
   const base       = snapPrice(contract);
   const enrollment = Number(contract.enrollment_fee || 0);
   const discount   = Number(contract.manual_discount || 0);
-  return Math.max(0, base + enrollment - discount);
+  const credit     = Number(contract.credit_balance || 0);
+  return Math.max(0, base + enrollment - discount - credit);
 }
 
 function hasChargeInfo(contract) {
@@ -57,6 +61,18 @@ function hasChargeInfo(contract) {
     contract?.external_payment_link ||
     contract?.external_invoice_number
   );
+}
+
+function hasNativeChargeInfo(contract) {
+  return Boolean(
+    contract?.asaas_charge_id || contract?.asaas_payment_link ||
+    contract?.asaas_pix_copy || contract?.asaas_pix_qrcode
+  );
+}
+
+function isMonthlyAutomatic(contract, plans = {}) {
+  return Boolean(contract?.auto_renewal) &&
+    Number(contract.plan_snapshot?.period_months || plans[contract.plan_id]?.period_months) === 1;
 }
 
 const PAY_STATUS = {
@@ -71,6 +87,73 @@ const PAY_STATUS = {
 };
 
 const TERMINAL_PAYMENT_STATUSES = new Set(['paid', 'cancelled', 'refunded']);
+const BOARD_STAGES = [
+  { id: 'contact_pending', label: 'Enviar mensagem', color: 'text-blue-700' },
+  { id: 'waiting_response', label: 'Aguardando decisão', color: 'text-violet-700' },
+  { id: 'charge_pending', label: 'Enviar cobrança', color: 'text-amber-700' },
+  { id: 'waiting_payment', label: 'Aguardando pagamento', color: 'text-red-700' },
+  { id: 'renewed', label: 'Renovou', color: 'text-green-700' },
+  { id: 'not_renewed', label: 'Não renovou', color: 'text-gray-700' },
+];
+const OPEN_BOARD_STAGES = BOARD_STAGES.slice(0, 4).map(stage => stage.id);
+const TERMINAL_BOARD_STAGES = BOARD_STAGES.slice(4).map(stage => stage.id);
+const RENEWAL_FIELDS_LEGACY = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, credit_balance, payment_method, payment_status, payment_date, manual_payment, refund_status, refund_amount, refund_date, refund_notes, parent_contract_id, notes, created_at, updated_at, status, auto_renewal, asaas_charge_id, asaas_payment_link, asaas_pix_copy, asaas_pix_qrcode, external_payment_link, external_invoice_number, payment_message_sent_at';
+const RENEWAL_FIELDS_BOARD = `${RENEWAL_FIELDS_LEGACY}, renewal_stage, renewal_stage_updated_at, renewal_entered_at, renewal_response_code, renewal_response_at, renewal_follow_up_at, renewal_resolved_at, renewal_last_contact_at`;
+const PAGE_SIZE = 500;
+
+function missingRenewalSchema(error) {
+  return ['42703', 'PGRST204'].includes(error?.code) &&
+    /renewal_(stage|entered|resolved|response|follow_up|last_contact)/i.test(error?.message || '');
+}
+
+async function fetchRenewalPages(makeQuery) {
+  const rows = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await makeQuery().range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) return rows;
+  }
+}
+
+async function fetchRelatedRows(table, fields, ids) {
+  if (ids.length === 0) return [];
+  const chunks = [];
+  for (let offset = 0; offset < ids.length; offset += 200) chunks.push(ids.slice(offset, offset + 200));
+  const results = await Promise.all(chunks.map(chunk =>
+    supabase.from(table).select(fields).in('id', chunk)
+  ));
+  const error = results.find(result => result.error)?.error;
+  if (error) throw error;
+  return results.flatMap(result => result.data || []);
+}
+const RESPONSE_LABELS = {
+  will_renew: 'Sim, vou renovar',
+  thinking: 'Ainda estou pensando',
+  change_plan_or_coach: 'Mudar plano/treinador',
+  needs_agent: 'Falar com atendente',
+  not_renewing: 'Não vou renovar',
+};
+const EVENT_LABELS = {
+  renewal_message_sent: 'Mensagem de intenção enviada',
+  renewal_declined: 'Não renovação registrada',
+  external_charge_registered: 'Cobrança externa registrada',
+  external_charge_updated: 'Cobrança externa atualizada',
+  manual_payment_recorded: 'Pagamento manual registrado',
+  renewal_scheduled: 'Renovação agendada',
+  renewal_activated: 'Nova vigência iniciada',
+  renewal_subscription_link_registered: 'Link da assinatura cadastrado',
+};
+
+function renewalEventLabel(event) {
+  if (event.event_type === 'renewal_stage_changed') {
+    const before = BOARD_STAGES.find(stage => stage.id === event.payload?.stage_before)?.label || 'Entrada no pipeline';
+    const after = BOARD_STAGES.find(stage => stage.id === event.payload?.stage_after)?.label || 'Sem etapa';
+    const response = RESPONSE_LABELS[event.payload?.response_code];
+    return `${before} → ${after}${event.payload?.action === 'register_response' && response ? ` · ${response}` : ''}`;
+  }
+  return event.notes || EVENT_LABELS[event.event_type] || event.event_type;
+}
 const DAY_MS = 86400000;
 
 function localDate(dateStr) {
@@ -90,18 +173,15 @@ function addDays(dateStr, days) {
   return toLocalDateStr(d);
 }
 
-function daysBetween(dateStr, todayStr = todayLocalStr()) {
-  const target = localDate(dateStr);
-  const today = localDate(todayStr);
-  if (!target || !today) return null;
-  return Math.round((target - today) / DAY_MS);
+function daysBetween(dateStr, todayStr = todaySaoPaulo()) {
+  return renewalDaysUntilEnd(dateStr, todayStr);
 }
 
 function renewalDate(draft, parent) {
   return parent?.end_date || draft.start_date || draft.end_date || '';
 }
 
-function renewalDaysLeft(draft, parent, todayStr = todayLocalStr()) {
+function renewalDaysLeft(draft, parent, todayStr = todaySaoPaulo()) {
   return daysBetween(renewalDate(draft, parent), todayStr);
 }
 
@@ -410,10 +490,12 @@ export default function Renewals() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [drafts,     setDrafts]     = useState([]);
   const [scheduled,  setScheduled]  = useState([]);
+  const [boardRows,  setBoardRows]  = useState([]);
   const [parents,    setParents]    = useState({});
   const [customers,  setCustomers]  = useState({});
   const [coaches,    setCoaches]    = useState({});
   const [modalities, setModalities] = useState({});
+  const [plans, setPlans] = useState({});
   const [loading,    setLoading]    = useState(true);
   const [busy,       setBusy]       = useState(null);
   const [scanModal,  setScanModal]  = useState(false);
@@ -436,65 +518,97 @@ export default function Renewals() {
   const [charging, setCharging] = useState(false);
   const [messageTask, setMessageTask] = useState(null);
   const [resolutionTarget, setResolutionTarget] = useState(null);
+  const [boardSearch, setBoardSearch] = useState('');
+  const [boardFilters, setBoardFilters] = useState({ plan: '', coach: '', modality: '', hideCompleted: false });
+  const [selectedCard, setSelectedCard] = useState(null);
+  const [timeline, setTimeline] = useState([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [responseTarget, setResponseTarget] = useState(null);
+  const [responseForm, setResponseForm] = useState({ code: 'will_renew', followUpAt: '' });
+  const [intentTarget, setIntentTarget] = useState(null);
+  const [intentText, setIntentText] = useState('');
+  const [intentOpened, setIntentOpened] = useState(false);
+  const [boardAvailable, setBoardAvailable] = useState(true);
+  const [subscriptionTarget, setSubscriptionTarget] = useState(null);
+  const [subscriptionLink, setSubscriptionLink] = useState('');
+  const [changeTarget, setChangeTarget] = useState(null);
+  const [changeConfirmed, setChangeConfirmed] = useState(false);
+  const [followUpTarget, setFollowUpTarget] = useState(null);
+  const [followUpDate, setFollowUpDate] = useState('');
+  const [todayStr, setTodayStr] = useState(todaySaoPaulo);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const renewalFields = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, due_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, payment_date, manual_payment, refund_status, refund_amount, refund_date, refund_notes, parent_contract_id, notes, created_at, updated_at, status, auto_renewal, asaas_charge_id, asaas_payment_link, asaas_pix_copy, asaas_pix_qrcode, external_payment_link, external_invoice_number, payment_message_sent_at';
-      const { data: renewalData, error: renewalError } = await supabase
-        .from('assessment_contracts')
-        .select(renewalFields)
-        .in('status', ['draft', 'scheduled', 'active', 'overdue', 'on_leave'])
-        .not('parent_contract_id', 'is', null)
-        .order('start_date', { ascending: true })
-        .order('created_at', { ascending: true });
-      if (renewalError) throw renewalError;
-
-      let renewalList = [...(renewalData || [])].sort(compareRenewalDrafts);
+      let renewalList;
+      let hasBoardSchema = true;
+      try {
+        // Keep all open cards, however old their dates are. Fetch only recent terminal
+        // cards for the board and KPI; pagination avoids PostgREST's default row cap.
+        const recentCutoff = new Date(Date.now() - 32 * DAY_MS).toISOString();
+        const [open, terminal, terminalMissingDate] = await Promise.all([
+          fetchRenewalPages(() => supabase.from('assessment_contracts')
+            .select(RENEWAL_FIELDS_BOARD)
+            .in('renewal_stage', OPEN_BOARD_STAGES)
+            .not('parent_contract_id', 'is', null)
+            .order('start_date', { ascending: true }).order('id', { ascending: true })),
+          fetchRenewalPages(() => supabase.from('assessment_contracts')
+            .select(RENEWAL_FIELDS_BOARD)
+            .in('renewal_stage', TERMINAL_BOARD_STAGES)
+            .gte('renewal_resolved_at', recentCutoff)
+            .not('parent_contract_id', 'is', null)
+            .order('start_date', { ascending: true }).order('id', { ascending: true })),
+          fetchRenewalPages(() => supabase.from('assessment_contracts')
+            .select(RENEWAL_FIELDS_BOARD)
+            .in('renewal_stage', TERMINAL_BOARD_STAGES)
+            .is('renewal_resolved_at', null)
+            .not('parent_contract_id', 'is', null)
+            .order('start_date', { ascending: true }).order('id', { ascending: true })),
+        ]);
+        renewalList = [...open, ...terminal, ...terminalMissingDate];
+      } catch (error) {
+        if (!missingRenewalSchema(error)) throw error;
+        hasBoardSchema = false;
+        renewalList = await fetchRenewalPages(() => supabase.from('assessment_contracts')
+          .select(RENEWAL_FIELDS_LEGACY)
+          .in('status', ['draft', 'scheduled', 'active', 'overdue', 'on_leave'])
+          .not('parent_contract_id', 'is', null)
+          .order('start_date', { ascending: true }).order('id', { ascending: true }));
+      }
+      renewalList.sort(compareRenewalDrafts);
+      setBoardAvailable(hasBoardSchema);
 
       if (renewalList.length === 0) {
-        setDrafts([]); setScheduled([]);
-        setParents({}); setCustomers({}); setCoaches({}); setModalities({});
-        setLoading(false); return;
+        setDrafts([]); setScheduled([]); setBoardRows([]);
+        setParents({}); setCustomers({}); setCoaches({}); setModalities({}); setPlans({});
+        return;
       }
 
       const parentIds   = [...new Set(renewalList.map(d => d.parent_contract_id).filter(Boolean))];
       const customerIds = [...new Set(renewalList.map(d => d.customer_id).filter(Boolean))];
       const coachIds    = [...new Set(renewalList.map(d => d.coach_id).filter(Boolean))];
       const modalityIds = [...new Set(renewalList.map(d => d.plan_snapshot?.modality_id).filter(Boolean))];
+      const planIds = [...new Set(renewalList.map(d => d.plan_id).filter(Boolean))];
 
-      const [parentRes, custRes, coachRes, modRes] = await Promise.all([
-        parentIds.length   ? supabase.from('assessment_contracts').select('id, contract_number, status, end_date, payment_status').in('id', parentIds) : Promise.resolve({ data: [] }),
-        customerIds.length ? supabase.from('presale_customers').select('id, full_name, whatsapp, email, cpf').in('id', customerIds)                : Promise.resolve({ data: [] }),
-        coachIds.length    ? supabase.from('assessment_coaches').select('id, name').in('id', coachIds)                                           : Promise.resolve({ data: [] }),
-        modalityIds.length ? supabase.from('assessment_modalities').select('id, name').in('id', modalityIds)                                     : Promise.resolve({ data: [] }),
+      const [parentRows, customerRows, coachRows, modalityRows, planRows] = await Promise.all([
+        fetchRelatedRows('assessment_contracts', 'id, contract_number, status, end_date, payment_status', parentIds),
+        fetchRelatedRows('presale_customers', 'id, full_name, whatsapp, email, cpf', customerIds),
+        fetchRelatedRows('assessment_coaches', 'id, name', coachIds),
+        fetchRelatedRows('assessment_modalities', 'id, name', modalityIds),
+        fetchRelatedRows('assessment_plans', 'id, name, period_months', planIds),
       ]);
-      const relatedError = [parentRes, custRes, coachRes, modRes].find(result => result.error)?.error;
-      if (relatedError) throw relatedError;
-
-      await applyAssessmentContractTransitions([...(renewalList || []), ...(parentRes.data || [])]);
-
-      const [renewalRefreshRes, parentRefreshRes] = await Promise.all([
-        supabase.from('assessment_contracts').select(renewalFields).in('id', renewalList.map(contract => contract.id)),
-        parentIds.length
-          ? supabase.from('assessment_contracts').select('id, contract_number, status, end_date, payment_status').in('id', parentIds)
-          : Promise.resolve({ data: [], error: null }),
-      ]);
-      if (renewalRefreshRes.error) throw renewalRefreshRes.error;
-      if (parentRefreshRes.error) throw parentRefreshRes.error;
-      renewalList = [...(renewalRefreshRes.data || [])]
-        .filter(contract => contract.parent_contract_id)
-        .sort(compareRenewalDrafts);
 
       setDrafts(renewalList.filter(contract => contract.status === 'draft'));
       setScheduled(renewalList.filter(contract =>
         ['scheduled', 'active', 'overdue', 'on_leave'].includes(contract.status)
         && !TERMINAL_PAYMENT_STATUSES.has(contract.payment_status)
       ));
-      setParents(Object.fromEntries((parentRefreshRes.data || []).map(p => [p.id, p])));
-      setCustomers(Object.fromEntries((custRes.data  || []).map(c => [c.id, c])));
-      setCoaches(Object.fromEntries((coachRes.data   || []).map(c => [c.id, c])));
-      setModalities(Object.fromEntries((modRes.data  || []).map(m => [m.id, m])));
+      setBoardRows(hasBoardSchema ? renewalList : []);
+      setParents(Object.fromEntries(parentRows.map(p => [p.id, p])));
+      setCustomers(Object.fromEntries(customerRows.map(c => [c.id, c])));
+      setCoaches(Object.fromEntries(coachRows.map(c => [c.id, c])));
+      setModalities(Object.fromEntries(modalityRows.map(m => [m.id, m])));
+      setPlans(Object.fromEntries(planRows.map(p => [p.id, p])));
     } catch (e) {
       console.error('Erro ao carregar pendentes:', e);
       toast.error('Erro ao carregar: ' + (e.message || ''));
@@ -507,6 +621,11 @@ export default function Renewals() {
     const timer = setTimeout(() => { load(); }, 0);
     return () => clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setTodayStr(todaySaoPaulo()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   // ── Ações: renovação ─────────────────────────────────────────────────────
 
@@ -533,12 +652,21 @@ export default function Renewals() {
       load();
     } catch (e) {
       toast.error('Erro ao ativar: ' + (e.message || ''));
+      if (e.status === 409) { setActivationModal(null); await load(); }
     } finally {
       setBusy(null);
     }
   };
 
   const openExternalChargeModal = (contract, dueDate = '') => {
+    if (isMonthlyAutomatic(contract, plans)) {
+      toast.error('Assinatura automática: cadastre somente o link da cobrança já existente');
+      return;
+    }
+    if (hasNativeChargeInfo(contract)) {
+      toast.error('Esta renovação já possui dados de cobrança Asaas. Confira a cobrança no contrato.');
+      return;
+    }
     const suggestedDueDate = suggestedAssessmentChargeDueDate(contract);
     const defaultExternalMethod = normalizeExternalChargeMethod(contract.payment_method, contract.installments);
     setExternalChargeForm({
@@ -548,6 +676,11 @@ export default function Renewals() {
       invoice_number: contract.external_invoice_number || '',
     });
     setExternalChargeModal(contract);
+  };
+
+  const openSubscriptionLink = contract => {
+    setSubscriptionTarget(contract);
+    setSubscriptionLink(contract.asaas_payment_link || '');
   };
 
   const openChargeModal = (contract) => {
@@ -623,6 +756,7 @@ export default function Renewals() {
       await load();
     } catch (e) {
       toast.error(e.message || 'Erro ao salvar cobrança externa');
+      if (e.status === 409) { setExternalChargeModal(null); await load(); }
     } finally {
       setCharging(false);
     }
@@ -700,7 +834,6 @@ export default function Renewals() {
   const scheduledOpenPayments = orderedScheduled.filter(contract =>
     !['paid', 'refunded', 'cancelled'].includes(contract.payment_status)
   );
-  const todayStr = todayLocalStr();
   const scanWindowDays = normalizeScanDays(scanForm.horizon_days);
   const scanWindowEnd = addDays(todayStr, scanWindowDays);
   const firstDraft = orderedDrafts[0];
@@ -716,6 +849,85 @@ export default function Renewals() {
   const activationTotal = activationDraft ? contractTotal(activationDraft) : 0;
   const chargeModalCustomer = chargeModal ? customers[chargeModal.customer_id] : null;
   const hasRenewalWork = orderedDrafts.length > 0 || orderedScheduled.length > 0;
+  const useLegacyView = !boardAvailable || searchParams.get('view') === 'legacy';
+  const board = boardRows.filter(contract => isVisibleOnRenewalBoard(contract, todayStr));
+  const displayedBoard = board.filter(contract => {
+    const customer = customers[contract.customer_id];
+    const term = boardSearch.trim().toLocaleLowerCase('pt-BR');
+    if (term && !`${customer?.full_name || ''} ${contract.contract_number || ''}`
+      .toLocaleLowerCase('pt-BR').includes(term)) return false;
+    if (boardFilters.plan && contract.plan_id !== boardFilters.plan) return false;
+    if (boardFilters.coach && contract.coach_id !== boardFilters.coach) return false;
+    if (boardFilters.modality && contract.plan_snapshot?.modality_id !== boardFilters.modality) return false;
+    if (boardFilters.hideCompleted && ['renewed', 'not_renewed'].includes(contract.renewal_stage)) return false;
+    return true;
+  });
+  const selectedBoardCard = boardRows.find(row => row.id === selectedCard?.id) || selectedCard;
+  const boardOpen = board.filter(row => !['renewed', 'not_renewed'].includes(row.renewal_stage));
+  const boardAttention = boardOpen.filter(row => {
+    const left = renewalDaysLeft(row, parents[row.parent_contract_id], todayStr);
+    return (left !== null && left <= 3) ||
+      (row.renewal_follow_up_at && row.renewal_follow_up_at <= todayStr) ||
+      row.payment_status === 'overdue' || needsRenewalReview(row);
+  });
+  const boardWaitingPayment = boardOpen.filter(row => row.renewal_stage === 'waiting_payment');
+  const boardRecentRenewed = boardRows.filter(row => row.renewal_stage === 'renewed' &&
+    saoPauloDate(row.renewal_resolved_at) >= addDays(todayStr, -30));
+
+  const runBoardAction = async (contract, action, { responseCode = null, followUpAt = null, subscriptionLink: link = null } = {}) => {
+    if (needsRenewalReview(contract)) {
+      toast.error('Esta renovação precisa de conferência financeira antes de novas ações');
+      return false;
+    }
+    setBusy(contract.id);
+    try {
+      await transitionAssessmentRenewalStage(contract.id, {
+        action, responseCode, followUpAt, subscriptionLink: link,
+        expectedUpdatedAt: contract.updated_at,
+      });
+      toast.success('Renovação atualizada');
+      await load();
+      return true;
+    } catch (error) {
+      toast.error(error.status === 409
+        ? 'Esta renovação mudou. O quadro será atualizado.'
+        : error.message || 'Não foi possível atualizar a renovação');
+      if (error.status === 409) {
+        setIntentTarget(null); setResponseTarget(null); setFollowUpTarget(null);
+        setChangeTarget(null); setSubscriptionTarget(null);
+        await load();
+      }
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openTimeline = async contract => {
+    setSelectedCard(contract);
+    setTimeline([]);
+    setTimelineLoading(true);
+    const ids = [contract.id, contract.parent_contract_id].filter(Boolean);
+    const { data, error } = await supabase.from('assessment_contract_event')
+      .select('id, contract_id, event_type, notes, created_at, payload')
+      .in('contract_id', ids)
+      .order('created_at', { ascending: false })
+      .limit(80);
+    if (error) toast.error('Não foi possível carregar o histórico');
+    else setTimeline(data || []);
+    setTimelineLoading(false);
+  };
+
+  const openIntent = contract => {
+    const firstName = (customers[contract.customer_id]?.full_name || 'atleta').split(' ')[0];
+    const left = renewalDaysLeft(contract, parents[contract.parent_contract_id], todayStr);
+    const timing = left !== null && left < 0
+      ? `seu plano venceu em ${formatDate(renewalDate(contract, parents[contract.parent_contract_id]))}`
+      : 'seu plano vence nos próximos dias';
+    setIntentText(`Oi, ${firstName}! Tudo bem?\nSou o Pebinha, assistente virtual da EON. Estou aqui pra te lembrar que ${timing}.\nPra ajudar nosso time nesse processo, você gostaria de realizar a renovação?\n1. Sim, vou renovar.\n2. Ainda estou pensando.\n3. Gostaria de mudar de plano/treinador.\n4. Gostaria de falar com um atendente.\n5. Não vou renovar.`);
+    setIntentOpened(false);
+    setIntentTarget(contract);
+  };
 
   useEffect(() => {
     const renewalId = searchParams.get('resolver');
@@ -748,15 +960,25 @@ export default function Renewals() {
             Renovações
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Rascunhos, renovações agendadas e cobranças de continuidade
+            Acompanhe cada renovação da primeira abordagem até a decisão final
           </p>
         </div>
-        <Button onClick={() => setScanModal(true)} variant="outline">
-          <RotateCcw className="w-4 h-4 mr-1.5" />
-          Verificar renovações agora
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={load} variant="ghost" disabled={loading}>
+            <RefreshCcw className="w-4 h-4 mr-1.5" /> Atualizar quadro
+          </Button>
+          <Button onClick={() => setScanModal(true)} variant="outline">
+            <RotateCcw className="w-4 h-4 mr-1.5" />
+            Verificar renovações agora
+          </Button>
+        </div>
       </div>
 
+      {!loading && !boardAvailable && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">
+        O quadro será exibido após a atualização do banco. A lista anterior continua disponível nesta prévia.
+      </div>}
+
+      {useLegacyView ? <>
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <Card>
@@ -866,6 +1088,171 @@ export default function Renewals() {
         </div>
       )}
 
+      </> : <>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        {[
+          { label: 'No pipeline', value: boardOpen.length, tone: 'text-blue-700' },
+          { label: 'Exigem atenção', value: boardAttention.length, tone: 'text-red-700' },
+          { label: 'Aguardando pagamento', value: boardWaitingPayment.length, tone: 'text-amber-700' },
+          { label: 'Renovaram em 30 dias', value: boardRecentRenewed.length, tone: 'text-green-700' },
+        ].map(kpi => <Card key={kpi.label}><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground">{kpi.label}</p>
+          <p className={`text-2xl font-bold mt-1 ${kpi.tone}`}>{kpi.value}</p>
+        </CardContent></Card>)}
+      </div>
+
+      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+        A data coloca a renovação no fluxo e aumenta a urgência. Nenhuma pendência sai do quadro só porque venceu.
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+        <Input className="md:col-span-2" placeholder="Buscar atleta ou contrato" aria-label="Buscar atleta ou contrato" value={boardSearch}
+          onChange={event => setBoardSearch(event.target.value)} />
+        <select className="h-10 rounded-md border bg-white px-3 text-sm" aria-label="Filtrar por plano" value={boardFilters.plan}
+          onChange={event => setBoardFilters(value => ({ ...value, plan: event.target.value }))}>
+          <option value="">Todos os planos</option>
+          {[...new Map(boardRows.map(row => [row.plan_id, row.plan_snapshot?.name || 'Plano'])).entries()]
+            .filter(([id]) => id).map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+        </select>
+        <select className="h-10 rounded-md border bg-white px-3 text-sm" aria-label="Filtrar por coach" value={boardFilters.coach}
+          onChange={event => setBoardFilters(value => ({ ...value, coach: event.target.value }))}>
+          <option value="">Todos os coaches</option>
+          {Object.values(coaches).sort((a, b) => a.name.localeCompare(b.name))
+            .map(coach => <option key={coach.id} value={coach.id}>{coach.name}</option>)}
+        </select>
+        <select className="h-10 rounded-md border bg-white px-3 text-sm" aria-label="Filtrar por modalidade" value={boardFilters.modality}
+          onChange={event => setBoardFilters(value => ({ ...value, modality: event.target.value }))}>
+          <option value="">Todas as modalidades</option>
+          {Object.values(modalities).sort((a, b) => a.name.localeCompare(b.name))
+            .map(modality => <option key={modality.id} value={modality.id}>{modality.name}</option>)}
+        </select>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-gray-600">
+        <input type="checkbox" checked={boardFilters.hideCompleted}
+          onChange={event => setBoardFilters(value => ({ ...value, hideCompleted: event.target.checked }))} />
+        Ocultar concluídos
+      </label>
+
+      {loading ? <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground">
+        <Loader2 className="w-5 h-5 animate-spin" /> Carregando renovações...
+      </div> : <div className="overflow-x-auto pb-4" aria-label="Quadro de renovações">
+        <div className="flex gap-3 min-w-max items-start">
+          {BOARD_STAGES.map(stage => {
+            const cards = displayedBoard.filter(row => row.renewal_stage === stage.id)
+              .sort((a, b) => compareRenewalDrafts(a, b, parents));
+            return <section key={stage.id} className="w-[275px] shrink-0 rounded-xl border bg-slate-50 min-h-[240px]">
+              <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-slate-100 px-3 py-3 rounded-t-xl">
+                <h3 className={`text-sm font-semibold ${stage.color}`}>{stage.label}</h3>
+                <span className="rounded-full bg-white border px-2 py-0.5 text-xs font-semibold">{cards.length}</span>
+              </div>
+              <div className="p-2 space-y-2">
+                {cards.length === 0 && <p className="text-xs text-muted-foreground p-3">Nenhuma renovação</p>}
+                {cards.map(contract => {
+                  const parent = parents[contract.parent_contract_id];
+                  const customer = customers[contract.customer_id];
+                  const coach = coaches[contract.coach_id];
+                  const modality = modalities[contract.plan_snapshot?.modality_id];
+                  const left = renewalDaysLeft(contract, parent, todayStr);
+                  const followUpLate = contract.renewal_follow_up_at && contract.renewal_follow_up_at < todayStr;
+                  const urgent = !['renewed', 'not_renewed'].includes(stage.id) &&
+                    ((left !== null && left <= 3) || followUpLate || contract.payment_status === 'overdue');
+                  const auto = isMonthlyAutomatic(contract, plans);
+                  const missingLink = auto && stage.id === 'waiting_payment' && !hasRenewalPaymentLink(contract);
+                  const review = needsRenewalReview(contract);
+                  const startDays = renewalDaysUntilEnd(contract.start_date, todayStr);
+                  const terminalDays = renewalTerminalDaysRemaining(contract, todayStr) ?? 5;
+                  return <Card key={contract.id} className={`${urgent ? 'border-l-4 border-l-red-500' : ''} ${['renewed', 'not_renewed'].includes(stage.id) ? 'opacity-80' : ''}`}>
+                    <CardContent className="p-3 space-y-2">
+                      <button type="button" className="w-full text-left" onClick={() => openTimeline(contract)}>
+                        <p className="font-semibold text-sm text-gray-900 truncate">{customer?.full_name || 'Atleta'}</p>
+                        <p className="font-mono text-[11px] text-muted-foreground">{contract.contract_number}</p>
+                      </button>
+                      <p className="text-xs text-gray-600 truncate">
+                        {modality?.name || contract.plan_snapshot?.modality_name || 'Modalidade'} · {contract.plan_snapshot?.name || 'Plano'}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">Coach: {coach?.name || '—'}</p>
+                      <div className="flex flex-wrap gap-1 text-[10px] font-medium">
+                        {auto && <span className="rounded bg-violet-100 text-violet-700 px-1.5 py-0.5">Assinatura automática</span>}
+                        {contract.renewal_response_code === 'change_plan_or_coach' && stage.id === 'waiting_response' &&
+                          <span className="rounded bg-violet-100 text-violet-700 px-1.5 py-0.5">Mudar plano/coach</span>}
+                        {contract.renewal_response_code === 'needs_agent' && stage.id === 'waiting_response' &&
+                          <span className="rounded bg-violet-100 text-violet-700 px-1.5 py-0.5">Atendimento pendente</span>}
+                        {missingLink && <span className="rounded bg-amber-100 text-amber-800 px-1.5 py-0.5">Link ausente</span>}
+                        {left !== null && <span className={`rounded px-1.5 py-0.5 ${renewalTimingClass(left)}`}>{renewalTimingLabel(left)}</span>}
+                        {review && <span className="rounded bg-red-100 text-red-800 px-1.5 py-0.5">Precisa de conferência</span>}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        <p>Fim da vigência: {formatDate(parent?.end_date)}</p>
+                        <p>Nova vigência: {formatDate(contract.start_date)}</p>
+                        {contract.renewal_entered_at && <p>No pipeline desde {formatDate(saoPauloDate(contract.renewal_entered_at))}</p>}
+                        <p>Valor: {formatCurrency(contractTotal(contract))}</p>
+                      </div>
+                      {urgent && <p className="rounded bg-red-50 p-2 text-[11px] text-red-700">
+                        {stage.id === 'contact_pending' && left < 0
+                          ? 'A abordagem ficou atrasada, mas o card permanece no fluxo.'
+                          : stage.id === 'waiting_payment' && startDays !== null && startDays < 0
+                          ? `A nova vigência começou há ${-startDays} dia(s) e o pagamento continua pendente.`
+                          : followUpLate
+                          ? `Follow-up atrasado há ${-renewalDaysUntilEnd(contract.renewal_follow_up_at, todayStr)} dia(s).`
+                          : left < 0 ? 'A vigência passou. A ação continua pendente.' : 'Ação urgente antes do vencimento.'}
+                      </p>}
+                      {contract.renewal_follow_up_at && stage.id === 'waiting_response' &&
+                        <p className={`text-[11px] ${contract.renewal_follow_up_at < todayStr ? 'text-red-700' : 'text-gray-600'}`}>
+                          Follow-up: {formatDate(contract.renewal_follow_up_at)}
+                        </p>}
+                      {missingLink && <p className="text-[11px] text-amber-800">Link da cobrança ainda não informado. O card segue ativo.</p>}
+                      {review && <p className="text-[11px] text-red-800">Etapa e pagamento não conferem. Verifique o contrato antes de avançar.</p>}
+                      {stage.id === 'waiting_payment' && <p className="text-[11px] text-blue-700">Também em Vendas em aberto.</p>}
+                      {['renewed', 'not_renewed'].includes(stage.id) &&
+                        <p className="text-[11px] text-muted-foreground">{contract.renewal_resolved_at
+                          ? `Sai do quadro em ${terminalDays} dia(s). Histórico preservado.`
+                          : 'Data de resolução ausente. Conferência necessária.'}</p>}
+                      {stage.id === 'contact_pending' && <Button size="sm" className="w-full" disabled={Boolean(busy) || review}
+                        onClick={() => openIntent(contract)}>Enviar mensagem</Button>}
+                      {stage.id === 'contact_pending' && <Button size="sm" variant="ghost" className="w-full" disabled={Boolean(busy) || review}
+                        onClick={() => { setResponseTarget(contract); setResponseForm({ code: 'will_renew', followUpAt: '' }); }}>
+                        Resposta já recebida</Button>}
+                      {stage.id === 'waiting_response' && <Button size="sm" className="w-full" disabled={Boolean(busy) || review}
+                        onClick={() => { setResponseTarget(contract); setResponseForm({ code: 'will_renew', followUpAt: contract.renewal_follow_up_at || '' }); }}>
+                        Registrar resposta</Button>}
+                      {stage.id === 'waiting_response' && contract.renewal_response_code === 'change_plan_or_coach' &&
+                        <div className="space-y-1"><Link className="block text-center text-xs text-blue-700 underline" to={`/assessoria/contratos/${contract.id}?ajustar-plano=1`}>
+                          Resolver alteração no contrato</Link><Button size="sm" variant="outline" className="w-full" disabled={Boolean(busy) || review}
+                            onClick={() => { setChangeConfirmed(false); setChangeTarget(contract); }}>Seguir para cobrança</Button></div>}
+                      {stage.id === 'waiting_response' && <Button size="sm" variant="ghost" className="w-full" disabled={Boolean(busy) || review}
+                        onClick={() => { setFollowUpTarget(contract); setFollowUpDate(contract.renewal_follow_up_at || ''); }}>Definir follow-up</Button>}
+                      {stage.id === 'charge_pending' && (hasNativeChargeInfo(contract)
+                        ? <Link className="block text-center text-xs text-blue-700 underline" to={`/assessoria/contratos/${contract.id}`}>Revisar cobrança no contrato</Link>
+                        : <Button size="sm" className="w-full" disabled={Boolean(busy) || review}
+                          onClick={() => openExternalChargeModal(contract)}>Cadastrar cobrança</Button>)}
+                      {stage.id === 'waiting_payment' && (hasNativeChargeInfo(contract) && !auto
+                        ? <Link className="block text-center text-xs text-blue-700 underline" to={`/assessoria/contratos/${contract.id}`}>Ver cobrança no contrato</Link>
+                        : <Button size="sm" variant="outline" className="w-full" disabled={Boolean(busy) || review}
+                          onClick={() => auto ? openSubscriptionLink(contract) : openExternalChargeModal(contract)}>
+                          {auto ? (contract.asaas_payment_link ? 'Atualizar link da assinatura' : 'Adicionar link da assinatura') : 'Ver cobrança'}</Button>)}
+                      {stage.id === 'waiting_payment' && !auto && hasChargeInfo(contract) &&
+                        <Button size="sm" variant="ghost" className="w-full" disabled={Boolean(busy) || review}
+                          onClick={() => openMessageForRenewal(contract)}>
+                          {contract.payment_message_sent_at ? 'Reenviar cobrança' : 'Enviar cobrança'}
+                        </Button>}
+                      {stage.id === 'waiting_payment' && <Link className="block text-center text-xs text-blue-700 underline" to={`/assessoria/contratos/${contract.id}`}>
+                        Registrar pagamento no contrato</Link>}
+                      {!['renewed', 'not_renewed'].includes(stage.id) && <Button size="sm" variant="ghost"
+                        className="w-full text-red-700" disabled={Boolean(busy) || review}
+                        onClick={() => openResolution(contract, parent, 'customer_declined')}>Não renovar</Button>}
+                      {!['renewed', 'not_renewed'].includes(stage.id) && <Button size="sm" variant="ghost"
+                        className="w-full text-gray-600" disabled={Boolean(busy) || review}
+                        onClick={() => openResolution(contract, parent, 'created_in_error')}>Descartar venda</Button>}
+                    </CardContent>
+                  </Card>;
+                })}
+              </div>
+            </section>;
+          })}
+        </div>
+      </div>}
+      </>}
+
       {resolutionTarget && (
         <RenewalResolutionDialog
           key={`${resolutionTarget.contract.id}:${resolutionTarget.initialChoice}`}
@@ -875,6 +1262,154 @@ export default function Renewals() {
           onRefresh={load}
         />
       )}
+
+      <Dialog open={Boolean(intentTarget)} onOpenChange={open => !open && busy !== intentTarget?.id && setIntentTarget(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Mensagem de intenção de renovação</DialogTitle></DialogHeader>
+          {intentTarget && <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Edite o texto antes de abrir o WhatsApp. Confirme o envio apenas depois de mandar a mensagem.</p>
+            <textarea className="w-full min-h-[250px] rounded-md border p-3 text-sm" value={intentText}
+              onChange={event => setIntentText(event.target.value)} disabled={busy === intentTarget.id} />
+            <div className="flex flex-wrap gap-2 justify-end">
+              <Button variant="outline" disabled={busy === intentTarget.id} onClick={() => setIntentTarget(null)}>Cancelar</Button>
+              {customers[intentTarget.customer_id]?.whatsapp?.replace(/\D/g, '') ?
+                <Button variant="outline" asChild><a target="_blank" rel="noopener noreferrer"
+                  href={`https://wa.me/${customers[intentTarget.customer_id].whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(intentText)}`}
+                  onClick={() => setIntentOpened(true)}>Abrir WhatsApp</a></Button> :
+                <Button variant="outline" onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(intentText);
+                    setIntentOpened(true);
+                    toast.info('Mensagem copiada. Envie pelo canal de atendimento.');
+                  } catch {
+                    toast.error('Não foi possível copiar. Selecione o texto e copie manualmente.');
+                  }
+                }}>Copiar mensagem</Button>}
+              <Button disabled={!intentOpened || busy === intentTarget.id} onClick={async () => {
+                const ok = await runBoardAction(intentTarget, 'message_sent');
+                if (ok) setIntentTarget(null);
+              }}>{busy === intentTarget.id ? 'Salvando...' : 'Confirmo que enviei'}</Button>
+            </div>
+          </div>}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(responseTarget)} onOpenChange={open => !open && busy !== responseTarget?.id && setResponseTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Registrar resposta do atleta</DialogTitle></DialogHeader>
+          {responseTarget && <div className="space-y-4">
+            <div><Label>Resposta</Label><select className="mt-1 h-10 w-full rounded-md border bg-white px-3 text-sm"
+              value={responseForm.code} onChange={event => setResponseForm(value => ({ ...value, code: event.target.value }))}>
+              {Object.entries(RESPONSE_LABELS).map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+            </select></div>
+            {responseForm.code === 'thinking' && <div><Label>Próximo contato</Label>
+              <Input type="date" value={responseForm.followUpAt}
+                onChange={event => setResponseForm(value => ({ ...value, followUpAt: event.target.value }))} /></div>}
+            {responseForm.code === 'change_plan_or_coach' &&
+              <p className="rounded bg-violet-50 p-3 text-sm text-violet-900">O card ficará aguardando a alteração. Resolva o plano ou coach no contrato antes de avançar para cobrança.</p>}
+            {responseForm.code === 'not_renewing' &&
+              <p className="rounded bg-red-50 p-3 text-sm text-red-900">A saída seguirá pela resolução segura, com confirmação dos efeitos financeiros.</p>}
+            <div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setResponseTarget(null)}>Cancelar</Button>
+              <Button disabled={busy === responseTarget.id} onClick={async () => {
+                if (responseForm.code === 'not_renewing') {
+                  openResolution(responseTarget, parents[responseTarget.parent_contract_id], 'customer_declined');
+                  setResponseTarget(null);
+                  return;
+                }
+                const ok = await runBoardAction(responseTarget, 'register_response', {
+                  responseCode: responseForm.code,
+                  followUpAt: responseForm.code === 'thinking' ? responseForm.followUpAt || null : null,
+                });
+                if (ok) setResponseTarget(null);
+              }}>Registrar resposta</Button></div>
+          </div>}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(followUpTarget)} onOpenChange={open => !open && busy !== followUpTarget?.id && setFollowUpTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Agendar follow-up</DialogTitle></DialogHeader>
+          {followUpTarget && <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">O card permanece em Aguardando decisão até a equipe registrar uma resposta.</p>
+            <div><Label htmlFor="renewal-follow-up">Data do próximo contato</Label>
+              <Input id="renewal-follow-up" className="mt-1" type="date" value={followUpDate}
+                onChange={event => setFollowUpDate(event.target.value)} disabled={busy === followUpTarget.id} /></div>
+            <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy === followUpTarget.id}
+              onClick={() => setFollowUpTarget(null)}>Cancelar</Button>
+              <Button disabled={!followUpDate || busy === followUpTarget.id} onClick={async () => {
+                const ok = await runBoardAction(followUpTarget, 'set_follow_up', { followUpAt: followUpDate });
+                if (ok) setFollowUpTarget(null);
+              }}>Salvar follow-up</Button></div>
+          </div>}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(changeTarget)} onOpenChange={open => !open && busy !== changeTarget?.id && setChangeTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Concluir alteração de plano ou coach</DialogTitle></DialogHeader>
+          {changeTarget && <div className="space-y-4">
+            <p className="text-sm text-gray-700">Confirme somente depois de salvar a alteração no contrato. A renovação irá para Enviar cobrança.</p>
+            <Link to={`/assessoria/contratos/${changeTarget.id}?ajustar-plano=1`} className="text-sm text-blue-700 underline">
+              Abrir ajuste no contrato
+            </Link>
+            <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={changeConfirmed}
+              onChange={event => setChangeConfirmed(event.target.checked)} />
+              <span>A alteração solicitada pelo atleta já foi resolvida e salva.</span></label>
+            <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy === changeTarget.id}
+              onClick={() => setChangeTarget(null)}>Cancelar</Button>
+              <Button disabled={!changeConfirmed || busy === changeTarget.id} onClick={async () => {
+                const ok = await runBoardAction(changeTarget, 'change_resolved');
+                if (ok) setChangeTarget(null);
+              }}>Seguir para cobrança</Button></div>
+          </div>}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(subscriptionTarget)} onOpenChange={open => !open && busy !== subscriptionTarget?.id && setSubscriptionTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Link da assinatura automática</DialogTitle></DialogHeader>
+          {subscriptionTarget && <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">Cole o link da cobrança que a assinatura já criou. Esta ação não gera uma nova cobrança no Asaas.</p>
+            <div><Label htmlFor="renewal-subscription-link">Link HTTPS da cobrança existente</Label>
+              <Input id="renewal-subscription-link" className="mt-1" type="url" value={subscriptionLink}
+                placeholder="https://..." onChange={event => setSubscriptionLink(event.target.value)}
+                disabled={busy === subscriptionTarget.id} /></div>
+            <div className="flex justify-end gap-2"><Button variant="outline" disabled={busy === subscriptionTarget.id}
+              onClick={() => setSubscriptionTarget(null)}>Cancelar</Button>
+              <Button disabled={busy === subscriptionTarget.id || !/^https:\/\/[^\s]+$/i.test(subscriptionLink.trim())}
+                onClick={async () => {
+                  const ok = await runBoardAction(subscriptionTarget, 'register_subscription_link', {
+                    subscriptionLink: subscriptionLink.trim(),
+                  });
+                  if (ok) setSubscriptionTarget(null);
+                }}>Salvar link existente</Button></div>
+          </div>}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedCard)} onOpenChange={open => !open && setSelectedCard(null)}>
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Histórico da renovação {selectedBoardCard?.contract_number}</DialogTitle></DialogHeader>
+          {selectedBoardCard && <div className="space-y-4">
+            <div className="rounded-lg bg-slate-50 p-3 text-sm">
+              <p className="font-semibold">{customers[selectedBoardCard.customer_id]?.full_name || 'Atleta'}</p>
+              <p>Etapa: {BOARD_STAGES.find(stage => stage.id === selectedBoardCard.renewal_stage)?.label || 'Sem etapa'}</p>
+              <p>Contrato anterior: {parents[selectedBoardCard.parent_contract_id]?.contract_number || '—'}</p>
+              <p>Resposta: {RESPONSE_LABELS[selectedBoardCard.renewal_response_code] || 'Ainda não registrada'}</p>
+            </div>
+            <div><h4 className="font-semibold text-sm mb-2">Linha do tempo</h4>
+              {timelineLoading ? <p className="text-sm text-muted-foreground">Carregando eventos...</p> :
+                timeline.length === 0 ? <p className="text-sm text-muted-foreground">Nenhum evento encontrado.</p> :
+                <ol className="space-y-2 border-l pl-4 text-sm">{timeline.map(event =>
+                  <li key={event.id} className="relative before:absolute before:-left-[21px] before:top-2 before:h-2 before:w-2 before:rounded-full before:bg-blue-500">
+                    <p className="font-medium">{renewalEventLabel(event)}</p>
+                    <p className="text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })} · {event.contract_id === selectedBoardCard.id ? 'Renovação' : 'Contrato anterior'}</p>
+                  </li>)}</ol>}
+            </div>
+            <Link className="text-sm text-blue-700 underline" to={`/assessoria/contratos/${selectedBoardCard.id}`}>Abrir contrato</Link>
+          </div>}
+        </DialogContent>
+      </Dialog>
 
       <ExternalChargeDialog
         open={Boolean(externalChargeModal)}
@@ -1097,7 +1632,7 @@ export default function Renewals() {
             </div>
             <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3 text-xs text-blue-900 space-y-1">
               <p>
-                Com <b>{scanWindowDays} dia{scanWindowDays === 1 ? '' : 's'}</b>, serão considerados contratos que vencem de <b>{formatDate(todayStr)}</b> até <b>{formatDate(scanWindowEnd)}</b>.
+                Com <b>{scanWindowDays} dia{scanWindowDays === 1 ? '' : 's'}</b>, serão considerados contratos que vencem até <b>{formatDate(scanWindowEnd)}</b>, inclusive os já vencidos e ainda pendentes.
               </p>
               <p className="text-blue-700">
                 Renovações existentes não são duplicadas.
