@@ -608,11 +608,21 @@ export default function Renewals() {
           <span className="text-sm">Carregando...</span>
         </div>
       ) : (
+        // As colunas dividem a largura da tela (mínimo de 260px; abaixo disso o
+        // quadro rola para o lado). Em tela grande cada coluna cabe na altura da
+        // tela e rola sozinha, com o título sempre visível.
         <div className="overflow-x-auto pb-2 -mx-1 px-1">
-          <div className="flex gap-3 min-w-max items-start">
+          <div
+            className="grid gap-3 items-start"
+            style={{ gridTemplateColumns: `repeat(${board.columns.length}, minmax(260px, 1fr))` }}
+          >
             {board.columns.map(column => (
-              <section key={column.stage} className="w-[280px] shrink-0 rounded-2xl border bg-slate-50/70 p-3" aria-label={column.title}>
-                <div className="mb-3 flex items-start justify-between gap-2">
+              <section
+                key={column.stage}
+                className="min-w-0 flex flex-col rounded-2xl border bg-slate-50/70 p-3 lg:max-h-[calc(100vh-7rem)]"
+                aria-label={column.title}
+              >
+                <div className="mb-3 flex shrink-0 items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
                       <span className={`h-2 w-2 rounded-full ${column.dot}`} aria-hidden="true" />
@@ -632,7 +642,7 @@ export default function Renewals() {
                     {hasFilters ? 'Nada com esses filtros.' : 'Sem renovações aqui.'}
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2 lg:min-h-0 lg:overflow-y-auto lg:-m-1 lg:p-1">
                     {column.items.map(card => (
                       <RenewalCard
                         key={card.contract.id}
