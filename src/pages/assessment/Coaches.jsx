@@ -10,6 +10,7 @@ import { AssessmentCoach, AssessmentContract, AssessmentModality } from '@/api/e
 import { usePageData } from '@/hooks/usePageData';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
 import { toast } from 'sonner';
+import ContextTabs from '@/components/layout/ContextTabs';
 
 const ROLE_LABEL = { junior: 'Junior', pleno: 'Pleno', senior: 'Senior' };
 const ROLE_COLOR = {
@@ -126,6 +127,7 @@ export default function Coaches() {
 
   return (
     <div className="space-y-5">
+      <ContextTabs group="team" current="/assessoria/coaches" />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Coaches</h2>

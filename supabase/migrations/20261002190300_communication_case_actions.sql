@@ -67,7 +67,7 @@ BEGIN
   PERFORM eon_private.lock_communication_source(v_case.source_type,v_case.source_id);
   SELECT * INTO v_case FROM public.communication_cases WHERE id=p_case_id FOR UPDATE;
   SELECT * INTO v_command FROM public.communication_case_commands
-    WHERE case_id=p_case_id AND idempotency_key=p_idempotency_key FOR UPDATE;
+    WHERE case_id=p_case_id AND idempotency_key=p_idempotency_key;
   IF FOUND THEN
     IF v_command.request_payload IS DISTINCT FROM p_request
        OR v_command.actor_id<>p_actor_id THEN
@@ -115,7 +115,15 @@ BEGIN
       RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='Já existe contato registrado hoje';
     END IF;
     IF v_case.purpose='billing' THEN
-      IF v_case.source_type='contract' THEN
+      IF v_case.source_type='contract' AND v_context->>'source_status'='finished' THEN
+        -- A finished term can still have an open balance. Its original
+        -- contract state remains authoritative while contact is recorded.
+        INSERT INTO public.assessment_contract_event(contract_id,event_type,payload,notes,created_by)
+        VALUES(v_case.source_id,'payment_message_sent',
+          jsonb_build_object('communication_case_id',p_case_id,'message',v_message,
+            'source','communication_center','via','whatsapp','status','finished'),
+          'Cobrança de saldo remanescente após fim da vigência',p_actor_id);
+      ELSIF v_case.source_type='contract' THEN
         PERFORM public.mark_assessment_contract_payment_message_sent(
           v_case.source_id,'communication_center',NULL,
           NULLIF(v_context->>'due_date','')::date,

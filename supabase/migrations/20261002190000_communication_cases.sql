@@ -290,6 +290,7 @@ BEGIN
       'renewal_follow_up_at', c.renewal_follow_up_at,
       'renewal_last_contact_at', c.renewal_last_contact_at,
       'renewal_response_code', c.renewal_response_code,
+      'renewal_response_at', c.renewal_response_at,
       'onboarding_welcome_sent_at', onboarding.welcome_at,
       'onboarding_checkin_sent_at', onboarding.checkin_at,
       'period_months', eon_private.assessment_contract_period_months(c.plan_id, c.plan_snapshot),
@@ -525,7 +526,11 @@ BEGIN
         WHEN v_old.blocked_reason IN ('review_requested','payment_review',
           'dispute','needs_agent','source_reopened_review') THEN v_old.blocked_reason
         WHEN v_context->>'renewal_response_code' IN
-          ('change_plan_or_coach','needs_agent') THEN 'renewal_review'
+          ('change_plan_or_coach','needs_agent')
+          AND NOT EXISTS (SELECT 1 FROM public.communication_case_events review
+            WHERE review.case_id=v_case_id AND review.event_type='review_completed'
+              AND review.created_at>=NULLIF(v_context->>'renewal_response_at','')::timestamptz)
+          THEN 'renewal_review'
         ELSE NULL END;
       UPDATE public.communication_cases
       SET hold_kind=v_new_hold,next_action_at=v_new_next,

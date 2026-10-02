@@ -178,7 +178,7 @@ $$;
 CREATE OR REPLACE FUNCTION eon_private.lock_communication_source(
   p_source_type text,p_source_id uuid
 )
-RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE v_found uuid;v_customer_id uuid;
 BEGIN
   IF p_source_type='contract' THEN

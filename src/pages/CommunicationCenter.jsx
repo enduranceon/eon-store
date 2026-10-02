@@ -138,7 +138,7 @@ function HistoryRow({ item, onOpen }) {
         ) : null}
       </div>
       {(item.message_text || item.notes) && (
-        <p className="mt-3 whitespace-pre-wrap rounded-md bg-gray-50 p-3 text-sm text-gray-700">{item.message_text || item.notes}</p>
+        <p className="mt-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-gray-50 p-3 text-sm text-gray-700">{item.message_text || item.notes}</p>
       )}
     </article>
   );
@@ -460,7 +460,7 @@ export default function CommunicationCenter() {
       </div>}
 
       <CommunicationSendDialog
-        caseId={caseId}
+        caseId={queueReady ? caseId : null}
         communicationCase={selectedCase?.id === caseId ? selectedCase : null}
         onClose={closeCase}
         onChanged={handleChanged}

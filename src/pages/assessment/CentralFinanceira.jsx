@@ -20,8 +20,8 @@ import {
   buildContractLifecycleRows,
   getLifecycleMonthStart,
 } from '@/lib/assessment-contract-lifecycle';
-import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
+import ContextTabs from '@/components/layout/ContextTabs';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -208,6 +208,7 @@ export default function CentralFinanceira() {
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [data, setData] = useState({
     contracts: [], plans: [], modalities: [], coaches: [],
     customers: [], payments: [], todayStr: todayLocalStr(),
@@ -230,14 +231,13 @@ export default function CentralFinanceira() {
         isActual: true,
         scheduledFrom: rangeStart,
         scheduledTo: rangeEnd,
-      }).catch(error => {
-        console.error('[CentralFinanceira] Erro ao carregar recebimentos:', error);
-        return [];
       }),
     ]);
 
     const contracts = allContracts.filter(contract => contract.status !== 'draft');
-    await applyAssessmentContractTransitions(contracts);
+    for (const result of [modalitiesRes, coachesRes, customersRes]) {
+      if (result.error) throw result.error;
+    }
 
     setData({
       contracts,
@@ -248,19 +248,20 @@ export default function CentralFinanceira() {
       payments:  paymentsRes.map(toPaymentRecord),
       todayStr,
     });
+    setLoadError('');
   }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setLoading(true);
-      load().catch(console.error).finally(() => setLoading(false));
+      load().catch(error => setLoadError(error.message || 'Não foi possível consultar as previsões.')).finally(() => setLoading(false));
     }, 0);
     return () => clearTimeout(timer);
   }, [load]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await load().catch(console.error);
+    await load().catch(error => setLoadError(error.message || 'Não foi possível consultar as previsões.'));
     setRefreshing(false);
   };
 
@@ -431,11 +432,12 @@ export default function CentralFinanceira() {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
+      <ContextTabs group="assessment" current="/assessoria/central-financeira" />
 
       {/* ── Header ──────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Central Financeira</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Previsões da assessoria</h1>
           <p className="text-sm text-gray-500 mt-0.5 capitalize">{curMonthFull} · Assessoria Esportiva</p>
         </div>
         <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing} className="gap-2">
@@ -444,10 +446,20 @@ export default function CentralFinanceira() {
         </Button>
       </div>
 
+      {loadError && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Não foi possível atualizar esta consulta. {loadError} Use Atualizar para conferir os valores.</p>}
+      <details className="rounded-lg border bg-white p-3 text-sm text-slate-600">
+        <summary className="min-h-11 cursor-pointer font-medium text-slate-800">Como ler esta previsão · posição em {formatDate(data.todayStr)}</summary>
+        <div className="space-y-2 pt-2">
+          <p>Fonte: contratos, planos e recebimentos registrados da assessoria. Valores em reais; o gráfico projeta os seis meses indicados. Contratos ativos contam vínculos, inclusive quando uma pessoa possui mais de um.</p>
+          <p>MRR contratado é o valor mensal equivalente dos contratos elegíveis pela regra de vigência. Rascunhos, vendas descartadas e encerramentos que não contam como vigência ficam fora. Recebimentos usam a data de crédito dos lançamentos confirmados.</p>
+          <p>As projeções estimam contratos e renovações. Para conferir saldo ou registrar pagamento, abra <Link className="underline" to="/financeiro">Cobranças</Link>. Para vigência, abra <Link className="underline" to="/assessoria/contratos">Contratos</Link>; os <Link className="underline" to="/assessoria/fechamento">Fechamentos</Link> guardam os repasses oficiais.</p>
+        </div>
+      </details>
+
       {/* ── KPIs ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard
-          label="Alunos ativos"
+          label="Contratos ativos"
           value={kpis.active}
           sub={kpis.overdueCount > 0 ? `${kpis.overdueCount} em atraso` : undefined}
           icon={Users} iconBg="bg-blue-50" iconColor="text-blue-600" valueColor="text-blue-700"
@@ -465,9 +477,9 @@ export default function CentralFinanceira() {
           valueColor={kpis.exitsThisMonth > 0 ? 'text-red-600' : 'text-gray-500'}
         />
         <KpiCard
-          label="MRR"
+          label="MRR contratado"
           value={formatCurrency(kpis.mrr)}
-          sub="receita mensal recorrente"
+          sub="equivalente mensal dos contratos"
           icon={TrendingUp} iconBg="bg-purple-50" iconColor="text-purple-600" valueColor="text-purple-700"
         />
         <KpiCard
@@ -479,7 +491,7 @@ export default function CentralFinanceira() {
           valueColor={kpis.churnPct > 5 ? 'text-red-600' : 'text-gray-600'}
         />
         <KpiCard
-          label="Garantido este mês"
+          label="Recebimentos do mês"
           value={formatCurrency(kpis.guaranteedThisMonth)}
           sub="pagamentos registrados"
           icon={Wallet} iconBg="bg-emerald-50" iconColor="text-emerald-600" valueColor="text-emerald-700"

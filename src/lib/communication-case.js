@@ -10,6 +10,12 @@ const BLOCK_REASON_LABELS = {
   missing_payment_link: 'Link da cobrança ausente',
   missing_contact_phone: 'WhatsApp ausente ou inválido',
   not_due_yet: 'Aguardar a data do próximo contato',
+  already_contacted_today: 'Contato já registrado hoje',
+  renewal_stage_changed: 'Etapa da renovação mudou; confira o quadro',
+  payment_changed: 'Situação de pagamento mudou; confira o Financeiro',
+  community_link_missing: 'Link da comunidade ausente',
+  already_completed: 'Etapa de contato já concluída',
+  invalid_payment_link: 'Link de pagamento inválido',
 };
 
 export function communicationBlockReasonLabel(reason) {

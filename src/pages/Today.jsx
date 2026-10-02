@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import {
-  MessageCircle, RefreshCw, Package,
+  MessageCircle, RefreshCw, Package, Wallet,
   Undo2, ChevronRight, Sparkles, RotateCcw,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -106,7 +106,7 @@ function Section({ title, subtitle, icon: Icon, iconColor, count, total, borderC
 }
 
 async function loadTodayPage() {
-  const [presaleRes, stockRes, pendingReturnsRes, receivedReturnsRes, refundsRes, contacts] = await Promise.all([
+  const [presaleRes, stockRes, pendingReturnsRes, receivedReturnsRes, refundsRes, renewalChargesRes, contacts] = await Promise.all([
     supabase.from('presale_orders')
       .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, payment_date, created_date', { count: 'exact' })
       .eq('payment_status', 'paid')
@@ -126,10 +126,15 @@ async function loadTodayPage() {
     supabase.from('assessment_contracts')
       .select('id, contract_number, customer_id, refund_amount, refund_status, updated_at', { count: 'exact' })
       .eq('refund_status', 'pending').order('updated_at', { ascending: true }).range(0, 19),
+    supabase.from('assessment_contracts')
+      .select('id, contract_number, renewal_stage_updated_at', { count: 'exact' })
+      .not('parent_contract_id', 'is', null)
+      .eq('renewal_stage', 'charge_pending')
+      .order('renewal_stage_updated_at', { ascending: true }).range(0, 19),
     listCommunicationCases({ state: 'to_do', limit: 20 }),
   ]);
 
-  for (const result of [presaleRes, stockRes, pendingReturnsRes, receivedReturnsRes, refundsRes]) {
+  for (const result of [presaleRes, stockRes, pendingReturnsRes, receivedReturnsRes, refundsRes, renewalChargesRes]) {
     if (result.error || result.count == null) throw new Error('Não foi possível conferir todas as pendências. Tente atualizar a tela.');
   }
   if (!contacts || (contacts.rollout?.enabled !== false &&
@@ -163,11 +168,13 @@ async function loadTodayPage() {
     pendingReturns: pendingReturnsRes.data || [],
     receivedReturns: receivedReturnsRes.data || [],
     pendingRefunds,
+    renewalCharges: renewalChargesRes.data || [],
     counts: {
       deliveries: presaleRes.count + stockRes.count,
       pendingReturns: pendingReturnsRes.count,
       receivedReturns: receivedReturnsRes.count,
       pendingRefunds: refundsRes.count,
+      renewalCharges: renewalChargesRes.count,
     },
   };
 }
@@ -177,16 +184,16 @@ async function loadTodayPage() {
 // ─────────────────────────────────────────────────────────────────
 export default function Today() {
   const {
-    data: { deliveries, pendingReturns, receivedReturns, pendingRefunds, contacts, counts },
+    data: { deliveries, pendingReturns, receivedReturns, pendingRefunds, renewalCharges, contacts, counts },
     loading, refreshing, refresh, error,
   } = usePageData({
     key: 'today:operational-v3',
     forceOnMount: true,
     loader: loadTodayPage,
     initialData: {
-      deliveries: [], pendingReturns: [], receivedReturns: [], pendingRefunds: [],
+      deliveries: [], pendingReturns: [], receivedReturns: [], pendingRefunds: [], renewalCharges: [],
       contacts: { items: [], counts: {} },
-      counts: { deliveries: 0, pendingReturns: 0, receivedReturns: 0, pendingRefunds: 0 },
+      counts: { deliveries: 0, pendingReturns: 0, receivedReturns: 0, pendingRefunds: 0, renewalCharges: 0 },
     },
     tags: [
       'communication_cases',
@@ -226,7 +233,7 @@ export default function Today() {
   const totalActions =
     (contactsPreparing ? 0 : contactCount) +
     counts.deliveries + counts.pendingReturns +
-    counts.receivedReturns + counts.pendingRefunds;
+    counts.receivedReturns + counts.pendingRefunds + counts.renewalCharges;
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
@@ -236,7 +243,7 @@ export default function Today() {
         <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-bold text-gray-900">Hoje · {greeting()}</h1><Button variant="outline" disabled={refreshing} onClick={() => refresh({ force: true }).catch(() => {})}><RefreshCw aria-hidden="true" className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Atualizar</Button></div>
         <p className="text-sm text-muted-foreground mt-1">
           {contactsPreparing
-            ? `${totalActions} pendência${totalActions !== 1 ? 's' : ''} de entregas, devoluções e estornos. Os acompanhamentos estão em preparação.`
+            ? `${totalActions} pendência${totalActions !== 1 ? 's' : ''} de cobranças de renovação, entregas, devoluções e estornos. Os acompanhamentos estão em preparação.`
             : totalActions === 0
             ? 'Nenhuma ação prevista para agora.'
             : `Você tem ${totalActions} ${totalActions === 1 ? 'ação' : 'ações'} para revisar hoje`}
@@ -246,7 +253,7 @@ export default function Today() {
       {contactsPreparing && (
         <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
           <p className="font-semibold">Acompanhamentos em preparação</p>
-          <p className="mt-1">A fila de contatos ainda está sendo organizada. Entregas, devoluções e estornos seguem abaixo.</p>
+          <p className="mt-1">A fila de contatos ainda está sendo organizada. Cobranças de renovação, entregas, devoluções e estornos seguem abaixo.</p>
         </div>
       )}
 
@@ -273,6 +280,19 @@ export default function Today() {
             ))}
             <Link to="/comunicacao?state=to_do" className="inline-flex min-h-11 items-center px-3 text-sm font-medium text-blue-700">{contactCount > contactItems.length ? `Ver todas as ${contactCount} ações` : 'Abrir fila de contatos'}</Link>
           </Section>}
+
+          <Section title="Enviar cobrança de renovação" subtitle="Renovações aprovadas que aguardam o registro da cobrança no quadro." icon={Wallet} iconColor="text-amber-800" count={counts.renewalCharges} total={0}>
+            {renewalCharges.map(contract => (
+              <Link key={contract.id} to={`/assessoria/contratos/${contract.id}`} className="flex min-h-16 items-center gap-3 rounded-lg px-3 py-3 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">{contract.contract_number || 'Renovação'}</p>
+                  <p className="text-xs text-slate-600">Abrir contrato e registrar a cobrança</p>
+                </div>
+                <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-400" />
+              </Link>
+            ))}
+            <Link to="/assessoria/renovacoes" className="inline-flex min-h-11 items-center px-3 text-sm font-medium text-blue-700">{counts.renewalCharges > renewalCharges.length ? `Ver todas as ${counts.renewalCharges} renovações no quadro` : 'Abrir quadro de renovações'}</Link>
+          </Section>
 
           {/* ── 2. Estornos pendentes ───────────────────────────────── */}
           {counts.pendingRefunds > 0 && (

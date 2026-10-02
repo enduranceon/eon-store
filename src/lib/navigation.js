@@ -32,9 +32,7 @@ export const NAV_AREAS = [
       { id: 'cashflow', label: 'Fluxo de caixa', to: '/financeiro/fluxo-caixa', icon: 'cashflow' },
       { id: 'reconciliation', label: 'Conciliação', to: '/financeiro/conciliacao', icon: 'reconciliation', badge: 'financialQuality' },
       { id: 'refunds', label: 'Estornos', to: '/estornos', icon: 'refunds' },
-      { id: 'assessment_forecast', label: 'Previsão da assessoria', to: '/assessoria/central-financeira', icon: 'forecast' },
-      { id: 'payouts', label: 'Previsão de repasses', to: '/assessoria/repasse', icon: 'payouts' },
-      { id: 'closings', label: 'Fechamentos', to: '/assessoria/fechamento', icon: 'closings' },
+      { id: 'payouts', label: 'Repasses', to: '/assessoria/repasse', icon: 'payouts' },
     ],
   },
   {
@@ -49,7 +47,6 @@ export const NAV_AREAS = [
     items: [
       { id: 'overview', label: 'Visão geral', to: '/admin', icon: 'overview', exact: true },
       { id: 'assessment_indicators', label: 'Assessoria', to: '/assessoria/indicadores', icon: 'indicators' },
-      { id: 'assessment_panel', label: 'Painel atual', to: '/assessoria', icon: 'assessment', exact: true },
       { id: 'analytics', label: 'Analytics', to: '/analytics', icon: 'analytics' },
       { id: 'reports', label: 'Relatórios', to: '/relatorios', icon: 'reports' },
     ],
@@ -57,8 +54,7 @@ export const NAV_AREAS = [
   {
     id: 'settings', label: 'Configurações', description: 'Equipe, cadastros e parâmetros', icon: 'settings',
     items: [
-      { id: 'coaches', label: 'Equipe · Coaches', to: '/assessoria/coaches', icon: 'coaches' },
-      { id: 'trainers', label: 'Equipe · Treinadores', to: '/treinadores', icon: 'trainers' },
+      { id: 'team', label: 'Equipe', to: '/assessoria/coaches', icon: 'coaches' },
       { id: 'categories', label: 'Loja · Categorias', to: '/categorias', icon: 'categories' },
       { id: 'suppliers', label: 'Loja · Fornecedores', to: '/fornecedores', icon: 'suppliers' },
       { id: 'coupons', label: 'Loja · Cupons', to: '/cupons', icon: 'coupons' },
@@ -74,6 +70,10 @@ const LEGACY_SELECTIONS = [
   ['/clientes', 'people', 'people'],
   ['/assessoria/alunos', 'people', 'people'],
   ['/assessoria/regua', 'communication', 'message_rules'],
+  ['/assessoria/fechamento', 'finance', 'payouts'],
+  ['/assessoria/central-financeira', 'indicators', 'assessment_indicators'],
+  ['/treinadores', 'settings', 'team'],
+  ['/assessoria', 'indicators', 'assessment_indicators', true],
   ['/estoque/pedidos', 'store', 'orders'],
   ['/estoque/movimentacoes', 'store', 'products'],
   ['/estoque', 'store', 'products'],
@@ -86,7 +86,7 @@ function matchesRoute(pathname, to, exact = false) {
 
 export function resolveNavigation(pathname) {
   const path = String(pathname || '').split(/[?#]/)[0].replace(/\/$/, '') || '/';
-  const legacy = LEGACY_SELECTIONS.find(([prefix]) => matchesRoute(path, prefix));
+  const legacy = LEGACY_SELECTIONS.find(([prefix, , , exact]) => matchesRoute(path, prefix, exact));
   if (legacy) return { areaId: legacy[1], itemId: legacy[2] };
 
   const candidates = NAV_AREAS.flatMap(area => {

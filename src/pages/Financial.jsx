@@ -386,6 +386,7 @@ export default function Financial() {
   const [contactCases, setContactCases] = useState({});
   const [contactError, setContactError] = useState('');
   const [contactsReady, setContactsReady] = useState(null);
+  const [financialError, setFinancialError] = useState('');
   useEffect(() => {
     let active = true;
     (async () => {
@@ -495,15 +496,12 @@ export default function Financial() {
             isActual: true,
             scheduledFrom: apFromStr,
             sort: '-scheduled_on',
-          }).catch(error => {
-            console.error('[Financial] Erro ao carregar recebimentos:', error);
-            return [];
           }),
-          listFinancialDataQuality().catch(error => {
-            console.error('[Financial] Erro ao carregar qualidade financeira:', error);
-            return [];
-          }),
+          listFinancialDataQuality(),
         ]);
+        for (const result of [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, eventRegsRes, eventTypesRes, eventsRes]) {
+          if (result.error) throw result.error;
+        }
         const nextFinancialMovements = paymentsRes.map(toPaymentRecord);
         const nextQualityIssues = qualityRes;
 
@@ -597,10 +595,11 @@ export default function Financial() {
         const nextCenters = centersRes.data || [];
 
         // ── Estornos pendentes ──────────────────────────────────────
-        const { data: refundContracts } = await supabase
+        const { data: refundContracts, error: refundError } = await supabase
           .from('assessment_contracts')
           .select('id, contract_number, customer_id, refund_amount, refund_status, payment_method, cancellation_reason, updated_at')
           .eq('refund_status', 'pending');
+        if (refundError) throw refundError;
 
         let nextPendingRefunds = [];
         if (refundContracts?.length) {
@@ -626,9 +625,11 @@ export default function Financial() {
         setFinancialMovements(nextFinancialMovements);
         setPendingRefunds(nextPendingRefunds);
         setQualityIssues(nextQualityIssues);
+        setFinancialError('');
         writeFinancialPageCache(nextData);
       } catch (e) {
         console.error('Erro ao carregar Financeiro:', e);
+        setFinancialError(e.message || 'Consulta financeira indisponível');
       } finally {
         setLoading(false);
       }
@@ -904,6 +905,8 @@ export default function Financial() {
     </div>
   );
 
+  if (financialError) return <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900"><p>Não foi possível conferir os dados financeiros. {financialError}</p><Button variant="outline" className="mt-3 min-h-11" onClick={() => load(true)}>Tentar novamente</Button></div>;
+
   return (
     <div className="space-y-6">
 
@@ -912,7 +915,7 @@ export default function Financial() {
         <div>
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-amber-600" />
-            Vendas em aberto
+            Cobranças
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             Vendas que ainda precisam de cobrança ou pagamento · Loja · Pré-venda · Assessoria · Eventos
@@ -938,6 +941,15 @@ export default function Financial() {
         </div>
       </div>
 
+      <details className="rounded-lg border bg-white p-3 text-sm text-slate-600">
+        <summary className="min-h-11 cursor-pointer font-medium text-slate-800">Valores e data de corte · {formatDate(todayStr)}</summary>
+        <div className="space-y-2 pt-2">
+          <p>Fonte: vendas de estoque, pré-venda, assessoria e inscrições. Os cartões somam o valor das vendas elegíveis e abertas em reais; excluem pagamentos encerrados, cancelamentos e vendas descartadas conforme a regra financeira vigente.</p>
+          <p>Uma venda parcialmente paga pode ainda mostrar seu valor original no cartão. Confira o saldo atualizado no acompanhamento antes de cobrar. “Em atraso” usa vencimento anterior à data de corte; “A preparar” reúne vendas sem cobrança cadastrada.</p>
+          <p>Recebimentos e taxas pela data de crédito estão no <Link className="underline" to="/financeiro/fluxo-caixa">Fluxo de caixa</Link>. O histórico e a próxima ação de contato são compartilhados com <Link className="underline" to="/comunicacao">Comunicação</Link>.</p>
+        </div>
+      </details>
+
       <FinancialDataQuality issues={qualityIssues} />
       {contactError && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{contactError} A situação financeira permanece na lista; abra o acompanhamento para tentar novamente.</p>}
       {contactsReady === false && <p className="rounded-lg border bg-slate-50 p-3 text-sm text-slate-700">Acompanhamentos em preparação. Cobranças e pagamentos continuam disponíveis nas ações financeiras.</p>}
@@ -945,7 +957,7 @@ export default function Financial() {
       {/* ── KPI Cards ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
-          label="Total em aberto"
+          label="Valor das vendas abertas"
           value={formatCurrency(openSalesTotal)}
           sub={`${activeOrders.length} venda${activeOrders.length !== 1 ? 's' : ''} aguardando pagamento`}
           icon={Wallet}
@@ -968,7 +980,7 @@ export default function Financial() {
           iconBg="bg-amber-50" iconColor="text-amber-600" valueColor="text-amber-600"
         />
         <KpiCard
-          label="Sem cobrança gerada"
+          label="A preparar"
           value={formatCurrency(noChargeTotal)}
           sub={`${noCharge.length} venda${noCharge.length !== 1 ? 's' : ''} pra acionar`}
           icon={MessageCircle}

@@ -338,6 +338,9 @@ export default function CommunicationCaseDialog({
                 {activeCase.purpose === 'billing' && activeCase.balance != null && (
                   <p className="mt-3 font-semibold">Saldo pendente: {formatCurrency(Number(activeCase.balance) || 0)}</p>
                 )}
+                {activeCase.purpose === 'billing' && !activeCase.payment_link && activeCase.can_send_without_link && (
+                  <p className="mt-2 text-xs text-blue-800">Pagamento por PIX Copia e Cola disponível. Confira o código na mensagem antes de registrar o envio.</p>
+                )}
                 <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
                   <p><span className="text-muted-foreground">Último contato:</span> {activeCase.last_contact_at ? formatDateTime(activeCase.last_contact_at) : 'Não registrado'}</p>
                   <p><span className="text-muted-foreground">Próxima ação:</span> {activeCase.next_action_at ? formatDate(activeCase.next_action_at) : 'Revisão necessária'}</p>

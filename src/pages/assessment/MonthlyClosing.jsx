@@ -12,6 +12,7 @@ import { formatCurrency, formatDate, formatCompetence, todayLocalStr } from '@/l
 import { endedMonths, lastEndedMonth, monthHasEnded, monthOpensOn } from '@/lib/closing-months';
 import { functionErrorMessage } from '@/lib/function-error';
 import { toast } from 'sonner';
+import ContextTabs from '@/components/layout/ContextTabs';
 
 const STATUS = {
   pending_approval: { label: 'Em revisão', cls: 'bg-amber-100 text-amber-700' },
@@ -79,6 +80,7 @@ export default function MonthlyClosing() {
 
   return (
     <div className="space-y-5">
+      <ContextTabs group="payouts" current="/assessoria/fechamento" />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Fechamento Mensal</h2>

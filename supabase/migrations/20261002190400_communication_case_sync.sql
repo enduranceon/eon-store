@@ -119,7 +119,7 @@ GRANT EXECUTE ON FUNCTION public.preview_communication_case_sync(text,integer),
 CREATE OR REPLACE FUNCTION public.set_communication_cases_rollout(
   p_enabled boolean,p_actor_id uuid
 )
-RETURNS jsonb LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_preview jsonb;
   v_result jsonb;

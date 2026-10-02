@@ -150,6 +150,9 @@ DECLARE
   v_rule_trigger text;
   v_rule_kind text;
   v_rule_offset integer;
+  v_rendered text := '';
+  v_pay_link text := NULLIF(p_context->>'payment_link','');
+  v_pix_copy text := NULLIF(p_context->>'pix_copy','');
   v_welcome timestamptz;
   v_checkin timestamptz;
   v_policy public.communication_cadence_policies%ROWTYPE;
@@ -183,7 +186,7 @@ BEGIN
     ELSIF p_context->>'payment_status' IN ('paid', 'cancelled', 'refunded')
        OR (p_context->>'balance')::numeric <= 0 THEN
       v_block := 'source_resolved';
-    ELSIF p_context->>'source_status' IN ('cancelled', 'voided', 'finished') THEN
+    ELSIF p_context->>'source_status' IN ('cancelled', 'voided') THEN
       v_block := 'source_closed_review';
     END IF;
     IF v_last IS NULL AND p_context->>'payment_status'<>'partially_paid' THEN
@@ -331,11 +334,22 @@ BEGIN
   ORDER BY order_index,slug,id LIMIT 1;
   IF v_rule.id IS NULL THEN
     v_block := COALESCE(v_block, 'rule_unavailable');
+  ELSE
+    v_rendered:=public.render_communication_template(v_rule.message_template,
+      eon_private.communication_template_context(p_context));
+    -- Published models may omit a payment placeholder. Keep the proposed
+    -- billing message actionable when the source has a valid method.
+    IF p_case.purpose='billing' AND v_pay_link IS NOT NULL
+       AND strpos(v_rendered,v_pay_link)=0
+       AND (v_pix_copy IS NULL OR strpos(v_rendered,v_pix_copy)=0) THEN
+      v_rendered:=rtrim(v_rendered) || E'\n\nLink de pagamento:\n' || v_pay_link;
+    ELSIF p_case.purpose='billing' AND v_pay_link IS NULL
+       AND v_pix_copy IS NOT NULL AND strpos(v_rendered,v_pix_copy)=0 THEN
+      v_rendered:=rtrim(v_rendered) || E'\n\nPIX Copia e Cola:\n' || v_pix_copy;
+    END IF;
   END IF;
   RETURN jsonb_build_object(
-    'message', CASE WHEN v_rule.id IS NOT NULL THEN
-      public.render_communication_template(v_rule.message_template,
-        eon_private.communication_template_context(p_context)) ELSE '' END,
+    'message', v_rendered,
     'template_id', v_rule.id, 'rule_slug', COALESCE(v_rule.slug,v_slug),
     'rule_version', v_rule.template_version, 'action_code', v_action,
     'eligible_at', v_eligible, 'blocked_reason', v_block,

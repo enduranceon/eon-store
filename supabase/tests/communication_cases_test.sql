@@ -58,10 +58,16 @@ SELECT is(pg_temp.suggest(pg_temp.order_id(8))->>'rule_slug',
   'billing-charge-overdue-daily','D+8 resolves to daily model');
 SELECT is((pg_temp.suggest(pg_temp.order_id(8))->>'proposed_next_action_at')::date,
   current_date+1,'after D+7 next contact is tomorrow');
+SELECT is((eon_private.communication_case_suggestion(c,
+    eon_private.communication_source_context(c.source_type,c.source_id)
+      || jsonb_build_object('source_status','finished','due_date',current_date-90),
+    NULL,NULL)->>'blocked_reason'),
+  NULL,'finished term with an open debt stays eligible at D+90')
+FROM public.communication_cases c WHERE c.id=pg_temp.case_for(pg_temp.order_id(8));
 SELECT is(pg_temp.suggest(pg_temp.order_id(9))->>'blocked_reason',
   'balance_review','partial payment without trustworthy open balance needs review');
-SELECT ok((pg_temp.suggest(pg_temp.order_id(3))->>'message') LIKE '%Pessoa Exemplo 3%',
-  'production resolver renders current source person');
+SELECT ok((pg_temp.suggest(pg_temp.order_id(3))->>'message') LIKE '%Pessoa%',
+  'production resolver renders the current source first name');
 SELECT isnt(eon_private.communication_source_fingerprint(
     eon_private.communication_source_context('stock',pg_temp.order_id(3))),
   eon_private.communication_source_fingerprint(
@@ -91,11 +97,18 @@ SELECT is((eon_private.communication_case_suggestion(c,
 FROM public.communication_cases c WHERE c.id=pg_temp.case_for(pg_temp.order_id(3));
 SELECT is((eon_private.communication_case_suggestion(c,
     eon_private.communication_source_context(c.source_type,c.source_id),
-    (SELECT to_jsonb(r)||jsonb_build_object('message_template','OVERRIDE {nome}',
+    (SELECT to_jsonb(r)||jsonb_build_object('message_template','OVERRIDE {nome_completo}',
       'order_index',0) FROM public.communication_rules r
       WHERE slug='billing-charge-overdue'),NULL)->>'message'),
-  'OVERRIDE Pessoa Exemplo 3','simulation override uses the same production resolver')
+  'OVERRIDE Pessoa Exemplo 3'||E'\n\nLink de pagamento:\nhttps://example.test/pay/3',
+  'simulation override uses the same production resolver and payment method')
 FROM public.communication_cases c WHERE c.id=pg_temp.case_for(pg_temp.order_id(3));
+SELECT like((eon_private.communication_case_suggestion(c,
+    eon_private.communication_source_context(c.source_type,c.source_id)
+      || jsonb_build_object('payment_link',NULL,'pix_copy','000201PIXONLY'),
+    NULL,NULL)->>'message'),'%PIX Copia e Cola:%000201PIXONLY%',
+  'PIX-only billing suggestion includes the source payment method')
+FROM public.communication_cases c WHERE c.id=pg_temp.case_for(pg_temp.order_id(5));
 
 -- Rollout is reversible, but activating it requires a complete backfill.
 UPDATE public.communication_settings

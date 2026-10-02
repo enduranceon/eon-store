@@ -32,6 +32,7 @@ import {
   changeAssessmentContractPlan,
   createAssessmentContractRenewal,
   finishAssessmentContractLeave,
+  listCommunicationCases,
   removeAssessmentContractExternalCharge,
   setAssessmentContractAutoRenewal,
   startAssessmentContractLeave,
@@ -365,7 +366,8 @@ export default function ContractDetail() {
   const [externalSaleForm, setExternalSaleForm]   = useState({ link: '', due_date: '', payment_method: 'pix', invoice_number: '' });
   const [externalSaleSaving, setExternalSaleSaving] = useState(false);
   // WhatsApp — preview e envio
-  const [whatsappModal, setWhatsappModal] = useState(false);
+  const [communicationCaseId, setCommunicationCaseId] = useState(null);
+  const [communicationOpening, setCommunicationOpening] = useState(false);
   const [methodGroups, setMethodGroups]     = useState([]);
   // Edição de datas
   const [dateModal, setDateModal]     = useState(false);
@@ -1011,8 +1013,26 @@ export default function ContractDetail() {
     return () => clearTimeout(timer);
   }, [contract, loading, openManualPay, searchParams, setSearchParams]);
 
-  const openWhatsApp = () => {
-    if (student) setWhatsappModal(true);
+  const openWhatsApp = async () => {
+    if (!student?.whatsapp || communicationOpening) return;
+    setCommunicationOpening(true);
+    try {
+      const result = await listCommunicationCases({ state: 'open', source_type: 'contract', source_id: id, limit: 20 });
+      const target = `/comunicacao?source_type=contract&source_id=${encodeURIComponent(id)}`;
+      if (result.rollout?.enabled === false) {
+        navigate(target);
+      } else if (result.items?.length === 1 && !result.next_cursor) {
+        setCommunicationCaseId(result.items[0].id);
+      } else if (result.items?.length) {
+        navigate(target);
+      } else {
+        navigate(`${target}&state=resolved`);
+      }
+    } catch (error) {
+      toast.error(error?.message || 'Não foi possível localizar o acompanhamento deste contrato.');
+    } finally {
+      setCommunicationOpening(false);
+    }
   };
 
   const openExternalSaleModal = () => {
@@ -1141,7 +1161,7 @@ export default function ContractDetail() {
             </Badge>
           )}
           <Badge variant={ps.badge}>{ps.label}</Badge>
-          {student?.whatsapp && <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp}><MessageCircle className="w-4 h-4 mr-1" /> WhatsApp</Button>}
+          {student?.whatsapp && <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp} disabled={communicationOpening}><MessageCircle className="w-4 h-4 mr-1" /> {communicationOpening ? 'Carregando contato...' : 'Acompanhar contato'}</Button>}
         </div>
       </div>
 
@@ -2028,15 +2048,11 @@ export default function ContractDetail() {
       </Dialog>
 
       <CommunicationSendDialog
-        task={whatsappModal ? {
-          sourceType: 'contract', sourceId: id, sourceUi: 'contract_detail',
-          kind: ['contact_pending', 'waiting_response'].includes(contract.renewal_stage)
-            ? 'renewal_reminder'
-            : contract.payment_status === 'paid' ? 'onboarding_welcome' : 'charge_send',
-        } : null}
-        onClose={() => setWhatsappModal(false)}
+        caseId={communicationCaseId}
+        sourceUi="contract_detail"
+        onClose={() => setCommunicationCaseId(null)}
         onChanged={() => load()}
-        onSent={() => { setWhatsappModal(false); load(); }}
+        onSent={() => { setCommunicationCaseId(null); load(); }}
       />
 
       <ExternalChargeDialog
