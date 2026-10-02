@@ -15,6 +15,9 @@ export function hasNativePaymentInfo(task) {
 // histórico. Compartilhado entre a Central de Comunicação e o perfil do aluno
 // para manter uma única fonte de verdade do que é escrito.
 export async function registerCommunicationSend(task, options = {}) {
+  if (task?.kind === TASK_KIND.RENEWAL_CHARGE_PREPARE) {
+    throw new Error('Prepare a cobrança da renovação pelo quadro de Renovações');
+  }
   const message = String(options.message || '').trim();
   const trimmedLink = String(options.externalLink || '').trim();
   const dueDate = options.dueDate || '';

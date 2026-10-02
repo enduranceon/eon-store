@@ -135,11 +135,14 @@ Se ficou alguma duvida para comecar ou se precisar de qualquer ajuste, me chama 
     channel: 'whatsapp',
     active: true,
     order_index: 50,
-    message_template: `Ola, {nome}! Tudo bem?
-
-Seu acompanhamento na Endurance ON pelo plano *{plano}* esta chegando perto do vencimento em *{data_fim}*.
-
-Quero deixar sua continuidade organizada para voce nao interromper o acompanhamento. Posso te enviar as opcoes de renovacao?`,
+    message_template: `Oi, {nome}! Tudo bem?
+Sou o Pebinha, assistente virtual da EON. Estou aqui pra te lembrar que seu plano {situacao_vencimento}.
+Pra ajudar nosso time nesse processo, você gostaria de realizar a renovação?
+1. Sim, vou renovar.
+2. Ainda estou pensando.
+3. Gostaria de mudar de plano/treinador.
+4. Gostaria de falar com um atendente.
+5. Não vou renovar.`,
   },
 ];
 

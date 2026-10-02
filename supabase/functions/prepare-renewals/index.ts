@@ -7,10 +7,10 @@ import {
 } from "./policy.ts";
 
 // Processa a continuidade interna dos contratos sem acessar o Asaas.
-// Renovações manuais viram rascunho; automáticas são agendadas 5 dias antes.
+// Renovações manuais viram rascunho D-10; automáticas são agendadas D-5.
 //
 // Body (opcional):
-//   { horizon_days: 15 }  // janela em dias antes do end_date (default 15)
+//   { horizon_days: 10 }  // janela em dias antes do end_date (default 10)
 //   { auto_horizon_days: 5 }  // antecedência da renovação automática
 //   { contract_ids: ["uuid", ...] }  // força renovação só desses (ignora horizon)
 //

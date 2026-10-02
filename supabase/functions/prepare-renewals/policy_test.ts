@@ -9,7 +9,7 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-Deno.test("renewal scan defaults manual review to 15 days and automatic renewal to 5", () => {
+Deno.test("renewal scan defaults manual review to 10 days and automatic renewal to 5", () => {
   const result = normalizeRenewalRequest({});
 
   assert(

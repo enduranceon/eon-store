@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Calendar, CheckCircle2, Clock3, Link2, Loader2, MessageCircle,
+  AlertTriangle, Calendar, CheckCircle2, Clock3, ExternalLink, Link2, Loader2, MessageCircle,
   PhoneOff, RefreshCw, Search, SendHorizontal, Settings, WalletCards, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,7 +24,6 @@ import { hasNativePaymentInfo, registerCommunicationIgnore } from '@/lib/communi
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
 import { formatPhoneDisplay } from '@/lib/phone';
-import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 
 const TAB_INFO = [
   { value: 'pending', label: 'Pendentes' },
@@ -52,7 +51,7 @@ function historyPayload(event = {}) {
 
 function bucketFromTaskKind(kind, eventType = '') {
   if ([TASK_KIND.ONBOARDING_WELCOME, TASK_KIND.ONBOARDING_CHECKIN].includes(kind)) return TASK_BUCKET.ONBOARDING;
-  if (kind === TASK_KIND.RENEWAL_REMINDER) return TASK_BUCKET.RENEWAL;
+  if ([TASK_KIND.RENEWAL_REMINDER, TASK_KIND.RENEWAL_CHARGE_PREPARE].includes(kind)) return TASK_BUCKET.RENEWAL;
   if ([TASK_KIND.CHARGE_SEND, TASK_KIND.CHARGE_OVERDUE].includes(kind)) return TASK_BUCKET.CHARGES;
   if (eventType === 'renewal_message_sent') return TASK_BUCKET.RENEWAL;
   if (String(eventType).startsWith('onboarding')) return TASK_BUCKET.ONBOARDING;
@@ -77,6 +76,7 @@ function historyTitle(event = {}) {
   if (payload.task_kind === TASK_KIND.ONBOARDING_WELCOME) return 'Boas-vindas pós-pagamento';
   if (payload.task_kind === TASK_KIND.ONBOARDING_CHECKIN) return 'Check-in inicial';
   if (payload.task_kind === TASK_KIND.RENEWAL_REMINDER) return 'Renovação';
+  if (payload.task_kind === TASK_KIND.RENEWAL_CHARGE_PREPARE) return 'Preparar cobrança da renovação';
   if (event.event_type === 'payment_message_sent') return 'Cobrança';
   if (event.event_type === 'onboarding_welcome_sent') return 'Boas-vindas pós-pagamento';
   if (event.event_type === 'onboarding_checkin_sent') return 'Check-in inicial';
@@ -110,10 +110,12 @@ function taskMissingPaymentLink(task) {
 }
 
 function taskIsBlocked(task) {
+  if (task.actionHref) return false;
   return !taskHasWhatsapp(task) || taskMissingPaymentLink(task);
 }
 
 function taskIsReady(task) {
+  if (task.actionHref) return false;
   if (!taskHasWhatsapp(task)) return false;
   if (task.bucket === TASK_BUCKET.CHARGES) return taskHasPaymentLink(task);
   return true;
@@ -140,6 +142,7 @@ function taskAccentClass(task) {
 }
 
 function taskActionMeta(task) {
+  if (task.actionHref) return { label: 'Abrir quadro', icon: ExternalLink, variant: 'outline' };
   if (!taskHasWhatsapp(task)) return { label: 'Resolver contato', icon: PhoneOff, variant: 'outline' };
   if (taskMissingPaymentLink(task)) return { label: 'Resolver link', icon: Link2, variant: 'outline' };
   if (task.kind === TASK_KIND.CHARGE_OVERDUE) return { label: 'Reenviar', icon: SendHorizontal, variant: 'default' };
@@ -330,7 +333,7 @@ function normalizeSaleHistory(ev, presaleMap, stockMap, eventMap, customersMap) 
 
 function buildHistory(data) {
   const customers = mapById(data.customers || []);
-  const contracts = mapById(data.contracts || []);
+  const contracts = mapById([...(data.contracts || []), ...(data.renewalPipeline || [])]);
   const presale = mapById(data.presaleOrders || []);
   const stock = mapById(data.stockOrders || []);
   const events = mapById(data.eventRegistrations || []);
@@ -429,14 +432,24 @@ async function fetchCommunicationData() {
   for (const [name, res] of Object.entries(responses)) {
     if (res.error) throw new Error(`${name}: ${res.error.message}`);
   }
-  await applyAssessmentContractTransitions(contracts.data || []);
-
+  const { data: renewalPipeline, error: renewalPipelineError } = await supabase
+    .from('assessment_contracts')
+    .select('id, contract_number, customer_id, parent_contract_id, renewal_stage, renewal_follow_up_at, created_at')
+    .not('parent_contract_id', 'is', null)
+    .in('renewal_stage', ['contact_pending', 'waiting_response', 'charge_pending', 'waiting_payment'])
+    .order('created_at', { ascending: false });
+  // A prévia do frontend pode abrir antes da migration de banco. Mantemos a
+  // régua antiga legível nesse intervalo, sem ocultar outros erros de leitura.
+  if (renewalPipelineError && !['42703', 'PGRST204'].includes(renewalPipelineError.code)) {
+    throw new Error(`renewalPipeline: ${renewalPipelineError.message}`);
+  }
   return {
     ...Object.fromEntries(
       Object.entries(responses).map(([name, res]) => [name, res.data || []])
     ),
     communicationConfig,
     communicationRules: communicationConfig.rules,
+    renewalPipeline: renewalPipeline || [],
     communityLink: communicationConfig.communityLink,
   };
 }
@@ -470,7 +483,7 @@ function TaskCard({ task, onOpen, onDiscard, discarding }) {
                 Sem link
               </Badge>
             )}
-            {!hasWhatsapp && (
+            {!hasWhatsapp && !task.actionHref && (
               <Badge variant="warning" className="gap-1">
                 <PhoneOff className="w-3 h-3" />
                 Sem WhatsApp
@@ -478,6 +491,7 @@ function TaskCard({ task, onOpen, onDiscard, discarding }) {
             )}
             {nativePaymentInfo && <Badge variant="info">Asaas</Badge>}
             {!nativePaymentInfo && hasExternalLink && <Badge variant="outline">Link externo</Badge>}
+            {task.actionHref && <Badge variant="info">No quadro</Badge>}
             {isReady && <Badge variant="success">Pronta</Badge>}
           </div>
 
@@ -520,18 +534,21 @@ function TaskCard({ task, onOpen, onDiscard, discarding }) {
             )}
           </div>
 
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-            <Button
-              size="sm"
-              variant={action.variant}
-              onClick={() => onOpen(task)}
-              disabled={discarding}
-              className="w-full gap-1.5"
-            >
-              <ActionIcon className="w-4 h-4" />
-              {action.label}
+          <div className={task.actionHref ? 'mt-3' : 'mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2'}>
+            <Button size="sm" variant={action.variant} asChild={Boolean(task.actionHref)}
+              onClick={task.actionHref ? undefined : () => onOpen(task)}
+              disabled={discarding} className="w-full gap-1.5">
+              {task.actionHref ? (
+                <Link to={task.actionHref} className="flex items-center gap-1.5"
+                  aria-disabled={discarding}
+                  onClick={event => { if (discarding) event.preventDefault(); }}>
+                  <ActionIcon className="w-4 h-4" />{action.label}
+                </Link>
+              ) : (
+                <><ActionIcon className="w-4 h-4" />{action.label}</>
+              )}
             </Button>
-            <Button
+            {!task.actionHref && <Button
               size="sm"
               variant="outline"
               onClick={() => onDiscard(task)}
@@ -540,7 +557,7 @@ function TaskCard({ task, onOpen, onDiscard, discarding }) {
             >
               {discarding ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
               Descartar
-            </Button>
+            </Button>}
           </div>
         </div>
       </div>

@@ -26,6 +26,7 @@ import { handleFinancialRequest } from "./financial.ts";
 import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
+import { handleRenewalStageRequest } from "./renewal-stage.ts";
 import { handleRefundsRequest } from "./refunds.ts";
 import { handleReturnsRequest } from "./returns.ts";
 
@@ -251,6 +252,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (billingResponse) return billingResponse;
+
+  const renewalStageResponse = await handleRenewalStageRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (renewalStageResponse) return renewalStageResponse;
 
   const renewalResponse = await handleRenewalRequest(
     req,
