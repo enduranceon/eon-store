@@ -34,7 +34,7 @@ function isValidWhatsappNumber(phone) {
 
 // O componente é remontado por `key={task.id}` no pai, então o estado é
 // inicializado de forma lazy a partir da task — sem efeito de sincronização.
-export default function CommunicationSendDialog({ task, communityLink: initialCommunityLink = '', onClose, onSent }) {
+export default function CommunicationSendDialog({ task, communityLink: initialCommunityLink = '', onClose, onSent, showQueueActions = true }) {
   const initialLink = task?.externalPaymentLink || '';
   const initialDue = task?.dueDate || defaultPaymentDueDate();
   const initialCommunity = initialCommunityLink || DEFAULT_COMMUNITY_LINK;
@@ -261,6 +261,7 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
                 </Button>
               </div>
 
+              {showQueueActions && (
               <div className="rounded-lg border bg-gray-50 p-3 space-y-3">
                 <div>
                   <p className="text-sm font-semibold text-gray-900">Organizar fila</p>
@@ -298,6 +299,7 @@ export default function CommunicationSendDialog({ task, communityLink: initialCo
                   </Button>
                 </div>
               </div>
+              )}
 
               <div>
                 <Button onClick={markAsSent} disabled={saving} className="w-full">

@@ -534,6 +534,38 @@ function buildRenewalTask(contractSale, events, todayStr, rule) {
   }));
 }
 
+// Mensagem de intenção (ou nova mensagem) de uma renovação aberta no quadro,
+// no mesmo formato da Central: o envio registra a mensagem e move o card.
+export function buildRenewalMessageTask(contract, data = {}, options = {}) {
+  const todayStr = options.todayStr || todayLocalStr();
+  const rules = activeRulesByKind(options.rules || data.communicationRules || DEFAULT_COMMUNICATION_RULES);
+  const rule = (rules[TASK_KIND.RENEWAL_REMINDER] || [])[0] || null;
+  const maps = {
+    customers: mapById(data.customers || []),
+    plans: mapById(data.plans || []),
+    modalities: mapById(data.modalities || []),
+    coaches: mapById(data.coaches || []),
+    events: new Map(),
+    eventTypes: new Map(),
+  };
+  const sale = normalizeContract(contract, maps);
+  const followUp = sale.renewalStage === RENEWAL_STAGE.WAITING_RESPONSE;
+  return baseTask(TASK_KIND.RENEWAL_REMINDER, TASK_BUCKET.RENEWAL, sale, withRule(rule, {
+    id: `renewal-board:${followUp ? 'follow-up' : 'intent'}:contract:${sale.sourceId}`,
+    title: followUp ? 'Nova mensagem de renovação' : (rule?.name || 'Intenção de renovação'),
+    statusLabel: renewalDueLabel(daysUntil(sale.startDate, todayStr)),
+    scheduledDate: sale.startDate,
+    sortDate: sale.startDate,
+    priority: 50,
+    planLabel: sale.planLabel,
+    modalityName: sale.modalityName,
+    coachName: sale.coachName,
+    endDate: sale.startDate,
+    renewalStage: sale.renewalStage,
+    renewalFollowUp: followUp,
+  }));
+}
+
 export function buildCommunicationTasks(data, options = {}) {
   const todayStr = options.todayStr || todayLocalStr();
   const rulesByKind = activeRulesByKind(options.rules || data.communicationRules || DEFAULT_COMMUNICATION_RULES);
