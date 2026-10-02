@@ -21,6 +21,7 @@ DECLARE
   v_result jsonb;
   v_next date;
   v_hold text := 'none';
+  v_case_block text;
   v_payload jsonb;
   v_event_type text;
   v_source_ui text := NULLIF(p_request->>'source_ui','');
@@ -33,7 +34,8 @@ BEGIN
      OR p_request IS NULL OR jsonb_typeof(p_request)<>'object'
      OR pg_column_size(p_request)>8192
      OR v_action IS NULL
-     OR v_action NOT IN ('message_sent','response_recorded','return_scheduled','review_requested','resolve_case')
+     OR v_action NOT IN ('message_sent','response_recorded','return_scheduled',
+       'review_requested','review_completed','resolve_case')
      OR v_source_ui IS NULL OR length(v_source_ui)>80
      OR p_request->>'expected_version' IS NULL
      OR (p_request->>'expected_version') !~ '^[0-9]{1,18}$'
@@ -83,9 +85,10 @@ BEGIN
      IS DISTINCT FROM p_request->>'expected_source_fingerprint' THEN
     RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='A origem mudou. Atualize a página.';
   END IF;
-  IF v_case.purpose='billing' AND v_action<>'resolve_case'
+  IF v_case.purpose='billing' AND v_action='message_sent'
      AND (v_context->>'payment_status' IN ('paid','cancelled','refunded')
-       OR COALESCE(NULLIF(v_context->>'balance','')::numeric,0)<=0) THEN
+       OR NULLIF(v_context->>'balance','') IS NULL
+       OR (v_context->>'balance')::numeric<=0) THEN
     RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='Pagamento ou saldo mudou. Atualize a página.';
   END IF;
   v_suggestion := eon_private.communication_case_suggestion(v_case,v_context);
@@ -102,7 +105,8 @@ BEGIN
       RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='Confirme o envio e a versão do modelo';
     END IF;
     IF v_suggestion->>'blocked_reason' IS NOT NULL
-       OR (v_suggestion->>'eligible_at')::date>v_today THEN
+       OR (v_suggestion->>'eligible_at')::date>v_today
+       OR v_case.next_action_at>v_today THEN
       RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='Este contato não está elegível. Atualize a página.';
     END IF;
     IF EXISTS(SELECT 1 FROM public.communication_case_events
@@ -148,7 +152,8 @@ BEGIN
     v_payload := v_payload || jsonb_build_object('action_code',v_suggestion->>'action_code',
       'occurrence',v_suggestion->>'action_code');
     v_next := COALESCE(v_date,(v_suggestion->>'proposed_next_action_at')::date);
-    IF v_date IS NOT NULL THEN v_hold:='explicit_schedule'; END IF;
+    v_hold := CASE WHEN v_date IS NOT NULL THEN 'explicit_schedule'
+      ELSE 'contact_wait' END;
     IF v_case.purpose='onboarding' AND v_suggestion->>'action_code'='onboarding_checkin' THEN
       v_next := NULL;
     END IF;
@@ -172,9 +177,11 @@ BEGIN
     v_event_type:='response_recorded';
     v_payload := v_payload || jsonb_build_object('response_code',v_code);
     v_next := v_date;
-    v_hold := CASE WHEN v_date IS NOT NULL THEN 'contact_wait' ELSE 'none' END;
+    v_hold := CASE WHEN v_date IS NOT NULL THEN 'explicit_schedule' ELSE 'contact_wait' END;
     IF v_code IN ('paid_claimed','dispute','needs_agent','change_plan_or_coach') THEN
       v_hold:='explicit_schedule'; v_next:=COALESCE(v_date,v_today);
+      v_case_block:=CASE v_code WHEN 'paid_claimed' THEN 'payment_review'
+        WHEN 'dispute' THEN 'dispute' ELSE 'needs_agent' END;
     END IF;
   ELSIF v_action='return_scheduled' THEN
     IF v_date IS NULL THEN
@@ -192,6 +199,15 @@ BEGIN
     END IF;
     v_event_type:='review_requested'; v_next:=COALESCE(v_date,v_today);
     v_hold:='explicit_schedule';
+    v_case_block:='review_requested';
+  ELSIF v_action='review_completed' THEN
+    IF v_note IS NULL OR v_case.blocked_reason NOT IN
+      ('review_requested','payment_review','dispute','needs_agent',
+       'renewal_review','source_reopened_review') THEN
+      RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='Revisão e observação obrigatórias';
+    END IF;
+    v_event_type:='review_completed';v_next:=v_today;v_hold:='none';
+    v_case_block:=NULL;
   ELSE
     IF v_context->>'payment_status' NOT IN ('paid','cancelled','refunded')
        AND NOT (v_case.purpose='renewal' AND
@@ -214,7 +230,7 @@ BEGIN
       version=version+1,updated_at=now() WHERE id=p_case_id;
   ELSIF v_case.status='open' THEN
     UPDATE public.communication_cases SET hold_kind=v_hold,next_action_at=v_next,
-      blocked_reason=CASE WHEN v_event_type='review_requested' THEN 'review_requested' ELSE NULL END,
+      blocked_reason=v_case_block,
       last_contact_at=CASE WHEN v_action IN ('message_sent','response_recorded') THEN now()
         ELSE last_contact_at END,
       version=version+1,updated_at=now() WHERE id=p_case_id;

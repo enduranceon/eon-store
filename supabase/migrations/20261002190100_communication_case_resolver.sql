@@ -32,11 +32,21 @@ RETURNS text LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path = '' AS $$
     'end_date', p_context->'end_date',
     'contact_phone', p_context->'contact_phone',
     'payment_link', p_context->'payment_link',
+    'pix_copy', p_context->'pix_copy',
+    'person_name', p_context->'person_name',
+    'plan_name', p_context->'plan_name',
+    'reference', p_context->'reference',
+    'onboarding_welcome_sent_at', p_context->'onboarding_welcome_sent_at',
+    'onboarding_checkin_sent_at', p_context->'onboarding_checkin_sent_at',
     'charge_id', p_context->'charge_id',
     'external_invoice_number', p_context->'external_invoice_number',
     'source_updated_at', p_context->'source_updated_at',
     'payment_message_sent_at', p_context->'payment_message_sent_at',
     'renewal_follow_up_at', p_context->'renewal_follow_up_at'
+    ,'renewal_last_contact_at', p_context->'renewal_last_contact_at'
+    ,'renewal_response_code', p_context->'renewal_response_code'
+    ,'auto_renewal', p_context->'auto_renewal'
+    ,'period_months', p_context->'period_months'
   )::text);
 $$;
 
@@ -81,7 +91,8 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION eon_private.communication_case_suggestion(
-  p_case public.communication_cases, p_context jsonb
+  p_case public.communication_cases, p_context jsonb,
+  p_rule_override jsonb DEFAULT NULL, p_policy_override jsonb DEFAULT NULL
 )
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
@@ -95,10 +106,18 @@ DECLARE
   v_block text;
   v_last date;
   v_rule public.communication_rules%ROWTYPE;
+  v_rule_journey text;
+  v_rule_trigger text;
+  v_rule_kind text;
+  v_rule_offset integer;
   v_welcome timestamptz;
   v_checkin timestamptz;
   v_policy public.communication_cadence_policies%ROWTYPE;
 BEGIN
+  IF (p_rule_override IS NOT NULL AND jsonb_typeof(p_rule_override)<>'object')
+     OR (p_policy_override IS NOT NULL AND jsonb_typeof(p_policy_override)<>'object') THEN
+    RAISE EXCEPTION USING ERRCODE='22023',MESSAGE='Prévia de modelo inválida';
+  END IF;
   IF p_case.status = 'resolved' THEN
     v_block := 'case_resolved';
   END IF;
@@ -111,17 +130,23 @@ BEGIN
   IF p_case.purpose = 'billing' THEN
     SELECT * INTO v_policy FROM public.communication_cadence_policies
       WHERE slug = 'billing_overdue';
-    SELECT max(contact_date) INTO v_last FROM public.communication_case_events
+    IF p_policy_override IS NOT NULL THEN
+      v_policy:=jsonb_populate_record(v_policy,p_policy_override);
+    END IF;
+    SELECT GREATEST(max(contact_date),
+      (NULLIF(p_context->>'payment_message_sent_at','')::timestamptz
+        AT TIME ZONE 'America/Sao_Paulo')::date)
+      INTO v_last FROM public.communication_case_events
       WHERE case_id = p_case.id AND event_type = 'message_sent';
-    IF p_context->>'payment_status' IN ('paid', 'cancelled', 'refunded')
-       OR COALESCE(NULLIF(p_context->>'balance', '')::numeric, 0) <= 0 THEN
-      v_block := 'source_resolved';
-    ELSIF NULLIF(p_context->>'balance', '') IS NULL THEN
+    IF NULLIF(p_context->>'balance', '') IS NULL THEN
       v_block := 'balance_review';
+    ELSIF p_context->>'payment_status' IN ('paid', 'cancelled', 'refunded')
+       OR (p_context->>'balance')::numeric <= 0 THEN
+      v_block := 'source_resolved';
     ELSIF p_context->>'source_status' IN ('cancelled', 'voided', 'finished') THEN
       v_block := 'source_closed_review';
     END IF;
-    IF p_context->>'payment_message_sent_at' IS NULL THEN
+    IF v_last IS NULL AND p_context->>'payment_status'<>'partially_paid' THEN
       v_slug := 'billing-charge-send'; v_action := 'initial_charge';
       v_next := CASE WHEN v_due IS NULL THEN NULL ELSE v_due + 3 END;
     ELSIF v_due IS NULL THEN
@@ -186,6 +211,8 @@ BEGIN
            max(created_at) FILTER (WHERE event_type = 'onboarding_checkin_sent')
       INTO v_welcome, v_checkin FROM public.assessment_contract_event
       WHERE contract_id = p_case.source_id;
+    v_welcome:=COALESCE(NULLIF(p_context->>'onboarding_welcome_sent_at','')::timestamptz,v_welcome);
+    v_checkin:=COALESCE(NULLIF(p_context->>'onboarding_checkin_sent_at','')::timestamptz,v_checkin);
     IF v_checkin IS NOT NULL THEN
       v_slug := 'onboarding-checkin-5d'; v_action := 'completed';
       v_block := 'already_completed';
@@ -201,8 +228,17 @@ BEGIN
     END IF;
   END IF;
 
-  IF NULLIF(p_context->>'contact_phone', '') IS NULL THEN
+  IF length(regexp_replace(COALESCE(p_context->>'contact_phone',''),'[^0-9]','','g'))
+       NOT BETWEEN 10 AND 13 THEN
     v_block := COALESCE(v_block, 'missing_contact_phone');
+  END IF;
+  IF p_case.purpose='billing' AND NULLIF(p_context->>'payment_link','') IS NOT NULL
+     AND (length(p_context->>'payment_link')>2048 OR
+       p_context->>'payment_link' !~* '^https?://[^[:space:][:cntrl:]]+$') THEN
+    v_block := COALESCE(v_block,'invalid_payment_link');
+  END IF;
+  IF p_case.blocked_reason IS NOT NULL THEN
+    v_block := p_case.blocked_reason;
   END IF;
   IF p_case.hold_kind = 'explicit_schedule'
      AND p_case.next_action_at IS NOT NULL AND p_case.next_action_at > v_today THEN
@@ -212,15 +248,47 @@ BEGIN
      AND p_case.next_action_at IS NOT NULL AND p_case.next_action_at > v_today THEN
     v_eligible := GREATEST(v_eligible, p_case.next_action_at);
   END IF;
-  SELECT * INTO v_rule FROM public.communication_rules WHERE slug = v_slug;
-  IF v_rule.id IS NULL OR NOT v_rule.active THEN
+  IF p_case.purpose='billing' THEN
+    v_rule_journey:='billing';
+    v_rule_trigger:=CASE WHEN v_action='initial_charge' THEN 'charge_created'
+      ELSE 'charge_due_date' END;
+    v_rule_kind:=CASE WHEN v_action IN ('initial_charge','pre_due') THEN 'charge_send'
+      ELSE 'charge_overdue' END;
+    v_rule_offset:=CASE v_action
+      WHEN 'initial_charge' THEN 0 WHEN 'pre_due' THEN v_policy.pre_due_offset
+      WHEN 'overdue_d3' THEN 3 WHEN 'overdue_d5' THEN 5
+      WHEN 'overdue_d7' THEN 7 ELSE 8 END;
+  ELSIF p_case.purpose='renewal' THEN
+    v_rule_journey:='renewal';v_rule_trigger:='contract_end_date';
+    v_rule_kind:='renewal_reminder';v_rule_offset:=-10;
+  ELSE
+    v_rule_journey:='onboarding';
+    v_rule_trigger:=CASE WHEN v_action='onboarding_welcome'
+      THEN 'payment_confirmed' ELSE 'onboarding_welcome_sent' END;
+    v_rule_kind:=CASE WHEN v_action='onboarding_welcome'
+      THEN 'onboarding_welcome' ELSE 'onboarding_checkin' END;
+    v_rule_offset:=CASE WHEN v_action='onboarding_welcome' THEN 0 ELSE 5 END;
+  END IF;
+  SELECT * INTO v_rule FROM (
+    SELECT r.* FROM public.communication_rules r
+    WHERE p_rule_override IS NULL OR r.id IS DISTINCT FROM
+      NULLIF(p_rule_override->>'id','')::uuid
+    UNION ALL
+    SELECT x.* FROM jsonb_populate_record(
+      NULL::public.communication_rules,p_rule_override) x
+    WHERE p_rule_override IS NOT NULL
+  ) candidates
+  WHERE journey=v_rule_journey AND trigger_event=v_rule_trigger
+    AND task_kind=v_rule_kind AND days_offset=v_rule_offset AND active=true
+  ORDER BY order_index,slug,id LIMIT 1;
+  IF v_rule.id IS NULL THEN
     v_block := COALESCE(v_block, 'rule_unavailable');
   END IF;
   RETURN jsonb_build_object(
     'message', CASE WHEN v_rule.id IS NOT NULL THEN
       public.render_communication_template(v_rule.message_template,
         eon_private.communication_template_context(p_context)) ELSE '' END,
-    'template_id', v_rule.id, 'rule_slug', v_slug,
+    'template_id', v_rule.id, 'rule_slug', COALESCE(v_rule.slug,v_slug),
     'rule_version', v_rule.template_version, 'action_code', v_action,
     'eligible_at', v_eligible, 'blocked_reason', v_block,
     'proposed_next_action_at', v_next,
@@ -244,7 +312,7 @@ BEGIN
   v_stage := CASE
     WHEN p_case.status = 'resolved' THEN 'resolved'
     WHEN p_case.hold_kind = 'explicit_schedule' AND p_case.next_action_at > v_today THEN 'scheduled'
-    WHEN p_case.hold_kind = 'contact_wait' AND p_case.next_action_at > v_today THEN 'following_up'
+    WHEN p_case.hold_kind = 'contact_wait' THEN 'following_up'
     WHEN v_next > v_today THEN 'scheduled'
     ELSE 'to_do' END;
   RETURN jsonb_build_object(
@@ -260,7 +328,8 @@ BEGIN
     'person_id', v_context->>'person_id',
     'reference', v_context->>'reference', 'balance', v_context->'balance',
     'payment_link', v_context->>'payment_link',
-    'can_send_without_link', p_case.purpose <> 'billing',
+    'can_send_without_link', p_case.purpose <> 'billing'
+      OR NULLIF(v_context->>'pix_copy','') IS NOT NULL,
     'source_href', v_context->>'source_href',
     'source_fingerprint', v_suggestion->>'source_fingerprint',
     'suggested_message', v_suggestion->>'message',
@@ -271,11 +340,11 @@ $$;
 
 REVOKE ALL ON FUNCTION eon_private.communication_source_fingerprint(jsonb),
   eon_private.communication_template_context(jsonb),
-  eon_private.communication_case_suggestion(public.communication_cases,jsonb),
+  eon_private.communication_case_suggestion(public.communication_cases,jsonb,jsonb,jsonb),
   eon_private.communication_case_projection(public.communication_cases)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION eon_private.communication_source_fingerprint(jsonb),
   eon_private.communication_template_context(jsonb),
-  eon_private.communication_case_suggestion(public.communication_cases,jsonb),
+  eon_private.communication_case_suggestion(public.communication_cases,jsonb,jsonb,jsonb),
   eon_private.communication_case_projection(public.communication_cases)
   TO service_role;

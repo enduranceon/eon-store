@@ -37,11 +37,14 @@ BEGIN
       OR (p.purpose='onboarding' AND c.source_type='contract'
         AND c.context->>'parent_contract_id' IS NULL
         AND c.context->>'payment_status'='paid'
-        AND c.context->>'source_status' IN ('active','scheduled','on_leave'))
+        AND c.context->>'source_status' IN ('active','scheduled','on_leave')
+        AND NOT EXISTS(SELECT 1 FROM public.assessment_contract_event e
+          WHERE e.contract_id=c.source_id AND e.event_type='onboarding_checkin_sent'))
   ), missing AS (
     SELECT a.* FROM candidates a LEFT JOIN public.communication_cases x
       ON x.source_type=a.source_type AND x.source_id=a.source_id
       AND x.purpose=a.purpose AND x.obligation_key=a.obligation_key
+      AND x.status='open'
     WHERE x.id IS NULL
   )
   SELECT jsonb_build_object(

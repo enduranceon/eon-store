@@ -145,6 +145,26 @@ VALUES ('billing_overdue', ARRAY[3, 5, 7], 7, 1, false, -1, ARRAY[3, 6]);
 INSERT INTO public.communication_settings(key,value)
 VALUES('cases_rollout',jsonb_build_object('enabled',false,'enabled_at',NULL,'enabled_by',NULL))
 ON CONFLICT (key) DO NOTHING;
+REVOKE INSERT,UPDATE,DELETE ON public.communication_settings FROM authenticated,anon;
+
+CREATE OR REPLACE FUNCTION eon_private.protect_communication_cases_rollout()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $$
+BEGIN
+  IF (CASE WHEN TG_OP='INSERT' THEN NEW.key='cases_rollout'
+       WHEN TG_OP='DELETE' THEN OLD.key='cases_rollout'
+       ELSE OLD.key='cases_rollout' OR NEW.key='cases_rollout' END)
+     AND current_user NOT IN ('postgres','service_role') THEN
+    RAISE EXCEPTION USING ERRCODE='42501',MESSAGE='Ativação dos casos exige operação administrativa';
+  END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER protect_communication_cases_rollout
+  BEFORE INSERT OR UPDATE OR DELETE ON public.communication_settings
+  FOR EACH ROW EXECUTE FUNCTION eon_private.protect_communication_cases_rollout();
+REVOKE ALL ON FUNCTION eon_private.protect_communication_cases_rollout()
+  FROM PUBLIC,anon,authenticated;
 
 CREATE OR REPLACE FUNCTION eon_private.communication_cases_rollout_enabled()
 RETURNS boolean LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
@@ -266,6 +286,8 @@ BEGIN
       'renewal_follow_up_at', c.renewal_follow_up_at,
       'renewal_last_contact_at', c.renewal_last_contact_at,
       'renewal_response_code', c.renewal_response_code,
+      'onboarding_welcome_sent_at', onboarding.welcome_at,
+      'onboarding_checkin_sent_at', onboarding.checkin_at,
       'period_months', eon_private.assessment_contract_period_months(c.plan_id, c.plan_snapshot),
       'plan_name', COALESCE(NULLIF(c.plan_snapshot->>'name', ''), plan.name),
       'end_date', c.end_date,
@@ -283,6 +305,11 @@ BEGIN
     FROM public.assessment_contracts c
     LEFT JOIN public.presale_customers customer ON customer.id = c.customer_id
     LEFT JOIN public.assessment_plans plan ON plan.id = c.plan_id
+    LEFT JOIN LATERAL (
+      SELECT max(e.created_at) FILTER(WHERE e.event_type='onboarding_welcome_sent') AS welcome_at,
+        max(e.created_at) FILTER(WHERE e.event_type='onboarding_checkin_sent') AS checkin_at
+      FROM public.assessment_contract_event e WHERE e.contract_id=c.id
+    ) onboarding ON true
     WHERE c.id = p_source_id;
   ELSIF p_source_type = 'event' THEN
     SELECT jsonb_build_object(
@@ -341,6 +368,8 @@ DECLARE
   v_eligible boolean := false;
   v_today date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
   v_due date;
+  v_prior_reason text;
+  v_prior_successor uuid;
 BEGIN
   v_context := eon_private.communication_source_context(p_source_type, p_source_id);
   IF v_context IS NULL THEN RETURN NULL; END IF;
@@ -361,7 +390,9 @@ BEGIN
     v_eligible := p_source_type = 'contract'
       AND v_context->>'parent_contract_id' IS NULL
       AND v_context->>'payment_status' = 'paid'
-      AND v_context->>'source_status' IN ('active', 'scheduled', 'on_leave');
+      AND v_context->>'source_status' IN ('active', 'scheduled', 'on_leave')
+      AND NOT EXISTS (SELECT 1 FROM public.assessment_contract_event
+        WHERE contract_id=p_source_id AND event_type='onboarding_checkin_sent');
     v_key := 'welcome';
   ELSE
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Finalidade inválida';
@@ -417,19 +448,24 @@ BEGIN
     IF v_case_id IS NULL THEN
       RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'Falha ao localizar o acompanhamento';
     END IF;
+    SELECT resolution_reason,superseded_by_case_id
+      INTO v_prior_reason,v_prior_successor
+    FROM public.communication_cases WHERE id=v_case_id;
     UPDATE public.communication_cases
     SET status = 'open', resolved_at = NULL, resolution_reason = NULL,
+        superseded_by_case_id = NULL,
         hold_kind = 'none', next_action_at = v_today,
         blocked_reason = 'source_reopened_review',
         version = version + 1, updated_at = now()
     WHERE id = v_case_id AND status = 'resolved'
-      AND superseded_by_case_id IS NULL
-      AND resolution_reason = 'source_resolved';
+      AND resolution_reason IN ('source_resolved','source_superseded','operator_verified');
     IF FOUND THEN
       INSERT INTO public.communication_case_events (case_id, event_type, payload)
       VALUES (v_case_id, 'case_reopened', jsonb_build_object(
         'payment_status', v_context->>'payment_status',
-        'renewal_stage', v_context->>'renewal_stage'
+        'renewal_stage', v_context->>'renewal_stage',
+        'previous_resolution_reason', v_prior_reason,
+        'previous_successor_case_id', v_prior_successor
       ));
     END IF;
   END IF;
@@ -514,6 +550,21 @@ CREATE TRIGGER communication_event_source
   AFTER INSERT OR UPDATE OF payment_status, asaas_charge_id,
     external_invoice_number ON public.event_registrations
   FOR EACH ROW EXECUTE FUNCTION eon_private.sync_communication_case_after_source();
+
+CREATE OR REPLACE FUNCTION eon_private.sync_communication_case_after_onboarding_event()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+BEGIN
+  IF NEW.event_type IN ('onboarding_welcome_sent','onboarding_checkin_sent') THEN
+    PERFORM eon_private.ensure_communication_case('contract',NEW.contract_id,'onboarding');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER communication_onboarding_event
+  AFTER INSERT ON public.assessment_contract_event
+  FOR EACH ROW EXECUTE FUNCTION eon_private.sync_communication_case_after_onboarding_event();
+REVOKE ALL ON FUNCTION eon_private.sync_communication_case_after_onboarding_event()
+  FROM PUBLIC,anon,authenticated;
 
 REVOKE ALL ON FUNCTION eon_private.ensure_communication_case(text,uuid,text),
   eon_private.sync_communication_case_after_source()

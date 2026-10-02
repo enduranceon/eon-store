@@ -22,7 +22,7 @@ SELECT throws_ok($$SELECT public.communication_model_command('publish','22222222
 INSERT INTO model_test_state VALUES ('simulation',public.communication_model_command('simulate',
   '22222222-2222-4222-8222-222222222222',jsonb_build_object('draft_id',(SELECT value->>'id' FROM model_test_state WHERE key='draft'))));
 SELECT is((SELECT (value->>'can_publish')::boolean FROM model_test_state WHERE key='simulation'),true,'simulação válida libera publicação explícita');
-SELECT is((SELECT jsonb_array_length(value->'scenarios') FROM model_test_state WHERE key='simulation'),3,'simulação contém saldo integral, parcial e pago');
+SELECT is((SELECT jsonb_array_length(value->'scenarios') FROM model_test_state WHERE key='simulation'),6,'simulação cobre saldo, pagamento, combinado e bloqueios');
 SELECT ok((SELECT value->'scenarios'->1->>'message' FROM model_test_state WHERE key='simulation') LIKE '%120%', 'prévia parcial usa saldo restante');
 SELECT ok((SELECT value->'scenarios'->1->>'message' FROM model_test_state WHERE key='simulation') NOT LIKE '%{%', 'renderer compartilhado resolveu tokens da prévia');
 

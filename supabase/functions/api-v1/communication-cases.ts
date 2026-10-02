@@ -12,6 +12,7 @@ const ACTION_FIELDS: Record<string, string[]> = {
   response_recorded: ["response_code", "note", "follow_up_at"],
   return_scheduled: ["next_action_at", "note"],
   review_requested: ["reason", "note", "next_action_at"],
+  review_completed: ["note"],
   resolve_case: ["reason"],
 };
 const COMMON_FIELDS = ["action", "expected_version", "expected_source_fingerprint", "source_ui"];
@@ -171,6 +172,8 @@ export async function handleCommunicationCaseRequest(
           !Number.isInteger(body.expected_rule_version) || Number(body.expected_rule_version) < 1)) ||
       (body.action === "response_recorded" &&
         (typeof body.response_code !== "string" || body.response_code.length > 50)) ||
+      (body.action === "review_completed" &&
+        (typeof body.note !== "string" || !body.note.trim() || body.note.length > 1000)) ||
       (body.action === "return_scheduled" && !isDate(body.next_action_at))) return invalid("Dados da ação inválidos");
     const { data, error } = await client.rpc("apply_communication_case_action", {
       p_case_id: actions[1], p_request: body, p_idempotency_key: idempotencyKey,
