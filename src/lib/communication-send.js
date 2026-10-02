@@ -2,6 +2,7 @@ import {
   markAssessmentContractPaymentMessageSent,
   markOrderPaymentMessageSent,
   recordCommunicationEvent,
+  transitionAssessmentRenewalStage,
 } from '@/api/client';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { TASK_BUCKET, TASK_KIND, taskEventType } from '@/lib/communication-tasks';
@@ -38,6 +39,17 @@ export async function registerCommunicationSend(task, options = {}) {
     has_asaas_link: Boolean(task.asaasPaymentLink || task.asaasPixCopy),
     community_link: task.kind === TASK_KIND.ONBOARDING_WELCOME ? (communityLink || null) : null,
   };
+
+  // A intenção de renovação (e o follow-up) passa pelo quadro de Renovações:
+  // o mesmo envio grava a mensagem e move o card para "Aguardando decisão".
+  if (task.kind === TASK_KIND.RENEWAL_REMINDER && task.renewalStage) {
+    await transitionAssessmentRenewalStage(task.sourceId, {
+      action: 'message_sent',
+      expectedUpdatedAt: task.updatedAt,
+      message: message || null,
+    });
+    return;
+  }
 
   if (isChargeTask) {
     if (task.sourceType === 'contract') {

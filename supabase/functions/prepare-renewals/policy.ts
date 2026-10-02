@@ -1,4 +1,5 @@
-export const DEFAULT_RENEWAL_HORIZON_DAYS = 15;
+// Renovação manual entra no quadro 10 dias antes do fim; a mensal automática, 5.
+export const DEFAULT_RENEWAL_HORIZON_DAYS = 10;
 export const DEFAULT_AUTO_RENEWAL_HORIZON_DAYS = 5;
 
 const UUID_PATTERN =

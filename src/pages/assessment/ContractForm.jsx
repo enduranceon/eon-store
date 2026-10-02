@@ -18,6 +18,7 @@ import { PhoneInput } from '@/components/PhoneInput';
 import { normalizePhone } from '@/lib/phone';
 import { formatCep, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import { classifyContractLifecycle, isContractVoidedSale } from '@/lib/assessment-contract-lifecycle';
+import { allowsAutoRenewal } from '@/lib/assessment-renewal-pipeline';
 import DiscountInput from '@/components/DiscountInput';
 import { toast } from 'sonner';
 
@@ -222,6 +223,8 @@ export default function ContractForm() {
 
   const selectedCustomer = customers.find(c => c.id === form.customer_id);
   const endDate = selectedPlan ? computeEndDate(form.start_date, selectedPlan) : '';
+  const autoRenewalAllowed = allowsAutoRenewal(selectedPlan);
+  const autoRenewal = !!form.auto_renewal && autoRenewalAllowed;
   const eligibleCoaches = selectedPlan
     ? coaches.filter(c => (c.modality_ids || []).includes(selectedPlan.modality_id))
     : [];
@@ -372,7 +375,7 @@ export default function ContractForm() {
         enrollmentFee,
         manualDiscount,
         discountReason:    form.discount_reason || null,
-        autoRenewal:       !!form.auto_renewal,
+        autoRenewal,
         notes:             form.notes || null,
         replacementContractId: replacementContract?.id || null,
       }, {
@@ -544,8 +547,8 @@ export default function ContractForm() {
               <span>{form.start_date} → {endDate}</span>
 
               <span className="text-muted-foreground">Renovação</span>
-              <span className={form.auto_renewal ? 'text-green-700 font-medium' : 'text-gray-500'}>
-                {form.auto_renewal ? 'Automática ao vencer' : 'Manual (operador decide)'}
+              <span className={autoRenewal ? 'text-green-700 font-medium' : 'text-gray-500'}>
+                {autoRenewal ? 'Automática ao vencer' : 'Manual (operador decide)'}
               </span>
             </div>
 
@@ -780,17 +783,22 @@ export default function ContractForm() {
             </div>
           )}
 
-          <label className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/40 cursor-pointer transition-colors">
+          <label className={`flex items-start gap-3 p-3 rounded-xl border border-gray-200 transition-colors ${
+            autoRenewalAllowed ? 'hover:border-blue-300 hover:bg-blue-50/40 cursor-pointer' : 'opacity-60 cursor-not-allowed'
+          }`}>
             <input
               type="checkbox"
-              checked={!!form.auto_renewal}
+              checked={autoRenewal}
+              disabled={!autoRenewalAllowed}
               onChange={e => setForm(f => ({ ...f, auto_renewal: e.target.checked }))}
               className="mt-0.5 w-4 h-4 accent-blue-600 shrink-0"
             />
             <div>
               <p className="text-sm font-medium flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5 text-green-600" /> Renovação automática</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                A próxima vigência será agendada 5 dias antes, com a cobrança interna em aberto.
+                {autoRenewalAllowed
+                  ? 'Só para plano mensal com assinatura no Asaas: a próxima vigência é agendada 5 dias antes, sem criar outra cobrança.'
+                  : 'Só vale para plano mensal. Trimestral e semestral renovam pelo quadro de Renovações.'}
               </p>
             </div>
           </label>

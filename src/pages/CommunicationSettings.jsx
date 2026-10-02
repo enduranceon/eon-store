@@ -57,6 +57,7 @@ const VARIABLES = [
   ['{comunidade}', 'link da comunidade'],
   ['{data_fim}', 'fim do contrato'],
   ['{dias}', 'dias até o fim'],
+  ['{aviso_vencimento}', '"seu plano vence nos próximos dias" ou "seu plano venceu em DD/MM"'],
 ];
 
 function timingLabel(rule) {

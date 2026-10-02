@@ -5,6 +5,20 @@ import { RENEWAL_ATTENTION_WINDOW_OFFSET } from '@/lib/assessment-renewal-window
 
 export const DEFAULT_COMMUNITY_LINK = 'https://chat.whatsapp.com/Eow2KTzNHwr0Q5n5XrTow3';
 
+// Mensagem de intenção de renovação (quadro de Renovações). {aviso_vencimento}
+// vira "seu plano vence nos próximos dias" ou "seu plano venceu em DD/MM".
+export const RENEWAL_INTENT_TEMPLATE = `Oi, {nome}! Tudo bem?
+
+Sou o Pebinha, assistente virtual da EON. Estou aqui pra te lembrar que {aviso_vencimento}.
+
+Pra ajudar nosso time nesse processo, você gostaria de realizar a renovação?
+
+1. Sim, vou renovar.
+2. Ainda estou pensando.
+3. Gostaria de mudar de plano/treinador.
+4. Gostaria de falar com um atendente.
+5. Não vou renovar.`;
+
 export const DEFAULT_COMMUNICATION_RULES = [
   {
     slug: 'billing-charge-send',
@@ -127,7 +141,7 @@ Se ficou alguma duvida para comecar ou se precisar de qualquer ajuste, me chama 
   },
   {
     slug: 'renewal-reminder-14d',
-    name: 'Renovacao proxima',
+    name: 'Intenção de renovação',
     journey: 'renewal',
     trigger_event: 'contract_end_date',
     task_kind: 'renewal_reminder',
@@ -135,11 +149,7 @@ Se ficou alguma duvida para comecar ou se precisar de qualquer ajuste, me chama 
     channel: 'whatsapp',
     active: true,
     order_index: 50,
-    message_template: `Ola, {nome}! Tudo bem?
-
-Seu acompanhamento na Endurance ON pelo plano *{plano}* esta chegando perto do vencimento em *{data_fim}*.
-
-Quero deixar sua continuidade organizada para voce nao interromper o acompanhamento. Posso te enviar as opcoes de renovacao?`,
+    message_template: RENEWAL_INTENT_TEMPLATE,
   },
 ];
 

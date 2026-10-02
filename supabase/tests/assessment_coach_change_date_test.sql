@@ -71,7 +71,7 @@ INSERT INTO public.assessment_contracts (
   ('70000000-0000-4000-a000-000000000102', 'ASS-970002', '70000000-0000-4000-a000-000000000032',
    '70000000-0000-4000-a000-000000000021', '70000000-0000-4000-a000-000000000011',
    '{"plan_id":"70000000-0000-4000-a000-000000000011","name":"Troca coach semestral","period_months":6,"price_total":1200,"modality_id":"70000000-0000-4000-a000-000000000001"}'::jsonb,
-   'active', current_date - 160, current_date + 20, current_date + 20, 6, 'paid', current_date - 160, true, true, true),
+   'active', current_date - 160, current_date + 20, current_date + 20, 6, 'paid', current_date - 160, true, false, true),
   ('70000000-0000-4000-a000-000000000103', 'ASS-970003', '70000000-0000-4000-a000-000000000033',
    '70000000-0000-4000-a000-000000000021', '70000000-0000-4000-a000-000000000011',
    '{"plan_id":"70000000-0000-4000-a000-000000000011","name":"Troca coach semestral","period_months":6,"price_total":1200,"modality_id":"70000000-0000-4000-a000-000000000001"}'::jsonb,
@@ -94,7 +94,7 @@ INSERT INTO public.assessment_contracts (
    '70000000-0000-4000-a000-000000000021', '70000000-0000-4000-a000-000000000011',
    '{"plan_id":"70000000-0000-4000-a000-000000000011","name":"Troca coach semestral","period_months":6,"price_total":1200,"modality_id":"70000000-0000-4000-a000-000000000001"}'::jsonb,
    'scheduled', current_date + 20, current_date + 200, current_date + 200, 6, 'pending',
-   false, true, false, '70000000-0000-4000-a000-000000000102');
+   false, false, false, '70000000-0000-4000-a000-000000000102');
 
 CREATE FUNCTION pg_temp.ver(p_id uuid) RETURNS timestamptz LANGUAGE sql AS $$
   SELECT updated_at FROM public.assessment_contracts WHERE id = p_id;
@@ -330,7 +330,7 @@ INSERT INTO public.assessment_contracts (
    '70000000-0000-4000-a000-000000000021', '70000000-0000-4000-a000-000000000011',
    '{"plan_id":"70000000-0000-4000-a000-000000000011","name":"Troca coach semestral","period_months":6,"price_total":1200,"modality_id":"70000000-0000-4000-a000-000000000001"}'::jsonb,
    'scheduled', current_date + 15, current_date + 195, current_date + 195, 6, 'pending',
-   false, true, false, '70000000-0000-4000-a000-000000000106');
+   false, false, false, '70000000-0000-4000-a000-000000000106');
 SELECT is(
   pg_temp.coach('70000000-0000-4000-a000-000000000116'),
   '70000000-0000-4000-a000-000000000022'::uuid,
