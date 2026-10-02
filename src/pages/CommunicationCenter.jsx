@@ -368,6 +368,7 @@ async function fetchCommunicationData() {
     presaleOrders,
     stockOrders,
     contracts,
+    renewalContracts,
     customers,
     plans,
     modalities,
@@ -391,6 +392,12 @@ async function fetchCommunicationData() {
       .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, discount_recurring, credit_balance, installments, plan_snapshot')
       .not('status', 'in', '("cancelled","draft","voided")')
       .neq('payment_status', 'refunded'),
+    // Renovações em "Enviar mensagem" ou "Aguardando decisão" no quadro: a
+    // maioria ainda é rascunho, por isso fora da consulta acima.
+    supabase.from('assessment_contracts')
+      .select('id, contract_number, customer_id, coach_id, plan_id, status, payment_status, payment_date, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, enrollment_fee, manual_discount, discount_recurring, credit_balance, installments, plan_snapshot, renewal_stage, renewal_follow_up_at, renewal_stage_updated_at, renewal_last_contact_at')
+      .not('parent_contract_id', 'is', null)
+      .in('renewal_stage', ['contact_pending', 'waiting_response']),
     supabase.from('presale_customers').select('id, full_name, whatsapp, email'),
     supabase.from('assessment_plans').select('id, name, modality_id, period, period_months, price_total, price_monthly'),
     supabase.from('assessment_modalities').select('id, name'),
@@ -416,6 +423,7 @@ async function fetchCommunicationData() {
     presaleOrders,
     stockOrders,
     contracts,
+    renewalContracts,
     customers,
     plans,
     modalities,

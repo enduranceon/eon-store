@@ -1428,6 +1428,57 @@ export async function markAssessmentContractPaymentMessageSent(
   return response.data;
 }
 
+// A mesma versão do contrato gera a mesma chave: um clique repetido ou um
+// reenvio da rede devolvem o primeiro resultado em vez de repetir a ação.
+export function renewalStageIdempotencyKey(action, contractId, expectedUpdatedAt) {
+  const version = Date.parse(expectedUpdatedAt);
+  return `rs:${action}:${contractId}:${Number.isFinite(version) ? version : 'sem-versao'}`;
+}
+
+const RENEWAL_STAGE_BODY_KEYS = {
+  message_sent: ['follow_up_at', 'message'],
+  register_response: ['response_code', 'follow_up_at', 'notes'],
+  set_follow_up: ['follow_up_at'],
+  change_resolved: ['notes'],
+};
+
+export async function transitionAssessmentRenewalStage(
+  contractId,
+  {
+    action,
+    expectedUpdatedAt,
+    responseCode = null,
+    followUpAt = null,
+    notes = null,
+    message = null,
+  },
+  options = {},
+) {
+  const values = {
+    response_code: responseCode,
+    follow_up_at: followUpAt || null,
+    notes: notes || null,
+    message: message || null,
+  };
+  const body = { action, expected_updated_at: expectedUpdatedAt };
+  (RENEWAL_STAGE_BODY_KEYS[action] || []).forEach((key) => {
+    body[key] = values[key];
+  });
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/renewal-stage`,
+    {
+      ...options,
+      method: 'POST',
+      idempotencyKey: options.idempotencyKey
+        || renewalStageIdempotencyKey(action, contractId, expectedUpdatedAt),
+      body,
+    },
+  );
+  invalidatePageCacheByTag('assessment_contracts');
+  invalidatePageCacheByTag('assessment_contract_event');
+  return response.data;
+}
+
 export async function resolveAssessmentRenewal(
   renewalId,
   {

@@ -56,6 +56,7 @@ import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-tr
 import { isOpenPlanChangeCharge, planChangeUnusedValue } from '@/lib/assessment-plan-change';
 import { refundMethodLabel } from '@/lib/contract-refund';
 import { coachHistorySegments, pendingCoachChange } from '@/lib/assessment-coach-history';
+import { allowsAutoRenewal, AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE } from '@/lib/assessment-renewal-pipeline';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DiscountInput from '@/components/DiscountInput';
@@ -919,6 +920,10 @@ export default function ContractDetail() {
   };
 
   const toggleAutoRenewal = async () => {
+    if (!contract.auto_renewal && !allowsAutoRenewal({ period_months: planVal('period_months'), period: planVal('period') })) {
+      toast.error(AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE);
+      return;
+    }
     try {
       await setAssessmentContractAutoRenewal(
         id,
@@ -1306,7 +1311,11 @@ export default function ContractDetail() {
               )}
               <button
                 onClick={toggleAutoRenewal}
-                className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-all ${
+                disabled={!contract.auto_renewal && !allowsAutoRenewal({ period_months: planVal('period_months'), period: planVal('period') })}
+                title={!contract.auto_renewal && !allowsAutoRenewal({ period_months: planVal('period_months'), period: planVal('period') })
+                  ? AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE
+                  : undefined}
+                className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
                   contract.auto_renewal
                     ? 'bg-green-100 text-green-700 border-green-300 hover:bg-green-200'
                     : 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200'

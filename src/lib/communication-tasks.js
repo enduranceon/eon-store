@@ -1,7 +1,14 @@
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { DEFAULT_COMMUNICATION_RULES } from '@/lib/communication-config';
+import { DEFAULT_COMMUNICATION_RULES, RENEWAL_INTENT_TEMPLATE } from '@/lib/communication-config';
 import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
+import {
+  daysUntil,
+  followUpLabel,
+  RENEWAL_STAGE,
+  renewalDueLabel,
+  renewalDueNotice,
+} from '@/lib/assessment-renewal-pipeline';
 
 export const COMMUNICATION_EVENT_TYPES = [
   'payment_message_sent',
@@ -254,14 +261,11 @@ function normalizeContract(contract, maps) {
   const baseValue = Number(planSnapshot.price_total ?? plan.price_total ?? 0);
   const enrollment = Number(contract.enrollment_fee) || 0;
   const discount = Number(contract.manual_discount) || 0;
-  const renewalDiscount = contract.discount_recurring ? discount : 0;
   const credit = Number(contract.credit_balance) || 0;
   const totalValue = Math.max(0, baseValue + enrollment - discount - credit);
-  const renewalTotalValue = Math.max(0, baseValue - renewalDiscount);
   const planLabel = periodLabel(planSnapshot.name ? planSnapshot : plan);
   const contractItemLabel = [planLabel, modality.name || planSnapshot.modality_name].filter(Boolean).join(' - ');
   const items = normalizeSaleItems([{ product_name: contractItemLabel || 'Contrato', quantity: 1, sale_price: totalValue }]);
-  const renewalItems = normalizeSaleItems([{ product_name: contractItemLabel || 'Contrato', quantity: 1, sale_price: renewalTotalValue }]);
 
   return {
     sourceType: 'contract',
@@ -286,6 +290,10 @@ function normalizeContract(contract, maps) {
     paymentMessageSentAt: contract.payment_message_sent_at,
     updatedAt: contract.updated_at,
     parentContractId: contract.parent_contract_id,
+    renewalStage: contract.renewal_stage || null,
+    renewalFollowUpAt: contract.renewal_follow_up_at || '',
+    renewalStageUpdatedAt: contract.renewal_stage_updated_at || '',
+    renewalLastContactAt: contract.renewal_last_contact_at || '',
     plan,
     planSnapshot,
     planLabel,
@@ -293,9 +301,6 @@ function normalizeContract(contract, maps) {
     coachName: coach.name || '',
     items,
     itemSummary: itemSummary(items),
-    renewalTotalValue,
-    renewalItems,
-    renewalItemSummary: itemSummary(renewalItems),
     href: `/assessoria/contratos/${contract.id}`,
     createdAt: contract.created_at,
   };
@@ -479,29 +484,53 @@ function buildCheckinTask(contractSale, events, todayStr, rule) {
   }));
 }
 
+function eventsSince(events = [], since) {
+  const sinceTime = Date.parse(since || '');
+  if (!Number.isFinite(sinceTime)) return events;
+  return events.filter(ev => {
+    const createdAt = Date.parse(ev.created_at || '');
+    return !Number.isFinite(createdAt) || createdAt >= sinceTime;
+  });
+}
+
+// A tarefa de renovação vem da etapa do quadro de Renovações (contrato de
+// renovação), não da data: passar do vencimento só aumenta a urgência e nunca
+// faz o lembrete sumir. "Enviar mensagem" gera a intenção de renovação; um
+// follow-up vencido em "Aguardando decisão" gera o follow-up.
 function buildRenewalTask(contractSale, events, todayStr, rule) {
   if (!rule) return null;
-  if (contractSale.sourceType !== 'contract') return null;
-  if (contractSale.paymentStatus !== 'paid') return null;
-  if (!CONTRACT_OPERATIONAL_STATUSES.has(contractSale.contractStatus)) return null;
-  if (ruleAlreadyHandled(events, rule, todayStr)) return null;
-  const daysToEnd = daysBetween(contractSale.endDate, todayStr);
-  const windowDays = Math.abs(Number(rule.days_offset) || 0);
-  if (daysToEnd === null || daysToEnd < 0 || daysToEnd > windowDays) return null;
+  if (contractSale.sourceType !== 'contract' || !contractSale.parentContractId) return null;
+  const stage = contractSale.renewalStage;
+  const followUpDue = stage === RENEWAL_STAGE.WAITING_RESPONSE
+    && Boolean(contractSale.renewalFollowUpAt)
+    && contractSale.renewalFollowUpAt <= todayStr;
+  if (stage !== RENEWAL_STAGE.CONTACT_PENDING && !followUpDue) return null;
+
+  // Ignorar ou adiar na Central vale só para esta etapa (ou este follow-up).
+  const since = followUpDue
+    ? (contractSale.renewalLastContactAt || contractSale.renewalStageUpdatedAt)
+    : contractSale.renewalStageUpdatedAt;
+  if (ruleAlreadyHandled(eventsSince(events, since), rule, todayStr)) return null;
+
+  // A renovação começa no dia em que o contrato atual termina.
+  const renewalDate = contractSale.startDate;
+  const daysToEnd = daysUntil(renewalDate, todayStr);
+  const daysLate = followUpDue ? -daysUntil(contractSale.renewalFollowUpAt, todayStr) : 0;
+  const scheduledDate = followUpDue ? contractSale.renewalFollowUpAt : renewalDate;
 
   return baseTask(TASK_KIND.RENEWAL_REMINDER, TASK_BUCKET.RENEWAL, contractSale, withRule(rule, {
-    title: rule.name || 'Renovação próxima',
-    statusLabel: daysToEnd === 0 ? 'vence hoje' : `vence em ${daysToEnd} dia${daysToEnd === 1 ? '' : 's'}`,
-    scheduledDate: contractSale.endDate,
-    sortDate: contractSale.endDate,
+    id: `${rule.slug || TASK_KIND.RENEWAL_REMINDER}:${followUpDue ? 'follow-up' : 'intent'}:contract:${contractSale.sourceId}`,
+    title: followUpDue ? 'Follow-up de renovação' : (rule.name || 'Intenção de renovação'),
+    statusLabel: followUpDue ? followUpLabel(daysLate) : renewalDueLabel(daysToEnd),
+    scheduledDate,
+    sortDate: scheduledDate,
     priority: 50,
-    totalValue: contractSale.renewalTotalValue,
-    items: contractSale.renewalItems,
-    itemSummary: contractSale.renewalItemSummary,
     planLabel: contractSale.planLabel,
     modalityName: contractSale.modalityName,
     coachName: contractSale.coachName,
-    endDate: contractSale.endDate,
+    endDate: renewalDate,
+    renewalStage: stage,
+    renewalFollowUp: followUpDue,
   }));
 }
 
@@ -530,6 +559,11 @@ export function buildCommunicationTasks(data, options = {}) {
   const presaleSales = (data.presaleOrders || []).map(normalizePresale);
   const stockSales = (data.stockOrders || []).map(normalizeStock);
   const contractSales = (data.contracts || []).map(contract => normalizeContract(contract, maps));
+  // A Central carrega à parte os rascunhos de renovação (fora da fila de
+  // cobrança); outras telas mandam todos os contratos do aluno.
+  const renewalSales = (data.renewalContracts || data.contracts || [])
+    .filter(contract => contract.parent_contract_id && contract.renewal_stage)
+    .map(contract => normalizeContract(contract, maps));
   const eventSales = (data.eventRegistrations || [])
     .map(registration => normalizeEventRegistration(registration, maps))
     .filter(sale => sale.totalValue > 0);
@@ -546,6 +580,10 @@ export function buildCommunicationTasks(data, options = {}) {
     const events = eventsByContract.get(contractSale.sourceId) || [];
     welcomeRules.forEach(rule => { const t = buildWelcomeTask(contractSale, events, todayStr, rule); if (t) tasks.push(t); });
     checkinRules.forEach(rule => { const t = buildCheckinTask(contractSale, events, todayStr, rule); if (t) tasks.push(t); });
+  });
+
+  renewalSales.forEach(contractSale => {
+    const events = eventsByContract.get(contractSale.sourceId) || [];
     renewalRules.forEach(rule => { const t = buildRenewalTask(contractSale, events, todayStr, rule); if (t) tasks.push(t); });
   });
 
@@ -597,6 +635,7 @@ function renderCommunicationTemplate(template, task, options = {}) {
     '{comunidade}': communityLink || '(link da comunidade nao configurado)',
     '{data_fim}': task.endDate ? formatDate(task.endDate) : '',
     '{dias}': daysToEnd == null ? '' : String(daysToEnd),
+    '{aviso_vencimento}': renewalDueNotice(task.endDate, todayLocalStr()),
   };
 
   return Object.entries(values).reduce(
@@ -697,11 +736,7 @@ export function buildTaskMessage(task, options = {}) {
   }
 
   if (task.kind === TASK_KIND.RENEWAL_REMINDER) {
-    const due = task.endDate ? formatDate(task.endDate) : '';
-    let msg = `Olá, ${name}! Tudo bem?\n\n`;
-    msg += `Seu acompanhamento na Endurance ON${task.planLabel ? ` pelo plano *${task.planLabel}*` : ''} está chegando perto do vencimento${due ? ` em *${due}*` : ''}.\n\n`;
-    msg += 'Quero deixar sua continuidade organizada para você não interromper o acompanhamento. Posso te enviar as opções de renovação?';
-    return msg;
+    return renderCommunicationTemplate(RENEWAL_INTENT_TEMPLATE, task, options);
   }
 
   return '';
