@@ -50,6 +50,7 @@ function validPlanBody(overrides: Record<string, unknown> = {}) {
 function client(
   preparedOverrides: Record<string, unknown> = {},
   cacheRows: Array<Record<string, unknown>> = [],
+  completeError: { code: string; message: string } | null = null,
 ) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const fake = {
@@ -68,6 +69,9 @@ function client(
           },
           error: null,
         });
+      }
+      if (name === "complete_assessment_contract_mutation" && completeError) {
+        return Promise.resolve({ data: null, error: completeError });
       }
       if (name === "complete_assessment_contract_mutation") {
         return Promise.resolve({
@@ -217,6 +221,77 @@ Deno.test("External references are detached without calling Asaas", async () => 
     external.outcome === "detached",
     "external reference was not detached",
   );
+});
+
+Deno.test("Local failure without provider action fails the operation instead of locking the contract", async () => {
+  const { fake, calls } = client({}, [], {
+    code: "P0002",
+    message: "Treinador não atende a modalidade deste plano",
+  });
+  const path = `/orders/contract/${CONTRACT_ID}/plan`;
+  const response = await handleContractRequest(
+    request("plan", validPlanBody()),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  const body = await responseBody(response!);
+  assert(response?.status === 404, "database reason was not returned");
+  assert(
+    body.error === "Treinador não atende a modalidade deste plano",
+    "real reason was replaced",
+  );
+  const finalize = calls.find((call) =>
+    call.name === "finalize_assessment_contract_mutation_failure"
+  );
+  assert(finalize, "failed operation was not finalized");
+  assert(
+    finalize.args.p_requires_reconciliation === false,
+    "local failure locked the contract for reconciliation",
+  );
+  assert(
+    finalize.args.p_error_message ===
+      "Treinador não atende a modalidade deste plano",
+    "operation kept a misleading reason",
+  );
+  assert(
+    JSON.stringify(finalize.args.p_external_result) === "{}",
+    "operation recorded a provider result that never happened",
+  );
+});
+
+Deno.test("Local failure after the Asaas cancellation still requires reconciliation", async () => {
+  await withAsaas(async () => {
+    globalThis.fetch = () =>
+      Promise.resolve(Response.json({ id: "pay_1", status: "PENDING" }));
+    const { fake, calls } = client(
+      { asaas_charge_id: "pay_1" },
+      [{
+        asaas_payment_id: "pay_1",
+        installment_group_id: null,
+        raw: { id: "pay_1", status: "PENDING" },
+      }],
+      { code: "P0001", message: "O contrato mudou" },
+    );
+    const path = `/orders/contract/${CONTRACT_ID}/plan`;
+    const response = await handleContractRequest(
+      request("plan", validPlanBody()),
+      path,
+      fake,
+      ACTOR_ID,
+    );
+    assert(response?.status === 409, "local failure was not reported");
+    const finalize = calls.find((call) =>
+      call.name === "finalize_assessment_contract_mutation_failure"
+    );
+    assert(finalize, "failed operation was not finalized");
+    assert(
+      finalize.args.p_requires_reconciliation === true,
+      "cancelled Asaas charge was left without reconciliation",
+    );
+    const external = finalize.args.p_external_result as Record<string, unknown>;
+    assert(external.provider === "asaas", "provider result was lost");
+  });
 });
 
 Deno.test("Completed idempotent mutation returns cached result without side effects", async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, CheckCheck, Check, Clock, Info, Loader2, RefreshCcw, RotateCcw,
   Search, Wallet,
@@ -161,6 +161,7 @@ function FilterSelect({ value, onChange, placeholder, options }) {
 }
 
 export default function Renewals() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [contracts, setContracts] = useState([]);
   const [parents, setParents] = useState({});
@@ -341,6 +342,11 @@ export default function Renewals() {
     };
     if (key === 'details') { setDetailId(contract.id); return; }
     setDetailId(null);
+    if (key === 'change_plan') {
+      // A troca é feita no contrato da renovação, com as mesmas regras de lá.
+      navigate(`/assessoria/contratos/${contract.id}?ajustar-plano=1`);
+      return;
+    }
     if (key === 'message') {
       setMessageTask(buildRenewalMessageTask(contract, {
         customers: Object.values(customers),
