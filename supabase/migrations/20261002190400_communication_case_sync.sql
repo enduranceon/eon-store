@@ -30,6 +30,10 @@ BEGIN
     FROM contexts c CROSS JOIN (VALUES('billing'),('renewal'),('onboarding')) p(purpose)
     WHERE (p.purpose='billing' AND c.context->>'payment_status' IN
       ('pending','awaiting_charge','charge_sent','overdue','partially_paid')
+      AND (c.source_type<>'contract'
+        OR c.context->>'parent_contract_id' IS NULL
+        OR COALESCE(c.context->>'renewal_stage','') NOT IN
+          ('contact_pending','waiting_response','charge_pending'))
       AND (c.context->>'balance' IS NULL OR (c.context->>'balance')::numeric>0))
       OR (p.purpose='renewal' AND c.source_type='contract'
         AND c.context->>'parent_contract_id' IS NOT NULL

@@ -1937,6 +1937,16 @@ export async function listCommunicationCases(filters = {}, options = {}) {
   return response.data ?? response;
 }
 
+export async function listCommunicationHistory(filters = {}, options = {}) {
+  const params = new URLSearchParams();
+  for (const key of ['customer_id', 'source_type', 'source_id', 'from', 'to', 'cursor', 'limit']) {
+    if (filters[key] !== undefined && filters[key] !== null && filters[key] !== '') params.set(key, String(filters[key]));
+  }
+  if (filters.query || filters.q) params.set('q', filters.query || filters.q);
+  const response = await apiRequest(`/communications/history${params.size ? `?${params}` : ''}`, options);
+  return response.data ?? response;
+}
+
 export async function getCommunicationCase(id, options = {}) {
   const response = await apiRequest(`/communications/cases/${encodeURIComponent(id)}`, options);
   return response.data ?? response;

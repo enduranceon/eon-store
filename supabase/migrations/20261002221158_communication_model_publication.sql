@@ -159,6 +159,7 @@ BEGIN
         'source_status','active','due_date',sample_due,'end_date',today_date+10,
         'onboarding_welcome_sent_at',CASE WHEN d.rule->>'task_kind'='onboarding_checkin' THEN (now()-interval '5 days')::text END,
         'plan_name','Plano trimestral de exemplo','period_months',3,'auto_renewal',false,'renewal_stage','contact_pending',
+        'community_link','https://example.invalid/comunidade','coach_name','Treinador Exemplo','modality','Corrida',
         'payment_message_sent_at',CASE WHEN d.rule->>'trigger_event'='charge_created' THEN NULL ELSE (now()-interval '10 days')::text END,
         'payment_link',CASE WHEN sample->>'scenario'='missing_link' THEN NULL ELSE 'https://example.invalid/pagamento' END,
         'pix_copy',NULL,'contact_phone',CASE WHEN sample->>'scenario'='invalid_phone' THEN '123' ELSE '5511999990000' END);

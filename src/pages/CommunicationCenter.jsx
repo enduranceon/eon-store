@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
-import { listCommunicationCases } from '@/api/client';
+import { listCommunicationCases, listCommunicationHistory } from '@/api/client';
+import { communicationBlockReasonLabel } from '@/lib/communication-case';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 
 const STATES = [
@@ -78,7 +79,7 @@ function CaseRow({ item, onOpen }) {
         <div className="min-w-0 text-sm">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Situação</p>
           <p className="mt-1 break-words text-gray-900">
-            {item.blocked_reason || item.action_label || item.status_label || (item.purpose === 'billing' ? 'Cobrança em acompanhamento' : 'Contato em acompanhamento')}
+            {communicationBlockReasonLabel(item.blocked_reason) || item.action_label || item.status_label || (item.purpose === 'billing' ? 'Cobrança em acompanhamento' : 'Contato em acompanhamento')}
           </p>
           {item.purpose === 'billing' && item.balance != null && (
             <p className="mt-1 font-semibold text-gray-900">Saldo pendente: {formatCurrency(Number(item.balance) || 0)}</p>
@@ -106,6 +107,43 @@ function CaseRow({ item, onOpen }) {
   );
 }
 
+const HISTORY_EVENT_LABEL = {
+  message_sent: 'Mensagem registrada',
+  response_recorded: 'Resposta registrada',
+  return_scheduled: 'Retorno agendado',
+  review_requested: 'Revisão solicitada',
+  review_completed: 'Conferência concluída',
+  resolve_case: 'Acompanhamento resolvido',
+  task_completed: 'Tarefa concluída',
+  legacy_message_sent: 'Mensagem registrada anteriormente',
+};
+
+function HistoryRow({ item, onOpen }) {
+  const caseId = item.case_id;
+  return (
+    <article className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={item.origin === 'case' ? 'info' : 'secondary'}>{item.origin === 'case' ? 'Acompanhamento' : 'Registro anterior'}</Badge>
+            <span className="text-xs text-muted-foreground">{item.created_at ? formatDateTime(item.created_at) : 'Data indisponível'}</span>
+          </div>
+          <p className="mt-2 font-semibold text-gray-900">{item.person_name || 'Pessoa sem nome'} · {HISTORY_EVENT_LABEL[item.event_type] || item.event_type || 'Contato registrado'}</p>
+          {item.reference && <p className="text-xs text-muted-foreground">{item.reference}</p>}
+        </div>
+        {caseId ? (
+          <Button type="button" variant="outline" onClick={() => onOpen({ id: caseId })} className="min-h-11 w-full sm:w-auto">Abrir acompanhamento</Button>
+        ) : item.source_href ? (
+          <Button variant="outline" asChild className="min-h-11 w-full sm:w-auto"><Link to={item.source_href}>Ver origem</Link></Button>
+        ) : null}
+      </div>
+      {(item.message_text || item.notes) && (
+        <p className="mt-3 whitespace-pre-wrap rounded-md bg-gray-50 p-3 text-sm text-gray-700">{item.message_text || item.notes}</p>
+      )}
+    </article>
+  );
+}
+
 export default function CommunicationCenter() {
   const [searchParams, setSearchParams] = useSearchParams();
   const stateParam = searchParams.get('state');
@@ -117,6 +155,8 @@ export default function CommunicationCenter() {
   const sourceType = searchParams.get('source_type') || '';
   const sourceId = searchParams.get('source_id') || '';
   const customerId = searchParams.get('customer_id') || '';
+  const from = searchParams.get('from') || '';
+  const to = searchParams.get('to') || '';
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [items, setItems] = useState([]);
   const [counts, setCounts] = useState(EMPTY_COUNTS);
@@ -130,12 +170,12 @@ export default function CommunicationCenter() {
   const restoredPages = useRef(Math.min(10, Math.max(1, Number(searchParams.get('pages')) || 1)));
 
   const updateQuery = useCallback((key, value, { replace = false } = {}) => {
-    if (['state', 'purpose', 'q'].includes(key)) restoredPages.current = 1;
+    if (['state', 'purpose', 'q', 'from', 'to'].includes(key)) restoredPages.current = 1;
     setSearchParams(previous => {
       const next = new URLSearchParams(previous);
       if (value === null || value === undefined || value === '') next.delete(key);
       else next.set(key, value);
-      if (['state', 'purpose', 'q'].includes(key)) next.delete('pages');
+      if (['state', 'purpose', 'q', 'from', 'to'].includes(key)) next.delete('pages');
       return next;
     }, { replace });
   }, [setSearchParams]);
@@ -151,6 +191,47 @@ export default function CommunicationCenter() {
     else setLoading(true);
     setError('');
     try {
+      if (state === 'resolved') {
+        const overview = await listCommunicationCases({
+          state: 'to_do', purpose: purpose || undefined,
+          source_type: sourceType || undefined, source_id: sourceId || undefined,
+          customer_id: customerId || undefined, limit: 1,
+        });
+        if (requestId !== requestVersion.current) return false;
+        setCounts({ ...EMPTY_COUNTS, ...(overview.counts || {}) });
+        setRollout(overview.rollout || null);
+        if (overview.rollout?.enabled === false) {
+          setItems([]);
+          setNextCursor(null);
+          return true;
+        }
+        const pagesToLoad = append ? 1 : restoredPages.current;
+        let next = cursor;
+        let collected = [];
+        for (let index = 0; index < pagesToLoad; index += 1) {
+          const page = await listCommunicationHistory({
+            customer_id: customerId || undefined,
+            source_type: sourceType || undefined,
+            source_id: sourceId || undefined,
+            q: debouncedSearch || undefined,
+            from: from || undefined,
+            to: to || undefined,
+            cursor: next || undefined,
+            limit: 30,
+          });
+          if (requestId !== requestVersion.current) return false;
+          collected = [...collected, ...(page.items || [])];
+          next = page.next_cursor || null;
+          if (!next) break;
+        }
+        setItems(current => append ? [...current, ...collected] : collected);
+        setNextCursor(next);
+        if (append) {
+          restoredPages.current += 1;
+          updateQuery('pages', String(restoredPages.current), { replace: true });
+        }
+        return true;
+      }
       const pagesToLoad = append ? 1 : restoredPages.current;
       let next = cursor;
       let collected = [];
@@ -195,7 +276,7 @@ export default function CommunicationCenter() {
         setLoadingMore(false);
       }
     }
-  }, [state, purpose, sourceType, sourceId, customerId, debouncedSearch, updateQuery]);
+  }, [state, purpose, sourceType, sourceId, customerId, debouncedSearch, from, to, updateQuery]);
 
   useEffect(() => {
     load();
@@ -206,6 +287,7 @@ export default function CommunicationCenter() {
     () => Number(counts.open),
     [counts],
   );
+  const queueReady = rollout?.enabled === true;
 
   const handleChanged = useCallback(() => {
     load();
@@ -247,7 +329,14 @@ export default function CommunicationCenter() {
         </div>
       </header>
 
-      {error && rollout?.enabled === false && (
+      {loading && !rollout && (
+        <div role="status" className="rounded-lg border bg-white p-8 text-center text-sm text-muted-foreground">
+          <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" aria-hidden="true" />
+          Carregando acompanhamentos...
+        </div>
+      )}
+
+      {error && !queueReady && (
         <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           {error}
           <Button variant="outline" onClick={() => load()} className="mt-2 min-h-11">Tentar novamente</Button>
@@ -264,7 +353,7 @@ export default function CommunicationCenter() {
         </div>
       )}
 
-      {rollout?.enabled !== false && <section aria-label="Resumo dos acompanhamentos" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {queueReady && <section aria-label="Resumo dos acompanhamentos" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-lg border bg-white p-3">
           <p className="text-xs text-muted-foreground">Acompanhamentos abertos</p>
           <p className="mt-1 text-2xl font-bold">{openCount}</p>
@@ -283,7 +372,7 @@ export default function CommunicationCenter() {
         </div>
       </section>}
 
-      {rollout?.enabled !== false && <div className="space-y-3 rounded-lg border bg-white p-3 shadow-sm">
+      {queueReady && <div className="space-y-3 rounded-lg border bg-white p-3 shadow-sm">
         <div role="tablist" aria-label="Estado do acompanhamento" className="flex gap-1 overflow-x-auto border-b pb-2">
           {STATES.map(tab => (
             <button
@@ -296,11 +385,11 @@ export default function CommunicationCenter() {
               onClick={() => updateQuery('state', tab.value)}
               className={`min-h-11 shrink-0 rounded-md px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${state === tab.value ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
             >
-              {tab.label} <span className="ml-1 text-xs">({counts[tab.value] || 0})</span>
+              {tab.label}{tab.value !== 'resolved' && <span className="ml-1 text-xs">({counts[tab.value] || 0})</span>}
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap gap-2">
+        {state !== 'resolved' && <div className="flex flex-wrap gap-2">
           {PURPOSES.map(filter => (
             <button
               key={filter.value}
@@ -312,20 +401,32 @@ export default function CommunicationCenter() {
               {filter.label}
             </button>
           ))}
-        </div>
+        </div>}
         <label className="relative block">
-          <span className="sr-only">Buscar pessoa ou referência</span>
+          <span className="sr-only">{state === 'resolved' ? 'Buscar pessoa, referência ou texto' : 'Buscar pessoa ou referência'}</span>
           <Search className="absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
           <Input
             className="min-h-11 pl-9"
-            placeholder="Buscar pessoa ou referência"
+            placeholder={state === 'resolved' ? 'Buscar pessoa, referência ou texto' : 'Buscar pessoa ou referência'}
             value={search}
             onChange={event => updateQuery('q', event.target.value, { replace: true })}
           />
         </label>
+        {state === 'resolved' && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-gray-700">
+              De
+              <Input type="date" value={from} max={to || undefined} onChange={event => updateQuery('from', event.target.value)} className="mt-1 min-h-11" />
+            </label>
+            <label className="text-sm font-medium text-gray-700">
+              Até
+              <Input type="date" value={to} min={from || undefined} onChange={event => updateQuery('to', event.target.value)} className="mt-1 min-h-11" />
+            </label>
+          </div>
+        )}
       </div>}
 
-      {rollout?.enabled !== false && <div id="communication-list" role="tabpanel" aria-labelledby={`communication-tab-${state}`} className="space-y-2">
+      {queueReady && <div id="communication-list" role="tabpanel" aria-labelledby={`communication-tab-${state}`} className="space-y-2">
         {error && (
           <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <span>{error}</span>
@@ -335,17 +436,19 @@ export default function CommunicationCenter() {
         {loading ? (
           <div className="rounded-lg border bg-white p-8 text-center text-sm text-muted-foreground" role="status">
             <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" aria-hidden="true" />
-            Carregando acompanhamentos...
+            {state === 'resolved' ? 'Carregando histórico...' : 'Carregando acompanhamentos...'}
           </div>
         ) : !error && items.length === 0 ? (
           <div className="rounded-lg border bg-white p-8 text-center text-sm text-muted-foreground">
             {state === 'to_do' && !purpose && !debouncedSearch
               ? 'Nenhuma ação agora. Verifique Em acompanhamento e Agendadas para os próximos retornos.'
               : state === 'resolved'
-                ? 'Nenhum caso resolvido corresponde aos filtros.'
+                ? 'Nenhum evento corresponde à busca ou ao período selecionado.'
                 : 'Nenhum acompanhamento corresponde aos filtros.'}
           </div>
-        ) : items.map(item => <CaseRow key={item.id} item={item} onOpen={openCase} />)}
+        ) : items.map(item => state === 'resolved'
+          ? <HistoryRow key={item.id || item.event_identifier} item={item} onOpen={openCase} />
+          : <CaseRow key={item.id} item={item} onOpen={openCase} />)}
         {nextCursor && !loading && (
           <div className="flex justify-center pt-2">
             <Button variant="outline" disabled={loadingMore} onClick={() => load({ cursor: nextCursor, append: true })} className="min-h-11">

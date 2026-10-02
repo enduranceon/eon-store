@@ -15,6 +15,7 @@ import {
 } from '@/api/client';
 import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
+import { canCompleteCommunicationReview, communicationBlockReasonLabel } from '@/lib/communication-case';
 
 const RESPONSE_OPTIONS = {
   billing: [
@@ -60,6 +61,7 @@ function eventLabel(event) {
     response_recorded: 'Resposta registrada',
     return_scheduled: 'Retorno agendado',
     review_requested: 'Revisão solicitada',
+    review_completed: 'Conferência concluída',
     resolve_case: 'Caso resolvido',
   };
   return names[event.action] || names[event.event_type] || event.title || event.event_type || 'Evento';
@@ -97,6 +99,7 @@ export default function CommunicationCaseDialog({
   const [scheduleNote, setScheduleNote] = useState('');
   const [reviewReason, setReviewReason] = useState('');
   const [reviewDate, setReviewDate] = useState('');
+  const [completionNote, setCompletionNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [events, setEvents] = useState([]);
   const [eventsCursor, setEventsCursor] = useState(null);
@@ -125,6 +128,14 @@ export default function CommunicationCaseDialog({
       setMessage(next.suggestion?.message || next.case?.suggested_message || '');
       setConfirmed(false);
       setNextActionAt('');
+      setResponseCode('');
+      setResponseNote('');
+      setResponseDate('');
+      setScheduleDate('');
+      setScheduleNote('');
+      setReviewReason('');
+      setReviewDate('');
+      setCompletionNote('');
       setStaleNotice(stale ? 'Os dados deste acompanhamento mudaram. Revise saldo, contato, link e mensagem antes de continuar.' : '');
       lastAttempt.current = null;
     } catch (cause) {
@@ -192,6 +203,7 @@ export default function CommunicationCaseDialog({
     } catch (cause) {
       if (cause?.status === 409) {
         await loadDetail({ stale: true, knownCaseId: activeCase.id });
+        onChanged?.();
         setPanel('message');
       } else {
         toast.error(cause?.message || 'Não foi possível salvar a ação.');
@@ -203,8 +215,15 @@ export default function CommunicationCaseDialog({
 
   const phone = activeCase?.contact_phone || '';
   const hasPhone = isValidWhatsappNumber(phone);
+  const today = todayLocalStr();
+  const eligibleAt = suggestion?.eligible_at || null;
+  const contactIsFuture = Boolean((eligibleAt && eligibleAt > today) || (activeCase?.next_action_at && activeCase.next_action_at > today));
   const canSend = hasPhone
+    && !activeCase?.blocked_reason
     && !suggestion?.blocked_reason
+    && !contactIsFuture
+    && Number.isInteger(Number(suggestion?.rule_version))
+    && Number(suggestion?.rule_version) > 0
     && (activeCase?.purpose !== 'billing' || activeCase.payment_link || activeCase.can_send_without_link);
   const isResolved = activeCase?.workflow_stage === 'resolved';
   const suggestedReturn = suggestion?.proposed_next_action_at;
@@ -268,6 +287,12 @@ export default function CommunicationCaseDialog({
     });
   };
 
+  const completeReview = () => {
+    if (!canCompleteCommunicationReview(activeCase?.blocked_reason)) return;
+    if (!completionNote.trim()) return toast.error('Descreva o que foi conferido');
+    applyAction('review_completed', { note: completionNote.trim() });
+  };
+
   return (
     <Dialog open={open} onOpenChange={nextOpen => !nextOpen && !saving && onClose?.()}>
       <DialogContent className="!left-auto !right-0 !top-0 !h-[100dvh] !max-h-[100dvh] !w-full !max-w-xl !translate-x-0 !translate-y-0 !rounded-none overflow-y-auto p-0">
@@ -322,7 +347,11 @@ export default function CommunicationCaseDialog({
               {(activeCase.blocked_reason || suggestion?.blocked_reason) && (
                 <div role="note" className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                  <span>{suggestion?.blocked_reason || activeCase.blocked_reason}. O caso permanece visível até a revisão ou resolução.</span>
+                  <span>
+                    {suggestion?.blocked_reason === 'not_due_yet' && activeCase.next_action_at
+                      ? `Aguardar até ${formatDate(activeCase.next_action_at)} para o próximo contato.`
+                      : `${communicationBlockReasonLabel(suggestion?.blocked_reason || activeCase.blocked_reason)}. O caso permanece visível até a revisão ou resolução.`}
+                  </span>
                 </div>
               )}
 
@@ -345,16 +374,21 @@ export default function CommunicationCaseDialog({
                   <p className="text-sm text-muted-foreground">
                     Sugestão baseada na situação atual. Você pode editar o texto antes de abrir o WhatsApp.
                   </p>
+                  {contactIsFuture && suggestion?.blocked_reason !== 'not_due_yet' && (
+                    <p role="note" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                      Contato previsto para {formatDate(activeCase.next_action_at && activeCase.next_action_at > today ? activeCase.next_action_at : eligibleAt)}. O combinado permanece agendado até essa data.
+                    </p>
+                  )}
                   <div>
                     <Label htmlFor="case-message">Mensagem editável</Label>
                     <Textarea id="case-message" rows={11} value={message} onChange={event => { setMessage(event.target.value); setConfirmed(false); }} className="mt-1 text-sm leading-relaxed" />
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    <Button variant="outline" onClick={copyMessage} disabled={!message.trim()} className="min-h-11">
+                    <Button variant="outline" onClick={copyMessage} disabled={!canSend || !message.trim()} className="min-h-11">
                       {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
                       {copied ? 'Copiada' : 'Copiar texto'}
                     </Button>
-                    <Button variant="outline" onClick={openWhatsApp} disabled={!hasPhone || !message.trim()} className="min-h-11">
+                    <Button variant="outline" onClick={openWhatsApp} disabled={!canSend || !message.trim()} className="min-h-11">
                       <ExternalLink className="mr-2 h-4 w-4" /> Abrir WhatsApp
                     </Button>
                   </div>
@@ -461,6 +495,24 @@ export default function CommunicationCaseDialog({
               {panel === 'review' && (
                 <section className="space-y-4" aria-label="Solicitar revisão">
                   <p className="text-sm text-muted-foreground">Use para conferir pagamento informado, contestação, contato ou cobrança. O saldo permanece no Financeiro.</p>
+                  {activeCase.blocked_reason && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      <p className="font-medium">Revisão pendente: {communicationBlockReasonLabel(activeCase.blocked_reason)}</p>
+                      <p className="mt-1">Próxima conferência: {activeCase.next_action_at ? formatDate(activeCase.next_action_at) : 'sem data definida'}.</p>
+                      {activeCase.blocked_reason === 'payment_review' && (
+                        <p className="mt-1">Se o pagamento foi confirmado, registre-o no Financeiro antes de encerrar a conferência.</p>
+                      )}
+                    </div>
+                  )}
+                  {canCompleteCommunicationReview(activeCase.blocked_reason) && !isResolved && (
+                    <div className="space-y-2 rounded-md border border-blue-200 bg-blue-50 p-3">
+                      <Label htmlFor="case-completion-note">O que foi conferido?</Label>
+                      <Textarea id="case-completion-note" rows={3} value={completionNote} onChange={event => setCompletionNote(event.target.value)} className="bg-white" />
+                      <Button type="button" variant="outline" onClick={completeReview} disabled={saving || !completionNote.trim()} className="min-h-11 w-full">
+                        Conferência feita · retomar acompanhamento
+                      </Button>
+                    </div>
+                  )}
                   <div>
                     <Label htmlFor="case-review-reason">O que precisa ser revisto?</Label>
                     <Textarea id="case-review-reason" rows={4} value={reviewReason} onChange={event => setReviewReason(event.target.value)} className="mt-1" />

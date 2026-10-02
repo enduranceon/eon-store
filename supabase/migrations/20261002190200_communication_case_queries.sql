@@ -32,7 +32,7 @@ DECLARE
   v_result jsonb;
 BEGIN
   IF p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 100
-     OR (p_state IS NOT NULL AND p_state NOT IN ('to_do','following_up','scheduled','resolved'))
+     OR (p_state IS NOT NULL AND p_state NOT IN ('to_do','following_up','scheduled','resolved','open'))
      OR (p_purpose IS NOT NULL AND p_purpose NOT IN ('billing','onboarding','renewal'))
      OR (p_source_type IS NOT NULL AND p_source_type NOT IN ('contract','presale','stock','event'))
      OR length(COALESCE(p_query,'')) > 120 THEN
@@ -71,7 +71,8 @@ BEGIN
       OR body->>'reference' ILIKE '%' || p_query || '%')
   ), page AS (
     SELECT id, body, sort_date FROM filtered
-    WHERE (p_state IS NULL OR body->>'workflow_stage' = p_state)
+    WHERE (p_state IS NULL OR body->>'workflow_stage' = p_state
+      OR (p_state='open' AND body->>'workflow_stage'<>'resolved'))
       AND (v_id IS NULL OR (sort_date,id) > (v_date,v_id))
     ORDER BY sort_date,id LIMIT p_limit + 1
   ), shown AS (
@@ -178,21 +179,29 @@ CREATE OR REPLACE FUNCTION eon_private.lock_communication_source(
   p_source_type text,p_source_id uuid
 )
 RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
-DECLARE v_found uuid;
+DECLARE v_found uuid;v_customer_id uuid;
 BEGIN
   IF p_source_type='contract' THEN
-    SELECT id INTO v_found FROM public.assessment_contracts WHERE id=p_source_id FOR UPDATE;
+    SELECT id,customer_id INTO v_found,v_customer_id
+      FROM public.assessment_contracts WHERE id=p_source_id FOR UPDATE;
   ELSIF p_source_type='presale' THEN
     SELECT id INTO v_found FROM public.presale_orders WHERE id=p_source_id FOR UPDATE;
   ELSIF p_source_type='stock' THEN
     SELECT id INTO v_found FROM public.stock_orders WHERE id=p_source_id FOR UPDATE;
   ELSIF p_source_type='event' THEN
-    SELECT id INTO v_found FROM public.event_registrations WHERE id=p_source_id FOR UPDATE;
+    SELECT id,customer_id INTO v_found,v_customer_id
+      FROM public.event_registrations WHERE id=p_source_id FOR UPDATE;
   ELSE
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='Origem inválida';
   END IF;
   IF v_found IS NULL THEN
     RAISE EXCEPTION USING ERRCODE='P0002', MESSAGE='Origem não encontrada';
+  END IF;
+  IF v_customer_id IS NOT NULL THEN
+    -- Customer edits/merges cannot change the recipient between revalidation
+    -- and the immutable contact event. NOWAIT fails fast instead of deadlocking
+    -- with older customer-first operations.
+    PERFORM 1 FROM public.presale_customers WHERE id=v_customer_id FOR SHARE NOWAIT;
   END IF;
 END;
 $$;

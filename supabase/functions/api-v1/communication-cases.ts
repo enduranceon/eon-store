@@ -6,7 +6,7 @@ const KEY = /^[A-Za-z0-9._:-]{8,100}$/;
 const HASH = /^[0-9a-f]{32}$/;
 const SOURCE = new Set(["contract", "presale", "stock", "event"]);
 const PURPOSE = new Set(["billing", "onboarding", "renewal"]);
-const STATE = new Set(["to_do", "following_up", "scheduled", "resolved"]);
+const STATE = new Set(["to_do", "following_up", "scheduled", "resolved", "open"]);
 const ACTION_FIELDS: Record<string, string[]> = {
   message_sent: ["message", "channel", "confirmed_external_send", "expected_rule_version", "next_action_at"],
   response_recorded: ["response_code", "note", "follow_up_at"],
@@ -24,7 +24,7 @@ function invalid(message: string): Response {
 function dbError(error: { code?: string; message?: string }, operation: string): Response {
   console.error(`api-v1 communication ${operation}:`, error.code, error.message);
   if (error.code === "P0002") return jsonResponse({ error: error.message, code: "not_found" }, 404);
-  if (["P0001", "23505"].includes(error.code || "")) {
+  if (["P0001", "23505", "55P03"].includes(error.code || "")) {
     return jsonResponse({ error: error.message || "Acompanhamento alterado", code: "conflict" }, 409);
   }
   if (["22023", "22P02", "22007", "22008", "23514", "23502", "23503"].includes(error.code || "")) {

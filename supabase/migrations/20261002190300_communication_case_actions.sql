@@ -69,7 +69,8 @@ BEGIN
   SELECT * INTO v_command FROM public.communication_case_commands
     WHERE case_id=p_case_id AND idempotency_key=p_idempotency_key FOR UPDATE;
   IF FOUND THEN
-    IF v_command.request_hash<>v_hash OR v_command.actor_id<>p_actor_id THEN
+    IF v_command.request_payload IS DISTINCT FROM p_request
+       OR v_command.actor_id<>p_actor_id THEN
       RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='Chave de idempotência reutilizada com dados diferentes';
     END IF;
     RETURN v_command.result || jsonb_build_object('replayed',true);
@@ -246,8 +247,8 @@ BEGIN
   RETURNING * INTO v_event;
   v_result := jsonb_build_object('case',(public.get_communication_case(p_case_id))->'case',
     'event',to_jsonb(v_event),'replayed',false);
-  INSERT INTO public.communication_case_commands(case_id,idempotency_key,request_hash,result,actor_id)
-    VALUES(p_case_id,p_idempotency_key,v_hash,v_result,p_actor_id);
+  INSERT INTO public.communication_case_commands(case_id,idempotency_key,request_hash,request_payload,result,actor_id)
+    VALUES(p_case_id,p_idempotency_key,v_hash,p_request,v_result,p_actor_id);
   RETURN v_result;
 END;
 $$;

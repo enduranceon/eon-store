@@ -15,6 +15,7 @@ import {
   simulateCommunicationDraft,
 } from '@/api/client';
 import { DEFAULT_COMMUNITY_LINK, loadCommunicationConfig, saveCommunityLink } from '@/lib/communication-config';
+import { communicationBlockReasonLabel } from '@/lib/communication-case';
 import { formatDateTime } from '@/lib/utils';
 
 const JOURNEY_LABEL = {
@@ -32,11 +33,31 @@ const TASK_KIND_LABEL = {
   renewal_reminder: 'Conversar sobre renovação',
 };
 
-const NEW_RULE_BASE = {
-  billing: { trigger_event: 'charge_created', task_kind: 'charge_send' },
-  onboarding: { trigger_event: 'payment_confirmed', task_kind: 'onboarding_welcome' },
-  renewal: { trigger_event: 'contract_end_date', task_kind: 'renewal_reminder' },
+const MODEL_STAGES = {
+  billing: [
+    { key: 'initial', label: 'Cobrança inicial', trigger_event: 'charge_created', task_kind: 'charge_send', offsets: [[0, 'Ao cadastrar cobrança']] },
+    { key: 'pre_due', label: 'Lembrete antes ou no vencimento', trigger_event: 'charge_due_date', task_kind: 'charge_send', offsets: [[-1, 'D−1 · véspera'], [0, 'D0 · vencimento']] },
+    { key: 'overdue', label: 'Saldo em atraso', trigger_event: 'charge_due_date', task_kind: 'charge_overdue', offsets: [[3, 'D+3'], [5, 'D+5'], [7, 'D+7'], [8, 'D+8 em diante · revisão diária']] },
+  ],
+  onboarding: [
+    { key: 'welcome', label: 'Boas-vindas após pagamento', trigger_event: 'payment_confirmed', task_kind: 'onboarding_welcome', offsets: [[0, 'Após pagamento']] },
+    { key: 'checkin', label: 'Check-in inicial', trigger_event: 'onboarding_welcome_sent', task_kind: 'onboarding_checkin', offsets: [[5, 'D+5 após boas-vindas']] },
+  ],
+  renewal: [
+    { key: 'renewal', label: 'Contato de renovação', trigger_event: 'contract_end_date', task_kind: 'renewal_reminder', offsets: [[-10, 'D−10 antes do fim']] },
+  ],
 };
+
+function modelStage(rule) {
+  return (MODEL_STAGES[rule.journey] || []).find(stage => (
+    stage.trigger_event === rule.trigger_event && stage.task_kind === rule.task_kind
+  ));
+}
+
+function isCurrentStage(rule) {
+  const stage = modelStage(rule);
+  return Boolean(stage && stage.offsets.some(([offset]) => offset === Number(rule.days_offset)));
+}
 
 function copyRule(rule) {
   return {
@@ -91,7 +112,13 @@ function SimulationResults({ simulation }) {
       {Array.isArray(simulation.scenarios) && simulation.scenarios.map((scenario, index) => (
         <div key={index} className="rounded-md border bg-white p-2">
           <p className="font-semibold">{scenario.label || `Cenário ${index + 1}`}</p>
-          {scenario.expected_action && <p className="mt-1 text-xs text-muted-foreground">Ação: {scenario.expected_action}</p>}
+          {(scenario.blocked_reason || scenario.expected_action) && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Ação: {scenario.blocked_reason
+                ? `Contato bloqueado: ${communicationBlockReasonLabel(scenario.blocked_reason)}`
+                : scenario.expected_action}
+            </p>
+          )}
           {scenario.message && <p className="mt-2 whitespace-pre-wrap text-xs text-gray-800">{scenario.message}</p>}
         </div>
       ))}
@@ -113,9 +140,24 @@ function RuleEditor({ rule, savedDraft, isNew = false, onPublished, onDraftSaved
   const [versionsCursor, setVersionsCursor] = useState(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [error, setError] = useState('');
+  const stage = modelStage(draft);
+  const stages = MODEL_STAGES[draft.journey] || [];
 
   const setField = (field, value) => {
     setDraft(current => ({ ...current, [field]: value }));
+    setDirty(true);
+    setSimulation(null);
+  };
+
+  const setStage = (key) => {
+    const nextStage = stages.find(candidate => candidate.key === key);
+    if (!nextStage) return;
+    setDraft(current => ({
+      ...current,
+      trigger_event: nextStage.trigger_event,
+      task_kind: nextStage.task_kind,
+      days_offset: nextStage.offsets[0][0],
+    }));
     setDirty(true);
     setSimulation(null);
   };
@@ -204,7 +246,7 @@ function RuleEditor({ rule, savedDraft, isNew = false, onPublished, onDraftSaved
           <div>
             <CardTitle className="text-base">{isNew ? 'Novo modelo em rascunho' : rule.name}</CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              {JOURNEY_LABEL[draft.journey] || draft.journey} · {TASK_KIND_LABEL[draft.task_kind] || 'Modelo de contato'}
+              {JOURNEY_LABEL[draft.journey] || draft.journey} · {stage?.label || TASK_KIND_LABEL[draft.task_kind] || 'Modelo de contato'}
               {!isNew && ` · versão publicada ${rule.template_version || 1}`}
             </p>
           </div>
@@ -226,14 +268,37 @@ function RuleEditor({ rule, savedDraft, isNew = false, onPublished, onDraftSaved
             Rascunho {dirty ? 'com mudanças ainda não salvas' : 'salvo'}. Salvar não publica; é preciso simular e confirmar a publicação.
           </p>
         )}
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_100px_100px]">
+        {isNew && (
+          <div>
+            <Label htmlFor={`model-stage-${draft.slug}`}>Etapa deste texto</Label>
+            <select
+              id={`model-stage-${draft.slug}`}
+              value={stage?.key || ''}
+              onChange={event => setStage(event.target.value)}
+              className="mt-1 min-h-11 w-full rounded-md border bg-white px-3 text-sm"
+            >
+              {stages.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
+            </select>
+          </div>
+        )}
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(210px,0.8fr)_110px]">
           <div>
             <Label htmlFor={`model-name-${draft.slug}`}>Nome</Label>
             <Input id={`model-name-${draft.slug}`} value={draft.name} onChange={event => setField('name', event.target.value)} className="mt-1" />
           </div>
           <div>
-            <Label htmlFor={`model-days-${draft.slug}`}>Marco do texto</Label>
-            <Input id={`model-days-${draft.slug}`} type="number" value={draft.days_offset} onChange={event => setField('days_offset', event.target.value)} className="mt-1" />
+            <Label htmlFor={`model-days-${draft.slug}`}>Quando usar</Label>
+            <select
+              id={`model-days-${draft.slug}`}
+              value={draft.days_offset}
+              onChange={event => setField('days_offset', Number(event.target.value))}
+              className="mt-1 min-h-11 w-full rounded-md border bg-white px-2 text-sm"
+            >
+              {stage?.offsets.map(([offset, label]) => <option key={offset} value={offset}>{label}</option>)}
+              {!stage?.offsets.some(([offset]) => offset === Number(draft.days_offset)) && (
+                <option value={draft.days_offset} disabled>Fora da régua ({draft.days_offset})</option>
+              )}
+            </select>
           </div>
           <div>
             <Label htmlFor={`model-order-${draft.slug}`}>Ordem</Label>
@@ -241,7 +306,8 @@ function RuleEditor({ rule, savedDraft, isNew = false, onPublished, onDraftSaved
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          O marco escolhe o texto da etapa. A cadência das cobranças em atraso é uma política separada e não muda ao editar este número.
+          O texto é escolhido pela etapa e pelo marco. Entre modelos ativos da mesma etapa, a menor ordem tem prioridade.
+          {draft.journey === 'billing' && ' A cadência de D+3, D+5, D+7 e revisão diária permanece fixa.'}
         </p>
         <div>
           <Label htmlFor={`model-template-${draft.slug}`}>Texto sugerido</Label>
@@ -477,7 +543,7 @@ export default function CommunicationSettings() {
   ));
 
   const createRule = journey => {
-    const base = NEW_RULE_BASE[journey];
+    const base = MODEL_STAGES[journey][0];
     setNewRule({
       slug: newSlug(base.task_kind),
       name: 'Novo modelo',
@@ -486,7 +552,7 @@ export default function CommunicationSettings() {
       task_kind: base.task_kind,
       channel: 'whatsapp',
       active: false,
-      days_offset: 0,
+      days_offset: base.offsets[0][0],
       order_index: 99,
       message_template: 'Oi, {nome}!\n\n',
     });
@@ -571,8 +637,8 @@ export default function CommunicationSettings() {
                   <Plus className="h-4 w-4" /> Novo modelo
                 </Button>
               </div>
-              {(rulesByJourney[journey] || []).length === 0 && <p className="text-sm text-muted-foreground">Nenhum modelo publicado nesta finalidade.</p>}
-              {(rulesByJourney[journey] || []).map(rule => {
+              {(rulesByJourney[journey] || []).filter(isCurrentStage).length === 0 && <p className="text-sm text-muted-foreground">Nenhum modelo vigente nesta finalidade.</p>}
+              {(rulesByJourney[journey] || []).filter(isCurrentStage).map(rule => {
                 const savedDraft = draftForRule(rule);
                 return (
                   <RuleEditor
@@ -584,6 +650,18 @@ export default function CommunicationSettings() {
                   />
                 );
               })}
+              {(rulesByJourney[journey] || []).some(rule => !isCurrentStage(rule)) && (
+                <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm">
+                  <h3 className="font-semibold">Modelos antigos fora da régua atual</h3>
+                  <p className="text-xs text-muted-foreground">Esses textos permanecem para consulta, mas seus marcos não são usados para sugerir mensagens na régua vigente.</p>
+                  {(rulesByJourney[journey] || []).filter(rule => !isCurrentStage(rule)).map(rule => (
+                    <details key={rule.id} className="rounded-md border bg-white p-3">
+                      <summary className="cursor-pointer font-medium">{rule.name} · marco {rule.days_offset} · versão {rule.template_version || 1}</summary>
+                      <p className="mt-2 whitespace-pre-wrap text-xs text-gray-700">{rule.message_template}</p>
+                    </details>
+                  ))}
+                </div>
+              )}
               {newRuleDrafts.filter(savedDraft => savedDraft.rule?.journey === journey).map(savedDraft => (
                 <RuleEditor
                   key={savedDraft.id}

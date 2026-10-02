@@ -35,6 +35,10 @@ RETURNS text LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path = '' AS $$
     'pix_copy', p_context->'pix_copy',
     'person_name', p_context->'person_name',
     'plan_name', p_context->'plan_name',
+    'modality_name', p_context->'modality_name',
+    'coach_name', p_context->'coach_name',
+    'community_link', p_context->'community_link',
+    'items', p_context->'items',
     'reference', p_context->'reference',
     'onboarding_welcome_sent_at', p_context->'onboarding_welcome_sent_at',
     'onboarding_checkin_sent_at', p_context->'onboarding_checkin_sent_at',
@@ -60,6 +64,13 @@ DECLARE
   v_balance numeric;
   v_link text := NULLIF(p_context->>'payment_link', '');
   v_pix text := NULLIF(p_context->>'pix_copy', '');
+  v_name text := COALESCE(NULLIF(btrim(p_context->>'person_name'),''),'Cliente');
+  v_item jsonb;
+  v_items text := '';
+  v_first_item text;
+  v_item_name text;
+  v_item_count integer:=0;
+  v_quantity integer;
 BEGIN
   v_due := NULLIF(p_context->>'due_date', '')::date;
   v_end := NULLIF(p_context->>'end_date', '')::date;
@@ -67,8 +78,23 @@ BEGIN
   v_type := CASE p_context->>'source_type'
     WHEN 'contract' THEN 'contrato' WHEN 'event' THEN 'inscricao'
     ELSE 'pedido' END;
+  IF jsonb_typeof(p_context->'items')='array' THEN
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_context->'items') LOOP
+      IF COALESCE(v_item->>'cancelled','false')='true' THEN CONTINUE; END IF;
+      v_item_name:=COALESCE(NULLIF(v_item->>'product_name',''),
+        NULLIF(v_item->>'name',''),NULLIF(v_item->>'description',''));
+      IF v_item_name IS NULL THEN CONTINUE; END IF;
+      v_item_count:=v_item_count+1;
+      v_first_item:=COALESCE(v_first_item,v_item_name);
+      v_quantity:=CASE WHEN COALESCE(v_item->>'quantity','') ~ '^[0-9]{1,4}$'
+        THEN GREATEST(1,(v_item->>'quantity')::integer) ELSE 1 END;
+      v_items:=v_items || CASE WHEN v_items='' THEN '' ELSE E'\n' END ||
+        '- ' || v_item_name || ' x' || v_quantity;
+    END LOOP;
+  END IF;
   RETURN jsonb_build_object(
-    'nome', COALESCE(NULLIF(p_context->>'person_name', ''), 'Cliente'),
+    'nome', split_part(v_name,' ',1),
+    'nome_completo', v_name,
     'tipo', v_type,
     'numero', COALESCE(NULLIF(p_context->>'reference', ''), 'sem numero'),
     'valor', CASE WHEN v_balance IS NULL THEN 'saldo a conferir'
@@ -79,13 +105,27 @@ BEGIN
     'vencimento_atraso', CASE WHEN v_due IS NULL THEN ''
       ELSE ' em ' || to_char(v_due, 'DD/MM/YYYY') END,
     'pix_bloco', CASE WHEN v_pix IS NULL THEN ''
-      ELSE 'Pix copia e cola: ' || v_pix || E'\n\n' END,
+      ELSE 'PIX Copia e Cola:' || E'\n' || v_pix || E'\n\n' END,
+    'pix_copia_cola', COALESCE(v_pix,''),
     'link_bloco', CASE WHEN v_link IS NULL THEN ''
-      ELSE 'Link para pagamento: ' || v_link || E'\n\n' END,
-    'itens_bloco', '',
+      ELSE 'Link de pagamento:' || E'\n' || v_link || E'\n\n' END,
+    'link_pagamento', COALESCE(v_link,''),
+    'item', CASE WHEN v_item_count>1 THEN v_first_item||' +'||(v_item_count-1)
+      ELSE COALESCE(v_first_item,'') END,
+    'itens', v_items,
+    'itens_bloco', CASE WHEN v_items='' THEN ''
+      ELSE 'Itens:' || E'\n' || v_items || E'\n\n' END,
     'plano', COALESCE(NULLIF(p_context->>'plan_name', ''), 'seu plano'),
     'data_fim', CASE WHEN v_end IS NULL THEN '' ELSE to_char(v_end, 'DD/MM/YYYY') END,
-    'modalidade', '', 'coach', '', 'comunidade', ''
+    'dias', CASE WHEN v_end IS NULL THEN '' ELSE (v_end-v_today)::text END,
+    'aviso_vencimento', CASE WHEN v_end IS NULL
+      THEN 'a data de vencimento do seu plano precisa ser confirmada'
+      WHEN v_end>=v_today THEN 'seu plano vence nos próximos dias'
+      ELSE 'seu plano venceu em ' || to_char(v_end,'DD/MM') END,
+    'modalidade', COALESCE(NULLIF(p_context->>'modality_name',''),'a confirmar'),
+    'coach', COALESCE(NULLIF(p_context->>'coach_name',''),'a definir'),
+    'comunidade', COALESCE(NULLIF(p_context->>'community_link',''),
+      '(link da comunidade não configurado)')
   );
 END;
 $$;
@@ -148,7 +188,8 @@ BEGIN
     END IF;
     IF v_last IS NULL AND p_context->>'payment_status'<>'partially_paid' THEN
       v_slug := 'billing-charge-send'; v_action := 'initial_charge';
-      v_next := CASE WHEN v_due IS NULL THEN NULL ELSE v_due + 3 END;
+      v_next := CASE WHEN v_due IS NULL THEN NULL
+        ELSE GREATEST(v_due+3,v_today+1) END;
     ELSIF v_due IS NULL THEN
       v_slug := 'billing-charge-overdue'; v_action := 'overdue';
       v_block := COALESCE(v_block, 'missing_due_date');
@@ -226,6 +267,10 @@ BEGIN
     IF p_context->>'payment_status' <> 'paid' THEN
       v_block := 'payment_changed';
     END IF;
+    IF v_action='onboarding_welcome'
+       AND NULLIF(p_context->>'community_link','') IS NULL THEN
+      v_block:=COALESCE(v_block,'community_link_missing');
+    END IF;
   END IF;
 
   IF length(regexp_replace(COALESCE(p_context->>'contact_phone',''),'[^0-9]','','g'))
@@ -247,6 +292,9 @@ BEGIN
   IF p_case.hold_kind = 'contact_wait'
      AND p_case.next_action_at IS NOT NULL AND p_case.next_action_at > v_today THEN
     v_eligible := GREATEST(v_eligible, p_case.next_action_at);
+  END IF;
+  IF v_block IS NULL AND (v_eligible>v_today OR p_case.next_action_at>v_today) THEN
+    v_block:='not_due_yet';
   END IF;
   IF p_case.purpose='billing' THEN
     v_rule_journey:='billing';
@@ -312,7 +360,9 @@ BEGIN
   v_stage := CASE
     WHEN p_case.status = 'resolved' THEN 'resolved'
     WHEN p_case.hold_kind = 'explicit_schedule' AND p_case.next_action_at > v_today THEN 'scheduled'
-    WHEN p_case.hold_kind = 'contact_wait' THEN 'following_up'
+    WHEN p_case.hold_kind = 'contact_wait' AND p_case.purpose='renewal'
+      AND p_case.next_action_at IS NULL THEN 'following_up'
+    WHEN p_case.hold_kind = 'contact_wait' AND p_case.next_action_at > v_today THEN 'following_up'
     WHEN v_next > v_today THEN 'scheduled'
     ELSE 'to_do' END;
   RETURN jsonb_build_object(

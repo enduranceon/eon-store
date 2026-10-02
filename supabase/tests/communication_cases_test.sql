@@ -68,6 +68,17 @@ SELECT isnt(eon_private.communication_source_fingerprint(
     eon_private.communication_source_context('stock',pg_temp.order_id(3))
       || jsonb_build_object('pix_copy','0002010102112658EXAMPLE')),
   'adding a PIX payload invalidates the source fingerprint');
+SELECT is((eon_private.communication_template_context(jsonb_build_object(
+    'source_type','contract','person_name','Ana Exemplo','end_date',current_date-1,
+    'community_link','https://example.test/community','modality_name','corrida',
+    'coach_name','Coach Exemplo','items',jsonb_build_array(
+      jsonb_build_object('name','Camisa','quantity',2))))->>'aviso_vencimento'),
+  'seu plano venceu em '||to_char(current_date-1,'DD/MM'),
+  'Pebinha receives the correct overdue renewal notice');
+SELECT is((eon_private.communication_template_context(jsonb_build_object(
+    'source_type','stock','person_name','Ana Exemplo','items',jsonb_build_array(
+      jsonb_build_object('name','Camisa','quantity',2))))->>'itens'),
+  '- Camisa x2','item tokens use the source item snapshot');
 SELECT is((eon_private.communication_case_suggestion(c,
     eon_private.communication_source_context(c.source_type,c.source_id)
       || jsonb_build_object('contact_phone','12'),NULL,NULL)->>'blocked_reason'),

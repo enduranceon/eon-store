@@ -12,7 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { listFinancialDataQuality, listFinancialMovements, updateOrderDueDate } from '@/api/client';
+import { listCommunicationCases, listFinancialDataQuality, listFinancialMovements, updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
 import { financialQualitySeverityLabel, toPaymentRecord } from '@/lib/financial-ledger';
 import {
@@ -28,11 +28,11 @@ import {
   isOpenCollectionSale,
 } from '@/lib/sales';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
+import { communicationBlockReasonLabel } from '@/lib/communication-case';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { readPageCache, writePageCache } from '@/lib/page-cache';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
-import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
@@ -143,7 +143,7 @@ function collectionTaskFor(order) {
 }
 
 
-function OrderRow({ o, onEditDueDate, onCollectPayment, onRegisterPayment }) {
+function OrderRow({ o, contact, onEditDueDate, onCollectPayment, onRegisterPayment }) {
   const link = o.is_prospect         ? '/assessoria/prospects'
              : o.type === 'stock'    ? `/estoque/pedidos/${o.id}`
              : o.type === 'contract' ? `/assessoria/contratos/${o.id}`
@@ -166,7 +166,7 @@ function OrderRow({ o, onEditDueDate, onCollectPayment, onRegisterPayment }) {
     && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors group">
+    <div className="flex flex-col items-stretch gap-3 px-3 py-3 rounded-lg hover:bg-gray-50 transition-colors group sm:flex-row sm:items-center">
       <Link to={link} className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-semibold text-blue-700">{o.order_number}</span>
@@ -188,6 +188,10 @@ function OrderRow({ o, onEditDueDate, onCollectPayment, onRegisterPayment }) {
           )}
         </div>
         <p className="text-xs text-muted-foreground truncate">{o.customer}</p>
+        {contact && <div className="mt-1 space-y-0.5 text-xs text-slate-600">
+          <p>{contact.last_contact_at ? `Último contato: ${formatDate(contact.last_contact_at)}` : 'Sem contato registrado'}{contact.next_action_at ? ` · Retorno: ${formatDate(contact.next_action_at)}` : ''}</p>
+          <p className={contact.blocked_reason ? 'font-medium text-amber-800' : ''}>{contact.blocked_reason ? communicationBlockReasonLabel(contact.blocked_reason) : { to_do: 'A fazer', following_up: 'Em acompanhamento', scheduled: 'Agendado' }[contact.workflow_stage]}</p>
+        </div>}
       </Link>
       <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap">
         {o.due_date ? (
@@ -205,11 +209,12 @@ function OrderRow({ o, onEditDueDate, onCollectPayment, onRegisterPayment }) {
             type="button"
             variant="outline"
             size="sm"
-            className="h-7 px-2 text-xs border-green-200 text-green-700 hover:bg-green-50"
+            aria-label={`Acompanhar cobrança ${o.order_number}`}
+            className="min-h-11 px-3 text-xs border-green-200 text-green-700 hover:bg-green-50"
             onClick={() => onCollectPayment(o)}
           >
             <MessageCircle className="w-3.5 h-3.5 sm:mr-1" />
-            <span className="hidden sm:inline">Cobrar</span>
+            <span className="ml-1">Acompanhar</span>
           </Button>
         )}
         {canRegisterPayment && (
@@ -217,7 +222,8 @@ function OrderRow({ o, onEditDueDate, onCollectPayment, onRegisterPayment }) {
             type="button"
             variant="outline"
             size="sm"
-            className="h-7 px-2 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+            aria-label={`Registrar pagamento ${o.order_number}`}
+            className="min-h-11 px-3 text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
             onClick={() => onRegisterPayment(o)}
           >
             <Banknote className="w-3.5 h-3.5 sm:mr-1" />
@@ -229,7 +235,8 @@ function OrderRow({ o, onEditDueDate, onCollectPayment, onRegisterPayment }) {
             type="button"
             variant="outline"
             size="sm"
-            className="h-7 px-2 text-xs"
+            aria-label={`Alterar vencimento ${o.order_number}`}
+            className="min-h-11 px-3 text-xs"
             onClick={() => onEditDueDate(o)}
           >
             <Calendar className="w-3.5 h-3.5 sm:mr-1" />
@@ -244,7 +251,7 @@ function OrderRow({ o, onEditDueDate, onCollectPayment, onRegisterPayment }) {
   );
 }
 
-function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, badgeCls, total, onEditDueDate, onCollectPayment, onRegisterPayment }) {
+function OrderSection({ contactCases = {}, title, icon: Icon, iconCls, orders, emptyMsg, border, badgeCls, total, onEditDueDate, onCollectPayment, onRegisterPayment }) {
   if (orders.length === 0) return null;
   return (
     <Card className={border || ''}>
@@ -269,6 +276,7 @@ function OrderSection({ title, icon: Icon, iconCls, orders, emptyMsg, border, ba
             <OrderRow
               key={o.list_key || o.id + o.type}
               o={o}
+              contact={contactCases[`${o.type}:${o.id}`]}
               onEditDueDate={onEditDueDate}
               onCollectPayment={onCollectPayment}
               onRegisterPayment={onRegisterPayment}
@@ -375,6 +383,25 @@ export default function Financial() {
   const cachedFinancialData = initialFinancialCache?.data;
   const [loading, setLoading]             = useState(!cachedFinancialData);
   const [orders, setOrders]               = useState(() => cachedFinancialData?.orders || []);
+  const [contactCases, setContactCases] = useState({});
+  const [contactError, setContactError] = useState('');
+  const [contactsReady, setContactsReady] = useState(null);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const bySource = {};
+      let cursor;
+      do {
+        const page = await listCommunicationCases({ purpose: 'billing', state: 'open', limit: 100, cursor });
+        if (!active) return;
+        if (page.rollout?.enabled === false) { setContactsReady(false); setContactError(''); return; }
+        for (const item of page.items || []) bySource[`${item.source_type}:${item.source_id}`] = item;
+        cursor = page.next_cursor || null;
+      } while (cursor);
+      if (active) { setContactCases(bySource); setContactsReady(true); setContactError(''); }
+    })().catch(cause => { if (active) setContactError(cause.message || 'Não foi possível consultar os acompanhamentos.'); });
+    return () => { active = false; };
+  }, [orders]);
   const [centers, setCenters]             = useState(() => cachedFinancialData?.centers || []);
   const [receivables, setReceivables]     = useState([]);
   const [loadingRec, setLoadingRec]       = useState(false);
@@ -493,7 +520,6 @@ export default function Financial() {
         }));
         const stock     = (stockRes.data     || []).map(o => ({ ...o, type: 'stock',    customer: o.customer_name }));
         const contractRows = contractRes.data || [];
-        await applyAssessmentContractTransitions(contractRows);
         const contracts = buildContractLifecycleRows(contractRows, { plansById: plansMap })
           .filter(c => {
             if (c.lifecycle?.type === 'voided_sale') return false;
@@ -867,10 +893,7 @@ export default function Financial() {
   };
 
   // Relê a fonte: enviar mensagem não significa receber nem emitir cobrança.
-  const handleCollectionSent = async () => {
-    setCollectionTask(null);
-    await load(true);
-  };
+  const handleCollectionSent = () => setCollectionTask(null);
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
@@ -916,6 +939,8 @@ export default function Financial() {
       </div>
 
       <FinancialDataQuality issues={qualityIssues} />
+      {contactError && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{contactError} A situação financeira permanece na lista; abra o acompanhamento para tentar novamente.</p>}
+      {contactsReady === false && <p className="rounded-lg border bg-slate-50 p-3 text-sm text-slate-700">Acompanhamentos em preparação. Cobranças e pagamentos continuam disponíveis nas ações financeiras.</p>}
 
       {/* ── KPI Cards ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1026,6 +1051,7 @@ export default function Financial() {
             </Card>
           )}
           <OrderSection
+            contactCases={contactCases}
             title="Em atraso" icon={AlertTriangle} iconCls="text-red-600"
             badgeCls="bg-red-100 text-red-700" border="border-red-200"
             orders={overdue} total={overdueTotal}
@@ -1034,6 +1060,7 @@ export default function Financial() {
             onRegisterPayment={openRegisterPayment}
           />
           <OrderSection
+            contactCases={contactCases}
             title="A vencer" icon={Calendar} iconCls="text-blue-600"
             badgeCls="bg-blue-100 text-blue-700"
             orders={upcoming} total={upcomingTotal}
@@ -1042,6 +1069,7 @@ export default function Financial() {
             onRegisterPayment={openRegisterPayment}
           />
           <OrderSection
+            contactCases={contactCases}
             title="Sem vencimento" icon={Clock} iconCls="text-gray-500"
             badgeCls="bg-gray-100 text-gray-600"
             orders={missingDueDate} total={missingDueDateTotal}
@@ -1050,6 +1078,7 @@ export default function Financial() {
             onRegisterPayment={openRegisterPayment}
           />
           <OrderSection
+            contactCases={contactCases}
             title="Recebidos esse mês" icon={CheckCircle2} iconCls="text-green-700"
             badgeCls="bg-green-100 text-green-700"
             orders={paidThisMonth} total={receivedMonth}

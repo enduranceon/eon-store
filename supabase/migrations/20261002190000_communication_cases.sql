@@ -61,6 +61,7 @@ CREATE TABLE public.communication_case_commands (
   case_id uuid NOT NULL REFERENCES public.communication_cases(id) ON DELETE RESTRICT,
   idempotency_key text NOT NULL CHECK (idempotency_key ~ '^[A-Za-z0-9._:-]{8,100}$'),
   request_hash text NOT NULL,
+  request_payload jsonb NOT NULL,
   result jsonb NOT NULL,
   actor_id uuid NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -146,6 +147,7 @@ INSERT INTO public.communication_settings(key,value)
 VALUES('cases_rollout',jsonb_build_object('enabled',false,'enabled_at',NULL,'enabled_by',NULL))
 ON CONFLICT (key) DO NOTHING;
 REVOKE INSERT,UPDATE,DELETE ON public.communication_settings FROM authenticated,anon;
+GRANT SELECT ON public.communication_settings TO service_role;
 
 CREATE OR REPLACE FUNCTION eon_private.protect_communication_cases_rollout()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $$
@@ -167,7 +169,7 @@ REVOKE ALL ON FUNCTION eon_private.protect_communication_cases_rollout()
   FROM PUBLIC,anon,authenticated;
 
 CREATE OR REPLACE FUNCTION eon_private.communication_cases_rollout_enabled()
-RETURNS boolean LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
   SELECT COALESCE((value->>'enabled')::boolean,false)
   FROM public.communication_settings WHERE key='cases_rollout';
 $$;
@@ -251,6 +253,7 @@ BEGIN
       'source_updated_at', o.updated_date, 'payment_link', COALESCE(NULLIF(o.asaas_payment_link, ''), NULLIF(o.external_payment_link, '')),
       'pix_copy', NULLIF(o.asaas_pix_copy, ''), 'charge_id', NULLIF(o.asaas_charge_id, ''),
       'external_invoice_number', NULLIF(o.external_invoice_number, ''),
+      'items', o.items,
       'balance', eon_private.communication_open_balance('presale', o.id, o.payment_status, COALESCE(o.total_value, o.total_amount, 0))
     ) INTO v_result
     FROM public.presale_orders o WHERE o.id = p_source_id;
@@ -266,6 +269,7 @@ BEGIN
       'source_updated_at', o.updated_date, 'payment_link', COALESCE(NULLIF(o.asaas_payment_link, ''), NULLIF(o.external_payment_link, '')),
       'pix_copy', NULLIF(o.asaas_pix_copy, ''), 'charge_id', NULLIF(o.asaas_charge_id, ''),
       'external_invoice_number', NULLIF(o.external_invoice_number, ''),
+      'items', o.items,
       'balance', eon_private.communication_open_balance('stock', o.id, o.payment_status, COALESCE(o.total_value, 0))
     ) INTO v_result
     FROM public.stock_orders o WHERE o.id = p_source_id;
@@ -290,6 +294,10 @@ BEGIN
       'onboarding_checkin_sent_at', onboarding.checkin_at,
       'period_months', eon_private.assessment_contract_period_months(c.plan_id, c.plan_snapshot),
       'plan_name', COALESCE(NULLIF(c.plan_snapshot->>'name', ''), plan.name),
+      'modality_name', modality.name,
+      'coach_name', coach.name,
+      'community_link', (SELECT NULLIF(value->>'url','') FROM public.communication_settings
+        WHERE key='community_link'),
       'end_date', c.end_date,
       'balance', eon_private.communication_open_balance(
         'contract', c.id, c.payment_status,
@@ -305,6 +313,8 @@ BEGIN
     FROM public.assessment_contracts c
     LEFT JOIN public.presale_customers customer ON customer.id = c.customer_id
     LEFT JOIN public.assessment_plans plan ON plan.id = c.plan_id
+    LEFT JOIN public.assessment_modalities modality ON modality.id = plan.modality_id
+    LEFT JOIN public.assessment_coaches coach ON coach.id = c.coach_id
     LEFT JOIN LATERAL (
       SELECT max(e.created_at) FILTER(WHERE e.event_type='onboarding_welcome_sent') AS welcome_at,
         max(e.created_at) FILTER(WHERE e.event_type='onboarding_checkin_sent') AS checkin_at
@@ -318,14 +328,16 @@ BEGIN
       'person_name', COALESCE(NULLIF(customer.full_name, ''), 'Participante'),
       'contact_phone', customer.whatsapp,
       'reference', r.registration_number, 'source_href', '/eventos/' || r.event_id::text,
-      'payment_status', r.payment_status, 'source_status', 'registered',
+      'payment_status', r.payment_status, 'source_status', ev.status,
       'due_date', r.due_date, 'payment_message_sent_at', r.payment_message_sent_at,
       'source_updated_at', r.updated_at, 'payment_link', COALESCE(NULLIF(r.asaas_payment_link, ''), NULLIF(r.external_payment_link, '')),
       'pix_copy', NULLIF(r.asaas_pix_copy, ''), 'charge_id', NULLIF(r.asaas_charge_id, ''),
       'external_invoice_number', NULLIF(r.external_invoice_number, ''),
+      'items', jsonb_build_array(jsonb_build_object('name',t.name,'quantity',1,'price',t.price)),
       'balance', eon_private.communication_open_balance('event', r.id, r.payment_status, COALESCE(t.price, 0))
     ) INTO v_result
     FROM public.event_registrations r
+    JOIN public.events ev ON ev.id=r.event_id
     JOIN public.event_registration_types t ON t.id = r.registration_type_id
     LEFT JOIN public.presale_customers customer ON customer.id = r.customer_id
     WHERE r.id = p_source_id;
@@ -370,12 +382,21 @@ DECLARE
   v_due date;
   v_prior_reason text;
   v_prior_successor uuid;
+  v_followup date;
+  v_new_hold text;
+  v_new_next date;
+  v_new_block text;
 BEGIN
   v_context := eon_private.communication_source_context(p_source_type, p_source_id);
   IF v_context IS NULL THEN RETURN NULL; END IF;
   IF p_purpose = 'billing' THEN
     v_eligible := v_context->>'payment_status' IN
       ('pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid');
+    IF p_source_type='contract' AND v_context->>'parent_contract_id' IS NOT NULL
+       AND v_context->>'renewal_stage' IN
+         ('contact_pending','waiting_response','charge_pending') THEN
+      v_eligible:=false;
+    END IF;
     IF (v_context->>'balance') IS NOT NULL
        AND (v_context->>'balance')::numeric <= 0 THEN
       v_eligible := false;
@@ -486,24 +507,37 @@ BEGIN
     END LOOP;
   END IF;
   IF p_purpose = 'renewal' THEN
-    UPDATE public.communication_cases
-    SET hold_kind = CASE WHEN NULLIF(v_context->>'renewal_follow_up_at','')::date > v_today
-        THEN 'contact_wait' ELSE 'none' END,
-        next_action_at = COALESCE(NULLIF(v_context->>'renewal_follow_up_at','')::date,v_today),
-        last_contact_at = NULLIF(v_context->>'renewal_last_contact_at','')::timestamptz,
-        blocked_reason = CASE WHEN v_context->>'renewal_response_code'
-          IN ('change_plan_or_coach','needs_agent') THEN 'renewal_review' ELSE NULL END,
-        version = version+1,updated_at=now()
-    WHERE id=v_case_id AND status='open'
-      AND (hold_kind IS DISTINCT FROM CASE
-          WHEN NULLIF(v_context->>'renewal_follow_up_at','')::date > v_today
-          THEN 'contact_wait' ELSE 'none' END
-        OR next_action_at IS DISTINCT FROM
-          COALESCE(NULLIF(v_context->>'renewal_follow_up_at','')::date,v_today)
-        OR last_contact_at IS DISTINCT FROM
-          NULLIF(v_context->>'renewal_last_contact_at','')::timestamptz
-        OR blocked_reason IS DISTINCT FROM CASE WHEN v_context->>'renewal_response_code'
-          IN ('change_plan_or_coach','needs_agent') THEN 'renewal_review' ELSE NULL END);
+    SELECT * INTO v_old FROM public.communication_cases WHERE id=v_case_id;
+    IF v_old.status='open' THEN
+      v_followup:=NULLIF(v_context->>'renewal_follow_up_at','')::date;
+      v_new_hold:=CASE
+        WHEN v_followup>v_today THEN 'explicit_schedule'
+        WHEN v_old.blocked_reason IN ('review_requested','payment_review',
+          'dispute','needs_agent','source_reopened_review')
+          AND v_old.hold_kind='explicit_schedule' THEN 'explicit_schedule'
+        WHEN v_old.hold_kind='contact_wait' THEN 'contact_wait'
+        ELSE 'none' END;
+      v_new_next:=CASE
+        WHEN v_followup>v_today THEN v_followup
+        WHEN v_new_hold IN ('explicit_schedule','contact_wait') THEN v_old.next_action_at
+        ELSE v_today END;
+      v_new_block:=CASE
+        WHEN v_old.blocked_reason IN ('review_requested','payment_review',
+          'dispute','needs_agent','source_reopened_review') THEN v_old.blocked_reason
+        WHEN v_context->>'renewal_response_code' IN
+          ('change_plan_or_coach','needs_agent') THEN 'renewal_review'
+        ELSE NULL END;
+      UPDATE public.communication_cases
+      SET hold_kind=v_new_hold,next_action_at=v_new_next,
+        last_contact_at=COALESCE(NULLIF(v_context->>'renewal_last_contact_at','')::timestamptz,
+          last_contact_at),blocked_reason=v_new_block,
+        version=version+1,updated_at=now()
+      WHERE id=v_case_id AND (hold_kind IS DISTINCT FROM v_new_hold
+        OR next_action_at IS DISTINCT FROM v_new_next
+        OR last_contact_at IS DISTINCT FROM COALESCE(
+          NULLIF(v_context->>'renewal_last_contact_at','')::timestamptz,last_contact_at)
+        OR blocked_reason IS DISTINCT FROM v_new_block);
+    END IF;
   END IF;
   RETURN v_case_id;
 END;
