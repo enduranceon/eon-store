@@ -6,6 +6,16 @@ const CUSTOMER_ID = "22222222-2222-4222-8222-222222222222";
 const ACTOR_ID = "33333333-3333-4333-8333-333333333333";
 const KEY = "case:test:00000001";
 const FINGERPRINT = "a".repeat(32);
+// PostgreSQL encode(convert_to(jsonb_build_object(...)::text, 'UTF8'), 'base64')
+// wraps these list and event cursors after 76 characters.
+const LIST_CURSOR = [
+  "eyJpZCI6ICIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCAiZGF0ZSI6ICIy",
+  "MDI2LTEwLTAzIiwgImFzX29mIjogIjIwMjYtMTAtMDNUMTI6MzQ6NTYuMTIzNDU2KzAwOjAwIn0=",
+].join("\n");
+const EVENTS_CURSOR = [
+  "eyJhdCI6ICIyMDI2LTEwLTAzVDEyOjM0OjU2LjEyMzQ1NiswMDowMCIsICJpZCI6ICIxMTExMTEx",
+  "MS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifQ==",
+].join("\r\n");
 type Call = { name: string; args: Record<string, unknown> };
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -46,6 +56,39 @@ Deno.test("case list uses server pagination and confines customer profile", asyn
   assert(calls.length === 1 && calls[0].name === "list_communication_cases", "list used wrong RPC");
   assert(calls[0].args.p_customer_id === CUSTOMER_ID, "customer scope was lost");
   assert(calls[0].args.p_state === "to_do" && calls[0].args.p_limit === 30, "pagination changed");
+});
+
+Deno.test("wrapped PostgreSQL list cursor is forwarded as clean base64", async () => {
+  const calls: Call[] = [];
+  const path = `/communications/cases?cursor=${encodeURIComponent(LIST_CURSOR)}&limit=20`;
+  const response = await handleCommunicationCaseRequest(req(path), "/communications/cases", client(calls), ACTOR_ID);
+  assert(response?.status === 200, "wrapped list cursor was rejected");
+  assert(calls.length === 1 && calls[0].name === "list_communication_cases", "list RPC was not called");
+  assert(calls[0].args.p_cursor === LIST_CURSOR.replace(/\r?\n/g, ""), "wrapped list cursor was not normalized");
+});
+
+Deno.test("wrapped PostgreSQL event cursor is forwarded as clean base64", async () => {
+  const calls: Call[] = [];
+  const route = `/communications/cases/${CASE_ID}/events`;
+  const response = await handleCommunicationCaseRequest(
+    req(`${route}?cursor=${encodeURIComponent(EVENTS_CURSOR)}`), route, client(calls), ACTOR_ID,
+  );
+  assert(response?.status === 200, "wrapped event cursor was rejected");
+  assert(calls.length === 1 && calls[0].name === "list_communication_case_events", "event RPC was not called");
+  assert(calls[0].args.p_cursor === EVENTS_CURSOR.replace(/\r?\n/g, ""), "wrapped event cursor was not normalized");
+});
+
+Deno.test("cursor validation still rejects other characters, empty values and over 512 bytes", async () => {
+  const calls: Call[] = [];
+  for (const route of ["/communications/cases", `/communications/cases/${CASE_ID}/events`]) {
+    for (const cursor of ["YWJj@", "YW Jj", "YW\tJj", "\r\n", "A".repeat(513)]) {
+      const response = await handleCommunicationCaseRequest(
+        req(`${route}?cursor=${encodeURIComponent(cursor)}`), route, client(calls), ACTOR_ID,
+      );
+      assert(response?.status === 400, `invalid cursor was accepted at ${route}`);
+    }
+  }
+  assert(calls.length === 0, "invalid cursor reached the database");
 });
 
 Deno.test("manual send requires confirmation, version and idempotency key", async () => {

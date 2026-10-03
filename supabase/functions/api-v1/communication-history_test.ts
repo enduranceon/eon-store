@@ -44,12 +44,32 @@ Deno.test("history rejects malformed filters before database work", async () => 
   for (const query of [
     "?customer_id=wrong", `?source_id=${SOURCE}`, "?source_type=unknown",
     "?from=2026-02-30", "?from=2026-10-03&to=2026-10-02",
-    "?limit=101", "?cursor=bad!", "?unknown=x",
+    "?limit=101", "?cursor=bad!", "?cursor=YW%20Jj", "?cursor=%0A%0D", "?unknown=x",
+    `?cursor=${encodeURIComponent("\n".repeat(513))}`,
   ]) {
     const response = await handleCommunicationHistoryRequest(request(query), "/communications/history", client, ACTOR);
     assert(response?.status === 400, `invalid filter accepted: ${query}`);
   }
   assert(calls.length === 0, "invalid history filter reached database");
+});
+
+Deno.test("history accepts PostgreSQL base64 line wrapping in the next page cursor", async () => {
+  const { client, calls } = fake();
+  const plain = btoa(JSON.stringify({
+    at: "2026-10-03T20:41:50.783568+00:00",
+    as_of: "2026-10-03T20:42:32.507242+00:00",
+    scope: "11d7d3de9555d21d371195b39e955e2a",
+    identifier: `case:${SOURCE}`,
+  }));
+  for (const separator of ["\n", "\r\n"]) {
+    const wrapped = plain.match(/.{1,76}/g)!.join(separator);
+    const response = await handleCommunicationHistoryRequest(
+      request(`?cursor=${encodeURIComponent(wrapped)}`),
+      "/communications/history", client, ACTOR,
+    );
+    assert(response?.status === 200, "database-generated cursor was rejected");
+    assert(calls.at(-1)?.args.p_cursor === plain, "cursor payload changed during normalization");
+  }
 });
 
 Deno.test("history is read-only and hides unexpected database diagnostics", async () => {

@@ -51,8 +51,12 @@ function positiveLimit(value: string | null, fallback: number, max: number): num
   return parsed >= 1 && parsed <= max ? parsed : null;
 }
 
-function validCursor(value: string | null): boolean {
-  return value === null || (value.length <= 512 && /^[A-Za-z0-9+/=]+$/.test(value));
+function normalizeCursor(value: string | null): string | null | undefined {
+  if (value === null) return null;
+  if (value.length > 512) return undefined;
+  // PostgreSQL encode(..., 'base64') wraps long values with CR/LF.
+  const cursor = value.replace(/[\r\n]/g, "");
+  return cursor && /^[A-Za-z0-9+/=]+$/.test(cursor) ? cursor : undefined;
 }
 
 function isDate(value: unknown): boolean {
@@ -80,12 +84,12 @@ export async function handleCommunicationCaseRequest(
     const sourceId = params.get("source_id") || null;
     const customerId = params.get("customer_id") || null;
     const query = params.get("q") || null;
-    const cursor = params.get("cursor");
+    const cursor = normalizeCursor(params.get("cursor"));
     const limit = positiveLimit(params.get("limit"), 20, 100);
     if ((state && !STATE.has(state)) || (purpose && !PURPOSE.has(purpose)) ||
       (sourceType && !SOURCE.has(sourceType)) || (sourceId && !UUID.test(sourceId)) ||
       (customerId && !UUID.test(customerId)) || (query && query.length > 120) ||
-      !validCursor(cursor) || limit === null) return invalid("Filtro inválido");
+      cursor === undefined || limit === null) return invalid("Filtro inválido");
     const { data, error } = await client.rpc("list_communication_cases", {
       p_state: state, p_purpose: purpose, p_source_type: sourceType,
       p_source_id: sourceId, p_customer_id: customerId,
@@ -142,9 +146,9 @@ export async function handleCommunicationCaseRequest(
   const events = path.match(/^\/communications\/cases\/([^/]+)\/events$/);
   if (events) {
     if (req.method !== "GET") return jsonResponse({ error: "Método não permitido", code: "method_not_allowed" }, 405);
-    const cursor = params.get("cursor");
+    const cursor = normalizeCursor(params.get("cursor"));
     const limit = positiveLimit(params.get("limit"), 30, 100);
-    if (!UUID.test(events[1]) || !validCursor(cursor) || limit === null ||
+    if (!UUID.test(events[1]) || cursor === undefined || limit === null ||
       [...params.keys()].some((key) => !["cursor", "limit"].includes(key))) return invalid("Paginação inválida");
     const { data, error } = await client.rpc("list_communication_case_events", {
       p_case_id: events[1], p_cursor: cursor, p_limit: limit,
