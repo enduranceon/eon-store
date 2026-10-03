@@ -36,7 +36,9 @@ export async function handleCommunicationHistoryRequest(
   const query = params.get("q")?.trim() || null;
   const from = params.get("from") || null;
   const to = params.get("to") || null;
-  const cursor = params.get("cursor") || null;
+  const rawCursor = params.get("cursor") || null;
+  // PostgreSQL encode(..., 'base64') wraps long cursors at 76 characters.
+  const cursor = rawCursor?.replace(/[\r\n]/g, "") ?? null;
   const limitRaw = params.get("limit") || "30";
   const limit = Number(limitRaw);
   if ((customerId && !UUID.test(customerId)) ||
@@ -45,7 +47,7 @@ export async function handleCommunicationHistoryRequest(
     (query && query.length > 120) ||
     (from && !validDate(from)) || (to && !validDate(to)) ||
     (from && to && from > to) ||
-    (cursor && (cursor.length > 512 || !/^[A-Za-z0-9+/=]+$/.test(cursor))) ||
+    (rawCursor && (rawCursor.length > 512 || !cursor || !/^[A-Za-z0-9+/=]+$/.test(cursor))) ||
     !/^[0-9]{1,3}$/.test(limitRaw) || !Number.isInteger(limit) || limit < 1 || limit > 100) return invalid();
 
   const { data, error } = await client.rpc("search_communication_history", {
