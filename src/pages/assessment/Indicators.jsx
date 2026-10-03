@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import ContextTabs from '@/components/layout/ContextTabs';
 import {
   Activity, ArrowRight, BarChart3, CalendarDays, RefreshCw, Repeat2,
   TrendingDown, TrendingUp, UserMinus, UserPlus, UserRoundCheck, Users,
@@ -15,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { usePageData } from '@/hooks/usePageData';
+import BusinessPulse from '@/components/BusinessPulse';
 import {
   buildAssessmentYearlyIndicators,
   getAssessmentIndicatorYears,
@@ -158,6 +160,7 @@ export default function Indicators() {
 
   return (
     <div className="space-y-5 pb-8">
+      <ContextTabs group="assessment" current="/assessoria/indicadores" />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0">
@@ -187,6 +190,11 @@ export default function Indicators() {
         </div>
       </div>
 
+      <section aria-label="Panorama atual da assessoria" className="space-y-2">
+        <h3 className="text-sm font-semibold text-slate-800">Panorama atual</h3>
+        <BusinessPulse />
+      </section>
+
       <div className="flex flex-wrap items-end justify-between gap-3 border-b pb-4">
         <div className="w-full sm:w-48">
           <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Ano</label>
@@ -201,6 +209,21 @@ export default function Indicators() {
           <CalendarDays className="w-3.5 h-3.5" /> Dados até {formatDate(indicators.asOfDate)}
         </p>
       </div>
+
+      <section aria-label="Critérios dos indicadores" className="rounded-lg border border-blue-100 bg-blue-50/60 p-4 text-xs leading-relaxed text-slate-700">
+        <p className="font-semibold text-slate-900">Fonte e corte</p>
+        <p className="mt-1">
+          Contratos da Assessoria e planos cadastrados. Cada mês fechado usa a posição do último dia; o mês atual usa os dados até {formatDate(indicators.asOfDate)} e aparece como parcial.
+          O histórico é reconstruído dos registros atuais, portanto correções posteriores em contratos podem atualizar meses anteriores.
+        </p>
+        <div className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+          <p><strong>Base:</strong> pessoas distintas com contrato vigente no corte. Agendados ainda não iniciados e vendas descartadas ficam fora.</p>
+          <p><strong>Entradas e retornos:</strong> novos alunos e ex-alunos que voltaram. Renovações e trocas com continuidade são mostradas separadamente.</p>
+          <p><strong>Saídas reais:</strong> cancelamento ou não renovação efetiva, sem estorno e sem contrato de continuidade vinculado ou iniciado em até 45 dias.</p>
+          <p><strong>Saldo e churn:</strong> saldo = entradas + retornos − saídas; churn = saídas reais ÷ base no início do mês.</p>
+          <p className="sm:col-span-2"><strong>MRR contratado:</strong> soma do valor mensal equivalente dos contratos vigentes, com desconto contratual. É receita recorrente contratada, não dinheiro recebido.</p>
+        </div>
+      </section>
 
       <div className="grid grid-cols-2 xl:grid-cols-6 gap-3">
         <MetricCard icon={Users} label="Base no fim" value={summary.baseEnd} sub={`início: ${summary.baseStart}`} tone="blue" />

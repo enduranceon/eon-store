@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowLeft,
   Archive,
   CalendarClock,
@@ -11,6 +12,7 @@ import {
   CreditCard,
   Edit2,
   FileText,
+  GitMerge,
   Hash,
   IdCard,
   Loader2,
@@ -33,27 +35,19 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   AssessmentCoach,
-  AssessmentContractEvent,
   AssessmentLeave,
   AssessmentModality,
+  EventRegistration,
   PreSaleCustomer,
   PreSaleOrder,
   StockOrder,
 } from '@/api/entities';
 import { normalizePhone, supabase } from '@/api/db';
-import {
-  COMMUNICATION_EVENT_TYPES,
-  TASK_BUCKET,
-  TASK_KIND,
-  buildCommunicationTasks,
-  summarizeCommunicationEvent,
-  taskChannelLabel,
-} from '@/lib/communication-tasks';
-import { DEFAULT_COMMUNITY_LINK, loadCommunicationConfig } from '@/lib/communication-config';
-import CommunicationHistory from '@/components/CommunicationHistory';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
+import { usePageData } from '@/hooks/usePageData';
 import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
 import { formatCep, formatCustomerAddress, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import {
@@ -65,6 +59,7 @@ import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-tr
 import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
 import { toast } from 'sonner';
+import { listCommunicationCases, mergeCustomers } from '@/api/client';
 
 const CONTRACT_STATUS = {
   scheduled: { label: 'Agendado', cls: 'bg-blue-100 text-blue-700' },
@@ -146,11 +141,35 @@ function buildRegistrationForm(customer) {
   };
 }
 
-function taskTone(task) {
-  if (task.kind === TASK_KIND.CHARGE_OVERDUE) return 'destructive';
-  if (task.bucket === TASK_BUCKET.ONBOARDING) return 'success';
-  if (task.bucket === TASK_BUCKET.RENEWAL) return 'purple';
-  return 'info';
+const CASE_PURPOSE = { billing: 'Cobrança', renewal: 'Renovação', onboarding: 'Boas-vindas' };
+const CASE_STAGE = { to_do: 'A fazer', following_up: 'Em acompanhamento', scheduled: 'Agendado', resolved: 'Resolvido' };
+
+function caseTone(item) {
+  if (item.blocked_reason) return 'warning';
+  if (item.workflow_stage === 'resolved') return 'secondary';
+  if (item.purpose === 'renewal') return 'purple';
+  return item.purpose === 'billing' ? 'info' : 'success';
+}
+
+function PersonCaseRow({ item, onOpen }) {
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 border-b py-3 last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={caseTone(item)}>{CASE_PURPOSE[item.purpose] || 'Contato'}</Badge>
+          <span className="text-sm font-semibold">{item.reference || 'Referência indisponível'}</span>
+          <span className="text-xs text-slate-500">{CASE_STAGE[item.workflow_stage] || item.workflow_stage}</span>
+        </div>
+        <p className="mt-1 text-xs text-slate-600">
+          {item.blocked_reason || item.action_label || item.status_label || 'Acompanhar situação'}
+          {item.next_action_at ? ` · Próxima ação ${formatDate(item.next_action_at)}` : ''}
+        </p>
+      </div>
+      <Button type="button" variant="outline" size="sm" onClick={() => onOpen(item)}>
+        {item.workflow_stage === 'resolved' ? 'Ver histórico' : 'Abrir caso'}
+      </Button>
+    </li>
+  );
 }
 
 function dateValue(value) {
@@ -298,7 +317,7 @@ function buildFinancialHistoryRows({ contracts, orders, today }) {
     .sort((a, b) => dateValue(b.date).localeCompare(dateValue(a.date)));
 }
 
-function buildTimelineEvents({ contracts, orders, leaves, commEvents, modalities, coaches }) {
+function buildTimelineEvents({ contracts, orders, leaves, modalities, coaches }) {
   const events = [];
 
   for (const contract of contracts) {
@@ -410,18 +429,6 @@ function buildTimelineEvents({ contracts, orders, leaves, commEvents, modalities
     }
   }
 
-  for (const event of commEvents) {
-    events.push({
-      id: `communication-${event.id}`,
-      type: 'communication',
-      date: event.created_at,
-      title: 'Comunicação registrada',
-      description: summarizeCommunicationEvent(event) || event.payload?.message || event.event_type,
-      badge: event.payload?.channel || 'Contato',
-      badgeVariant: 'info',
-    });
-  }
-
   return events
     .filter(event => event.date)
     .sort((a, b) => dateValue(b.date).localeCompare(dateValue(a.date)));
@@ -480,30 +487,52 @@ function TimelineList({ events }) {
 export default function StudentDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [customer, setCustomer] = useState(null);
+  const [profileError, setProfileError] = useState('');
   const [contracts, setContracts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [coaches, setCoaches] = useState([]);
   const [plans, setPlans] = useState([]);
   const [modalities, setModalities] = useState([]);
   const [leaves, setLeaves] = useState([]);
-  const [commEvents, setCommEvents] = useState([]);
-  const [currentUserId, setCurrentUserId] = useState(null);
-  const [pendingTasks, setPendingTasks] = useState([]);
-  const [communityLink, setCommunityLink] = useState(DEFAULT_COMMUNITY_LINK);
-  const [selectedTask, setSelectedTask] = useState(null);
+  const [selectedCase, setSelectedCase] = useState(null);
   const [reloadFlag, setReloadFlag] = useState(0);
   const [editingRegistration, setEditingRegistration] = useState(false);
   const [registrationForm, setRegistrationForm] = useState(EMPTY_REGISTRATION_FORM);
   const [savingRegistration, setSavingRegistration] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
+  const [mergeReview, setMergeReview] = useState(null);
+  const [merging, setMerging] = useState(false);
+  const {
+    data: casePage,
+    loading: casesLoading,
+    error: casesError,
+    refresh: refreshCases,
+  } = usePageData({
+    key: `people:communication:${id}`,
+    loader: async () => {
+      const page = await listCommunicationCases({ customer_id: id, limit: 20 });
+      if (page?.rollout?.enabled === false) return { ...page, items: [], counts: {} };
+      if (!Array.isArray(page?.items) || !page?.counts ||
+          page.items.some(item => item.person_id !== id)) {
+        throw new Error('A consulta de acompanhamentos não confirmou o vínculo com esta pessoa.');
+      }
+      return page;
+    },
+    initialData: { items: [], counts: {} },
+    tags: ['communication_cases', 'communication_case_events'],
+    forceOnMount: true,
+    onError: cause => console.error('Erro ao carregar acompanhamentos da pessoa:', cause),
+  });
 
   useEffect(() => {
     let active = true;
     const load = async () => {
+      setProfileError('');
       try {
-        const [student, allPresaleOrders, stockOrders, rawContracts, allCoaches, allPlans, allMod, authRes, config] = await Promise.all([
+        const [student, allPresaleOrders, stockOrders, rawContracts, allCoaches, allPlans, allMod] = await Promise.all([
           PreSaleCustomer.get(id),
           PreSaleOrder.list().catch(() => []),
           StockOrder.filter({ customer_id: id }, '-created_date').catch(() => []),
@@ -511,8 +540,6 @@ export default function StudentDetail() {
           AssessmentCoach.list().catch(() => []),
           loadAssessmentMetricPlans(supabase),
           AssessmentModality.list().catch(() => []),
-          supabase.auth.getUser().catch(() => null),
-          loadCommunicationConfig().catch(() => null),
         ]);
         if (!active) return;
 
@@ -533,55 +560,18 @@ export default function StudentDetail() {
         setCoaches(allCoaches);
         setPlans(allPlans);
         setModalities(allMod);
-        setCurrentUserId(authRes?.data?.user?.id || null);
-        setCommunityLink(config?.communityLink || DEFAULT_COMMUNITY_LINK);
-
         if (rawContracts.length === 0) {
           setLeaves([]);
-          setCommEvents([]);
-          setPendingTasks(buildCommunicationTasks(
-            {
-              contracts: [],
-              customers: [student],
-              plans: allPlans,
-              modalities: allMod,
-              coaches: allCoaches,
-              contractEvents: [],
-              presaleOrders,
-              stockOrders: stockOrdersTagged,
-            },
-            { rules: config?.rules },
-          ));
           return;
         }
 
-        const contractIds = rawContracts.map(contract => contract.id);
-        const [allLeaves, events] = await Promise.all([
-          Promise.all(rawContracts.map(contract => AssessmentLeave.filter({ contract_id: contract.id }).catch(() => []))),
-          AssessmentContractEvent.filter(
-            { contract_id: contractIds, event_type: COMMUNICATION_EVENT_TYPES },
-            '-created_at',
-          ).catch(() => []),
-        ]);
+        const allLeaves = await Promise.all(rawContracts.map(contract => AssessmentLeave.filter({ contract_id: contract.id }).catch(() => [])));
         if (!active) return;
 
         setLeaves(allLeaves.flat().sort((a, b) => dateValue(b.start_date).localeCompare(dateValue(a.start_date))));
-        setCommEvents(events);
-        setPendingTasks(buildCommunicationTasks(
-          {
-            contracts: rawContracts,
-            customers: [student],
-            plans: allPlans,
-            modalities: allMod,
-            coaches: allCoaches,
-            contractEvents: events,
-            presaleOrders,
-            stockOrders: stockOrdersTagged,
-          },
-          { rules: config?.rules },
-        ));
       } catch (e) {
-        console.error('Erro ao carregar aluno:', e);
+        console.error('Erro ao carregar pessoa:', e);
+        if (active) setProfileError(e.message || 'Não foi possível carregar a ficha.');
       }
     };
     load();
@@ -627,37 +617,46 @@ export default function StudentDetail() {
     if (!registrationForm.full_name?.trim()) return toast.error('Nome obrigatório');
 
     const cleanCpf = registrationForm.cpf?.replace(/\D/g, '') || null;
+    const payload = {
+      full_name: registrationForm.full_name.trim(),
+      whatsapp: registrationForm.whatsapp ? normalizePhone(registrationForm.whatsapp) : null,
+      email: registrationForm.email?.trim().toLowerCase() || null,
+      cpf: cleanCpf,
+      birth_date: registrationForm.birth_date || null,
+      address_zip: normalizeCep(registrationForm.address_zip) || null,
+      address_street: registrationForm.address_street?.trim() || null,
+      address_number: registrationForm.address_number?.trim() || null,
+      address_complement: registrationForm.address_complement?.trim() || null,
+      address_neighborhood: registrationForm.address_neighborhood?.trim() || null,
+      address_city: registrationForm.address_city?.trim() || null,
+      address_state: registrationForm.address_state?.trim().toUpperCase() || null,
+      internal_notes: registrationForm.internal_notes?.trim() || null,
+    };
     setSavingRegistration(true);
     try {
       if (cleanCpf && cleanCpf !== (customer.cpf || '').replace(/\D/g, '')) {
         const { data: duplicate, error } = await supabase
           .from('presale_customers')
-          .select('id, full_name')
+          .select('id, full_name, whatsapp, email, internal_notes, customer_code')
           .eq('cpf', cleanCpf)
           .neq('id', id)
           .maybeSingle();
         if (error) throw error;
         if (duplicate) {
-          toast.error(`CPF já cadastrado para ${duplicate.full_name}. Use a tela de Clientes para mesclar os perfis.`);
+          const [allPresaleOrders, duplicateStockOrders, duplicateContracts, duplicateEvents] = await Promise.all([
+            PreSaleOrder.list(),
+            StockOrder.filter({ customer_id: duplicate.id }),
+            loadAssessmentMetricContracts(supabase, duplicate.id),
+            EventRegistration.filter({ customer_id: duplicate.id }),
+          ]);
+          const duplicateOrders = [
+            ...allPresaleOrders.filter(order => order.customer_id === duplicate.id),
+            ...duplicateStockOrders,
+          ];
+          setMergeReview({ duplicate, duplicateOrders, duplicateContracts, duplicateEvents, payload });
           return;
         }
       }
-
-      const payload = {
-        full_name: registrationForm.full_name.trim(),
-        whatsapp: registrationForm.whatsapp ? normalizePhone(registrationForm.whatsapp) : null,
-        email: registrationForm.email?.trim().toLowerCase() || null,
-        cpf: cleanCpf,
-        birth_date: registrationForm.birth_date || null,
-        address_zip: normalizeCep(registrationForm.address_zip) || null,
-        address_street: registrationForm.address_street?.trim() || null,
-        address_number: registrationForm.address_number?.trim() || null,
-        address_complement: registrationForm.address_complement?.trim() || null,
-        address_neighborhood: registrationForm.address_neighborhood?.trim() || null,
-        address_city: registrationForm.address_city?.trim() || null,
-        address_state: registrationForm.address_state?.trim().toUpperCase() || null,
-        internal_notes: registrationForm.internal_notes?.trim() || null,
-      };
 
       await PreSaleCustomer.update(id, payload);
       const updatedCustomer = { ...customer, ...payload };
@@ -669,6 +668,65 @@ export default function StudentDetail() {
       toast.error(e.message || 'Erro ao salvar cadastro');
     } finally {
       setSavingRegistration(false);
+    }
+  };
+
+  const saveWithoutMerge = async () => {
+    if (!mergeReview) return;
+    setMerging(true);
+    try {
+      await PreSaleCustomer.update(id, mergeReview.payload);
+      const updatedCustomer = { ...customer, ...mergeReview.payload };
+      setCustomer(updatedCustomer);
+      setRegistrationForm(buildRegistrationForm(updatedCustomer));
+      setEditingRegistration(false);
+      setMergeReview(null);
+      toast.success('Cadastro atualizado sem mesclar as pessoas.');
+    } catch (error) {
+      toast.error(error.message || 'Erro ao salvar cadastro');
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  const confirmMerge = async () => {
+    if (!mergeReview || mergeReview.duplicateEvents.length) return;
+    setMerging(true);
+    try {
+      const { duplicate, payload } = mergeReview;
+      const mergedPayload = {
+        ...payload,
+        whatsapp: payload.whatsapp || duplicate.whatsapp || null,
+        email: payload.email || duplicate.email || null,
+        internal_notes: [payload.internal_notes, duplicate.internal_notes]
+          .filter(Boolean).join('\n\n[Mesclado de outro perfil]\n') || null,
+      };
+      await mergeCustomers(id, duplicate.id, {
+        full_name: mergedPayload.full_name,
+        whatsapp: mergedPayload.whatsapp,
+        email: mergedPayload.email,
+        cpf: mergedPayload.cpf,
+        internal_notes: mergedPayload.internal_notes,
+      });
+      // A RPC mescla as referências em uma transação. Os campos adicionais do
+      // cadastro são salvos em seguida, pois a RPC aceita apenas contato/notas.
+      try {
+        await PreSaleCustomer.update(id, mergedPayload);
+        setCustomer(current => ({ ...current, ...mergedPayload }));
+        setRegistrationForm(buildRegistrationForm({ ...customer, ...mergedPayload }));
+        setEditingRegistration(false);
+        setReloadFlag(flag => flag + 1);
+        refreshCases({ force: true }).catch(() => {});
+        toast.success('Perfis revisados e mesclados.');
+      } catch {
+        toast.warning('Os perfis foram mesclados. Revise e salve os demais campos do cadastro.');
+        setRegistrationForm(buildRegistrationForm({ ...customer, ...mergedPayload }));
+      }
+      setMergeReview(null);
+    } catch (error) {
+      toast.error(error.message || 'Erro ao mesclar pessoas');
+    } finally {
+      setMerging(false);
     }
   };
 
@@ -715,8 +773,16 @@ export default function StudentDetail() {
     }),
   ].sort((a, b) => dateValue(a.date).localeCompare(dateValue(b.date)));
   const financialHistoryRows = buildFinancialHistoryRows({ contracts: lifecycleRows, orders, today });
-  const timelineEvents = buildTimelineEvents({ contracts: lifecycleRows, orders, leaves, commEvents, modalities, coaches });
+  const timelineEvents = buildTimelineEvents({ contracts: lifecycleRows, orders, leaves, modalities, coaches });
+  const personCases = casePage.items || [];
+  const personCaseCounts = casePage.counts || {};
+  const casesPreparing = casePage.rollout?.enabled === false;
+  const openCaseCount = Number(personCaseCounts.open || 0);
+  const totalCaseCount = openCaseCount + Number(personCaseCounts.resolved || 0);
+  const communicationHref = `/comunicacao?customer_id=${encodeURIComponent(id)}`;
   const requestedTab = searchParams.get('aba');
+  const returnTo = typeof location.state?.returnTo === 'string' && location.state.returnTo.startsWith('/pessoas')
+    ? location.state.returnTo : '/pessoas';
   const activeTab = TAB_VALUES.has(requestedTab) ? requestedTab : 'overview';
   const setActiveTab = (value) => {
     const next = new URLSearchParams(searchParams);
@@ -725,14 +791,25 @@ export default function StudentDetail() {
     setSearchParams(next, { replace: true });
   };
 
-  if (!customer) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
+  if (!customer) return profileError ? (
+    <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
+      Não foi possível carregar esta pessoa: {profileError}
+      <Button variant="outline" className="ml-2" onClick={() => setReloadFlag(flag => flag + 1)}>Tentar novamente</Button>
+    </div>
+  ) : <div className="p-8 text-center text-muted-foreground">Carregando pessoa...</div>;
 
   return (
     <div className="max-w-6xl mx-auto space-y-5">
+      {profileError && (
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          Não foi possível atualizar a ficha: {profileError}
+          <Button variant="outline" className="ml-2" onClick={() => setReloadFlag(flag => flag + 1)}>Tentar novamente</Button>
+        </div>
+      )}
       <div className="flex flex-col gap-4 rounded-lg border bg-white px-4 py-4 lg:px-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-3 min-w-0">
-            <Button variant="ghost" size="icon" onClick={() => navigate('/assessoria/alunos')} className="shrink-0">
+            <Button variant="ghost" size="icon" onClick={() => navigate(returnTo)} className="shrink-0" aria-label="Voltar para Pessoas">
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <div className="w-12 h-12 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0">
@@ -931,27 +1008,26 @@ export default function StudentDetail() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {pendingTasks.length === 0 ? (
+                {casesLoading ? (
+                  <p role="status" className="text-sm text-slate-600">Carregando acompanhamentos...</p>
+                ) : casesError ? (
+                  <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                    Não foi possível conferir os contatos desta pessoa.
+                    <Button variant="outline" size="sm" className="mt-2" onClick={() => refreshCases({ force: true }).catch(() => {})}>Tentar novamente</Button>
+                  </div>
+                ) : casesPreparing ? (
+                  <div role="status" className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                    Acompanhamentos em preparação. A fila de contatos desta pessoa aparecerá aqui quando estiver disponível.
+                  </div>
+                ) : openCaseCount === 0 ? (
                   <div className="rounded-lg border px-3 py-3">
-                    <p className="text-sm font-semibold text-gray-900">{commEvents.length} contato{commEvents.length !== 1 ? 's' : ''} registrado{commEvents.length !== 1 ? 's' : ''}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Nenhuma ação pendente agora.</p>
+                    <p className="text-sm font-semibold text-gray-900">Nenhum acompanhamento aberto</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{personCaseCounts.resolved || 0} caso(s) resolvido(s). Veja o histórico na aba Comunicação.</p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {pendingTasks.slice(0, 4).map(task => (
-                      <div key={task.id} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <Badge variant={taskTone(task)}>{taskChannelLabel(task)}</Badge>
-                            <p className="text-sm font-semibold truncate">{task.title}</p>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-0.5">{task.statusLabel || task.orderNumber}</p>
-                        </div>
-                        <Button size="sm" onClick={() => setSelectedTask(task)}>Preparar</Button>
-                      </div>
-                    ))}
-                  </div>
+                  <ul>{personCases.filter(item => item.workflow_stage !== 'resolved').slice(0, 4).map(item => <PersonCaseRow key={item.id} item={item} onOpen={setSelectedCase} />)}</ul>
                 )}
+                {!casesLoading && !casesError && !casesPreparing && <Link to={communicationHref} className="mt-3 inline-block text-sm font-medium text-blue-700 hover:underline">Ver todos na Central de Comunicação</Link>}
               </CardContent>
             </Card>
           </div>
@@ -1135,7 +1211,7 @@ export default function StudentDetail() {
             </CardHeader>
             <CardContent>
               {orders.length === 0 ? (
-                <EmptyState icon={ShoppingBag} text="Nenhum produto vendido para este aluno" />
+                <EmptyState icon={ShoppingBag} text="Nenhum produto vendido para esta pessoa" />
               ) : (
                 <div className="space-y-3">
                   {orders.map(order => {
@@ -1222,15 +1298,15 @@ export default function StudentDetail() {
 
         <TabsContent value="timeline" className="space-y-5">
           <div className="grid gap-3 sm:grid-cols-3">
-            <MetricCard label="Eventos" value={String(timelineEvents.length)} helper="Contratos, vendas, pagamentos e contatos" />
+            <MetricCard label="Eventos" value={String(timelineEvents.length)} helper="Contratos, vendas, pagamentos e licenças" />
             <MetricCard label="Último evento" value={timelineEvents[0] ? formatDate(timelineEvents[0].date) : '—'} helper={timelineEvents[0]?.title || 'Sem histórico'} />
-            <MetricCard label="Comunicações" value={String(commEvents.length)} helper={`${pendingTasks.length} ação${pendingTasks.length !== 1 ? 'ões' : ''} pendente${pendingTasks.length !== 1 ? 's' : ''}`} />
+            <MetricCard label="Acompanhamentos" value={casesLoading || casesError || casesPreparing ? '—' : String(totalCaseCount)} helper={casesPreparing ? 'Em preparação' : casesError ? 'Consulta indisponível' : 'Histórico completo na aba Comunicação'} />
           </div>
 
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
-                <CalendarClock className="w-4 h-4" /> Linha do tempo do aluno
+                <CalendarClock className="w-4 h-4" /> Linha do tempo da pessoa
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1240,45 +1316,40 @@ export default function StudentDetail() {
         </TabsContent>
 
         <TabsContent value="communication" className="space-y-5">
-          {pendingTasks.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Send className="w-4 h-4" /> Ações pendentes ({pendingTasks.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <ul className="divide-y">
-                  {pendingTasks.map(task => (
-                    <li key={task.id} className="py-2.5 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant={taskTone(task)}>{taskChannelLabel(task)}</Badge>
-                          <span className="text-sm font-semibold">{task.title}</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          <span className="font-mono">{task.orderNumber}</span>
-                          {task.statusLabel ? ` · ${task.statusLabel}` : ''}
-                        </p>
-                      </div>
-                      <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setSelectedTask(task)}>
-                        <MessageCircle className="w-4 h-4" /> Preparar
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
-
           <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <MessageCircle className="w-4 h-4" /> Histórico de contatos ({commEvents.length})
-              </CardTitle>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pb-2">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base"><MessageCircle className="h-4 w-4" /> Acompanhamentos da pessoa</CardTitle>
+                <p className="mt-1 text-xs text-slate-600">Assessoria, loja e eventos na mesma fila. O histórico completo fica dentro de cada caso.</p>
+              </div>
+              {!casesPreparing && !casesError && <Button variant="outline" size="sm" asChild><Link to={communicationHref}>Ver todos na Central</Link></Button>}
             </CardHeader>
             <CardContent className="pt-0">
-              <CommunicationHistory events={commEvents} currentUserId={currentUserId} />
+              {casesLoading ? (
+                <p role="status" className="py-5 text-sm text-slate-600">Carregando acompanhamentos...</p>
+              ) : casesError ? (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                  Não foi possível conferir os acompanhamentos desta pessoa.
+                  <Button variant="outline" size="sm" className="mt-2" onClick={() => refreshCases({ force: true }).catch(() => {})}>Tentar novamente</Button>
+                </div>
+              ) : casesPreparing ? (
+                <p role="status" className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Acompanhamentos em preparação. O histórico desta pessoa aparecerá aqui quando estiver disponível.</p>
+              ) : totalCaseCount === 0 ? (
+                <p className="py-5 text-sm text-slate-600">Nenhum acompanhamento registrado para esta pessoa.</p>
+              ) : (
+                <>
+                  <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                    <span className="rounded bg-amber-50 px-2 py-1 text-amber-800">A fazer: {personCaseCounts.to_do || 0}</span>
+                    <span className="rounded bg-blue-50 px-2 py-1 text-blue-800">Acompanhamento: {personCaseCounts.following_up || 0}</span>
+                    <span className="rounded bg-violet-50 px-2 py-1 text-violet-800">Agendados: {personCaseCounts.scheduled || 0}</span>
+                    <span className="rounded bg-slate-100 px-2 py-1 text-slate-700">Resolvidos: {personCaseCounts.resolved || 0}</span>
+                  </div>
+                  <ul>{personCases.map(item => <PersonCaseRow key={item.id} item={item} onOpen={setSelectedCase} />)}</ul>
+                  {(casePage.next_cursor || totalCaseCount > personCases.length) && (
+                    <p className="border-t pt-3 text-xs text-slate-600">Exibindo {personCases.length} de {totalCaseCount} casos. <Link to={communicationHref} className="font-medium text-blue-700 hover:underline">Ver todos na Central</Link></p>
+                  )}
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -1326,7 +1397,7 @@ export default function StudentDetail() {
                     </div>
                     <div>
                       <Label>Email</Label>
-                      <Input type="email" value={registrationForm.email || ''} onChange={event => setRegistrationField('email', event.target.value)} className="mt-1" placeholder="aluno@email.com" />
+                      <Input type="email" value={registrationForm.email || ''} onChange={event => setRegistrationField('email', event.target.value)} className="mt-1" placeholder="email@exemplo.com" />
                     </div>
                   </div>
 
@@ -1334,7 +1405,7 @@ export default function StudentDetail() {
                     <div>
                       <Label>CPF</Label>
                       <Input value={registrationForm.cpf || ''} onChange={event => setRegistrationField('cpf', event.target.value)} className="mt-1" placeholder="000.000.000-00" />
-                      <p className="text-xs text-muted-foreground mt-1">Se esse CPF existir em outro cadastro, o salvamento será bloqueado para evitar duplicidade.</p>
+                      <p className="text-xs text-muted-foreground mt-1">Se esse CPF existir em outra ficha, você poderá revisar os vínculos antes de decidir se deseja mesclar.</p>
                     </div>
                     <div>
                       <Label>Nascimento</Label>
@@ -1447,12 +1518,47 @@ export default function StudentDetail() {
         </TabsContent>
       </Tabs>
 
+      <Dialog open={!!mergeReview} onOpenChange={open => !open && !merging && setMergeReview(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <AlertTriangle className="h-5 w-5" /> CPF já cadastrado
+            </DialogTitle>
+          </DialogHeader>
+          {mergeReview && (
+            <div className="space-y-4 text-sm">
+              <p>O CPF informado pertence a outra pessoa. Confira os registros antes de alterar qualquer ficha.</p>
+              <div className="rounded-lg border bg-slate-50 p-3 space-y-1">
+                <p className="font-semibold">{mergeReview.duplicate.full_name}</p>
+                <p className="font-mono text-xs text-slate-600">ID: {mergeReview.duplicate.id}</p>
+                {mergeReview.duplicate.customer_code && <p className="text-xs text-slate-600">Código: {mergeReview.duplicate.customer_code}</p>}
+                <p>{mergeReview.duplicateOrders.length} pedido(s) · {mergeReview.duplicateContracts.length} contrato(s) · {mergeReview.duplicateEvents.length} inscrição(ões) em eventos</p>
+              </div>
+              <p className="text-xs text-slate-600">Mesclar move os pedidos e contratos para a ficha atual e remove a ficha duplicada. Esta ação exige sua revisão e confirmação.</p>
+              {mergeReview.duplicateEvents.length > 0 && (
+                <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  Esta pessoa tem inscrição em evento. A operação atual de mesclagem não move inscrições; revise esses vínculos antes de mesclar.
+                </p>
+              )}
+              <div className="flex flex-col gap-2">
+                <Button onClick={confirmMerge} disabled={merging || mergeReview.duplicateEvents.length > 0}>
+                  <GitMerge className="h-4 w-4" /> {merging ? 'Processando...' : 'Mesclar após revisão'}
+                </Button>
+                <Button variant="outline" onClick={saveWithoutMerge} disabled={merging}>Salvar sem mesclar</Button>
+                <Button variant="ghost" onClick={() => setMergeReview(null)} disabled={merging}>Cancelar</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <CommunicationSendDialog
-        key={selectedTask?.id || 'none'}
-        task={selectedTask}
-        communityLink={communityLink}
-        onClose={() => setSelectedTask(null)}
-        onSent={() => { setSelectedTask(null); setReloadFlag(flag => flag + 1); }}
+        key={selectedCase?.id || 'none'}
+        caseId={selectedCase?.id}
+        communicationCase={selectedCase}
+        sourceUi="person_profile"
+        onClose={() => setSelectedCase(null)}
+        onChanged={() => { setSelectedCase(null); refreshCases({ force: true }).catch(() => {}); }}
       />
     </div>
   );

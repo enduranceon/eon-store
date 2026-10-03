@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/api/db';
 import { formatCurrency, todayLocalStr } from '@/lib/utils';
 import { cn } from '@/lib/utils';
+import ContextTabs from '@/components/layout/ContextTabs';
 
 // ─────────────────────────────────────────────────────────────────
 // HELPERS
@@ -431,6 +432,7 @@ export default function Repasse() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
+      <ContextTabs group="payouts" current="/assessoria/repasse" />
 
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between">

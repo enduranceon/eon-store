@@ -1,17 +1,14 @@
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ShoppingCart, Clock, Package,
-  Undo2, ChevronRight, Sparkles, RotateCcw, CalendarX,
+  MessageCircle, RefreshCw, Package, Wallet,
+  Undo2, ChevronRight, Sparkles, RotateCcw,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/api/db';
-import { formatCurrency, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { isAwaitingCharge, isEffectiveOpenSale } from '@/lib/sales';
+import { formatCurrency } from '@/lib/utils';
+import { listCommunicationCases } from '@/api/client';
+import { Button } from '@/components/ui/button';
 import { usePageData } from '@/hooks/usePageData';
-import BusinessPulse from '@/components/BusinessPulse';
-import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
-import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
-import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
 import { fulfillmentStatus } from '@/lib/order-fulfillment';
 
 // ─────────────────────────────────────────────────────────────────
@@ -20,13 +17,6 @@ import { fulfillmentStatus } from '@/lib/order-fulfillment';
 function daysSince(iso) {
   if (!iso) return 0;
   return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
-}
-
-function daysUntil(dateStr) {
-  if (!dateStr) return null;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const d = new Date(dateStr + 'T00:00:00');
-  return Math.round((d - today) / 86400000);
 }
 
 function greeting() {
@@ -73,7 +63,7 @@ function ItemRow({ item, badge, badgeColor }) {
 
 function ReturnItem({ ret }) {
   return (
-    <Link to="/devolucoes" className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors group">
+    <Link to={`/devolucoes?status=${ret.status}`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors group">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-semibold text-blue-700">{ret.order_number}</span>
@@ -116,83 +106,55 @@ function Section({ title, subtitle, icon: Icon, iconColor, count, total, borderC
 }
 
 async function loadTodayPage() {
-  const [presaleRes, stockRes, contractRes, plansRes, customersRes, returnsRes, refundsRes, eventRegsRes, eventTypesRes] = await Promise.all([
+  const [presaleRes, stockRes, pendingReturnsRes, receivedReturnsRes, refundsRes, renewalChargesRes, contacts] = await Promise.all([
     supabase.from('presale_orders')
-      .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, due_date, created_date, status_changed_at')
-      .neq('payment_status', 'cancelled')
-      .neq('payment_status', 'refunded'),
+      .select('id, order_number, checkout_name, total_value, payment_status, delivery_status, payment_date, created_date', { count: 'exact' })
+      .eq('payment_status', 'paid')
+      .not('delivery_status', 'in', '("delivered","cancelled")')
+      .order('created_date', { ascending: true }).range(0, 19),
     supabase.from('stock_orders')
-      .select('id, order_number, customer_name, total_value, payment_status, delivery_status, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, due_date, created_date, status_changed_at')
-      .neq('payment_status', 'cancelled')
-      .neq('payment_status', 'refunded'),
+      .select('id, order_number, customer_name, total_value, payment_status, delivery_status, payment_date, created_date', { count: 'exact' })
+      .eq('payment_status', 'paid')
+      .not('delivery_status', 'in', '("delivered","cancelled")')
+      .order('created_date', { ascending: true }).range(0, 19),
+    supabase.from('order_returns')
+      .select('id, order_id, order_type, order_number, customer_name, product_name, variation, refund_value, status, created_at', { count: 'exact' })
+      .eq('status', 'pending_return').order('created_at', { ascending: true }).range(0, 19),
+    supabase.from('order_returns')
+      .select('id, order_id, order_type, order_number, customer_name, product_name, variation, refund_value, status, created_at', { count: 'exact' })
+      .eq('status', 'received').order('created_at', { ascending: true }).range(0, 19),
     supabase.from('assessment_contracts')
-      .select('id, contract_number, customer_id, plan_id, payment_status, payment_method, payment_date, manual_payment, due_date, start_date, end_date, status, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, enrollment_fee, manual_discount, credit_balance, plan_snapshot, refund_status, refund_amount')
-      .not('status', 'in', '("cancelled","finished","draft","voided")')
-      .neq('payment_status', 'refunded'),
-    supabase.from('assessment_plans').select('id, price_total, price_monthly, modality_id'),
-    supabase.from('presale_customers').select('id, full_name'),
-    supabase.from('order_returns').select('*').in('status', ['pending_return', 'received']),
+      .select('id, contract_number, customer_id, refund_amount, refund_status, updated_at', { count: 'exact' })
+      .eq('refund_status', 'pending').order('updated_at', { ascending: true }).range(0, 19),
     supabase.from('assessment_contracts')
-      .select('id, contract_number, customer_id, refund_amount, refund_status, payment_method, updated_at')
-      .eq('refund_status', 'pending'),
-    supabase.from('event_registrations')
-      .select('id, registration_number, customer_id, event_id, registration_type_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, created_at, updated_at')
-      .neq('payment_status', 'cancelled')
-      .neq('payment_status', 'refunded'),
-    supabase.from('event_registration_types').select('id, price'),
+      .select('id, contract_number, renewal_stage_updated_at', { count: 'exact' })
+      .not('parent_contract_id', 'is', null)
+      .eq('renewal_stage', 'charge_pending')
+      .order('renewal_stage_updated_at', { ascending: true }).range(0, 19),
+    listCommunicationCases({ state: 'to_do', limit: 20 }),
   ]);
 
-  const presale = (presaleRes.data || []).map(o => ({ ...o, type: 'presale', customer: o.checkout_name }));
-  const stock = (stockRes.data || []).map(o => ({ ...o, type: 'stock', customer: o.customer_name }));
-  const plansMap = Object.fromEntries((plansRes.data || []).map(p => [p.id, p]));
-  const customersMap = Object.fromEntries((customersRes.data || []).map(c => [c.id, c]));
-  const eventTypePriceMap = Object.fromEntries((eventTypesRes.data || []).map(type => [type.id, Number(type.price) || 0]));
-  const events = (eventRegsRes.data || []).map(registration => ({
-    ...registration,
-    order_number: registration.registration_number,
-    customer: customersMap[registration.customer_id]?.full_name || '—',
-    total_value: eventTypePriceMap[registration.registration_type_id] || 0,
-    created_date: registration.created_at,
-    status_changed_at: registration.updated_at,
-    type: 'event',
-  }));
-  const contractRows = contractRes.data || [];
-  await applyAssessmentContractTransitions(contractRows);
-  const contracts = buildContractLifecycleRows(contractRows, { plansById: plansMap })
-    .filter(c =>
-      c.lifecycle?.counts?.active ||
-      (c.status === 'scheduled' && !['paid', 'refunded', 'cancelled'].includes(c.payment_status))
-    )
-    .map(c => {
-      return {
-        id: c.id,
-        order_number: c.contract_number,
-        customer: customersMap[c.customer_id]?.full_name || '—',
-        total_value: Number(c.value) || 0,
-        payment_status: c.payment_status,
-        payment_method: c.payment_method,
-        due_date: c.due_date,
-        end_date: c.end_date,
-        created_date: c.lifecycle?.createdLocal || c.created_at,
-        created_at: c.created_at,
-        status_changed_at: c.updated_at,
-        status: c.status,
-        asaas_charge_id: c.asaas_charge_id,
-        asaas_payment_link: c.asaas_payment_link,
-        asaas_pix_copy: c.asaas_pix_copy,
-        external_payment_link: c.external_payment_link,
-        payment_message_sent_at: c.payment_message_sent_at,
-        type: 'contract',
-      };
-    });
+  for (const result of [presaleRes, stockRes, pendingReturnsRes, receivedReturnsRes, refundsRes, renewalChargesRes]) {
+    if (result.error || result.count == null) throw new Error('Não foi possível conferir todas as pendências. Tente atualizar a tela.');
+  }
+  if (!contacts || (contacts.rollout?.enabled !== false &&
+      (!Array.isArray(contacts.items) || !contacts.counts))) {
+    throw new Error('Não foi possível conferir os acompanhamentos. Tente atualizar a tela.');
+  }
+
+  const deliveries = [
+    ...(presaleRes.data || []).map(order => ({ ...order, type: 'presale', customer: order.checkout_name })),
+    ...(stockRes.data || []).map(order => ({ ...order, type: 'stock', customer: order.customer_name })),
+  ].sort((a, b) => (a.created_date || '').localeCompare(b.created_date || '')).slice(0, 20);
 
   let pendingRefunds = [];
   if (refundsRes.data?.length) {
     const customerIds = [...new Set(refundsRes.data.map(r => r.customer_id).filter(Boolean))];
-    const { data: refundCustomers } = await supabase
+    const { data: refundCustomers, error: refundError } = await supabase
       .from('presale_customers')
       .select('id, full_name')
       .in('id', customerIds);
+    if (refundError) throw new Error('Não foi possível conferir as pessoas dos estornos.');
     const refundCustomerMap = Object.fromEntries((refundCustomers || []).map(c => [c.id, c]));
     pendingRefunds = refundsRes.data.map(r => ({
       ...r,
@@ -201,10 +163,19 @@ async function loadTodayPage() {
   }
 
   return {
-    orders: [...presale, ...stock, ...events],
-    contracts,
-    returns: returnsRes.data || [],
+    contacts,
+    deliveries,
+    pendingReturns: pendingReturnsRes.data || [],
+    receivedReturns: receivedReturnsRes.data || [],
     pendingRefunds,
+    renewalCharges: renewalChargesRes.data || [],
+    counts: {
+      deliveries: presaleRes.count + stockRes.count,
+      pendingReturns: pendingReturnsRes.count,
+      receivedReturns: receivedReturnsRes.count,
+      pendingRefunds: refundsRes.count,
+      renewalCharges: renewalChargesRes.count,
+    },
   };
 }
 
@@ -213,21 +184,25 @@ async function loadTodayPage() {
 // ─────────────────────────────────────────────────────────────────
 export default function Today() {
   const {
-    data: { orders, contracts, returns, pendingRefunds },
-    loading,
+    data: { deliveries, pendingReturns, receivedReturns, pendingRefunds, renewalCharges, contacts, counts },
+    loading, refreshing, refresh, error,
   } = usePageData({
-    key: 'today:dashboard',
+    key: 'today:operational-v3',
+    forceOnMount: true,
     loader: loadTodayPage,
-    initialData: { orders: [], contracts: [], returns: [], pendingRefunds: [] },
+    initialData: {
+      deliveries: [], pendingReturns: [], receivedReturns: [], pendingRefunds: [], renewalCharges: [],
+      contacts: { items: [], counts: {} },
+      counts: { deliveries: 0, pendingReturns: 0, receivedReturns: 0, pendingRefunds: 0, renewalCharges: 0 },
+    },
     tags: [
+      'communication_cases',
+      'communication_case_events',
       'presale_orders',
       'stock_orders',
       'assessment_contracts',
-      'assessment_plans',
       'presale_customers',
       'order_returns',
-      'event_registrations',
-      'event_registration_types',
     ],
     onError: error => console.error('Erro ao carregar Hoje:', error),
   });
@@ -241,102 +216,86 @@ export default function Today() {
     </div>
   );
 
-  const todayStr = todayLocalStr();
-  const allItems = [...orders, ...contracts];
-
-  // ── Buckets ─────────────────────────────────────────────────────
-
-  // 1. Em atraso — loja, assessoria e eventos
-  const overdue = allItems
-    .filter(o => o.due_date && o.due_date < todayStr && isEffectiveOpenSale(o))
-    .sort((a, b) => a.due_date.localeCompare(b.due_date));
-
-  // 2. Para cobrar — loja, assessoria e eventos sem cobrança criada
-  const toCharge = allItems
-    .filter(isAwaitingCharge)
-    .sort((a, b) => (b.created_date || '').localeCompare(a.created_date || ''));
-
-  // 3. Cobrança enviada sem pagamento — 2+ dias sem retorno
-  const chargedNoPay = allItems
-    .filter(o => isEffectiveOpenSale(o)
-      && !isAwaitingCharge(o)
-      && daysSince(o.payment_message_sent_at || o.status_changed_at || o.created_date || o.created_at) >= 2)
-    .sort((a, b) => daysSince(b.payment_message_sent_at || b.status_changed_at || b.created_date || b.created_at)
-      - daysSince(a.payment_message_sent_at || a.status_changed_at || a.created_date || a.created_at));
-
-  // 5. Contratos dentro da janela de renovação
-  const inRenewalWindow = (() => {
-    const d = new Date(); d.setDate(d.getDate() + RENEWAL_ATTENTION_WINDOW_DAYS);
-    return toLocalDateStr(d);
-  })();
-  const expiringContracts = contracts
-    .filter(c => c.status === 'active' && c.end_date && c.end_date <= inRenewalWindow && c.end_date >= todayStr)
-    .sort((a, b) => a.end_date.localeCompare(b.end_date));
-
-  // 6. Pagos aguardando entrega (loja apenas)
-  const awaitingDelivery = orders
-    .filter(o => ['presale', 'stock'].includes(o.type) && o.payment_status === 'paid' && o.delivery_status && !['delivered', 'cancelled'].includes(o.delivery_status))
-    .sort((a, b) => (a.payment_date || '').localeCompare(b.payment_date || ''));
-
-  // 7. Devoluções
-  const pendingReturns  = returns.filter(r => r.status === 'pending_return');
-  const receivedReturns = returns.filter(r => r.status === 'received');
-
-  const sum       = arr => arr.reduce((s, x) => s + (x.total_value   || 0), 0);
-  const sumRefund = arr => arr.reduce((s, x) => s + (x.refund_value  || 0), 0);
-  const sumAmount = arr => arr.reduce((s, x) => s + (x.refund_amount || 0), 0);
+  if (error) return (
+    <div role="alert" className="mx-auto max-w-5xl rounded-xl border border-amber-200 bg-amber-50 p-5 text-amber-900">
+      <h1 className="text-lg font-semibold">Não foi possível conferir as pendências</h1>
+      <p className="my-3 text-sm">{error.message} As contagens ficam ocultas até a consulta ser concluída.</p>
+      <Button variant="outline" disabled={refreshing} onClick={() => refresh({ force: true }).catch(() => {})}>Tentar novamente</Button>
+    </div>
+  );
+  const contactItems = contacts.items || [];
+  const contactsPreparing = contacts.rollout?.enabled === false;
+  const contactCount = Number(contacts.counts?.to_do ?? contactItems.length);
+  const sum       = arr => arr.reduce((s, x) => s + Number(x.total_value || 0), 0);
+  const sumRefund = arr => arr.reduce((s, x) => s + Number(x.refund_value || 0), 0);
+  const sumAmount = arr => arr.reduce((s, x) => s + Number(x.refund_amount || 0), 0);
 
   const totalActions =
-    overdue.length + toCharge.length +
-    chargedNoPay.length + expiringContracts.length +
-    awaitingDelivery.length + pendingReturns.length +
-    receivedReturns.length + pendingRefunds.length;
+    (contactsPreparing ? 0 : contactCount) +
+    counts.deliveries + counts.pendingReturns +
+    counts.receivedReturns + counts.pendingRefunds + counts.renewalCharges;
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
 
       {/* Cabeçalho */}
       <div>
-        <h2 className="text-2xl font-bold text-gray-900">{greeting()}! 👋</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-2xl font-bold text-gray-900">Hoje · {greeting()}</h1><Button variant="outline" disabled={refreshing} onClick={() => refresh({ force: true }).catch(() => {})}><RefreshCw aria-hidden="true" className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />Atualizar</Button></div>
         <p className="text-sm text-muted-foreground mt-1">
-          {totalActions === 0
-            ? 'Tudo em dia. Nenhuma ação pendente.'
-            : `Você tem ${totalActions} ${totalActions === 1 ? 'item' : 'itens'} para revisar hoje`}
+          {contactsPreparing
+            ? `${totalActions} pendência${totalActions !== 1 ? 's' : ''} de cobranças de renovação, entregas, devoluções e estornos. Os acompanhamentos estão em preparação.`
+            : totalActions === 0
+            ? 'Nenhuma ação prevista para agora.'
+            : `Você tem ${totalActions} ${totalActions === 1 ? 'ação' : 'ações'} para revisar hoje`}
         </p>
       </div>
 
-      {/* Pulso do negócio — KPIs executivos da assessoria */}
-      <BusinessPulse />
+      {contactsPreparing && (
+        <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          <p className="font-semibold">Acompanhamentos em preparação</p>
+          <p className="mt-1">A fila de contatos ainda está sendo organizada. Cobranças de renovação, entregas, devoluções e estornos seguem abaixo.</p>
+        </div>
+      )}
 
-      {totalActions === 0 ? (
+      {totalActions === 0 && !contactsPreparing ? (
         <Card>
           <CardContent className="flex flex-col items-center py-16 text-center">
             <Sparkles className="w-12 h-12 text-green-400 mb-3" />
             <p className="text-lg font-semibold text-gray-700">Caixa de entrada vazia!</p>
-            <p className="text-sm text-muted-foreground mt-1">Você está em dia com tudo — store e assessoria. ✨</p>
+            <p className="text-sm text-muted-foreground mt-1">Retornos futuros e contatos agendados continuam na Comunicação.</p>
           </CardContent>
         </Card>
       ) : (
         <>
-          {/* ── 1. Em atraso — store + assessoria ──────────────────── */}
-          <Section
-            title="Cobranças em atraso"
-            subtitle="Vencimento passou e ainda não foi pago"
-            icon={AlertTriangle} iconColor="text-red-600"
-            count={overdue.length} total={sum(overdue)}
-            borderColor="border-red-200"
-          >
-            {overdue.map(o => {
-              const d = Math.abs(daysUntil(o.due_date));
-              return (
-                <ItemRow key={o.id + o.type} item={o}
-                  badge={`${d}d em atraso`} badgeColor="bg-red-100 text-red-700" />
-              );
-            })}
+          {!contactsPreparing && <Section title="Contatos e pendências de atendimento" subtitle="A mesma fila da Comunicação, incluindo casos que precisam de revisão antes do contato." icon={MessageCircle} iconColor="text-blue-700" count={contactCount} total={0}>
+            {contactItems.map(item => (
+              <Link key={item.id || item.case_id} to={`/comunicacao?state=to_do&case=${encodeURIComponent(item.id || item.case_id)}`} className="flex min-h-16 items-center gap-3 rounded-lg px-3 py-3 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{item.person_name || item.customer_name || 'Pessoa não identificada'}</p>
+                  <p className="text-xs text-slate-600">{item.reference || item.source_reference || 'Atendimento'}</p>
+                  {item.blocked_reason && <p className="mt-1 text-xs font-medium text-amber-800">Revisar pendência antes de enviar</p>}
+                </div>
+                <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-400" />
+              </Link>
+            ))}
+            <Link to="/comunicacao?state=to_do" className="inline-flex min-h-11 items-center px-3 text-sm font-medium text-blue-700">{contactCount > contactItems.length ? `Ver todas as ${contactCount} ações` : 'Abrir fila de contatos'}</Link>
+          </Section>}
+
+          <Section title="Enviar cobrança de renovação" subtitle="Renovações aprovadas que aguardam o registro da cobrança no quadro." icon={Wallet} iconColor="text-amber-800" count={counts.renewalCharges} total={0}>
+            {renewalCharges.map(contract => (
+              <Link key={contract.id} to={`/assessoria/contratos/${contract.id}`} className="flex min-h-16 items-center gap-3 rounded-lg px-3 py-3 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-700">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">{contract.contract_number || 'Renovação'}</p>
+                  <p className="text-xs text-slate-600">Abrir contrato e registrar a cobrança</p>
+                </div>
+                <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-400" />
+              </Link>
+            ))}
+            <Link to="/assessoria/renovacoes" className="inline-flex min-h-11 items-center px-3 text-sm font-medium text-blue-700">{counts.renewalCharges > renewalCharges.length ? `Ver todas as ${counts.renewalCharges} renovações no quadro` : 'Abrir quadro de renovações'}</Link>
           </Section>
 
           {/* ── 2. Estornos pendentes ───────────────────────────────── */}
-          {pendingRefunds.length > 0 && (
+          {counts.pendingRefunds > 0 && (
             <Card className="border-orange-200">
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-3">
@@ -344,11 +303,11 @@ export default function Today() {
                     <CardTitle className="text-base flex items-center gap-2 text-orange-700">
                       <RotateCcw className="w-4 h-4" />
                       Estornos pendentes
-                      <span className="text-sm font-normal text-muted-foreground">({pendingRefunds.length})</span>
+                      <span className="text-sm font-normal text-muted-foreground">({counts.pendingRefunds})</span>
                     </CardTitle>
                     <p className="text-xs text-muted-foreground mt-0.5">Contratos cancelados aguardando devolução ao aluno</p>
                   </div>
-                  <span className="text-sm font-bold text-orange-700">{formatCurrency(sumAmount(pendingRefunds))}</span>
+                  {counts.pendingRefunds === pendingRefunds.length && <span className="text-sm font-bold text-orange-700">{formatCurrency(sumAmount(pendingRefunds))}</span>}
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
@@ -373,74 +332,27 @@ export default function Today() {
                       </Link>
                     );
                   })}
+                  {counts.pendingRefunds > pendingRefunds.length && (
+                    <Link to="/estornos" className="inline-flex min-h-11 items-center px-3 text-sm font-medium text-blue-700">Ver todos os {counts.pendingRefunds} estornos</Link>
+                  )}
                 </div>
               </CardContent>
             </Card>
           )}
-
-          {/* ── 3. Para cobrar ─────────────────────────────────────── */}
-          <Section
-            title="Pedidos / contratos para cobrar"
-            subtitle="Aguardando você gerar cobrança"
-            icon={ShoppingCart} iconColor="text-blue-600"
-            count={toCharge.length} total={sum(toCharge)}
-          >
-            {toCharge.map(o => {
-              const d = daysSince(o.created_date || o.created_at);
-              return (
-                <ItemRow key={o.id + o.type} item={o}
-                  badge={d === 0 ? 'Hoje' : `Há ${d}d`}
-                  badgeColor={d > 1 ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'} />
-              );
-            })}
-          </Section>
-
-          {/* ── 4. Contratos vencendo em breve ─────────────────────── */}
-          <Section
-            title="Contratos vencendo em breve"
-            subtitle={`Assessoria — renovar ou encerrar nos próximos ${RENEWAL_ATTENTION_WINDOW_DAYS} dias`}
-            icon={CalendarX} iconColor="text-violet-600"
-            count={expiringContracts.length} total={0}
-            borderColor="border-violet-100"
-          >
-            {expiringContracts.map(c => {
-              const d = daysUntil(c.end_date);
-              return (
-                <ItemRow key={c.id + 'contract'} item={c}
-                  badge={d === 0 ? 'Vence hoje' : d === 1 ? 'Vence amanhã' : `Vence em ${d}d`}
-                  badgeColor={d <= 3 ? 'bg-red-100 text-red-700' : d <= 7 ? 'bg-orange-100 text-orange-700' : 'bg-violet-100 text-violet-700'} />
-              );
-            })}
-          </Section>
-
-          {/* ── 5. Cobrança enviada há 2+ dias sem pagamento ───────── */}
-          <Section
-            title="Cobranças enviadas — lembrar cliente"
-            subtitle="PIX/boleto enviado há 2+ dias sem confirmação"
-            icon={Clock} iconColor="text-amber-600"
-            count={chargedNoPay.length} total={sum(chargedNoPay)}
-          >
-            {chargedNoPay.map(o => {
-              const d = daysSince(o.status_changed_at || o.created_date);
-              return (
-                <ItemRow key={o.id + o.type} item={o}
-                  badge={`${d}d sem pagar`} badgeColor="bg-amber-100 text-amber-700" />
-              );
-            })}
-          </Section>
 
           {/* ── 7. Pagos aguardando entrega (store) ────────────────── */}
           <Section
             title="Pagos — pendentes de entrega"
             subtitle="Pedidos da loja pagos que precisam ser processados"
             icon={Package} iconColor="text-purple-600"
-            count={awaitingDelivery.length} total={sum(awaitingDelivery)}
+            count={counts.deliveries} total={counts.deliveries === deliveries.length ? sum(deliveries) : 0}
           >
-            {awaitingDelivery.map(o => (
+            {deliveries.map(o => (
               <ItemRow key={o.id + o.type} item={o}
                 badge={fulfillmentStatus(o.type, o.delivery_status).label}
                 badgeColor="bg-purple-100 text-purple-700" />
             ))}
+            {counts.deliveries > deliveries.length && <Link to="/pedidos" className="inline-flex min-h-11 items-center px-3 text-sm font-medium text-blue-700">Ver todos os {counts.deliveries} pedidos pendentes de entrega</Link>}
           </Section>
 
           {/* ── 8. Devoluções ──────────────────────────────────────── */}
@@ -448,22 +360,29 @@ export default function Today() {
             title="Devoluções aguardando recebimento"
             subtitle="Cliente vai devolver — marque quando chegar"
             icon={Undo2} iconColor="text-slate-600"
-            count={pendingReturns.length} total={sumRefund(pendingReturns)}
+            count={counts.pendingReturns} total={counts.pendingReturns === pendingReturns.length ? sumRefund(pendingReturns) : 0}
           >
             {pendingReturns.map(r => <ReturnItem key={r.id} ret={r} />)}
+            {counts.pendingReturns > pendingReturns.length && <Link to="/devolucoes?status=pending_return" className="inline-flex min-h-11 items-center px-3 text-sm font-medium text-blue-700">Ver todas as {counts.pendingReturns} devoluções pendentes</Link>}
           </Section>
 
           <Section
             title="Devoluções recebidas — repor estoque"
             subtitle="Itens chegaram, precisam voltar ao estoque"
             icon={Undo2} iconColor="text-green-700"
-            count={receivedReturns.length} total={sumRefund(receivedReturns)}
+            count={counts.receivedReturns} total={counts.receivedReturns === receivedReturns.length ? sumRefund(receivedReturns) : 0}
             borderColor="border-green-200"
           >
             {receivedReturns.map(r => <ReturnItem key={r.id} ret={r} />)}
+            {counts.receivedReturns > receivedReturns.length && <Link to="/devolucoes?status=received" className="inline-flex min-h-11 items-center px-3 text-sm font-medium text-blue-700">Ver todas as {counts.receivedReturns} devoluções recebidas</Link>}
           </Section>
         </>
       )}
+      <footer className="flex flex-wrap gap-4 border-t pt-3 text-sm">
+        <Link className="inline-flex min-h-11 items-center text-blue-700 hover:underline" to="/comunicacao">Retornos e agendamentos</Link>
+        <Link className="inline-flex min-h-11 items-center text-blue-700 hover:underline" to="/assessoria/renovacoes">Quadro de renovações</Link>
+        <Link className="inline-flex min-h-11 items-center text-blue-700 hover:underline" to="/assessoria/indicadores">Indicadores da assessoria</Link>
+      </footer>
     </div>
   );
 }

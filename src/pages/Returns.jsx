@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Package, CheckCircle2, Clock, Undo2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,7 @@ async function loadReturnsPage() {
 }
 
 export default function Returns() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: returns, loading, refresh } = usePageData({
     key: 'returns:list',
     loader: loadReturnsPage,
@@ -27,7 +28,13 @@ export default function Returns() {
     tags: ['order_returns'],
     onError: () => toast.error('Erro ao carregar devoluções'),
   });
-  const [filter, setFilter] = useState('pending_return');
+  const requestedStatus = searchParams.get('status');
+  const filter = TABS.some(tab => tab.key === requestedStatus) ? requestedStatus : 'pending_return';
+  const setFilter = status => setSearchParams(current => {
+    const next = new URLSearchParams(current);
+    next.set('status', status);
+    return next;
+  }, { replace: true });
   const [actionId, setActionId] = useState(null);
 
   const markReceived = async (ret) => {

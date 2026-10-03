@@ -1,11 +1,12 @@
 import ManualInstallmentsEditor from '@/components/ManualInstallmentsEditor';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { studentProfilePath } from '@/lib/customer-profile';
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, User, UserCheck, FileText, Calendar, Zap, MessageCircle, Copy, Check, ExternalLink,
   Link2, QrCode, RefreshCw, History, Pause, XCircle, RotateCcw,
-  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, AlertCircle, Clock, TrendingUp,
+  HandCoins, Activity, Plus, PenLine, Banknote, RefreshCcw, Ban, Clock, TrendingUp,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -31,7 +32,7 @@ import {
   changeAssessmentContractPlan,
   createAssessmentContractRenewal,
   finishAssessmentContractLeave,
-  markAssessmentContractPaymentMessageSent,
+  listCommunicationCases,
   removeAssessmentContractExternalCharge,
   setAssessmentContractAutoRenewal,
   startAssessmentContractLeave,
@@ -43,13 +44,11 @@ import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib
 import { DEFAULT_ASAAS_DUE_DAYS, defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import { externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
-import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
 import {
   generateAssessmentContractCharge,
   markAssessmentContractNonRenewal,
   registerExternalAssessmentContractCharge,
 } from '@/lib/assessment-contract-operations';
-import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel, reopenManualPayment } from '@/lib/manual-payment';
 import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
@@ -367,8 +366,8 @@ export default function ContractDetail() {
   const [externalSaleForm, setExternalSaleForm]   = useState({ link: '', due_date: '', payment_method: 'pix', invoice_number: '' });
   const [externalSaleSaving, setExternalSaleSaving] = useState(false);
   // WhatsApp — preview e envio
-  const [whatsappModal, setWhatsappModal] = useState(false);
-  const [whatsappCopied, setWhatsappCopied] = useState(false);
+  const [communicationCaseId, setCommunicationCaseId] = useState(null);
+  const [communicationOpening, setCommunicationOpening] = useState(false);
   const [methodGroups, setMethodGroups]     = useState([]);
   // Edição de datas
   const [dateModal, setDateModal]     = useState(false);
@@ -1014,50 +1013,25 @@ export default function ContractDetail() {
     return () => clearTimeout(timer);
   }, [contract, loading, openManualPay, searchParams, setSearchParams]);
 
-  const buildMessage = () => {
-    if (!contract || !student) return '';
-    return buildAssessmentContractMessage({
-      contract,
-      customer: student,
-      plan,
-      modality,
-      coach,
-    });
-  };
-
-  const openWhatsApp = () => {
-    if (!student) return;
-    setWhatsappCopied(false);
-    setWhatsappModal(true);
-  };
-
-  const sendWhatsAppDirect = () => {
-    const phone = phoneDigitsForWhatsApp(student.whatsapp);
-    const msg = buildMessage();
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
-  };
-
-  const copyWhatsAppMessage = () => {
-    navigator.clipboard.writeText(buildMessage()).then(() => {
-      setWhatsappCopied(true);
-      setTimeout(() => setWhatsappCopied(false), 2000);
-    });
-  };
-
-  const markMessageSent = async () => {
+  const openWhatsApp = async () => {
+    if (!student?.whatsapp || communicationOpening) return;
+    setCommunicationOpening(true);
     try {
-      await markAssessmentContractPaymentMessageSent(id, {
-        source: 'contract_detail',
-        externalLink: contract.external_payment_link || null,
-        dueDate: contract.due_date || null,
-        expectedUpdatedAt: contract.updated_at,
-        metadata: {},
-      });
-      toast.success('Mensagem marcada como enviada!');
-      setWhatsappModal(false);
-      await load();
-    } catch (e) {
-      toast.error(e.message || 'Erro ao registrar envio');
+      const result = await listCommunicationCases({ state: 'open', source_type: 'contract', source_id: id, limit: 20 });
+      const target = `/comunicacao?source_type=contract&source_id=${encodeURIComponent(id)}`;
+      if (result.rollout?.enabled === false) {
+        navigate(target);
+      } else if (result.items?.length === 1 && !result.next_cursor) {
+        setCommunicationCaseId(result.items[0].id);
+      } else if (result.items?.length) {
+        navigate(target);
+      } else {
+        navigate(`${target}&state=resolved`);
+      }
+    } catch (error) {
+      toast.error(error?.message || 'Não foi possível localizar o acompanhamento deste contrato.');
+    } finally {
+      setCommunicationOpening(false);
     }
   };
 
@@ -1187,7 +1161,7 @@ export default function ContractDetail() {
             </Badge>
           )}
           <Badge variant={ps.badge}>{ps.label}</Badge>
-          {student?.whatsapp && <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp}><MessageCircle className="w-4 h-4 mr-1" /> WhatsApp</Button>}
+          {student?.whatsapp && <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp} disabled={communicationOpening}><MessageCircle className="w-4 h-4 mr-1" /> {communicationOpening ? 'Carregando contato...' : 'Acompanhar contato'}</Button>}
         </div>
       </div>
 
@@ -2073,54 +2047,13 @@ export default function ContractDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL: Enviar via WhatsApp */}
-      <Dialog open={whatsappModal} onOpenChange={setWhatsappModal}>
-        <DialogContent className="max-w-lg" onInteractOutside={e => e.preventDefault()} onFocusOutside={e => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <MessageCircle className="w-4 h-4 text-green-600" /> Enviar mensagem via WhatsApp
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            {!contract.asaas_charge_id && !contract.external_payment_link && (
-              <div className="flex items-start gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                <span className="text-amber-800">
-                  Sem cobrança gerada. A mensagem irá <strong>sem link de pagamento</strong>.
-                  Considere gerar uma cobrança Asaas ou cadastrar uma externa antes.
-                </span>
-              </div>
-            )}
-
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm whitespace-pre-wrap font-mono max-h-[50vh] overflow-y-auto text-green-900">
-              {buildMessage()}
-            </div>
-
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <MessageCircle className="w-3 h-3" />
-              <span>Para: <strong>{formatPhoneDisplay(student?.whatsapp)}</strong></span>
-            </div>
-
-            <div className="flex gap-2 pt-1">
-              <Button variant="outline" className="flex-1" onClick={copyWhatsAppMessage}>
-                {whatsappCopied ? <><Check className="w-4 h-4 mr-1.5 text-green-600" /> Copiado!</> : <><Copy className="w-4 h-4 mr-1.5" /> Copiar mensagem</>}
-              </Button>
-              <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white" onClick={sendWhatsAppDirect}>
-                <ExternalLink className="w-4 h-4 mr-1.5" /> Abrir WhatsApp
-              </Button>
-            </div>
-
-            <div className="border-t pt-3">
-              <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={markMessageSent}>
-                <Check className="w-4 h-4 mr-1.5" /> Marcar como enviada
-              </Button>
-              <p className="text-[11px] text-muted-foreground text-center mt-1.5">
-                Depois de enviar a mensagem pelo WhatsApp, clique aqui pra registrar o envio.
-              </p>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <CommunicationSendDialog
+        caseId={communicationCaseId}
+        sourceUi="contract_detail"
+        onClose={() => setCommunicationCaseId(null)}
+        onChanged={() => load()}
+        onSent={() => { setCommunicationCaseId(null); load(); }}
+      />
 
       <ExternalChargeDialog
         open={externalSaleModal}

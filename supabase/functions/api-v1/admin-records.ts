@@ -930,6 +930,9 @@ export async function handleAdminRecordRequest(
   const match = path.match(/^\/admin-records\/([^/]+)(?:\/([^/]+))?$/);
   if (!match) return null;
   const [, resourceKey, itemId] = match;
+  if (resourceKey === "communication-rules" && req.method !== "GET") {
+    return jsonResponse({ error: "Edite um rascunho, simule e publique em Modelos e regras", code: "publication_required" }, 409);
+  }
   let resource: ResourceSpec;
   try {
     resource = resourceFor(resourceKey);

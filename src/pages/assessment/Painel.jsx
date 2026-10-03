@@ -27,6 +27,7 @@ import {
 } from 'recharts';
 import { toast } from 'sonner';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
+import ContextTabs from '@/components/layout/ContextTabs';
 
 function periodLabel(plan) {
   const m = plan?.period_months
@@ -252,6 +253,7 @@ export default function Painel() {
 
   return (
     <div className="space-y-6">
+      <ContextTabs group="assessment" current="/assessoria" />
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">

@@ -1,5 +1,6 @@
 import { Menu } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import { NAV_AREAS, resolveNavigation } from '@/lib/navigation';
 
 const titles = {
   '/': 'Dashboard',
@@ -12,11 +13,13 @@ const titles = {
   '/pedidos': 'Pedidos',
   '/clientes': 'Clientes',
   '/assessoria/alunos': 'Alunos',
+  '/pessoas': 'Pessoas',
   '/assessoria/indicadores': 'Indicadores da Assessoria',
   '/relatorios': 'Relatórios',
 };
 
 function getTitle(pathname) {
+  if (pathname.startsWith('/pessoas/')) return 'Ficha da pessoa';
   if (pathname.startsWith('/campanhas/')) return 'Detalhe da coleção';
   if (pathname.startsWith('/produtos/pre-venda/')) return 'Produto de pré-venda';
   if (pathname.startsWith('/produtos/estoque/')) return 'Estoque do produto';
@@ -26,7 +29,10 @@ function getTitle(pathname) {
   if (pathname.startsWith('/pedidos/')) return 'Pedido';
   if (pathname.startsWith('/assessoria/alunos/')) return 'Aluno';
   if (pathname.startsWith('/clientes/')) return 'Cliente';
-  return titles[pathname] ?? 'EON Store';
+  const selection = resolveNavigation(pathname);
+  const area = NAV_AREAS.find(item => item.id === selection.areaId);
+  const item = area?.items?.find(child => child.id === selection.itemId);
+  return titles[pathname] ?? item?.label ?? area?.label ?? 'EON Store';
 }
 
 export default function TopBar({ onMenuClick }) {

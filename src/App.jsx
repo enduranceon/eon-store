@@ -1,9 +1,10 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/components/AuthProvider';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import RouteFallback from '@/components/RouteFallback';
+import { legacyPersonRedirectPath } from '@/lib/customer-profile';
 
 const AdminLayout = lazy(() => import('@/components/layout/AdminLayout'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
@@ -17,8 +18,6 @@ const OrderCenter = lazy(() => import('@/pages/OrderCenter'));
 const Events = lazy(() => import('@/pages/Events'));
 const PublicEventRegistration = lazy(() => import('@/pages/PublicEventRegistration'));
 const EventDetail = lazy(() => import('@/pages/EventDetail'));
-const Customers = lazy(() => import('@/pages/Customers'));
-const CustomerDetail = lazy(() => import('@/pages/CustomerDetail'));
 const Suppliers = lazy(() => import('@/pages/Suppliers'));
 const SupplierForm = lazy(() => import('@/pages/SupplierForm'));
 const Categories = lazy(() => import('@/pages/Categories'));
@@ -84,6 +83,12 @@ function LegacyOrderListRedirect({ origin }) {
   return <Navigate to={`/pedidos?${params.toString()}${location.hash}`} replace />;
 }
 
+function LegacyPersonRedirect({ fromAssessment = false }) {
+  const location = useLocation();
+  const { id } = useParams();
+  return <Navigate to={legacyPersonRedirectPath({ id, search: location.search, hash: location.hash, fromAssessment })} replace />;
+}
+
 function RouteErrorBoundary({ children }) {
   const location = useLocation();
 
@@ -133,8 +138,10 @@ export default function App() {
           <Route path="/eventos/:id" element={<AdminLayout><EventDetail /></AdminLayout>} />
           <Route path="/pedidos/pre-venda" element={<LegacyOrderListRedirect origin="presale" />} />
           <Route path="/pedidos/:id" element={<AdminLayout><OrderDetail /></AdminLayout>} />
-          <Route path="/clientes" element={<AdminLayout><Customers /></AdminLayout>} />
-          <Route path="/clientes/:id" element={<AdminLayout><CustomerDetail /></AdminLayout>} />
+          <Route path="/pessoas" element={<AdminLayout><AssStudents /></AdminLayout>} />
+          <Route path="/pessoas/:id" element={<AdminLayout><AssStudentDetail /></AdminLayout>} />
+          <Route path="/clientes" element={<LegacyPersonRedirect />} />
+          <Route path="/clientes/:id" element={<LegacyPersonRedirect />} />
           <Route path="/categorias" element={<AdminLayout><Categories /></AdminLayout>} />
           <Route path="/treinadores" element={<AdminLayout><Trainers /></AdminLayout>} />
           <Route path="/fornecedores" element={<AdminLayout><Suppliers /></AdminLayout>} />
@@ -162,8 +169,8 @@ export default function App() {
           <Route path="/assessoria/regua"         element={<Navigate to="/comunicacao/configuracoes" replace />} />
           <Route path="/assessoria/configuracoes" element={<AdminLayout><AssConfiguracoes /></AdminLayout>} />
           <Route path="/assessoria/coaches"       element={<AdminLayout><AssCoaches /></AdminLayout>} />
-          <Route path="/assessoria/alunos"        element={<AdminLayout><AssStudents /></AdminLayout>} />
-          <Route path="/assessoria/alunos/:id"    element={<AdminLayout><AssStudentDetail /></AdminLayout>} />
+          <Route path="/assessoria/alunos"        element={<LegacyPersonRedirect fromAssessment />} />
+          <Route path="/assessoria/alunos/:id"    element={<LegacyPersonRedirect fromAssessment />} />
           <Route path="/assessoria/contratos"     element={<AdminLayout><AssContracts /></AdminLayout>} />
           <Route path="/assessoria/contratos/novo" element={<AdminLayout><AssContractForm /></AdminLayout>} />
           <Route path="/assessoria/contratos/:id" element={<AdminLayout><AssContractDetail /></AdminLayout>} />

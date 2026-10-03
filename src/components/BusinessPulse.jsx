@@ -7,7 +7,6 @@ import { supabase } from '@/api/db';
 import { formatCurrency } from '@/lib/utils';
 import { computeAssessmentMetrics } from '@/lib/assessment-metrics';
 import { usePageData } from '@/hooks/usePageData';
-import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 
 // Carrega contratos (todos os status) + planos pra calcular os KPIs.
@@ -16,7 +15,6 @@ async function loadPulseData() {
     loadAssessmentMetricContracts(supabase),
     loadAssessmentMetricPlans(supabase),
   ]);
-  await applyAssessmentContractTransitions(contracts);
   return { contracts, plans };
 }
 
@@ -50,9 +48,9 @@ function churnTrend(churnRate) {
   return { Icon: ArrowUpRight, color: 'text-red-600', label: 'alto' };
 }
 
-// Banda de KPIs executivos da assessoria. Aparece no topo do "Hoje".
+// Banda de KPIs atuais da assessoria exibida em Indicadores.
 export default function BusinessPulse() {
-  const { data, loading } = usePageData({
+  const { data, loading, error, refresh } = usePageData({
     key: 'business-pulse',
     loader: loadPulseData,
     initialData: { contracts: [], plans: [] },
@@ -70,6 +68,8 @@ export default function BusinessPulse() {
     );
   }
 
+  if (error) return <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Não foi possível conferir o panorama atual. <button type="button" className="min-h-11 px-2 font-medium underline" onClick={() => refresh({ force: true }).catch(() => {})}>Tentar novamente</button></div>;
+
   const m = computeAssessmentMetrics(data.contracts, data.plans);
 
   // Sem contratos de assessoria ainda → não mostra a banda
@@ -83,7 +83,7 @@ export default function BusinessPulse() {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
       <Kpi
-        label="Receita recorrente (MRR)"
+        label="MRR contratado"
         value={formatCurrency(m.mrr)}
         sub={novosLabel}
         icon={TrendingUp}

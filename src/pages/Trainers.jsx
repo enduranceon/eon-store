@@ -7,6 +7,7 @@ import { PreSaleTrainer } from '@/api/entities';
 import { usePageData } from '@/hooks/usePageData';
 import { phoneDigitsForWhatsApp, formatPhoneDisplay } from '@/lib/phone';
 import { toast } from 'sonner';
+import ContextTabs from '@/components/layout/ContextTabs';
 
 async function loadTrainersPage() {
   return PreSaleTrainer.list();
@@ -58,6 +59,7 @@ export default function Trainers() {
 
   return (
     <div className="space-y-6 max-w-2xl">
+      <ContextTabs group="team" current="/treinadores" />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Treinadores</h2>
