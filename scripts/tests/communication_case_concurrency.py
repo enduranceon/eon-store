@@ -73,14 +73,13 @@ def query(sql: str, env: dict[str, str]) -> str:
 def check_target(env: dict[str, str]) -> None:
     result = query(
         "SELECT current_database() || '|' || current_user || '|' || "
-        "(SELECT rolsuper::text FROM pg_roles WHERE rolname=current_user) || '|' || "
         "COALESCE((SELECT value->>'enabled' FROM public.communication_settings "
         "WHERE key='cases_rollout'),'missing')",
         env,
     )
-    if result != "postgres|postgres|true|false":
+    if result != "postgres|postgres|false":
         raise RuntimeError(
-            "Refusing to run: expected fresh local postgres superuser and disabled case rollout; "
+            "Refusing to run: expected fresh local postgres database and disabled case rollout; "
             f"got {result!r}"
         )
 
