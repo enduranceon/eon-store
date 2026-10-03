@@ -369,6 +369,75 @@ GRANT EXECUTE ON FUNCTION eon_private.communication_open_balance(text,uuid,text,
   eon_private.communication_obligation_key(jsonb)
   TO service_role;
 
+-- Only a first paid membership or a return after at least one complete day
+-- without a membership receives onboarding. Contract end_date is exclusive;
+-- cancellation_date is the final day considered active. Evaluate other
+-- contracts as they existed at this contract's entry, so a later membership
+-- cannot turn an earlier first membership into a false return.
+CREATE OR REPLACE FUNCTION eon_private.communication_onboarding_eligible(
+  p_contract_id uuid
+)
+RETURNS boolean LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+  v_contract public.assessment_contracts%ROWTYPE;
+  v_has_prior boolean;
+  v_has_continuous boolean;
+BEGIN
+  SELECT * INTO v_contract FROM public.assessment_contracts WHERE id=p_contract_id;
+  IF NOT FOUND OR v_contract.parent_contract_id IS NOT NULL
+     OR v_contract.customer_id IS NULL OR v_contract.start_date IS NULL
+     OR v_contract.created_at IS NULL
+     OR v_contract.payment_status<>'paid'
+     OR v_contract.status NOT IN ('active','scheduled','on_leave')
+     OR v_contract.prospect_customer_relationship='active_student'
+     OR EXISTS (SELECT 1 FROM public.assessment_contract_event e
+       WHERE e.contract_id=p_contract_id AND e.event_type='onboarding_checkin_sent') THEN
+    RETURN false;
+  END IF;
+
+  WITH prior AS (
+    SELECT old.status,old.end_date,old.cancellation_date
+    FROM public.assessment_contracts old
+    WHERE old.customer_id=v_contract.customer_id AND old.id<>v_contract.id
+      AND old.start_date<=v_contract.start_date
+      AND (
+        old.created_at<v_contract.created_at
+        OR old.id=v_contract.prospect_previous_contract_id
+        OR (old.created_at=v_contract.created_at
+          AND CASE
+            WHEN old.contract_number ~ '^ASS-[0-9]+$'
+              AND v_contract.contract_number ~ '^ASS-[0-9]+$'
+            THEN substring(old.contract_number FROM 5)::numeric
+              < substring(v_contract.contract_number FROM 5)::numeric
+            ELSE false END)
+      )
+      AND (
+        old.status IN ('active','overdue','on_leave','finished')
+        OR (old.status IN ('cancelled','scheduled') AND (
+          old.payment_status='paid' OR old.payment_date IS NOT NULL
+          OR COALESCE(old.manual_payment,false)))
+      )
+  )
+  SELECT EXISTS(SELECT 1 FROM prior), EXISTS(
+    SELECT 1 FROM prior WHERE (
+      (status<>'cancelled' AND end_date<v_contract.start_date)
+      OR (status='cancelled'
+        AND cancellation_date<v_contract.start_date-1)
+    ) IS NOT TRUE
+  ) INTO v_has_prior,v_has_continuous;
+
+  -- A prospect explicitly marked as former student without verifiable prior
+  -- membership needs review instead of a speculative welcome.
+  RETURN NOT v_has_continuous
+    AND (v_contract.prospect_customer_relationship IS DISTINCT FROM 'former_student'
+      OR v_has_prior);
+END;
+$$;
+REVOKE ALL ON FUNCTION eon_private.communication_onboarding_eligible(uuid)
+  FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION eon_private.communication_onboarding_eligible(uuid)
+  TO service_role;
+
 CREATE OR REPLACE FUNCTION eon_private.ensure_communication_case(
   p_source_type text, p_source_id uuid, p_purpose text
 )
@@ -410,11 +479,7 @@ BEGIN
     v_key := 'renewal';
   ELSIF p_purpose = 'onboarding' THEN
     v_eligible := p_source_type = 'contract'
-      AND v_context->>'parent_contract_id' IS NULL
-      AND v_context->>'payment_status' = 'paid'
-      AND v_context->>'source_status' IN ('active', 'scheduled', 'on_leave')
-      AND NOT EXISTS (SELECT 1 FROM public.assessment_contract_event
-        WHERE contract_id=p_source_id AND event_type='onboarding_checkin_sent');
+      AND eon_private.communication_onboarding_eligible(p_source_id);
     v_key := 'welcome';
   ELSE
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Finalidade inválida';
@@ -574,7 +639,9 @@ $$;
 CREATE TRIGGER communication_contract_source
   AFTER INSERT OR UPDATE OF status, payment_status, renewal_stage,
     renewal_follow_up_at, renewal_last_contact_at, renewal_response_code,
-    asaas_charge_id, external_invoice_number, due_date, payment_message_sent_at
+    asaas_charge_id, external_invoice_number, due_date, payment_message_sent_at,
+    customer_id, parent_contract_id, start_date, end_date, cancellation_date,
+    prospect_customer_relationship, prospect_previous_contract_id
     ON public.assessment_contracts
   FOR EACH ROW EXECUTE FUNCTION eon_private.sync_communication_case_after_source();
 CREATE TRIGGER communication_presale_source

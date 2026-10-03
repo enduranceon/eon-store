@@ -35,6 +35,16 @@ jobs:
       - name: Run database regression tests
         run: supabase test db --local
 
+      - name: Verify concurrent communication actions
+        run: python3 scripts/tests/communication_case_concurrency.py
+        env:
+          EON_TEST_EPHEMERAL: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: '54322'
+          PGDATABASE: postgres
+          PGUSER: postgres
+          PGPASSWORD: postgres
+
       - name: Clean up local database
         if: always()
         run: supabase stop --no-backup
@@ -213,6 +223,19 @@ jobs:
                   where version = '20260918164157'
                 )
                 and (
+                  select count(*) = 7
+                  from supabase_migrations.schema_migrations
+                  where version in (
+                    '20261002190000',
+                    '20261002190100',
+                    '20261002190200',
+                    '20261002190300',
+                    '20261002190400',
+                    '20261002221158',
+                    '20261002223922'
+                  )
+                )
+                and (
                   select ns.nspname = 'extensions'
                   from pg_catalog.pg_extension as ext
                   join pg_catalog.pg_namespace as ns
@@ -344,6 +367,31 @@ jobs:
                   'authenticated',
                   'public.prepare_presale_order_charge_creation(uuid,text,date,integer,text,text,uuid,timestamptz,uuid)',
                   'EXECUTE'
+                )
+                and (
+                  select count(*) = 11
+                    and bool_and(
+                      rpc.oid is not null
+                      and coalesce(has_function_privilege('service_role', rpc.oid, 'EXECUTE'), false)
+                      and not coalesce(has_function_privilege('anon', rpc.oid, 'EXECUTE'), false)
+                      and not coalesce(has_function_privilege('authenticated', rpc.oid, 'EXECUTE'), false)
+                    )
+                  from (values
+                    ('public.render_communication_template(text,jsonb)'),
+                    ('public.get_communication_case(uuid)'),
+                    ('public.list_communication_cases(text,text,text,uuid,uuid,text,text,integer)'),
+                    ('public.list_communication_case_events(uuid,text,integer)'),
+                    ('public.prepare_communication_case(text,uuid,text)'),
+                    ('public.apply_communication_case_action(uuid,jsonb,text,uuid)'),
+                    ('public.preview_communication_case_sync(text,integer)'),
+                    ('public.sync_communication_cases(text,uuid,integer)'),
+                    ('public.set_communication_cases_rollout(boolean,uuid)'),
+                    ('public.communication_model_command(text,uuid,jsonb)'),
+                    ('public.search_communication_history(uuid,text,uuid,text,date,date,text,integer)')
+                  ) as expected(signature)
+                  cross join lateral (
+                    select to_regprocedure(expected.signature) as oid
+                  ) as rpc
                 );
             ")"
           printf '%s\n' "$readback"

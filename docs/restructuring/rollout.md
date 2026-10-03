@@ -49,6 +49,9 @@ Todos os caminhos abaixo são relativos a `/functions/v1/api-v1`.
 - Revisar mensagem e destinatário; abrir/copiar WhatsApp não registra envio.
   Confirmar envio apenas após realizar o contato manualmente.
 - Registrar uma data combinada e verificar que ela vale em todos os acessos.
+- Onboarding atende primeira adesão e retorno com uma pausa real no histórico.
+  Renovação e plano adicional de aluno ativo ficam de fora. Alterar plano ou
+  treinador no mesmo contrato preserva o progresso do onboarding.
 - Informar “já paguei”: exige conferência. Registrar o pagamento na operação
   financeira encerra a cobrança. “Concluir revisão” exige nota e não quita dívida.
 - Conferir D+3, D+5, D+7 e retorno diário a partir de D+8. O aviso D−1/D0 inicia
@@ -87,7 +90,7 @@ a sincronização e reconciliação antes de liberar o trabalho.
 | A02 | Painel de caso compartilhado por Central, Hoje, Pessoas, contrato, pedidos, evento e Financeiro. |
 | A03 | Agendamento e revisão persistidos, resolvidos no servidor e revalidados em toda ação. |
 | A04 | Fingerprint, versão da fonte e locks antes do registro; fixture visual de conflito após pagamento. |
-| A05 | Idempotência e versão otimista testadas no SQL/API. Homologar duas sessões simultâneas no ambiente isolado. |
+| A05 | Idempotência e versão otimista testadas no SQL/API. O CI executa duas sessões PostgreSQL concorrentes: conflito entre operadores e repetição da mesma ação, com um único evento e comando. |
 | A06 | Saldo parcial desconhecido bloqueia para revisão; substituição da obrigação e retorno A→B→A cobertos no SQL. |
 | A07 | Regra automática mensal preservada; aviso pré-vencimento exclui automática. |
 | A08 | Contrato-filho e transições do Kanban preservados; sincronização com resposta e follow-up. Suíte anterior mantida. |

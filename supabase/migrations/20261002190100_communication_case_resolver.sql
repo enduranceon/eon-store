@@ -273,6 +273,11 @@ BEGIN
     IF p_context->>'payment_status' <> 'paid' THEN
       v_block := 'payment_changed';
     END IF;
+    IF EXISTS (SELECT 1 FROM public.assessment_contracts
+      WHERE id=p_case.source_id)
+      AND NOT eon_private.communication_onboarding_eligible(p_case.source_id) THEN
+      v_block := COALESCE(v_block,'onboarding_not_eligible');
+    END IF;
     IF v_action='onboarding_welcome'
        AND NULLIF(p_context->>'community_link','') IS NULL THEN
       v_block:=COALESCE(v_block,'community_link_missing');

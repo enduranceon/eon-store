@@ -87,6 +87,11 @@ BEGIN
      IS DISTINCT FROM p_request->>'expected_source_fingerprint' THEN
     RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='A origem mudou. Atualize a página.';
   END IF;
+  IF v_case.purpose='onboarding'
+     AND NOT eon_private.communication_onboarding_eligible(v_case.source_id) THEN
+    RAISE EXCEPTION USING ERRCODE='P0001',
+      MESSAGE='Esta adesão não está elegível para onboarding. Atualize a página.';
+  END IF;
   IF v_case.purpose='billing' AND v_action='message_sent'
      AND (v_context->>'payment_status' IN ('paid','cancelled','refunded')
        OR NULLIF(v_context->>'balance','') IS NULL
