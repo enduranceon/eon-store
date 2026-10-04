@@ -22,8 +22,8 @@ function clientWithResult(result: { data: unknown[] | null; error: null }) {
       calls.push({ method: "order", args: [field, options] });
       return query;
     },
-    limit(limit: number) {
-      calls.push({ method: "limit", args: [limit] });
+    range(from: number, to: number) {
+      calls.push({ method: "range", args: [from, to] });
       return query;
     },
     eq(field: string, value: unknown) {
@@ -94,6 +94,62 @@ Deno.test("financial movements are queried through an allowlisted server route",
   assert(calls.some(call => call.method === "lte" && call.args[1] === "2026-08-31"), "end date filter was lost");
 });
 
+Deno.test("financial movements come back whole beyond the 1000-row page, up to the limit", async () => {
+  const rows = Array.from({ length: 2300 }, (_, index) => ({ movement_id: `m-${index}` }));
+  const ranges: Array<[number, number]> = [];
+  const orders: string[] = [];
+  const pagedQuery = () => {
+    let range: [number, number] = [0, 0];
+    const query = {
+      select() {
+        return query;
+      },
+      order(field: string) {
+        orders.push(field);
+        return query;
+      },
+      eq() {
+        return query;
+      },
+      gte() {
+        return query;
+      },
+      range(from: number, to: number) {
+        range = [from, to];
+        ranges.push(range);
+        return query;
+      },
+      then(resolve: (value: { data: unknown[]; error: null }) => unknown) {
+        // O PostgREST corta cada resposta em 1000 linhas.
+        const end = Math.min(range[1] + 1, range[0] + 1000);
+        return Promise.resolve({ data: rows.slice(range[0], end), error: null }).then(resolve);
+      },
+    };
+    return query;
+  };
+  const client = { from: () => pagedQuery() } as unknown as SupabaseClient;
+
+  const all = await handleFinancialRequest(
+    new Request("https://example.test/api-v1/financial/movements?movement_kind=receipt&sort=-scheduled_on"),
+    "/financial/movements",
+    client,
+  );
+  const allBody = await all!.json();
+  assert(allBody.data.length === 2300, "movements were cut at the page size");
+  assert(JSON.stringify(ranges) === JSON.stringify([[0, 999], [1000, 1999], [2000, 2999]]), "pages were not requested in order");
+  assert(orders.includes("scheduled_on") && orders.includes("movement_id"), "pagination lost its stable order");
+
+  ranges.length = 0;
+  const limited = await handleFinancialRequest(
+    new Request("https://example.test/api-v1/financial/movements?limit=1500"),
+    "/financial/movements",
+    client,
+  );
+  const limitedBody = await limited!.json();
+  assert(limitedBody.data.length === 1500, "limit was not respected across pages");
+  assert(JSON.stringify(ranges) === JSON.stringify([[0, 999], [1000, 1499]]), "last page did not stop at the limit");
+});
+
 Deno.test("financial quality uses the protected quality view", async () => {
   const { client, calls } = clientWithResult({
     data: [{ issue_id: "pending_charge:1" }],
@@ -108,7 +164,7 @@ Deno.test("financial quality uses the protected quality view", async () => {
   assert(response?.status === 200, "financial quality request failed");
   assert(calls[0].args[0] === "financial_data_quality", "wrong quality relation was queried");
   assert(calls.some(call => call.method === "order" && call.args[0] === "occurred_on"), "quality sort was lost");
-  assert(calls.some(call => call.method === "limit" && call.args[0] === 10), "quality limit was lost");
+  assert(calls.some(call => call.method === "range" && call.args[0] === 0 && call.args[1] === 9), "quality limit was lost");
   assert(calls.some(call => call.method === "eq" && call.args[0] === "business_unit" && call.args[1] === "assessoria"), "quality business unit filter was lost");
   assert(calls.some(call => call.method === "eq" && call.args[0] === "severity" && call.args[1] === "high"), "quality severity filter was lost");
   assert(calls.some(call => call.method === "eq" && call.args[0] === "issue_type" && call.args[1] === "pending_refund"), "quality issue type filter was lost");

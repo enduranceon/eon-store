@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -11,25 +12,29 @@ function parseSortBy(sortBy = '-created_date') {
   return { field, ascending: !desc };
 }
 
-// Tenta ordenar por `field`. Se a coluna não existir (42703), faz fallback
-// entre `created_date` ↔ `created_at`. Reconstrói a query a cada tentativa
-// para não acumular cláusulas ORDER BY inválidas.
+// Busca todas as linhas (em páginas de 1000) ordenando por `field`, com
+// desempate por id para a paginação não repetir nem pular linhas. Se a coluna
+// não existir (42703), faz fallback entre `created_date` ↔ `created_at`, depois
+// sem o desempate (tabela sem id) e, por último, sem ordenação. Reconstrói a
+// query a cada tentativa para não acumular cláusulas ORDER BY inválidas.
 async function safeOrder(buildQuery, field, ascending) {
-  let { data, error } = await buildQuery().order(field, { ascending });
-  if (error?.code === '42703') {
-    const fallback = field === 'created_date' ? 'created_at'
-                   : field === 'created_at'   ? 'created_date'
-                   : null;
-    if (fallback) {
-      ({ data, error } = await buildQuery().order(fallback, { ascending }));
-    }
-    // Última tentativa: sem ordenação
-    if (error?.code === '42703') {
-      ({ data, error } = await buildQuery());
-    }
+  const fallback = field === 'created_date' ? 'created_at'
+                 : field === 'created_at'   ? 'created_date'
+                 : null;
+  const attempts = [[field, true], [fallback, true], [field, false], [fallback, false], [null, false]]
+    .filter(([orderField], index) => orderField || index === 4);
+  let result;
+  for (const [orderField, tieBreak] of attempts) {
+    result = await fetchAllPages(() => {
+      let query = buildQuery();
+      if (orderField) query = query.order(orderField, { ascending });
+      if (tieBreak && orderField !== 'id') query = query.order('id', { ascending: true });
+      return query;
+    });
+    if (result.error?.code !== '42703') break;
   }
-  if (error) throw error;
-  return data ?? [];
+  if (result.error) throw result.error;
+  return result.data ?? [];
 }
 
 function createSupabaseProxy(tableName) {
