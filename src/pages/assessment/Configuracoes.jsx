@@ -282,17 +282,28 @@ function planLabel(plan) {
 function PlanTransitionsCard({ plans, transitions, refresh }) {
   const [fromPlanId, setFromPlanId] = useState('');
   const [saving, setSaving] = useState(null);
+  const [showInactive, setShowInactive] = useState(false);
 
+  // Planos inativos (inclusive os do sistema antigo) ficam fora da lista até
+  // pedir para mostrar; os pares deles continuam na matriz.
+  const isVisible = plan => showInactive || plan.active !== false;
+  const inactiveCount = plans.filter(p => p.active === false).length;
+  const visiblePlans = plans.filter(isVisible);
   const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'pt-BR') || Number(a.price_total) - Number(b.price_total);
-  const periods = [...new Set(plans.map(p => p.period_months).filter(Boolean))].sort((a, b) => a - b);
-  const origin = plans.find(p => p.id === fromPlanId) || null;
+  const periods = [...new Set(visiblePlans.map(p => p.period_months).filter(Boolean))].sort((a, b) => a - b);
+  const origin = visiblePlans.find(p => p.id === fromPlanId) || null;
   const rows = origin
     ? transitions
       .filter(t => t.from_plan_id === origin.id)
       .map(t => ({ transition: t, target: plans.find(p => p.id === t.to_plan_id) }))
-      .filter(row => row.target && row.target.period_months === origin.period_months)
+      .filter(row => row.target && row.target.period_months === origin.period_months && isVisible(row.target))
       .sort((a, b) => Number(a.target.price_total) - Number(b.target.price_total) || byName(a.target, b.target))
     : [];
+
+  const toggleInactive = () => {
+    if (showInactive && plans.find(p => p.id === fromPlanId)?.active === false) setFromPlanId('');
+    setShowInactive(!showInactive);
+  };
 
   const changeType = async (transition, value) => {
     setSaving(transition.id);
@@ -316,25 +327,40 @@ function PlanTransitionsCard({ plans, transitions, refresh }) {
         </p>
       </CardHeader>
       <CardContent className="pt-0 space-y-3">
-        <div className="space-y-1">
-          <Label>Plano atual do aluno</Label>
-          <Select value={fromPlanId} onValueChange={setFromPlanId}>
-            <SelectTrigger className="w-full sm:w-96"><SelectValue placeholder="Escolha o plano de origem" /></SelectTrigger>
-            <SelectContent>
-              {periods.map(months => (
-                <SelectGroup key={months}>
-                  <SelectLabel>{periodLabel(months)}</SelectLabel>
-                  {plans.filter(p => p.period_months === months).sort(byName).map(p => (
-                    <SelectItem key={p.id} value={p.id}>{planLabel(p)}</SelectItem>
-                  ))}
-                </SelectGroup>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1 w-full sm:w-auto">
+            <Label>Plano atual do aluno</Label>
+            <Select value={fromPlanId} onValueChange={setFromPlanId}>
+              <SelectTrigger className="w-full sm:w-96"><SelectValue placeholder="Escolha o plano de origem" /></SelectTrigger>
+              <SelectContent>
+                {periods.map(months => (
+                  <SelectGroup key={months}>
+                    <SelectLabel>{periodLabel(months)}</SelectLabel>
+                    {visiblePlans.filter(p => p.period_months === months).sort(byName).map(p => (
+                      <SelectItem key={p.id} value={p.id}>{planLabel(p)}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {inactiveCount > 0 && (
+            <button
+              type="button"
+              onClick={toggleInactive}
+              className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                showInactive ? 'bg-gray-100 border-gray-300 text-gray-700' : 'border-gray-200 text-muted-foreground hover:bg-gray-50'
+              }`}
+            >
+              {showInactive ? 'Ocultar inativos' : `Mostrar inativos (${inactiveCount})`}
+            </button>
+          )}
         </div>
 
         {origin && rows.length === 0 && (
-          <p className="text-sm text-muted-foreground py-2">Nenhum outro plano no ciclo {periodLabel(origin.period_months).toLowerCase()}.</p>
+          <p className="text-sm text-muted-foreground py-2">
+            Nenhum outro plano{showInactive ? '' : ' ativo'} no ciclo {periodLabel(origin.period_months).toLowerCase()}.
+          </p>
         )}
         {rows.length > 0 && (
           <div className="divide-y text-sm">

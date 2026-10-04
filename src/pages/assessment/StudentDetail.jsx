@@ -48,7 +48,7 @@ import {
 import { normalizePhone, supabase } from '@/api/db';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { usePageData } from '@/hooks/usePageData';
-import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateTime, todayLocalStr, utcToLocalDateStr } from '@/lib/utils';
 import { formatCep, formatCustomerAddress, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import {
   buildContractLifecycleRows,
@@ -58,6 +58,7 @@ import {
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/assessment-metric-data';
 import { isEffectiveOpenSale, isEffectiveSale } from '@/lib/sales';
+import { assessmentTenure, customerSinceDate } from '@/lib/student-tenure';
 import { toast } from 'sonner';
 import { listCommunicationCases, mergeCustomers } from '@/api/client';
 
@@ -758,6 +759,9 @@ export default function StudentDetail() {
   const totalOpen = openOrders.reduce((sum, order) => sum + order._value, 0) + openContracts.reduce((sum, contract) => sum + contract._value, 0);
   const monthlyActive = activeContracts.reduce((sum, contract) => sum + (Number(contract.monthly) || 0), 0);
   const ltv = totalProductsPaid + totalContractsPaid;
+  const tenure = assessmentTenure({ contracts, leaves, today });
+  const customerSince = customerSinceDate({ customer, contracts, orders, today });
+  const registeredOn = customer?.created_date ? utcToLocalDateStr(customer.created_date) : '';
 
   const currentContract = activeContracts[0] || scheduledContracts[0] || lifecycleRows[0] || null;
   const currentPlan = currentContract?.plan || plans.find(plan => plan.id === currentContract?.plan_id);
@@ -873,8 +877,13 @@ export default function StudentDetail() {
         </div>
 
         <TabsContent value="overview" className="space-y-5">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <MetricCard label="LTV total" value={formatCurrency(ltv)} helper={monthlyActive > 0 ? `${formatCurrency(monthlyActive)}/mês ativo` : 'Loja + assessoria pagos'} tone="dark" />
+            <MetricCard
+              label="Na assessoria"
+              value={tenure.days > 0 ? `${tenure.days.toLocaleString('pt-BR')} dia${tenure.days !== 1 ? 's' : ''}` : '—'}
+              helper={tenure.since ? `Somando os planos desde ${formatDate(tenure.since)}` : 'Nenhum plano começou ainda'}
+            />
             <MetricCard label="Contratos" value={String(lifecycleRows.length)} helper={`${activeContracts.length} ativo${activeContracts.length !== 1 ? 's' : ''}`} />
             <MetricCard label="Produtos" value={formatCurrency(totalProducts)} helper={`${orders.length} pedido${orders.length !== 1 ? 's' : ''}`} />
             <MetricCard label="Em aberto" value={formatCurrency(totalOpen)} helper={`${openContracts.length + openOrders.length} cobrança${openContracts.length + openOrders.length !== 1 ? 's' : ''}`} tone={totalOpen > 0 ? 'danger' : 'default'} />
@@ -1499,7 +1508,10 @@ export default function StudentDetail() {
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Cliente desde</p>
-                    <p className="font-semibold">{customer.created_date ? formatDate(customer.created_date) : '—'}</p>
+                    <p className="font-semibold">{customerSince ? formatDate(customerSince) : '—'}</p>
+                    {registeredOn && registeredOn !== customerSince && (
+                      <p className="text-xs text-muted-foreground">Cadastro no sistema em {formatDate(registeredOn)}</p>
+                    )}
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> Endereço</p>
