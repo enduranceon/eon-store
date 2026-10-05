@@ -219,7 +219,7 @@ export default function Indicators() {
         <div className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <p><strong>Base:</strong> pessoas distintas com contrato vigente no corte. Agendados ainda não iniciados e vendas descartadas ficam fora.</p>
           <p><strong>Entradas e retornos:</strong> novos alunos e ex-alunos que voltaram. Renovações e trocas com continuidade são mostradas separadamente.</p>
-          <p><strong>Saídas reais:</strong> cancelamento ou não renovação efetiva, sem estorno e sem contrato de continuidade vinculado ou iniciado em até 45 dias.</p>
+          <p><strong>Saídas reais:</strong> cancelamento ou não renovação efetiva, sem contrato de continuidade vinculado ou iniciado em até 45 dias. Cancelamento com estorno parcial conta; estorno total desfaz a venda e fica fora.</p>
           <p><strong>Saldo e churn:</strong> saldo = entradas + retornos − saídas; churn = saídas reais ÷ base no início do mês.</p>
           <p className="sm:col-span-2"><strong>MRR contratado:</strong> soma do valor mensal equivalente dos contratos vigentes, com desconto contratual. É receita recorrente contratada, não dinheiro recebido.</p>
         </div>
@@ -230,7 +230,7 @@ export default function Indicators() {
         <MetricCard icon={UserPlus} label="Entradas" value={`+${summary.entries}`} sub="novos alunos" tone="emerald" />
         <MetricCard icon={UserRoundCheck} label="Retornos" value={`+${summary.returns}`} sub="ex-alunos reativados" tone="orange" />
         <MetricCard icon={Repeat2} label="Renovações" value={summary.renewals} sub="retenção" tone="violet" />
-        <MetricCard icon={UserMinus} label="Saídas reais" value={`−${summary.exits}`} sub="sem troca ou estorno" tone="red" />
+        <MetricCard icon={UserMinus} label="Saídas reais" value={`−${summary.exits}`} sub="sem troca ou venda desfeita" tone="red" />
         <MetricCard icon={summary.netGrowth >= 0 ? TrendingUp : TrendingDown} label="Saldo" value={`${summary.netGrowth >= 0 ? '+' : ''}${summary.netGrowth}`} sub={summary.isPartial ? 'mês atual parcial' : 'no período'} tone={summary.netGrowth >= 0 ? 'emerald' : 'red'} />
       </div>
 
