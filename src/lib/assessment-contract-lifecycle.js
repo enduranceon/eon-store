@@ -133,6 +133,16 @@ export function getContractTotalValue(contract, plansById = {}) {
   return Math.max(0, Number(total) + enroll - discount - credit);
 }
 
+// Estorno total desfaz a venda: o aluno recebeu de volta tudo o que pagou.
+// Estorno parcial (sobrou multa ou dias já treinados) não apaga a saída.
+export function hasFullContractRefund(contract, plansById = {}) {
+  if (contract?.payment_status === 'refunded') return true;
+  const refunded = Number(contract?.refund_amount ?? contract?.refund_calculated_amount ?? 0);
+  if (!(refunded > 0)) return false;
+  const total = getContractTotalValue(contract, plansById);
+  return total > 0 && refunded >= total - 0.01;
+}
+
 export function isContractVoidedSale(contract) {
   if (contract?.status === 'voided') return true;
   if (contract?.status !== 'cancelled') return false;
@@ -163,12 +173,17 @@ export function isContractPaymentOverdue(contract, today = todayLocalStr()) {
   return !!dueDate && dueDate < today;
 }
 
+// Substituto é outro contrato do aluno que começa depois deste e até 45 dias
+// após o cancelamento. Vale a vigência, não a data de cadastro: um histórico
+// gravado hoje não substitui um cancelamento de setembro.
 function getReplacementContract(contract, allContracts = []) {
   if (!contract?.customer_id) return null;
   const cancelDate =
     getContractCancellationDate(contract) ||
     getContractLocalDate(contract.updated_at) ||
     getContractLocalDate(contract.created_at);
+  if (!cancelDate) return null;
+  const ownStart = getContractLocalDate(contract.start_date);
   const upperBound = addDays(cancelDate, 45);
   const candidates = allContracts
     .filter(other =>
@@ -177,12 +192,18 @@ function getReplacementContract(contract, allContracts = []) {
       !['voided', 'draft'].includes(other.status) &&
       !isContractVoidedSale(other)
     )
-    .map(other => ({ ...other, createdLocal: getContractLocalDate(other.created_at) }))
+    .map(other => ({
+      ...other,
+      startLocal: getContractLocalDate(other.start_date),
+      endLocal: getContractLocalDate(other.end_date),
+    }))
     .filter(other => {
-      if (!other.createdLocal || !cancelDate) return false;
-      return other.createdLocal >= cancelDate && (!upperBound || other.createdLocal <= upperBound);
+      if (!other.startLocal) return false;
+      if (ownStart && other.startLocal < ownStart) return false;
+      if (other.endLocal && other.endLocal <= cancelDate) return false;
+      return !upperBound || other.startLocal <= upperBound;
     })
-    .sort((a, b) => a.createdLocal.localeCompare(b.createdLocal));
+    .sort((a, b) => a.startLocal.localeCompare(b.startLocal));
 
   return candidates[0] || null;
 }
@@ -198,6 +219,7 @@ function hasFutureOrActiveContract(contract, allContracts = []) {
 
 export function classifyContractLifecycle(contract, context = {}) {
   const allContracts = context.contracts || [];
+  const plansById = context.plansById || {};
   const monthStart = context.monthStart || getLifecycleMonthStart();
   const today = context.today || todayLocalStr();
   const createdLocal = getContractLocalDate(contract.created_at);
@@ -346,13 +368,12 @@ export function classifyContractLifecycle(contract, context = {}) {
       return base;
     }
 
-    if (hasRefund) {
+    if (hasRefund && hasFullContractRefund(contract, plansById)) {
       base.type = 'financial_adjustment';
       base.severity = 'medium';
       base.counts.financial = true;
-      reasons.push('Cancelado com estorno ou refund registrado.');
-      warnings.push('Estorno financeiro não prova sozinho que o aluno saiu da assessoria.');
-      actions.push('Confirmar se houve encerramento real do aluno ou apenas ajuste/correção.');
+      reasons.push('Cancelado com estorno total: a venda foi desfeita.');
+      actions.push('Manter fora das saídas; o aluno recebeu de volta tudo o que pagou.');
       return base;
     }
 
@@ -360,7 +381,9 @@ export function classifyContractLifecycle(contract, context = {}) {
       base.type = 'real_exit';
       base.severity = 'medium';
       base.counts.exit = true;
-      reasons.push('Contrato pago foi cancelado e não há outro contrato ativo/substituto detectado.');
+      reasons.push(hasRefund
+        ? 'Contrato pago foi cancelado com estorno parcial e não há outro contrato ativo/substituto detectado.'
+        : 'Contrato pago foi cancelado e não há outro contrato ativo/substituto detectado.');
       actions.push('Pode contar como saída se o aluno realmente encerrou a assessoria.');
       return base;
     }
@@ -395,7 +418,7 @@ export function buildContractLifecycleRows(contracts = [], lookups = {}) {
   return contracts.map(contract => {
     const plan = plansById[contract.plan_id] || null;
     const modality = plan ? modalitiesById[plan.modality_id] : null;
-    const lifecycle = classifyContractLifecycle(contract, { contracts, monthStart, today: lookups.today });
+    const lifecycle = classifyContractLifecycle(contract, { contracts, monthStart, today: lookups.today, plansById });
     return {
       ...contract,
       audit: lifecycle,

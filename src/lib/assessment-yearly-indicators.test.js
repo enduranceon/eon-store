@@ -90,7 +90,7 @@ test('keeps returns and renewals out of new entries', () => {
   assert.equal(august.renewals, 1);
 });
 
-test('counts only real exits and ignores replacements, refunds and voided sales', () => {
+test('counts only real exits and ignores replacements, full refunds and voided sales', () => {
   const indicators = buildAssessmentYearlyIndicators([
     contract({
       id: 'real-exit',
@@ -115,14 +115,15 @@ test('counts only real exits and ignores replacements, refunds and voided sales'
       end_date: '2027-08-10',
     }),
     contract({
-      id: 'refunded',
-      customer_id: 'student-refunded',
+      id: 'fully-refunded',
+      customer_id: 'student-fully-refunded',
       status: 'cancelled',
       start_date: '2026-05-01',
       end_date: '2026-12-01',
       cancellation_date: '2026-08-12',
-      refund_status: 'completed',
-      refund_amount: 50,
+      plan_snapshot: { price_total: 600 },
+      refund_status: 'done',
+      refund_amount: 600,
     }),
     contract({
       id: 'voided',
@@ -136,6 +137,42 @@ test('counts only real exits and ignores replacements, refunds and voided sales'
   const august = month(indicators, '2026-08');
   assert.equal(august.exits, 1);
   assert.equal(august.entries, 0);
+});
+
+test('a cancellation with a partial refund is still a real exit', () => {
+  const indicators = buildAssessmentYearlyIndicators([
+    contract({
+      id: 'partially-refunded',
+      customer_id: 'student-partial-refund',
+      status: 'cancelled',
+      start_date: '2026-05-01',
+      end_date: '2026-11-01',
+      cancellation_date: '2026-08-12',
+      plan_snapshot: { price_total: 600 },
+      cancellation_fee: 60,
+      refund_status: 'done',
+      refund_amount: 240,
+    }),
+    contract({
+      id: 'partial-refund-then-new-plan',
+      customer_id: 'student-plan-change',
+      status: 'cancelled',
+      start_date: '2026-05-01',
+      end_date: '2026-11-01',
+      cancellation_date: '2026-08-12',
+      plan_snapshot: { price_total: 600 },
+      refund_status: 'done',
+      refund_amount: 240,
+    }),
+    contract({
+      id: 'new-plan',
+      customer_id: 'student-plan-change',
+      start_date: '2026-08-12',
+      end_date: '2027-02-12',
+    }),
+  ], plans, { year: 2026, asOf: AS_OF });
+
+  assert.equal(month(indicators, '2026-08').exits, 1);
 });
 
 test('uses the exclusive contract end date for the monthly base and recognizes non-renewal', () => {

@@ -1,5 +1,5 @@
 import { getContractMonthlyValue } from './assessment-contract-mrr.js';
-import { buildContractLifecycleRows } from './assessment-contract-lifecycle.js';
+import { buildContractLifecycleRows, hasFullContractRefund } from './assessment-contract-lifecycle.js';
 
 const OPERATIVE_STATUSES = new Set(['active', 'overdue', 'on_leave', 'finished', 'cancelled']);
 const TERMINAL_PAYMENT_STATUSES = new Set(['cancelled', 'refunded']);
@@ -62,12 +62,6 @@ function hasPaidContract(contract) {
   return contract?.payment_status === 'paid'
     || !!contract?.payment_date
     || contract?.manual_payment === true;
-}
-
-function hasRefund(contract) {
-  return !!contract?.refund_status
-    || Number(contract?.refund_amount || 0) > 0
-    || contract?.payment_status === 'refunded';
 }
 
 function isVoidedSale(contract) {
@@ -146,8 +140,9 @@ function hasContinuityAfterExit(contract, contracts, exitDate) {
   });
 }
 
-function getRealExitDate(contract, contracts, asOfDate) {
-  if (!isOperativeContract(contract) || hasRefund(contract)) return '';
+// Estorno parcial continua sendo saída; só o estorno total (venda desfeita) fica fora.
+function getRealExitDate(contract, contracts, asOfDate, plansById) {
+  if (!isOperativeContract(contract) || hasFullContractRefund(contract, plansById)) return '';
 
   let exitDate = '';
   if (contract.status === 'cancelled') {
@@ -248,7 +243,7 @@ export function buildAssessmentYearlyIndicators(contracts = [], plans = [], opti
   ]));
   const exitDates = new Map(operativeContracts.map(contract => [
     contract.id,
-    getRealExitDate(contract, operativeContracts, asOfDate),
+    getRealExitDate(contract, operativeContracts, asOfDate, plansById),
   ]));
 
   const months = Array.from({ length: 12 }, (_, monthIndex) => {
