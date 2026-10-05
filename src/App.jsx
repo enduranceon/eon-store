@@ -67,6 +67,7 @@ const AssProspects = lazy(() => import('@/pages/assessment/Prospects'));
 const AssRepasse = lazy(() => import('@/pages/assessment/Repasse'));
 const AssContractAudit = lazy(() => import('@/pages/assessment/ContractAudit'));
 const AssLeaves = lazy(() => import('@/pages/assessment/Leaves'));
+const AssTecnofitArchive = lazy(() => import('@/pages/assessment/TecnofitArchive'));
 const Reports = lazy(() => import('@/pages/Reports'));
 const Analytics = lazy(() => import('@/pages/Analytics'));
 const CashFlow = lazy(() => import('@/pages/CashFlow'));
@@ -178,6 +179,7 @@ export default function App() {
           <Route path="/assessoria/prospects"    element={<AdminLayout><AssProspects /></AdminLayout>} />
           <Route path="/assessoria/auditoria"    element={<AdminLayout><AssContractAudit /></AdminLayout>} />
           <Route path="/assessoria/licencas"    element={<AdminLayout><AssLeaves /></AdminLayout>} />
+          <Route path="/assessoria/ex-alunos-tecnofit" element={<AdminLayout><AssTecnofitArchive /></AdminLayout>} />
           <Route path="/assessoria/central-financeira" element={<AdminLayout><AssCentralFinanceira /></AdminLayout>} />
           <Route path="/assessoria/repasse" element={<AdminLayout><AssRepasse /></AdminLayout>} />
           <Route path="/assessoria/fechamento"     element={<AdminLayout><AssMonthlyClosing /></AdminLayout>} />
