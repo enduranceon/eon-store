@@ -12,6 +12,7 @@ export const NAV_AREAS = [
       { id: 'prospects', label: 'Prospects', to: '/assessoria/prospects', icon: 'prospects', badge: 'prospects' },
       { id: 'audit', label: 'Auditoria', to: '/assessoria/auditoria', icon: 'audit' },
       { id: 'plans', label: 'Planos', to: '/assessoria/planos', icon: 'plans' },
+      { id: 'tecnofit_archive', label: 'Ex-alunos Tecnofit', to: '/assessoria/ex-alunos-tecnofit', icon: 'archive' },
     ],
   },
   {
