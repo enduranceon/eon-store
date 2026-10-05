@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { listCommunicationCases, listFinancialDataQuality, listFinancialMovements, updateOrderDueDate } from '@/api/client';
 import { supabase } from '@/api/db';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 import { financialQualitySeverityLabel, toPaymentRecord } from '@/lib/financial-ledger';
 import {
   financialQualityTypeMeta,
@@ -479,9 +480,10 @@ export default function Financial() {
           supabase.from('stock_orders')
             .select('id, order_number, customer_name, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
-          supabase.from('assessment_contracts')
+          fetchAllPages(() => supabase.from('assessment_contracts')
             .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, manual_payment, due_date, start_date, end_date, created_at, updated_at, parent_contract_id, cancellation_date, cancellation_fee, cancellation_reason, refund_status, refund_amount, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, credit_balance, status, installments, plan_snapshot, prospect_stage')
-            .not('status', 'in', '("cancelled","voided")').neq('payment_status', 'refunded'),
+            .not('status', 'in', '("cancelled","voided")').neq('payment_status', 'refunded')
+            .order('id', { ascending: true })),
           supabase.from('assessment_plans').select('id, price_total, price_monthly, name, revenue_center_id'),
           supabase.from('presale_customers').select('id, full_name, whatsapp, email, cpf'),
           supabase.from('revenue_centers').select('id, name, color'),

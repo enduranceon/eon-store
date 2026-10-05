@@ -13,6 +13,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { supabase } from '@/api/db';
+import { fetchAllPages } from '@/lib/fetch-all-pages';
 import { PreSaleOrder, PreSaleCampaign } from '@/api/entities';
 import { formatCurrency, formatDate, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -382,10 +383,11 @@ async function loadReportsSales() {
     supabase.from('stock_orders')
       .select('id, order_number, customer_name, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, items, created_date')
       .order('created_date', { ascending: false }),
-    supabase.from('assessment_contracts')
+    fetchAllPages(() => supabase.from('assessment_contracts')
       .select('id, contract_number, customer_id, plan_id, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, payment_message_sent_at, payment_method, enrollment_fee, manual_discount, status, installments, created_at, plan_snapshot')
       .not('status', 'in', '("cancelled","draft","voided")')
-      .order('created_at', { ascending: false }),
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: true })),
     supabase.from('assessment_plans').select('id, price_total, name'),
     supabase.from('presale_customers').select('id, full_name'),
   ]);

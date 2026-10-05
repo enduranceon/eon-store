@@ -159,14 +159,37 @@ function parseSort(
   return { field, ascending: !raw.startsWith("-") };
 }
 
+const MAX_LIMIT = 20000;
+// O PostgREST devolve no máximo 1000 linhas por consulta.
+const PAGE_SIZE = 1000;
+
 function parseLimit(params: URLSearchParams): number {
   const raw = params.get("limit");
-  if (!raw) return 5000;
+  if (!raw) return MAX_LIMIT;
   const limit = Number(raw);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 5000) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
     throw new FinancialQueryError("Limite inválido");
   }
   return limit;
+}
+
+type PagedQuery = {
+  range(from: number, to: number): PromiseLike<{ data: unknown[] | null; error: { message?: string } | null }>;
+};
+
+// Busca em páginas até o limite pedido ou até vir uma página incompleta.
+// A consulta já vem com ordenação estável (desempate pela chave da linha).
+async function fetchPages(buildQuery: () => PagedQuery, limit: number) {
+  const rows: unknown[] = [];
+  for (let from = 0; from < limit; from += PAGE_SIZE) {
+    const size = Math.min(PAGE_SIZE, limit - from);
+    const { data, error } = await buildQuery().range(from, from + size - 1);
+    if (error) return { data: null, error };
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < size) break;
+  }
+  return { data: rows, error: null };
 }
 
 export function parseFinancialMovementFilters(url: URL): FinancialMovementFilters {
@@ -240,36 +263,38 @@ export async function handleFinancialRequest(
 
     if (path === "/financial/movements") {
       const filters = parseFinancialMovementFilters(url);
-      let query = supabase
-        .from("financial_movements")
-        .select(MOVEMENT_COLUMNS)
-        .order(filters.sort.field, { ascending: filters.sort.ascending })
-        .limit(filters.limit);
+      const { data, error } = await fetchPages(() => {
+        let query = supabase
+          .from("financial_movements")
+          .select(MOVEMENT_COLUMNS)
+          .order(filters.sort.field, { ascending: filters.sort.ascending });
+        if (filters.sort.field !== "movement_id") query = query.order("movement_id", { ascending: true });
 
-      if (filters.businessUnit) query = query.eq("business_unit", filters.businessUnit);
-      if (filters.orderType) query = query.eq("order_type", filters.orderType);
-      if (filters.movementKind) query = query.eq("movement_kind", filters.movementKind);
-      if (filters.isActual !== null) query = query.eq("is_actual", filters.isActual);
-      if (filters.scheduledFrom) query = query.gte("scheduled_on", filters.scheduledFrom);
-      if (filters.scheduledTo) query = query.lte("scheduled_on", filters.scheduledTo);
-
-      const { data, error } = await query;
+        if (filters.businessUnit) query = query.eq("business_unit", filters.businessUnit);
+        if (filters.orderType) query = query.eq("order_type", filters.orderType);
+        if (filters.movementKind) query = query.eq("movement_kind", filters.movementKind);
+        if (filters.isActual !== null) query = query.eq("is_actual", filters.isActual);
+        if (filters.scheduledFrom) query = query.gte("scheduled_on", filters.scheduledFrom);
+        if (filters.scheduledTo) query = query.lte("scheduled_on", filters.scheduledTo);
+        return query;
+      }, filters.limit);
       if (error) return databaseError(error, "movements");
       return jsonResponse({ data: data ?? [] });
     }
 
     const filters = parseFinancialQualityFilters(url);
-    let query = supabase
-      .from("financial_data_quality")
-      .select(QUALITY_COLUMNS)
-      .order(filters.sort.field, { ascending: filters.sort.ascending })
-      .limit(filters.limit);
+    const { data, error } = await fetchPages(() => {
+      let query = supabase
+        .from("financial_data_quality")
+        .select(QUALITY_COLUMNS)
+        .order(filters.sort.field, { ascending: filters.sort.ascending });
+      if (filters.sort.field !== "issue_id") query = query.order("issue_id", { ascending: true });
 
-    if (filters.businessUnit) query = query.eq("business_unit", filters.businessUnit);
-    if (filters.severity) query = query.eq("severity", filters.severity);
-    if (filters.issueType) query = query.eq("issue_type", filters.issueType);
-
-    const { data, error } = await query;
+      if (filters.businessUnit) query = query.eq("business_unit", filters.businessUnit);
+      if (filters.severity) query = query.eq("severity", filters.severity);
+      if (filters.issueType) query = query.eq("issue_type", filters.issueType);
+      return query;
+    }, filters.limit);
     if (error) return databaseError(error, "quality");
     return jsonResponse({ data: data ?? [] });
   } catch (error) {
