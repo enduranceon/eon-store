@@ -8,12 +8,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { transitionAssessmentRenewalStage } from '@/api/client';
 import { todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { RENEWAL_RESPONSE_LABELS } from '@/lib/assessment-renewal-pipeline';
+import { RENEWAL_CHANGE_TARGETS, RENEWAL_RESPONSE_LABELS } from '@/lib/assessment-renewal-pipeline';
 
 const OPTIONS = [
   { code: 'will_renew', hint: 'Vai para "Enviar cobrança".' },
   { code: 'thinking', hint: 'Fica em "Aguardando decisão"; marque quando voltar a falar.' },
-  { code: 'change_plan_or_coach', hint: 'Fica aguardando até resolver a mudança. Não conta como saída.' },
+  { code: 'change_plan_or_coach', hint: 'Já abre a troca no contrato; depois segue para a cobrança. Não conta como saída.' },
   { code: 'needs_agent', hint: 'Fica aguardando, com atendimento pendente.' },
   { code: 'not_renewing', hint: 'Abre o encerramento seguro da renovação.' },
 ];
@@ -26,18 +26,21 @@ function plusDays(days) {
 
 // Registra a resposta do atleta à mensagem de intenção. "Não vou renovar" não
 // é gravado aqui: vai para a janela segura, que cuida de cobrança e repasse.
-export default function RenewalResponseDialog({ card, onClose, onDone, onNotRenewing, onConflict }) {
+// "Mudar plano/treinador" grava a resposta e já abre a troca escolhida.
+export default function RenewalResponseDialog({ card, onClose, onDone, onNotRenewing, onChangeRequested, onConflict }) {
   const [code, setCode] = useState('');
+  const [changeTarget, setChangeTarget] = useState('');
   const [followUpAt, setFollowUpAt] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const contract = card?.contract;
-  const asksFollowUp = ['thinking', 'change_plan_or_coach', 'needs_agent'].includes(code);
+  const asksChange = code === 'change_plan_or_coach';
+  const asksFollowUp = ['thinking', 'needs_agent'].includes(code);
 
   const choose = (next) => {
     setCode(next);
     if (next === 'thinking' && !followUpAt) setFollowUpAt(plusDays(3));
-    if (!['thinking', 'change_plan_or_coach', 'needs_agent'].includes(next)) setFollowUpAt('');
+    if (!['thinking', 'needs_agent'].includes(next)) setFollowUpAt('');
   };
 
   const save = async () => {
@@ -46,6 +49,7 @@ export default function RenewalResponseDialog({ card, onClose, onDone, onNotRene
       onNotRenewing(card);
       return;
     }
+    if (asksChange && !RENEWAL_CHANGE_TARGETS[changeTarget]) return toast.error('Escolha o que o atleta quer mudar');
     if (followUpAt && followUpAt < todayLocalStr()) return toast.error('O follow-up precisa ser de hoje em diante');
     setSaving(true);
     try {
@@ -56,6 +60,11 @@ export default function RenewalResponseDialog({ card, onClose, onDone, onNotRene
         followUpAt: asksFollowUp ? followUpAt || null : null,
         notes: notes.trim() || null,
       });
+      if (asksChange) {
+        toast.success(`Resposta registrada. Abrindo a troca de ${changeTarget === 'plan' ? 'plano' : 'coach'}.`);
+        onChangeRequested(card, changeTarget);
+        return;
+      }
       toast.success(code === 'will_renew'
         ? 'Resposta registrada. A renovação foi para "Enviar cobrança".'
         : 'Resposta registrada. A renovação continua aguardando a decisão.');
@@ -111,6 +120,37 @@ export default function RenewalResponseDialog({ card, onClose, onDone, onNotRene
               ))}
             </fieldset>
 
+            {asksChange && (
+              <fieldset className="space-y-2" disabled={saving}>
+                <legend className="text-xs font-medium text-gray-700 mb-1">O que o atleta quer mudar?</legend>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(RENEWAL_CHANGE_TARGETS).map(([target, option]) => (
+                    <label
+                      key={target}
+                      className={`flex items-start gap-2 rounded-lg border p-3 cursor-pointer transition-colors ${
+                        changeTarget === target ? 'border-violet-400 bg-violet-50' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="renewal-change-target"
+                        className="mt-1 accent-violet-600"
+                        checked={changeTarget === target}
+                        onChange={() => setChangeTarget(target)}
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-gray-900">{option.label}</span>
+                        <span className="block text-xs text-muted-foreground">{option.hint}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Se for mudar os dois, troque um e depois o outro no próprio contrato.
+                </p>
+              </fieldset>
+            )}
+
             {asksFollowUp && (
               <div>
                 <Label className="text-xs">Próximo contato (opcional)</Label>
@@ -142,9 +182,13 @@ export default function RenewalResponseDialog({ card, onClose, onDone, onNotRene
 
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" disabled={saving} onClick={onClose}>Voltar</Button>
-              <Button className="flex-1" disabled={saving || !code} onClick={save}>
+              <Button className="flex-1" disabled={saving || !code || (asksChange && !changeTarget)} onClick={save}>
                 {saving && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
-                {code === 'not_renewing' ? 'Seguir para o encerramento' : 'Registrar'}
+                {code === 'not_renewing'
+                  ? 'Seguir para o encerramento'
+                  : asksChange && changeTarget
+                    ? `Registrar e trocar o ${changeTarget === 'plan' ? 'plano' : 'coach'}`
+                    : 'Registrar'}
               </Button>
             </div>
           </div>

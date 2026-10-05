@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   allowsAutoRenewal,
+  awaitsRenewalChange,
   buildRenewalBoard,
   buildRenewalTimeline,
   businessDate,
@@ -11,6 +12,7 @@ import {
   isVisibleOnBoard,
   planPeriodMonths,
   renewalCardState,
+  renewalChangeHref,
   renewalDueLabel,
   renewalDueNotice,
   summarizeRenewalBoard,
@@ -205,4 +207,19 @@ test('the timeline keeps the renewal story and the related events of the previou
   });
   assert.deepEqual(rows.map(row => row.title), ['Financeiro', 'Mensagem de renovação enviada', 'Rascunho de renovação criado']);
   assert.equal(rows[2].fromParent, true);
+});
+
+test('a change answer opens the plan or coach change of the renewal contract', () => {
+  assert.equal(renewalChangeHref('c1', 'plan'), '/assessoria/contratos/c1?ajustar-plano=1');
+  assert.equal(renewalChangeHref('c1', 'coach'), '/assessoria/contratos/c1?trocar-coach=1');
+  assert.equal(renewalChangeHref('c1', 'other'), null);
+  assert.equal(renewalChangeHref('', 'plan'), null);
+});
+
+test('only a renewal still waiting for the plan or coach change counts as awaiting it', () => {
+  const waiting = { renewal_stage: 'waiting_response', renewal_response_code: 'change_plan_or_coach' };
+  assert.equal(awaitsRenewalChange(waiting), true);
+  assert.equal(awaitsRenewalChange({ ...waiting, renewal_stage: 'charge_pending' }), false);
+  assert.equal(awaitsRenewalChange({ ...waiting, renewal_response_code: 'thinking' }), false);
+  assert.equal(awaitsRenewalChange(null), false);
 });

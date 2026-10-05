@@ -16,6 +16,7 @@ import {
 import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { canCompleteCommunicationReview, communicationBlockReasonLabel } from '@/lib/communication-case';
+import { buildTaskMessage } from '@/lib/communication-tasks';
 
 const RESPONSE_OPTIONS = {
   billing: [
@@ -48,6 +49,14 @@ function purposeForTask(task) {
   if (task?.bucket === 'charges' || String(task?.kind || '').startsWith('charge_')) return 'billing';
   if (task?.bucket === 'renewal' || String(task?.kind || '').startsWith('renewal_')) return 'renewal';
   return 'onboarding';
+}
+
+// A cobrança da renovação usa o texto de "renovação confirmada" (plano, coach,
+// valor, vencimento e link); os demais casos seguem a sugestão do servidor.
+function initialMessage(task, detail) {
+  const suggested = detail?.suggestion?.message || detail?.case?.suggested_message || '';
+  if (task?.messageVariant !== 'assessment_contract_confirmation') return suggested;
+  return buildTaskMessage(task, { externalLink: detail?.case?.payment_link || undefined }) || suggested;
 }
 
 function isValidWhatsappNumber(phone) {
@@ -125,7 +134,7 @@ export default function CommunicationCaseDialog({
             purpose: purposeForTask(task),
           });
       setDetail(next);
-      setMessage(next.suggestion?.message || next.case?.suggested_message || '');
+      setMessage(initialMessage(task, next));
       setConfirmed(false);
       setNextActionAt('');
       setResponseCode('');

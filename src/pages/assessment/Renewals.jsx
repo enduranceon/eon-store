@@ -26,6 +26,7 @@ import { loadCommunicationConfig } from '@/lib/communication-config';
 import { canResolveAssessmentRenewal } from '@/lib/assessment-renewal-resolution';
 import {
   buildRenewalBoard,
+  renewalChangeHref,
   renewalSaleTotal,
   summarizeRenewalBoard,
 } from '@/lib/assessment-renewal-pipeline';
@@ -323,7 +324,7 @@ export default function Renewals() {
     return null;
   }, []);
 
-  const openExternalCharge = (contract) => {
+  const openExternalCharge = useCallback((contract) => {
     setExternalChargeForm({
       link: contract.external_payment_link || '',
       due_date: suggestedAssessmentChargeDueDate(contract),
@@ -331,20 +332,21 @@ export default function Renewals() {
       invoice_number: contract.external_invoice_number || '',
     });
     setExternalChargeModal(contract);
-  };
+  }, []);
+
+  const lookupsFor = (contract) => ({
+    customer: customers[contract.customer_id],
+    coach: coaches[contract.coach_id],
+    modality: modalities[contract.plan_snapshot?.modality_id],
+  });
 
   const handleAction = (key, card) => {
     const { contract } = card;
-    const lookups = {
-      customer: customers[contract.customer_id],
-      coach: coaches[contract.coach_id],
-      modality: modalities[contract.plan_snapshot?.modality_id],
-    };
     if (key === 'details') { setDetailId(contract.id); return; }
     setDetailId(null);
     if (key === 'change_plan') {
       // A troca é feita no contrato da renovação, com as mesmas regras de lá.
-      navigate(`/assessoria/contratos/${contract.id}?ajustar-plano=1`);
+      navigate(renewalChangeHref(contract.id, 'plan'));
       return;
     }
     if (key === 'message') {
@@ -362,7 +364,7 @@ export default function Renewals() {
     } else if (key === 'charge') {
       openExternalCharge(contract);
     } else if (key === 'charge_message') {
-      setMessageTask(chargeTaskForRenewal(contract, lookups));
+      setMessageTask(chargeTaskForRenewal(contract, lookupsFor(contract)));
     } else if (key === 'payment') {
       setPaymentCard(card);
     } else if (key === 'activate') {
@@ -385,12 +387,18 @@ export default function Renewals() {
     const { contract } = changeCard;
     setBusyId(contract.id);
     try {
-      await transitionAssessmentRenewalStage(contract.id, {
+      const result = await transitionAssessmentRenewalStage(contract.id, {
         action: 'change_resolved',
         expectedUpdatedAt: contract.updated_at,
       });
-      toast.success('Mudança resolvida. A renovação foi para "Enviar cobrança".');
       setChangeCard(null);
+      if (result?.contract?.updated_at) {
+        // Segue direto para o cadastro da cobrança, já com a versão nova do contrato.
+        toast.success('Mudança resolvida. Registre a cobrança da renovação.');
+        openExternalCharge({ ...contract, ...result.contract });
+      } else {
+        toast.success('Mudança resolvida. A renovação foi para "Enviar cobrança".');
+      }
       load();
     } catch (error) {
       toast.error(error.message || 'Não foi possível atualizar a renovação');
@@ -427,7 +435,7 @@ export default function Renewals() {
     const contract = externalChargeModal;
     setCharging(true);
     try {
-      await registerExternalAssessmentContractCharge({
+      const result = await registerExternalAssessmentContractCharge({
         contract,
         link: externalChargeForm.link.trim(),
         dueDate: externalChargeForm.due_date,
@@ -436,7 +444,15 @@ export default function Renewals() {
         source: 'renewals_page',
       });
       setExternalChargeModal(null);
-      toast.success('Cobrança registrada. A venda está em "Aguardando pagamento" e em Vendas em aberto.');
+      // Cobrança ainda não enviada: já abre a mensagem de renovação confirmada,
+      // com o link e o vencimento salvos. Na automática a cobrança sai pela
+      // assinatura; ali só se guarda o link.
+      if (!contract.auto_renewal && !contract.payment_message_sent_at) {
+        toast.success('Cobrança registrada. Copie a mensagem e envie para o atleta.');
+        setMessageTask(chargeTaskForRenewal({ ...contract, ...result.updates }, lookupsFor(contract)));
+      } else {
+        toast.success('Cobrança registrada. A venda está em "Aguardando pagamento" e em Vendas em aberto.');
+      }
       load();
     } catch (error) {
       toast.error(error.message || 'Erro ao salvar cobrança externa');
@@ -488,6 +504,19 @@ export default function Renewals() {
     }, 0);
     return () => clearTimeout(timer);
   }, [findCard, loading, openResolution, resolutionTarget, searchParams, setSearchParams]);
+
+  // Atalho vindo do contrato depois da troca de plano/coach: /assessoria/renovacoes?cobrar=<id>
+  useEffect(() => {
+    const renewalId = searchParams.get('cobrar');
+    if (!renewalId || loading) return undefined;
+    const timer = setTimeout(() => {
+      const card = findCard(renewalId);
+      if (card?.contract.renewal_stage === 'charge_pending') openExternalCharge(card.contract);
+      else if (!card) toast.error('A renovação pedida não está aberta no quadro');
+      setSearchParams({}, { replace: true });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [findCard, loading, openExternalCharge, searchParams, setSearchParams]);
 
   const scanWindowDays = normalizeScanDays(scanForm.horizon_days);
   const activationContract = activationCard?.contract;
@@ -682,6 +711,7 @@ export default function Renewals() {
           onDone={() => { setResponseCard(null); load(); }}
           onConflict={onConflict}
           onNotRenewing={card => { setResponseCard(null); openResolution(card, 'customer_declined'); }}
+          onChangeRequested={(card, target) => { setResponseCard(null); navigate(renewalChangeHref(card.contract.id, target)); }}
         />
       )}
 
@@ -718,7 +748,9 @@ export default function Renewals() {
           Confirme que a mudança de plano ou treinador de <b>{changeCard?.customer?.full_name || 'o atleta'}</b> já
           foi feita no contrato da renovação.
         </p>
-        <p className="text-muted-foreground">A renovação vai para "Enviar cobrança". Nada é cobrado agora.</p>
+        <p className="text-muted-foreground">
+          A renovação vai para "Enviar cobrança" e já abre o cadastro da cobrança. Nada é cobrado agora.
+        </p>
       </ConfirmDialog>
 
       {messageTask && (
@@ -751,6 +783,15 @@ export default function Renewals() {
         setForm={setExternalChargeForm}
         saving={charging}
         onSave={saveExternalCharge}
+        summary={externalChargeModal && (
+          <p className="text-sm bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-900">
+            {customers[externalChargeModal.customer_id]?.full_name || 'Atleta'} · {externalChargeModal.contract_number}
+            {externalChargeModal.plan_snapshot?.name && ` · ${externalChargeModal.plan_snapshot.name}`}
+            <br />
+            Total da renovação: <strong>{formatCurrency(renewalSaleTotal(externalChargeModal))}</strong>
+            {Number(externalChargeModal.installments) > 1 && ` em ${externalChargeModal.installments}x`}
+          </p>
+        )}
       />
 
       <Dialog open={!!activationCard} onOpenChange={open => { if (!open && !busyId) setActivationCard(null); }}>
