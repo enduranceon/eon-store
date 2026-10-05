@@ -36,6 +36,7 @@ import {
   removeAssessmentContractExternalCharge,
   setAssessmentContractAutoRenewal,
   startAssessmentContractLeave,
+  transitionAssessmentRenewalStage,
   updateAssessmentContractDates,
   updateAssessmentContractDiscount,
   voidAssessmentContractSale,
@@ -54,8 +55,8 @@ import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contra
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { isOpenPlanChangeCharge, planChangeUnusedValue } from '@/lib/assessment-plan-change';
 import { refundMethodLabel } from '@/lib/contract-refund';
-import { coachHistorySegments, pendingCoachChange } from '@/lib/assessment-coach-history';
-import { allowsAutoRenewal, AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE } from '@/lib/assessment-renewal-pipeline';
+import { coachChangeWindow } from '@/lib/assessment-coach-history';
+import { allowsAutoRenewal, AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE, awaitsRenewalChange } from '@/lib/assessment-renewal-pipeline';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DiscountInput from '@/components/DiscountInput';
@@ -328,6 +329,10 @@ export default function ContractDetail() {
   const [newCoachDate, setNewCoachDate] = useState(todayLocalStr());
   const [coachSaving, setCoachSaving] = useState(false);
   const [cancelCoachChangeModal, setCancelCoachChangeModal] = useState(false);
+  // Renovação em que o atleta pediu troca de plano/coach: depois da troca,
+  // oferece seguir para a cobrança.
+  const [renewalChargePrompt, setRenewalChargePrompt] = useState(false);
+  const [renewalResolving, setRenewalResolving] = useState(false);
   const [noRenewalModal, setNoRenewalModal] = useState(false);
   const [noRenewalSaving, setNoRenewalSaving] = useState(false);
   const [leaveModal, setLeaveModal] = useState(false);
@@ -535,6 +540,7 @@ export default function ContractDetail() {
   const changeCoach = async () => {
     if (!newCoachId || newCoachId === contract.coach_id) return setChangeCoachModal(false);
     if (!newCoachDate) return toast.error('Informe a data em que o novo coach começa');
+    const wasAwaitingChange = awaitsRenewalChange(contract);
     setCoachSaving(true);
     try {
       const result = await changeAssessmentContractCoach(id, {
@@ -548,9 +554,32 @@ export default function ContractDetail() {
       if (result?.regenerate_competence) {
         toast.warning(`O fechamento de ${formatDate(result.regenerate_competence).slice(3)} precisa ser gerado de novo.`);
       }
-      setChangeCoachModal(false); load();
+      setChangeCoachModal(false);
+      await load();
+      if (wasAwaitingChange) setRenewalChargePrompt(true);
     } catch (e) { toast.error(e.message); }
     finally { setCoachSaving(false); }
+  };
+
+  const resolveRenewalChange = async () => {
+    setRenewalResolving(true);
+    try {
+      await transitionAssessmentRenewalStage(contract.id, {
+        action: 'change_resolved',
+        expectedUpdatedAt: contract.updated_at,
+      });
+      toast.success('Mudança resolvida. Agora é só registrar a cobrança.');
+      setRenewalChargePrompt(false);
+      navigate(`/assessoria/renovacoes?cobrar=${contract.id}`);
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível seguir para a cobrança');
+      if (error?.status === 409) {
+        setRenewalChargePrompt(false);
+        load();
+      }
+    } finally {
+      setRenewalResolving(false);
+    }
   };
 
   const cancelScheduledCoachChange = async () => {
@@ -833,6 +862,34 @@ export default function ContractDetail() {
     return () => clearTimeout(timer);
   }, [contract, isUnpaid, loading, openAdjustPlanModal, searchParams, setSearchParams]);
 
+  const openCoachChangeModal = useCallback(() => {
+    const changeWindow = coachChangeWindow(history, {
+      startDate: contract.start_date, endDate: contract.end_date, today: todayLocalStr(),
+    });
+    if (changeWindow.scheduled) {
+      toast.error(`Já existe uma troca de coach agendada para ${formatDate(changeWindow.scheduled.started_at)}. Cancele-a antes de agendar outra.`);
+      return;
+    }
+    setNewCoachId(coach?.id || '');
+    setNewCoachDate(changeWindow.defaultDate);
+    setChangeCoachModal(true);
+  }, [coach, contract, history]);
+
+  useEffect(() => {
+    if (searchParams.get('trocar-coach') !== '1' || loading || !contract) return;
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('trocar-coach');
+    setSearchParams(nextParams, { replace: true });
+
+    if (['cancelled', 'finished', 'voided'].includes(contract.status)) {
+      toast.error('Este contrato não permite trocar o coach');
+      return;
+    }
+    const timer = setTimeout(openCoachChangeModal, 0);
+    return () => clearTimeout(timer);
+  }, [contract, loading, openCoachChangeModal, searchParams, setSearchParams]);
+
   const savePlanAdjustment = async () => {
     if (!isUnpaid) return toast.error('Só é possível ajustar plano antes do pagamento');
     if (!selectedAdjustPlan) return toast.error('Selecione um plano');
@@ -845,6 +902,7 @@ export default function ContractDetail() {
     );
     const enrollmentFee = Math.max(Number(adjustPlanForm.enrollment_fee) || 0, 0);
     const manualDiscount = Math.max(Number(adjustPlanForm.manual_discount) || 0, 0);
+    const wasAwaitingChange = awaitsRenewalChange(contract);
 
     setAdjustPlanSaving(true);
     try {
@@ -857,11 +915,14 @@ export default function ContractDetail() {
         discountReason: adjustPlanForm.discount_reason || null,
       });
 
-      toast.success(isRenewalContract(contract)
-        ? 'Renovação ajustada. Gere ou envie a cobrança correta agora.'
-        : 'Contrato ajustado. Gere ou envie a cobrança correta agora.');
+      toast.success(wasAwaitingChange
+        ? 'Plano da renovação trocado.'
+        : isRenewalContract(contract)
+          ? 'Renovação ajustada. Gere ou envie a cobrança correta agora.'
+          : 'Contrato ajustado. Gere ou envie a cobrança correta agora.');
       setAdjustPlanModal(false);
-      load();
+      await load();
+      if (wasAwaitingChange) setRenewalChargePrompt(true);
     } catch (e) {
       toast.error(e.message || 'Erro ao ajustar plano');
     } finally {
@@ -1090,25 +1151,20 @@ export default function ContractDetail() {
   // Quando modal de cancelamento está aberta, usa cancelDate; senão usa hoje
   const calc = cancelModal ? cancellationCalc(cancelDate) : cancellationCalc();
   const canCancel = !['cancelled', 'finished', 'voided'].includes(contract.status);
+  const awaitingRenewalChange = awaitsRenewalChange(contract);
   const compatibleCoaches = coaches.filter(c => (c.modality_ids || []).includes(plan?.modality_id));
   // Troca de coach com data: trechos pela regra do repasse e a troca agendada.
   const coachToday = todayLocalStr();
-  const coachSegments = coachHistorySegments(history, {
+  const coachWindow = coachChangeWindow(history, {
     startDate: contract.start_date, endDate: contract.end_date, today: coachToday,
   });
-  const scheduledCoachChange = pendingCoachChange(history, { startDate: contract.start_date, today: coachToday });
+  const coachSegments = coachWindow.segments;
+  const scheduledCoachChange = coachWindow.scheduled;
   const scheduledCoach = scheduledCoachChange
     ? allCoaches.find(c => c.id === scheduledCoachChange.coach_id)
     : null;
-  const coachReferenceDay = contract.start_date > coachToday ? contract.start_date : coachToday;
-  const coachSegmentNow = coachSegments.find(segment => segment.from <= coachReferenceDay
-    && (!segment.to || segment.to >= coachReferenceDay));
-  // O novo coach começa entre o início do coach atual e o último dia do contrato.
-  const coachDateMin = coachSegmentNow?.from || contract.start_date;
-  const contractLastDay = contract.end_date
-    ? toLocalDateStr(new Date(new Date(`${contract.end_date}T12:00:00`).getTime() - 86400000))
-    : undefined;
-  const defaultCoachDate = coachDateMin > coachToday ? coachDateMin : coachToday;
+  const coachDateMin = coachWindow.minDate;
+  const contractLastDay = coachWindow.maxDate;
   const coachFromFirstDay = newCoachDate === contract.start_date && contract.start_date > coachToday;
   const canCreateRenewal = !contract.parent_contract_id
     && !contract.renewal_generated
@@ -1164,6 +1220,35 @@ export default function ContractDetail() {
           {student?.whatsapp && <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={openWhatsApp} disabled={communicationOpening}><MessageCircle className="w-4 h-4 mr-1" /> {communicationOpening ? 'Carregando contato...' : 'Acompanhar contato'}</Button>}
         </div>
       </div>
+
+      {awaitingRenewalChange && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-950 space-y-2">
+          <div className="flex items-start gap-2.5">
+            <PenLine className="w-4 h-4 mt-0.5 shrink-0 text-violet-600" />
+            <div>
+              <p className="font-semibold">O atleta pediu para mudar o plano ou o treinador desta renovação.</p>
+              <p className="text-xs text-violet-800 mt-0.5">
+                Faça a troca aqui e siga para a cobrança. Até lá a renovação continua em "Aguardando decisão".
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 pl-6">
+            {isUnpaid && (
+              <Button size="sm" variant="outline" className="bg-white" onClick={openAdjustPlanModal}>
+                <PenLine className="w-3.5 h-3.5 mr-1" /> Trocar plano
+              </Button>
+            )}
+            {canCancel && !scheduledCoachChange && (
+              <Button size="sm" variant="outline" className="bg-white" onClick={openCoachChangeModal}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1" /> Trocar coach
+              </Button>
+            )}
+            <Button size="sm" onClick={() => setRenewalChargePrompt(true)}>
+              <Check className="w-3.5 h-3.5 mr-1" /> Mudança feita: seguir para a cobrança
+            </Button>
+          </div>
+        </div>
+      )}
 
       {contract.status === 'scheduled' && (
         <Card className="border-blue-200 bg-blue-50">
@@ -1259,7 +1344,7 @@ export default function ContractDetail() {
                 {canCancel && <button onClick={() => setCancelCoachChangeModal(true)} className="mt-1 text-purple-700 hover:underline">Cancelar troca</button>}
               </div>
             )}
-            {canCancel && !scheduledCoachChange && <button onClick={() => { setNewCoachId(coach?.id || ''); setNewCoachDate(defaultCoachDate); setChangeCoachModal(true); }} className="text-xs text-blue-600 hover:underline mt-1.5 inline-flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Trocar coach</button>}
+            {canCancel && !scheduledCoachChange && <button onClick={openCoachChangeModal} className="text-xs text-blue-600 hover:underline mt-1.5 inline-flex items-center gap-1"><RefreshCw className="w-3 h-3" /> Trocar coach</button>}
           </CardContent>
         </Card>
       </div>
@@ -1992,6 +2077,27 @@ export default function ContractDetail() {
             O contrato continua com <b>{coach?.name || '—'}</b>.
           </p>
         )}
+      </ConfirmDialog>
+
+      {/* MODAL: renovação com troca pedida — seguir para a cobrança */}
+      <ConfirmDialog
+        open={renewalChargePrompt && awaitingRenewalChange}
+        onOpenChange={setRenewalChargePrompt}
+        title="Mudança feita. Seguir para a cobrança?"
+        icon={Check}
+        iconClassName="text-green-600"
+        confirmLabel="Seguir para a cobrança"
+        cancelLabel="Ainda vou mudar outra coisa"
+        busy={renewalResolving}
+        onConfirm={resolveRenewalChange}
+      >
+        <p>
+          A renovação de <b>{student?.full_name || 'o atleta'}</b> vai para "Enviar cobrança" e o quadro de
+          Renovações já abre o cadastro da cobrança. Nada é cobrado agora.
+        </p>
+        <p className="text-muted-foreground">
+          Se também for trocar o plano ou o coach, faça isso antes de seguir.
+        </p>
       </ConfirmDialog>
 
       {/* MODAL: não renovar */}

@@ -11,7 +11,9 @@ import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 import { isSafePaymentUrl } from '@/lib/sales';
 import { canResolveAssessmentRenewal } from '@/lib/assessment-renewal-resolution';
 import {
+  awaitsRenewalChange,
   buildRenewalTimeline,
+  renewalChangeHref,
   RENEWAL_RESPONSE_LABELS,
   RENEWAL_STAGE,
   RENEWAL_STAGE_LABELS,
@@ -141,8 +143,7 @@ export default function RenewalDetailDialog({ card, coach, modality, onClose, on
   const planLabel = modality?.name && !planName.toLowerCase().includes(modality.name.toLowerCase())
     ? `${modality.name} · ${planName}`
     : planName;
-  const change = contract.renewal_response_code === 'change_plan_or_coach'
-    && contract.renewal_stage === RENEWAL_STAGE.WAITING_RESPONSE;
+  const change = awaitsRenewalChange(contract);
 
   return (
     <Dialog open={!!card} onOpenChange={open => { if (!open && !busy) onClose(); }}>
@@ -213,18 +214,18 @@ export default function RenewalDetailDialog({ card, coach, modality, onClose, on
             <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-950 space-y-2">
               <p className="font-semibold">Mudança de plano ou treinador pedida</p>
               <p className="text-xs">
-                Faça a mudança pelos ajustes do contrato da renovação (as regras de plano, coach e modalidade continuam valendo).
-                Depois confirme aqui para seguir para a cobrança.
+                A troca é feita no contrato da renovação (as regras de plano, coach e modalidade continuam valendo).
+                Ao salvar, o contrato oferece seguir direto para a cobrança.
               </p>
               <div className="flex flex-wrap gap-2">
-                <Link to={`/assessoria/contratos/${contract.id}?ajustar-plano=1`}>
+                <Link to={renewalChangeHref(contract.id, 'plan')}>
                   <Button size="sm" variant="outline" className="bg-white">
                     <PenLine className="w-3.5 h-3.5 mr-1" /> Trocar plano
                   </Button>
                 </Link>
-                <Link to={`/assessoria/contratos/${contract.id}`}>
+                <Link to={renewalChangeHref(contract.id, 'coach')}>
                   <Button size="sm" variant="outline" className="bg-white">
-                    <UserRound className="w-3.5 h-3.5 mr-1" /> Trocar coach no contrato
+                    <UserRound className="w-3.5 h-3.5 mr-1" /> Trocar coach
                   </Button>
                 </Link>
               </div>

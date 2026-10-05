@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { coachHistorySegments, coachOnDay, pendingCoachChange } from './assessment-coach-history.js';
+import { coachChangeWindow, coachHistorySegments, coachOnDay, pendingCoachChange } from './assessment-coach-history.js';
 
 const contract = { startDate: '2026-06-01', endDate: '2026-12-01', today: '2026-09-30' };
 
@@ -66,4 +66,33 @@ test('a plan change coach and the first row are not a pending coach change', () 
   ];
   assert.equal(pendingCoachChange(rows, contract), null);
   assert.deepEqual(coachHistorySegments([], contract), []);
+});
+
+test('the coach change window starts with the current coach and ends on the last day of the contract', () => {
+  const rows = [
+    row('1', 'A', '2026-06-01', '2026-06-01T10:00:00Z'),
+    row('2', 'B', '2026-09-15', '2026-09-20T10:00:00Z'),
+  ];
+  const window = coachChangeWindow(rows, contract);
+  assert.equal(window.minDate, '2026-09-15');
+  assert.equal(window.maxDate, '2026-11-30');
+  assert.equal(window.defaultDate, '2026-09-30');
+  assert.equal(window.scheduled, null);
+  assert.equal(window.segments.length, 2);
+});
+
+test('a renewal that has not started suggests its first day for the new coach', () => {
+  const rows = [row('1', 'A', '2026-10-10', '2026-09-28T10:00:00Z')];
+  const window = coachChangeWindow(rows, { startDate: '2026-10-10', endDate: '2027-01-10', today: '2026-10-05' });
+  assert.equal(window.minDate, '2026-10-10');
+  assert.equal(window.defaultDate, '2026-10-10');
+  assert.equal(window.maxDate, '2027-01-09');
+});
+
+test('the coach change window reports a change already scheduled', () => {
+  const rows = [
+    row('1', 'A', '2026-06-01', '2026-06-01T10:00:00Z'),
+    row('2', 'C', '2026-11-01', '2026-09-30T10:00:00Z'),
+  ];
+  assert.equal(coachChangeWindow(rows, contract).scheduled?.coach_id, 'C');
 });

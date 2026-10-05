@@ -29,6 +29,25 @@ export const RENEWAL_RESPONSE_LABELS = {
   not_renewing: 'Não vou renovar',
 };
 
+// "Mudar plano/treinador": o atendente escolhe o que muda e já cai na troca
+// certa do contrato da renovação.
+export const RENEWAL_CHANGE_TARGETS = {
+  plan: { label: 'Plano', hint: 'Abre a troca de plano da renovação.', query: 'ajustar-plano' },
+  coach: { label: 'Treinador', hint: 'Abre a troca de coach da renovação.', query: 'trocar-coach' },
+};
+
+export function renewalChangeHref(contractId, target) {
+  const change = RENEWAL_CHANGE_TARGETS[target];
+  if (!contractId || !change) return null;
+  return `/assessoria/contratos/${contractId}?${change.query}=1`;
+}
+
+// Renovação parada em "Aguardando decisão" esperando a troca de plano/coach.
+export function awaitsRenewalChange(contract) {
+  return contract?.renewal_stage === RENEWAL_STAGE.WAITING_RESPONSE
+    && contract?.renewal_response_code === 'change_plan_or_coach';
+}
+
 export const OPEN_RENEWAL_STAGES = new Set([
   RENEWAL_STAGE.CONTACT_PENDING,
   RENEWAL_STAGE.WAITING_RESPONSE,

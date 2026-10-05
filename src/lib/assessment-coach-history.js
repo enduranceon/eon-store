@@ -80,3 +80,21 @@ export function pendingCoachChange(rows, { startDate, today } = {}) {
     && dayOf(row.started_at) > start);
   return pending[pending.length - 1] || null;
 }
+
+// Janela da troca de coach: o novo coach começa entre o início do coach atual
+// e o último dia do contrato. A sugestão é hoje, ou o primeiro dia possível
+// quando ele ainda não chegou.
+export function coachChangeWindow(rows, { startDate, endDate, today } = {}) {
+  const segments = coachHistorySegments(rows, { startDate, endDate, today });
+  const start = dayOf(startDate);
+  const referenceDay = start > today ? start : today;
+  const now = segments.find(segment => segment.from <= referenceDay && (!segment.to || segment.to >= referenceDay));
+  const minDate = now?.from || start;
+  return {
+    segments,
+    scheduled: pendingCoachChange(rows, { startDate, today }),
+    minDate,
+    maxDate: endDate ? addDays(dayOf(endDate), -1) : undefined,
+    defaultDate: minDate > today ? minDate : today,
+  };
+}
