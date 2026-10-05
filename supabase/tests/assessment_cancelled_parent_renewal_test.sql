@@ -2,6 +2,8 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
+-- As regras usam a data de São Paulo; o current_date das fixtures também.
+SET LOCAL timezone = 'America/Sao_Paulo';
 
 SELECT plan(16);
 
