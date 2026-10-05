@@ -51,11 +51,13 @@ function purposeForTask(task) {
   return 'onboarding';
 }
 
-// A cobrança da renovação usa o texto de "renovação confirmada" (plano, coach,
-// valor, vencimento e link); os demais casos seguem a sugestão do servidor.
+// O primeiro envio da cobrança de um contrato usa o texto de "confirmada"
+// (plano, coach, valor, vencimento e link). Lembretes e os demais casos seguem
+// a sugestão do servidor.
 function initialMessage(task, detail) {
   const suggested = detail?.suggestion?.message || detail?.case?.suggested_message || '';
   if (task?.messageVariant !== 'assessment_contract_confirmation') return suggested;
+  if (detail?.suggestion?.action_code !== 'initial_charge') return suggested;
   return buildTaskMessage(task, { externalLink: detail?.case?.payment_link || undefined }) || suggested;
 }
 

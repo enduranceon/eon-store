@@ -77,6 +77,14 @@ export function isRenewalContract(contract) {
   return !!contract?.parent_contract_id;
 }
 
+// Depois de registrar a cobrança, a mensagem de "confirmada" abre sozinha
+// enquanto ainda não foi enviada. Na renovação automática a cobrança sai pela
+// assinatura e o servidor segura essa mensagem.
+export function opensChargeMessageAfterRegister(contract) {
+  if (!contract || contract.payment_message_sent_at) return false;
+  return !(isRenewalContract(contract) && contract.auto_renewal);
+}
+
 export function getContractKindLabel(contract) {
   return isRenewalContract(contract) ? 'Renovação' : 'Contrato novo';
 }

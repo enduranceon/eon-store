@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildContractLifecycleRows, hasFullContractRefund } from './assessment-contract-lifecycle.js';
+import {
+  buildContractLifecycleRows,
+  hasFullContractRefund,
+  opensChargeMessageAfterRegister,
+} from './assessment-contract-lifecycle.js';
 
 const TODAY = '2026-10-05';
 
@@ -95,4 +99,15 @@ test('the full refund check compares with what the student paid', () => {
   assert.equal(hasFullContractRefund({ ...plan, refund_amount: 603.87 }), false);
   assert.equal(hasFullContractRefund({ ...plan, refund_status: 'pending' }), false);
   assert.equal(hasFullContractRefund({ payment_status: 'refunded' }), true);
+});
+
+test('the charge message opens after registering the charge until it is sent', () => {
+  assert.equal(opensChargeMessageAfterRegister({ id: 'new' }), true);
+  assert.equal(opensChargeMessageAfterRegister({ id: 'renewal', parent_contract_id: 'old' }), true);
+  assert.equal(opensChargeMessageAfterRegister({ id: 'sent', payment_message_sent_at: '2026-10-05T12:00:00Z' }), false);
+  // Na renovação automática a cobrança sai pela assinatura.
+  assert.equal(opensChargeMessageAfterRegister({ id: 'auto', parent_contract_id: 'old', auto_renewal: true }), false);
+  // A flag de renovação automática num contrato novo não muda o envio da cobrança dele.
+  assert.equal(opensChargeMessageAfterRegister({ id: 'first', auto_renewal: true }), true);
+  assert.equal(opensChargeMessageAfterRegister(null), false);
 });
