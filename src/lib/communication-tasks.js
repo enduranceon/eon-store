@@ -2,6 +2,8 @@ import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_COMMUNICATION_RULES, RENEWAL_INTENT_TEMPLATE } from '@/lib/communication-config';
 import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
+import { getContractTotalValue } from '@/lib/assessment-contract-lifecycle';
+import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import {
   daysUntil,
   followUpLabel,
@@ -564,6 +566,58 @@ export function buildRenewalMessageTask(contract, data = {}, options = {}) {
     renewalStage: sale.renewalStage,
     renewalFollowUp: followUp,
   }));
+}
+
+// Envio da cobrança de um contrato da assessoria (novo ou renovação). No
+// primeiro envio a janela usa o texto de "confirmada" (plano, coach, valor,
+// vencimento e link); os lembretes seguem a sugestão do servidor.
+export function buildContractChargeTask(contract, { customer, coach, modality, plan } = {}) {
+  const snapshot = { ...(plan || {}), ...(contract.plan_snapshot || {}) };
+  const renewal = Boolean(contract.parent_contract_id);
+  const total = getContractTotalValue(contract, plan?.id ? { [plan.id]: plan } : {});
+  const planName = snapshot.name || (renewal ? 'Renovação' : 'Assessoria');
+  const itemLabel = [planName, modality?.name].filter(Boolean).join(' - ');
+  const items = [{ label: itemLabel, quantity: 1, unitPrice: total, total }];
+
+  return {
+    id: `contract-charge:${contract.id}:${contract.payment_message_sent_at || contract.updated_at || contract.created_at || ''}`,
+    kind: TASK_KIND.CHARGE_SEND,
+    bucket: TASK_BUCKET.CHARGES,
+    sourceType: 'contract',
+    tableName: 'assessment_contracts',
+    sourceId: contract.id,
+    sourceLabel: 'Contrato',
+    orderNumber: contract.contract_number,
+    customerName: customer?.full_name || 'Aluno',
+    customerWhatsapp: customer?.whatsapp || '',
+    totalValue: total,
+    paymentStatus: contract.payment_status || 'pending',
+    dueDate: suggestedAssessmentChargeDueDate(contract),
+    startDate: contract.start_date || '',
+    endDate: contract.end_date || '',
+    parentContractId: contract.parent_contract_id || null,
+    installments: contract.installments || 1,
+    enrollmentFee: Number(contract.enrollment_fee) || 0,
+    manualDiscount: Number(contract.manual_discount) || 0,
+    creditBalance: Number(contract.credit_balance) || 0,
+    asaasChargeId: contract.asaas_charge_id,
+    asaasPaymentLink: contract.asaas_payment_link,
+    asaasPixCopy: contract.asaas_pix_copy,
+    externalPaymentLink: contract.external_payment_link,
+    paymentMessageSentAt: contract.payment_message_sent_at,
+    updatedAt: contract.updated_at,
+    items,
+    itemSummary: itemLabel,
+    href: `/assessoria/contratos/${contract.id}`,
+    title: renewal ? 'Enviar cobrança da renovação' : 'Enviar cobrança do contrato',
+    statusLabel: contract.due_date ? `vence em ${formatDate(contract.due_date)}` : 'definir vencimento',
+    planLabel: planName,
+    planPeriod: snapshot.period || '',
+    periodMonths: snapshot.period_months || null,
+    modalityName: modality?.name || snapshot.modality_name || '',
+    coachName: coach?.name || '',
+    messageVariant: 'assessment_contract_confirmation',
+  };
 }
 
 export function buildCommunicationTasks(data, options = {}) {

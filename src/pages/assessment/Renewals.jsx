@@ -15,13 +15,13 @@ import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
 import { RENEWAL_ATTENTION_WINDOW_DAYS } from '@/lib/assessment-renewal-window';
-import { getActivationStatusForContract } from '@/lib/assessment-contract-lifecycle';
+import { getActivationStatusForContract, opensChargeMessageAfterRegister } from '@/lib/assessment-contract-lifecycle';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { defaultAsaasDueDate } from '@/lib/payment-methods';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import { normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { registerExternalAssessmentContractCharge } from '@/lib/assessment-contract-operations';
-import { TASK_BUCKET, TASK_KIND, buildRenewalMessageTask } from '@/lib/communication-tasks';
+import { buildContractChargeTask, buildRenewalMessageTask } from '@/lib/communication-tasks';
 import { loadCommunicationConfig } from '@/lib/communication-config';
 import { canResolveAssessmentRenewal } from '@/lib/assessment-renewal-resolution';
 import {
@@ -75,53 +75,6 @@ function normalizeScanDays(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return RENEWAL_ATTENTION_WINDOW_DAYS;
   return Math.max(1, Math.min(90, Math.round(n)));
-}
-
-function chargeTaskForRenewal(contract, { customer, coach, modality } = {}) {
-  const total = renewalSaleTotal(contract);
-  const planName = contract.plan_snapshot?.name || 'Renovação';
-  const itemLabel = [planName, modality?.name].filter(Boolean).join(' - ');
-  const items = [{ label: itemLabel || 'Renovação', quantity: 1, unitPrice: total, total }];
-
-  return {
-    id: `renewal-charge:${contract.id}:${contract.payment_message_sent_at || contract.updated_at || contract.created_at || ''}`,
-    kind: TASK_KIND.CHARGE_SEND,
-    bucket: TASK_BUCKET.CHARGES,
-    sourceType: 'contract',
-    tableName: 'assessment_contracts',
-    sourceId: contract.id,
-    sourceLabel: 'Contrato',
-    orderNumber: contract.contract_number,
-    customerName: customer?.full_name || 'Aluno',
-    customerWhatsapp: customer?.whatsapp || '',
-    totalValue: total,
-    paymentStatus: contract.payment_status || 'pending',
-    dueDate: suggestedAssessmentChargeDueDate(contract),
-    startDate: contract.start_date || '',
-    endDate: contract.end_date || '',
-    parentContractId: contract.parent_contract_id || null,
-    installments: contract.installments || 1,
-    enrollmentFee: Number(contract.enrollment_fee) || 0,
-    manualDiscount: Number(contract.manual_discount) || 0,
-    creditBalance: Number(contract.credit_balance) || 0,
-    asaasChargeId: contract.asaas_charge_id,
-    asaasPaymentLink: contract.asaas_payment_link,
-    asaasPixCopy: contract.asaas_pix_copy,
-    externalPaymentLink: contract.external_payment_link,
-    paymentMessageSentAt: contract.payment_message_sent_at,
-    updatedAt: contract.updated_at,
-    items,
-    itemSummary: itemLabel || 'Renovação',
-    href: `/assessoria/contratos/${contract.id}`,
-    title: 'Enviar cobrança da renovação',
-    statusLabel: contract.due_date ? `vence em ${formatDate(contract.due_date)}` : 'definir vencimento',
-    planLabel: planName,
-    planPeriod: contract.plan_snapshot?.period || '',
-    periodMonths: contract.plan_snapshot?.period_months || null,
-    modalityName: modality?.name || contract.plan_snapshot?.modality_name || '',
-    coachName: coach?.name || '',
-    messageVariant: 'assessment_contract_confirmation',
-  };
 }
 
 function Kpi({ icon: Icon, label, value, detail, tone = 'blue' }) {
@@ -364,7 +317,7 @@ export default function Renewals() {
     } else if (key === 'charge') {
       openExternalCharge(contract);
     } else if (key === 'charge_message') {
-      setMessageTask(chargeTaskForRenewal(contract, lookupsFor(contract)));
+      setMessageTask(buildContractChargeTask(contract, lookupsFor(contract)));
     } else if (key === 'payment') {
       setPaymentCard(card);
     } else if (key === 'activate') {
@@ -445,11 +398,10 @@ export default function Renewals() {
       });
       setExternalChargeModal(null);
       // Cobrança ainda não enviada: já abre a mensagem de renovação confirmada,
-      // com o link e o vencimento salvos. Na automática a cobrança sai pela
-      // assinatura; ali só se guarda o link.
-      if (!contract.auto_renewal && !contract.payment_message_sent_at) {
+      // com o link e o vencimento salvos.
+      if (opensChargeMessageAfterRegister(contract)) {
         toast.success('Cobrança registrada. Copie a mensagem e envie para o atleta.');
-        setMessageTask(chargeTaskForRenewal({ ...contract, ...result.updates }, lookupsFor(contract)));
+        setMessageTask(buildContractChargeTask({ ...contract, ...result.updates }, lookupsFor(contract)));
       } else {
         toast.success('Cobrança registrada. A venda está em "Aguardando pagamento" e em Vendas em aberto.');
       }

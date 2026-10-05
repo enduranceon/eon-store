@@ -51,7 +51,8 @@ import {
   registerExternalAssessmentContractCharge,
 } from '@/lib/assessment-contract-operations';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, getPaymentMethodLabel, reopenManualPayment } from '@/lib/manual-payment';
-import { getContractKindLabel, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
+import { getContractKindLabel, isRenewalContract, opensChargeMessageAfterRegister } from '@/lib/assessment-contract-lifecycle';
+import { buildContractChargeTask } from '@/lib/communication-tasks';
 import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-transitions';
 import { isOpenPlanChangeCharge, planChangeUnusedValue } from '@/lib/assessment-plan-change';
 import { refundMethodLabel } from '@/lib/contract-refund';
@@ -372,6 +373,8 @@ export default function ContractDetail() {
   const [externalSaleSaving, setExternalSaleSaving] = useState(false);
   // WhatsApp — preview e envio
   const [communicationCaseId, setCommunicationCaseId] = useState(null);
+  // Envio da cobrança com o texto de "adesão/renovação confirmada".
+  const [chargeMessageTask, setChargeMessageTask] = useState(null);
   const [communicationOpening, setCommunicationOpening] = useState(false);
   const [methodGroups, setMethodGroups]     = useState([]);
   // Edição de datas
@@ -1106,6 +1109,10 @@ export default function ContractDetail() {
     setExternalSaleModal(true);
   };
 
+  const openChargeMessage = (source) => {
+    setChargeMessageTask(buildContractChargeTask(source, { customer: student, coach, modality, plan }));
+  };
+
   const saveExternalSale = async () => {
     const link = externalSaleForm.link.trim();
     const dueDate = externalSaleForm.due_date;
@@ -1115,7 +1122,7 @@ export default function ContractDetail() {
     setExternalSaleSaving(true);
     try {
       const hadExternalLink = !!contract.external_payment_link;
-      await registerExternalAssessmentContractCharge({
+      const result = await registerExternalAssessmentContractCharge({
         contract,
         link,
         dueDate,
@@ -1123,9 +1130,13 @@ export default function ContractDetail() {
         invoiceNumber,
         source: 'contract_detail',
       });
-      toast.success(hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa registrada! Agora envie a mensagem pro aluno.');
+      // Cobrança ainda não enviada: já abre a mensagem para copiar e enviar.
+      const opensMessage = opensChargeMessageAfterRegister(contract);
+      toast.success(`${hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa registrada!'}${
+        opensMessage ? ' Copie a mensagem e envie para o aluno.' : ''}`);
       setExternalSaleModal(false);
       await load();
+      if (opensMessage) openChargeMessage({ ...contract, ...result.updates });
     } catch (e) {
       toast.error(e.message || 'Erro ao salvar cobrança externa');
     } finally {
@@ -1679,7 +1690,7 @@ export default function ContractDetail() {
               dueDateLabel={contract.due_date ? formatDate(contract.due_date) : null}
               messageSentLabel={contract.payment_message_sent_at ? `em ${formatDate(contract.payment_message_sent_at)}` : null}
               onCopy={() => { navigator.clipboard.writeText(contract.external_payment_link); toast.success('Link copiado!'); }}
-              onMessage={student?.whatsapp ? openWhatsApp : undefined}
+              onMessage={student?.whatsapp ? () => openChargeMessage(contract) : undefined}
               onEdit={openExternalSaleModal}
               onRemove={removeExternalSale}
               onRecordPayment={openManualPay}
@@ -2160,6 +2171,17 @@ export default function ContractDetail() {
         onChanged={() => load()}
         onSent={() => { setCommunicationCaseId(null); load(); }}
       />
+
+      {chargeMessageTask && (
+        <CommunicationSendDialog
+          key={chargeMessageTask.id}
+          task={chargeMessageTask}
+          sourceUi="contract_detail"
+          onClose={() => setChargeMessageTask(null)}
+          onChanged={() => load()}
+          onSent={() => { setChargeMessageTask(null); load(); }}
+        />
+      )}
 
       <ExternalChargeDialog
         open={externalSaleModal}
