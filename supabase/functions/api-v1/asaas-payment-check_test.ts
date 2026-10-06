@@ -237,6 +237,30 @@ Deno.test("without the Asaas key nothing is read", async () => {
   }, { key: null });
 });
 
+Deno.test("a sandbox key or address is reported instead of 'not found'", async () => {
+  for (
+    const env of [
+      { base: "https://sandbox.asaas.com/api/v3" },
+      { base: "https://api-sandbox.asaas.com/v3" },
+      { key: "$aact_hmlg_chave_de_teste" },
+    ]
+  ) {
+    await withAsaas(() => json({}), async (calls) => {
+      const { client, queries } = fakeDatabase();
+      const response = await handleAsaasPaymentCheckRequest(
+        checkRequest([{ type: "contract", id: CONTRACT_PAID }]),
+        "/asaas/payment-check",
+        client,
+      );
+      assert(response?.status === 503, `sandbox refused: ${JSON.stringify(env)}`);
+      const body = await response.json();
+      assert(body.code === "asaas_sandbox_configured", "explains the sandbox");
+      assert(calls.length === 0, "Asaas is not called");
+      assert(queries.length === 0, "database is not read");
+    }, env);
+  }
+});
+
 Deno.test("checks open charges in Asaas with read-only calls", async () => {
   const respond = (url: URL) => {
     if (url.pathname === "/v3/payments/pay_pixpago0000000001") {

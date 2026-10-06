@@ -157,6 +157,14 @@ function asaasConfigured(): boolean {
   );
 }
 
+// As faturas salvas são da conta real (www.asaas.com). Com o sandbox, toda
+// consulta voltaria "não encontrada"; melhor dizer o motivo de uma vez.
+// Chave de sandbox começa com $aact_hmlg_ e a de produção com $aact_prod_.
+function asaasSandboxConfigured(): boolean {
+  return /sandbox/i.test(Deno.env.get("ASAAS_BASE_URL") ?? "") ||
+    (Deno.env.get("ASAAS_API_KEY") ?? "").trim().startsWith("$aact_hmlg_");
+}
+
 async function loadOrders(
   supabase: SupabaseClient,
   orders: OrderRef[],
@@ -272,6 +280,13 @@ export async function handleAsaasPaymentCheckRequest(
     return jsonResponse({
       error: "A conferência com o Asaas ainda não foi configurada",
       code: "asaas_not_configured",
+    }, 503);
+  }
+  if (asaasSandboxConfigured()) {
+    return jsonResponse({
+      error:
+        "A chave configurada é do sandbox do Asaas (teste). As faturas cadastradas são da conta real: configure a chave de produção.",
+      code: "asaas_sandbox_configured",
     }, 503);
   }
 

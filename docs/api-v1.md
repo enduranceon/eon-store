@@ -193,7 +193,9 @@ Para cada venda devolve status, forma, valor e datas da cobrança e, num
 parcelamento, de cada parcela. Dados do cliente no Asaas não saem da rota.
 
 Sem `ASAAS_API_KEY` e `ASAAS_BASE_URL` a rota responde
-`503 asaas_not_configured`, sem consultar nada. Se nenhuma consulta der certo,
+`503 asaas_not_configured`, sem consultar nada. Com chave (`$aact_hmlg_`) ou
+endereço do sandbox responde `503 asaas_sandbox_configured`: as faturas salvas
+são da conta real e não existem no sandbox. Se nenhuma consulta der certo,
 responde `502 asaas_check_failed` com o motivo do Asaas; falhas isoladas voltam
 por venda. A rota não grava nada: o painel registra as pagas por
 `POST /orders/:type/:id/manual-payment`, depois que o administrador confirma.
