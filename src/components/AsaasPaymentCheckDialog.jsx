@@ -5,13 +5,30 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { checkAsaasPayments, listPaymentMethods } from '@/api/client';
 import { createManualInstallments } from '@/lib/manual-payment';
-import { asaasCheckCandidates, registerAsaasPayments, summarizeAsaasCheck } from '@/lib/asaas-payment-check';
+import {
+  asaasCheckCandidates,
+  reconfirmAsaasItems,
+  registerAsaasPayments,
+  summarizeAsaasCheck,
+} from '@/lib/asaas-payment-check';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 
 const TYPE_LABELS = { contract: 'Assessoria', presale: 'Pré-venda', stock: 'Loja', event: 'Evento' };
 
 function plural(count, one, many) {
   return `${count} ${count === 1 ? one : many}`;
+}
+
+function scheduleLabel(schedule) {
+  if (!schedule?.length) return 'Valores e datas das parcelas calculados pelo sistema.';
+  if (schedule.length === 1) return `Entra em ${formatDate(schedule[0].date)}, como no Asaas.`;
+  const values = schedule.map(row => row.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const amounts = min === max
+    ? `${schedule.length}x de ${formatCurrency(min)}`
+    : `${schedule.length} parcelas de ${formatCurrency(min)} a ${formatCurrency(max)}`;
+  return `${amounts}, como no Asaas: a 1ª entra em ${formatDate(schedule[0].date)} e a última em ${formatDate(schedule[schedule.length - 1].date)}.`;
 }
 
 function SaleLine({ order }) {
@@ -42,6 +59,8 @@ const EMPTY_GROUPS = { ready: [], review: [], open: [], skip: [] };
 
 // Consulta no Asaas as cobranças abertas com fatura do Asaas e registra as
 // pagas pelo mesmo pagamento manual do "Receber". Nada muda no Asaas.
+// Antes de gravar, confere de novo no Asaas as escolhidas e mostra o resumo
+// (forma, data e cada parcela) para confirmar.
 // Montado só enquanto aberto, com a lista do momento em que foi aberto;
 // ao fechar, avisa se registrou algo para a tela recarregar.
 export default function AsaasPaymentCheckDialog({ orders, onClose }) {
@@ -51,6 +70,7 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
   const [groups, setGroups] = useState(() => (candidates.length ? null : EMPTY_GROUPS));
   const [selected, setSelected] = useState(() => new Set());
   const [saved, setSaved] = useState({});
+  const [review, setReview] = useState(null);
 
   useEffect(() => {
     if (!candidates.length) return undefined;
@@ -72,6 +92,8 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
   }, [candidates]);
 
   const saving = phase === 'saving';
+  const busy = saving || phase === 'reconfirming';
+  const confirming = Boolean(review) && (phase === 'confirm' || saving);
   const registered = Object.values(saved).some(result => result.ok);
   const close = () => onClose({ registered });
   const ready = groups?.ready || [];
@@ -87,16 +109,40 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
   });
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(pendingReady.map(item => item.key)));
 
-  const register = async () => {
+  // Segunda conferência: consulta de novo só as escolhidas e mostra o resumo.
+  const startConfirm = async () => {
     if (!selectedItems.length) return;
+    setPhase('reconfirming');
+    try {
+      const chosen = selectedItems.map(item => item.order);
+      const [check, methods] = await Promise.all([checkAsaasPayments(chosen), listPaymentMethods()]);
+      const fresh = summarizeAsaasCheck(chosen, check?.results, methods, todayLocalStr());
+      setReview(reconfirmAsaasItems(selectedItems, fresh));
+      setPhase('confirm');
+    } catch (cause) {
+      toast.error(cause.message || 'Não foi possível conferir de novo no Asaas');
+      setPhase('ready');
+    }
+  };
+
+  const backToList = () => {
+    setReview(null);
+    setPhase('ready');
+  };
+
+  const register = async () => {
+    const items = review?.confirmed || [];
+    if (!items.length) return;
     setPhase('saving');
-    const results = await registerAsaasPayments(selectedItems, item => createManualInstallments(
+    const results = await registerAsaasPayments(items, item => createManualInstallments(
       item.method,
       item.paymentDate,
       { order_id: item.order.id, order_type: item.order.type, external_reference: item.order.order_number },
       item.total,
+      item.schedule || undefined,
     ));
     setSaved(current => ({ ...current, ...Object.fromEntries(results.map(result => [result.key, result])) }));
+    setReview(null);
     setPhase('ready');
     const okCount = results.filter(result => result.ok).length;
     const failed = results.length - okCount;
@@ -105,14 +151,14 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
   };
 
   return (
-    <Dialog open onOpenChange={open => { if (!open && !saving) close(); }}>
+    <Dialog open onOpenChange={open => { if (!open && !busy) close(); }}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Conferir pagamentos no Asaas</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
           Consulta as cobranças abertas que têm fatura do Asaas. Nada muda no Asaas: as pagas são registradas aqui
-          como no &quot;Receber&quot;, com a forma e a data do pagamento.
+          como no &quot;Receber&quot;, com a forma, a data e as parcelas (valor e data de crédito) que estão no Asaas.
         </p>
 
         {phase === 'loading' && (
@@ -126,7 +172,61 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
           <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{error}</p>
         )}
 
-        {groups && (
+        {phase === 'reconfirming' && (
+          <p role="status" className="flex items-center gap-2 rounded-lg border bg-slate-50 p-4 text-sm text-slate-700">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Conferindo de novo no Asaas as escolhidas...
+          </p>
+        )}
+
+        {confirming && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700">
+              Conferi de novo no Asaas agora. Veja cada uma antes de registrar:
+            </p>
+            {review.confirmed.length > 0 && (
+              <ul className="space-y-2">
+                {review.confirmed.map(item => (
+                  <li key={item.key} className="space-y-1 rounded-lg border border-emerald-200 p-3">
+                    <SaleLine order={item.order} />
+                    <span className="block text-xs text-slate-600">
+                      {item.method.name} · pago em {formatDate(item.paymentDate)} · total {formatCurrency(item.total)}
+                    </span>
+                    {item.schedule ? (
+                      <ol className="grid gap-x-4 gap-y-0.5 text-xs text-slate-600 sm:grid-cols-2">
+                        {item.schedule.map(row => (
+                          <li key={row.number}>
+                            {row.number}ª parcela · entra em {formatDate(row.date)} · {formatCurrency(row.value)}
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <span className="block text-xs text-slate-500">Valores e datas das parcelas calculados pelo sistema.</span>
+                    )}
+                    {item.order.is_prospect && (
+                      <span className="block text-xs text-violet-700">Ao registrar, o prospect vira aluno.</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {review.changed.length > 0 && (
+              <div role="alert" className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <p className="font-medium">Não vão ser registradas:</p>
+                <ul className="space-y-0.5 text-xs">
+                  {review.changed.map(({ item, reason }) => (
+                    <li key={item.key}>{item.order.order_number} · {item.order.customer}: {reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {!review.confirmed.length && (
+              <p className="text-sm text-slate-700">Nenhuma das escolhidas continua igual no Asaas. Volte e confira de novo.</p>
+            )}
+          </div>
+        )}
+
+        {groups && !confirming && (
           <div className="space-y-5">
             {!candidates.length && (
               <p className="rounded-lg border bg-slate-50 p-4 text-sm text-slate-700">
@@ -137,7 +237,7 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
             <Section icon={CheckCircle2} tone="text-emerald-700" title="Pagas no Asaas" count={ready.length}>
               {pendingReady.length > 1 && (
                 <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={allSelected} disabled={saving} onChange={toggleAll} />
+                  <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={allSelected} disabled={busy} onChange={toggleAll} />
                   Selecionar todas
                 </label>
               )}
@@ -154,7 +254,7 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
                             type="checkbox"
                             className="mt-1 h-4 w-4 shrink-0 accent-emerald-600"
                             checked={selected.has(item.key)}
-                            disabled={saving}
+                            disabled={busy}
                             onChange={() => toggle(item.key)}
                             aria-label={`Registrar ${item.order.order_number}`}
                           />
@@ -164,6 +264,7 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
                           <span className="block text-xs text-slate-600">
                             {item.method.name} · pago em {formatDate(item.paymentDate)} · {formatCurrency(item.total)}
                           </span>
+                          <span className="block text-xs text-slate-500">{scheduleLabel(item.schedule)}</span>
                           {item.order.is_prospect && !result?.ok && (
                             <span className="block text-xs text-violet-700">Ao registrar, o prospect vira aluno.</span>
                           )}
@@ -208,12 +309,32 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
         )}
 
         <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
-          <Button variant="outline" className="min-h-11" disabled={saving} onClick={close}>Fechar</Button>
-          {pendingReady.length > 0 && (
-            <Button className="min-h-11 bg-emerald-600 hover:bg-emerald-700" disabled={saving || !selectedItems.length} onClick={register}>
-              {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />}
-              {saving ? 'Registrando...' : `Registrar ${plural(selectedItems.length, 'pagamento', 'pagamentos')}`}
-            </Button>
+          {confirming ? (
+            <>
+              <Button variant="outline" className="min-h-11" disabled={saving} onClick={backToList}>Voltar</Button>
+              <Button
+                className="min-h-11 bg-emerald-600 hover:bg-emerald-700"
+                disabled={saving || !review.confirmed.length}
+                onClick={register}
+              >
+                {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />}
+                {saving ? 'Registrando...' : `Confirmar e registrar ${plural(review.confirmed.length, 'pagamento', 'pagamentos')}`}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" className="min-h-11" disabled={busy} onClick={close}>Fechar</Button>
+              {pendingReady.length > 0 && (
+                <Button
+                  className="min-h-11 bg-emerald-600 hover:bg-emerald-700"
+                  disabled={busy || !selectedItems.length}
+                  onClick={startConfirm}
+                >
+                  {phase === 'reconfirming' && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />}
+                  {`Revisar e registrar ${plural(selectedItems.length, 'pagamento', 'pagamentos')}`}
+                </Button>
+              )}
+            </>
           )}
         </div>
       </DialogContent>

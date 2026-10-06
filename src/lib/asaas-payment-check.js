@@ -1,8 +1,8 @@
 // Conferência das cobranças externas no Asaas. O servidor só lê o Asaas e
 // devolve os fatos (status, forma, valor e datas); aqui decidimos o que já dá
 // para registrar, o que precisa de conferência e o que segue em aberto. O
-// registro é o pagamento manual de sempre: mesma forma, data e valor que se
-// digitaria no "Receber", com as parcelas projetadas pelo sistema.
+// registro é o pagamento manual de sempre (mesma forma, data e valor do
+// "Receber"), com as parcelas no valor e na data de crédito do Asaas.
 
 const INVOICE_LINK = /^https:\/\/www\.asaas\.com\/i\/[A-Za-z0-9]{6,40}\/?$/;
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'partially_paid', 'cancelled', 'refunded']);
@@ -82,6 +82,24 @@ function paidOn(fact) {
   return fact?.client_payment_date || fact?.confirmed_date || fact?.payment_date || null;
 }
 
+// Parcelas como estão no Asaas: valor e data em que o dinheiro entra (já
+// creditado ou a previsão). A última absorve os centavos para a soma bater
+// com o total do sistema. Sem data ou valor em alguma parcela, devolve null
+// e o registro usa a projeção de sempre.
+export function asaasCreditSchedule(facts, total) {
+  const rows = (facts || []).map((fact, index) => ({
+    number: index + 1,
+    date: fact?.credit_date || fact?.estimated_credit_date || null,
+    value: Number(fact?.value) || 0,
+  }));
+  if (!rows.length || rows.some(row => !row.date || !(row.value > 0))) return null;
+  const allocated = rows.slice(0, -1).reduce((sum, row) => sum + cents(row.value), 0);
+  const last = (cents(total) - allocated) / 100;
+  if (!(last > 0)) return null;
+  rows[rows.length - 1].value = last;
+  return rows;
+}
+
 export function classifyAsaasCheck(order, check, methods, today) {
   const base = { key: `${order.type}:${order.id}`, order };
   const review = reason => ({ ...base, kind: 'review', reason });
@@ -105,6 +123,14 @@ export function classifyAsaasCheck(order, check, methods, today) {
     return { ...base, kind: 'open', status, label: asaasStatusLabel(status) };
   }
   if (paidCount < facts.length) return review(`${paidCount} de ${facts.length} parcelas pagas no Asaas.`);
+
+  // A fatura precisa ser do mesmo CPF da venda: pega link colado na venda errada.
+  if (check.customer_check === 'mismatch') {
+    return review('A fatura no Asaas é de outra pessoa (CPF diferente). Confira o link salvo nesta venda.');
+  }
+  if (check.customer_check !== 'match') {
+    return review('Não deu para conferir o CPF do cliente no Asaas. Confira e registre pelo "Receber".');
+  }
 
   const billingTypes = [...new Set(facts.map(fact => fact?.billing_type))];
   const billingType = billingTypes.length === 1 ? billingTypes[0] : null;
@@ -130,14 +156,16 @@ export function classifyAsaasCheck(order, check, methods, today) {
   if (!paymentDate) return review('O Asaas não informou a data do pagamento.');
   if (today && paymentDate > today) return review('O Asaas informou uma data de pagamento no futuro.');
 
+  const total = Number(order.total_value);
   return {
     ...base,
     kind: 'ready',
     method,
     paymentDate,
-    total: Number(order.total_value),
+    total,
     installments: facts.length,
     billingType,
+    schedule: asaasCreditSchedule(facts, total),
   };
 }
 
@@ -149,6 +177,38 @@ export function summarizeAsaasCheck(orders, results, methods, today) {
     groups[item.kind].push(item);
   }
   return groups;
+}
+
+function sameRegistration(shown, now) {
+  return Boolean(shown && now && now.kind === 'ready'
+    && shown.method?.id === now.method?.id
+    && shown.paymentDate === now.paymentDate
+    && cents(shown.total) === cents(now.total)
+    && JSON.stringify(shown.schedule || null) === JSON.stringify(now.schedule || null));
+}
+
+// Segunda conferência, logo antes de gravar: só segue o que continua igual
+// ao que foi mostrado na lista. O que mudou no Asaas fica de fora, com o motivo.
+export function reconfirmAsaasItems(selected, freshGroups) {
+  const fresh = new Map(
+    ['ready', 'review', 'open', 'skip'].flatMap(kind => freshGroups?.[kind] || []).map(item => [item.key, item]),
+  );
+  const confirmed = [];
+  const changed = [];
+  for (const item of selected || []) {
+    const now = fresh.get(item.key);
+    if (sameRegistration(item, now)) {
+      confirmed.push(now);
+    } else {
+      changed.push({
+        item,
+        reason: now?.kind === 'ready'
+          ? 'Forma, data, valor ou parcelas mudaram no Asaas desde a conferência.'
+          : now?.reason || now?.label || 'Não está mais paga no Asaas.',
+      });
+    }
+  }
+  return { confirmed, changed };
 }
 
 // Registra uma por vez; um erro não impede as outras.

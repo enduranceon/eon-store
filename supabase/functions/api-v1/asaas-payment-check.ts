@@ -2,6 +2,7 @@ import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { jsonResponse } from "../_shared/http.ts";
 import {
   AsaasApiError,
+  getAsaasCustomer,
   getAsaasInstallmentPayments,
   getAsaasPayment,
 } from "../_shared/asaas.ts";
@@ -35,6 +36,8 @@ export interface AsaasPaymentFacts {
   client_payment_date: string | null;
   confirmed_date: string | null;
   payment_date: string | null;
+  credit_date: string | null;
+  estimated_credit_date: string | null;
 }
 
 export type AsaasCheckResult =
@@ -44,6 +47,7 @@ export type AsaasCheckResult =
       result: "checked";
       payment: AsaasPaymentFacts;
       installments: AsaasPaymentFacts[] | null;
+      customer_check: CustomerCheck;
     }
     | { result: "closed"; local_status: string }
     | { result: "asaas_error"; message: string }
@@ -57,7 +61,12 @@ export type AsaasCheckResult =
     }
   );
 
+// CPF do cliente da fatura no Asaas x CPF do cliente da venda. Só o
+// resultado sai da rota; os CPFs ficam no servidor.
+export type CustomerCheck = "match" | "mismatch" | "unknown" | "skipped";
+
 export const MAX_CHECK_ORDERS = 100;
+const PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
 const CHECK_PATH = "/asaas/payment-check";
 const CONCURRENCY = 4;
 const DEADLINE_MS = 60_000;
@@ -142,6 +151,9 @@ export function paymentFacts(payment: AsaasPayload): AsaasPaymentFacts {
     client_payment_date: dateValue(payment.clientPaymentDate),
     confirmed_date: dateValue(payment.confirmedDate),
     payment_date: dateValue(payment.paymentDate),
+    // Quando o dinheiro entra: já creditado ou a previsão do Asaas.
+    credit_date: dateValue(payment.creditDate),
+    estimated_credit_date: dateValue(payment.estimatedCreditDate),
   };
 }
 
@@ -165,6 +177,10 @@ function asaasSandboxConfigured(): boolean {
     (Deno.env.get("ASAAS_API_KEY") ?? "").trim().startsWith("$aact_hmlg_");
 }
 
+function digits(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\D/g, "") : "";
+}
+
 async function loadOrders(
   supabase: SupabaseClient,
   orders: OrderRef[],
@@ -177,7 +193,9 @@ async function loadOrders(
     if (ids.length === 0) continue;
     const { data, error } = await supabase
       .from(ORDER_TABLES[type])
-      .select("id, payment_status, external_payment_link, asaas_charge_id")
+      .select(
+        "id, payment_status, external_payment_link, asaas_charge_id, customer_id",
+      )
       .in("id", ids);
     if (error) throw error;
     for (const row of (data ?? []) as Record<string, unknown>[]) {
@@ -187,9 +205,58 @@ async function loadOrders(
   return rows;
 }
 
+async function loadCustomerCpfs(
+  supabase: SupabaseClient,
+  rows: Map<string, Record<string, unknown>>,
+): Promise<Map<string, string>> {
+  const ids = [
+    ...new Set(
+      [...rows.values()].map((row) => row.customer_id).filter((id) =>
+        typeof id === "string" && id
+      ) as string[],
+    ),
+  ];
+  const cpfs = new Map<string, string>();
+  if (ids.length === 0) return cpfs;
+  const { data, error } = await supabase
+    .from("presale_customers")
+    .select("id, cpf")
+    .in("id", ids);
+  if (error) throw error;
+  for (const customer of (data ?? []) as Record<string, unknown>[]) {
+    const cpf = digits(customer.cpf);
+    if (cpf) cpfs.set(String(customer.id), cpf);
+  }
+  return cpfs;
+}
+
+// Uma consulta por cliente do Asaas, mesmo que ele tenha várias cobranças.
+async function compareCustomer(
+  asaasCustomerId: unknown,
+  localCpf: string | undefined,
+  cache: Map<string, Promise<string>>,
+): Promise<CustomerCheck> {
+  if (!localCpf || typeof asaasCustomerId !== "string" || !asaasCustomerId) {
+    return "unknown";
+  }
+  if (!cache.has(asaasCustomerId)) {
+    cache.set(
+      asaasCustomerId,
+      getAsaasCustomer(asaasCustomerId).then((customer) =>
+        digits(customer.cpfCnpj)
+      ),
+    );
+  }
+  const asaasCpf = await cache.get(asaasCustomerId)!;
+  if (!asaasCpf) return "unknown";
+  return asaasCpf === localCpf ? "match" : "mismatch";
+}
+
 async function checkOrder(
   order: OrderRef,
   row: Record<string, unknown> | undefined,
+  localCpf: string | undefined,
+  customerCache: Map<string, Promise<string>>,
 ): Promise<AsaasCheckResult> {
   if (!row) return { ...order, result: "not_found" };
   const localStatus = String(row.payment_status ?? "");
@@ -215,11 +282,20 @@ async function checkOrder(
         .sort(byInstallmentOrder)
       : null;
 
+    const payment = paymentFacts(lookup.payment);
+    const paid = [payment, ...(installments ?? [])].some((fact) =>
+      PAID_STATUSES.has(fact.status)
+    );
+    const customerCheck = paid
+      ? await compareCustomer(lookup.payment.customer, localCpf, customerCache)
+      : "skipped";
+
     return {
       ...order,
       result: "checked",
-      payment: paymentFacts(lookup.payment),
+      payment,
       installments,
+      customer_check: customerCheck,
     };
   } catch (error) {
     if (error instanceof AsaasApiError && error.code !== "asaas_misconfigured") {
@@ -291,8 +367,10 @@ export async function handleAsaasPaymentCheckRequest(
   }
 
   let rows: Map<string, Record<string, unknown>>;
+  let cpfs: Map<string, string>;
   try {
     rows = await loadOrders(supabase, orders);
+    cpfs = await loadCustomerCpfs(supabase, rows);
   } catch (error) {
     console.error(
       "api-v1 asaas payment check: load orders",
@@ -306,12 +384,21 @@ export async function handleAsaasPaymentCheckRequest(
   }
 
   const startedAt = Date.now();
+  const customerCache = new Map<string, Promise<string>>();
   let results: AsaasCheckResult[];
   try {
-    results = await runLimited(orders, CONCURRENCY, (order) =>
-      Date.now() - startedAt > DEADLINE_MS
-        ? Promise.resolve({ ...order, result: "not_checked" as const })
-        : checkOrder(order, rows.get(`${order.type}:${order.id}`)));
+    results = await runLimited(orders, CONCURRENCY, (order) => {
+      if (Date.now() - startedAt > DEADLINE_MS) {
+        return Promise.resolve({ ...order, result: "not_checked" as const });
+      }
+      const row = rows.get(`${order.type}:${order.id}`);
+      return checkOrder(
+        order,
+        row,
+        cpfs.get(String(row?.customer_id ?? "")),
+        customerCache,
+      );
+    });
   } catch (error) {
     if (error instanceof AsaasApiError) {
       return jsonResponse({
