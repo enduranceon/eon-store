@@ -92,6 +92,7 @@ export default function CommunicationCaseDialog({
   onChanged,
   onSent,
   onManualPay,
+  preventOutsideClose = false,
 }) {
   const open = Boolean(caseId || task);
   const [detail, setDetail] = useState(null);
@@ -306,7 +307,10 @@ export default function CommunicationCaseDialog({
 
   return (
     <Dialog open={open} onOpenChange={nextOpen => !nextOpen && !saving && onClose?.()}>
-      <DialogContent className="!left-auto !right-0 !top-0 !h-[100dvh] !max-h-[100dvh] !w-full !max-w-xl !translate-x-0 !translate-y-0 !rounded-none overflow-y-auto p-0">
+      <DialogContent
+        className="!left-auto !right-0 !top-0 !h-[100dvh] !max-h-[100dvh] !w-full !max-w-xl !translate-x-0 !translate-y-0 !rounded-none overflow-y-auto p-0"
+        onInteractOutside={preventOutsideClose ? event => event.preventDefault() : undefined}
+      >
         <div className="min-h-full">
           <DialogHeader className="border-b px-4 pb-4 pt-6 text-left sm:px-6">
             <DialogTitle>Preparar contato</DialogTitle>

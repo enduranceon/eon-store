@@ -2177,6 +2177,7 @@ export default function ContractDetail() {
           key={chargeMessageTask.id}
           task={chargeMessageTask}
           sourceUi="contract_detail"
+          preventOutsideClose
           onClose={() => setChargeMessageTask(null)}
           onChanged={() => load()}
           onSent={() => { setChargeMessageTask(null); load(); }}

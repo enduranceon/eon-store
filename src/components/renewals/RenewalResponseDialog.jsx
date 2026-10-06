@@ -11,7 +11,7 @@ import { todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { RENEWAL_CHANGE_TARGETS, RENEWAL_RESPONSE_LABELS } from '@/lib/assessment-renewal-pipeline';
 
 const OPTIONS = [
-  { code: 'will_renew', hint: 'Vai para "Enviar cobrança".' },
+  { code: 'will_renew', hint: 'Já abre o cadastro da cobrança; depois de salvar, abre a mensagem para enviar.' },
   { code: 'thinking', hint: 'Fica em "Aguardando decisão"; marque quando voltar a falar.' },
   { code: 'change_plan_or_coach', hint: 'Já abre a troca no contrato; depois segue para a cobrança. Não conta como saída.' },
   { code: 'needs_agent', hint: 'Fica aguardando, com atendimento pendente.' },
@@ -26,8 +26,11 @@ function plusDays(days) {
 
 // Registra a resposta do atleta à mensagem de intenção. "Não vou renovar" não
 // é gravado aqui: vai para a janela segura, que cuida de cobrança e repasse.
-// "Mudar plano/treinador" grava a resposta e já abre a troca escolhida.
-export default function RenewalResponseDialog({ card, onClose, onDone, onNotRenewing, onChangeRequested, onConflict }) {
+// "Mudar plano/treinador" grava a resposta e já abre a troca escolhida;
+// "Vou renovar" já abre o cadastro da cobrança.
+export default function RenewalResponseDialog({
+  card, onClose, onDone, onNotRenewing, onChangeRequested, onWillRenew, onConflict,
+}) {
   const [code, setCode] = useState('');
   const [changeTarget, setChangeTarget] = useState('');
   const [followUpAt, setFollowUpAt] = useState('');
@@ -53,7 +56,7 @@ export default function RenewalResponseDialog({ card, onClose, onDone, onNotRene
     if (followUpAt && followUpAt < todayLocalStr()) return toast.error('O follow-up precisa ser de hoje em diante');
     setSaving(true);
     try {
-      await transitionAssessmentRenewalStage(contract.id, {
+      const result = await transitionAssessmentRenewalStage(contract.id, {
         action: 'register_response',
         expectedUpdatedAt: contract.updated_at,
         responseCode: code,
@@ -63,6 +66,11 @@ export default function RenewalResponseDialog({ card, onClose, onDone, onNotRene
       if (asksChange) {
         toast.success(`Resposta registrada. Abrindo a troca de ${changeTarget === 'plan' ? 'plano' : 'coach'}.`);
         onChangeRequested(card, changeTarget);
+        return;
+      }
+      if (code === 'will_renew' && result?.stage_after === 'charge_pending' && result.contract && onWillRenew) {
+        toast.success('Resposta registrada. Cadastre a cobrança da renovação.');
+        onWillRenew(card, { ...contract, ...result.contract });
         return;
       }
       toast.success(code === 'will_renew'
@@ -188,7 +196,9 @@ export default function RenewalResponseDialog({ card, onClose, onDone, onNotRene
                   ? 'Seguir para o encerramento'
                   : asksChange && changeTarget
                     ? `Registrar e trocar o ${changeTarget === 'plan' ? 'plano' : 'coach'}`
-                    : 'Registrar'}
+                    : code === 'will_renew'
+                      ? 'Registrar e cadastrar a cobrança'
+                      : 'Registrar'}
               </Button>
             </div>
           </div>

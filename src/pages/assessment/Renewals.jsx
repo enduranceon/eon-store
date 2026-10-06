@@ -664,6 +664,7 @@ export default function Renewals() {
           onConflict={onConflict}
           onNotRenewing={card => { setResponseCard(null); openResolution(card, 'customer_declined'); }}
           onChangeRequested={(card, target) => { setResponseCard(null); navigate(renewalChangeHref(card.contract.id, target)); }}
+          onWillRenew={(card, contract) => { setResponseCard(null); openExternalCharge(contract); load(); }}
         />
       )}
 
@@ -710,6 +711,7 @@ export default function Renewals() {
           key={messageTask.id}
           task={messageTask}
           sourceUi="renewals"
+          preventOutsideClose
           onChanged={() => load()}
           showQueueActions={false}
           onClose={() => setMessageTask(null)}
