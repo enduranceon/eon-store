@@ -176,6 +176,30 @@ manual confirmado. A remoção das parcelas, a volta para `awaiting_charge` (ou
 `pending` em contrato) e os eventos de auditoria são atômicos e idempotentes.
 Pagamentos Asaas são rejeitados por essa rota.
 
+### Conferência de cobranças no Asaas
+
+`POST /asaas/payment-check` consulta no Asaas, só lendo, as cobranças externas
+abertas informadas:
+
+```json
+{ "orders": [{ "type": "contract", "id": "uuid" }] }
+```
+
+`type` aceita `contract`, `presale`, `stock` ou `event`, até 100 vendas. O
+backend relê cada venda, ignora as já pagas ou encerradas e as que têm cobrança
+da integração automática, e só consulta links de fatura
+`https://www.asaas.com/i/<código>`, que correspondem à cobrança `pay_<código>`.
+Para cada venda devolve status, forma, valor e datas da cobrança e, num
+parcelamento, de cada parcela. Dados do cliente no Asaas não saem da rota.
+
+Sem `ASAAS_API_KEY` e `ASAAS_BASE_URL` a rota responde
+`503 asaas_not_configured`, sem consultar nada. Com chave (`$aact_hmlg_`) ou
+endereço do sandbox responde `503 asaas_sandbox_configured`: as faturas salvas
+são da conta real e não existem no sandbox. Se nenhuma consulta der certo,
+responde `502 asaas_check_failed` com o motivo do Asaas; falhas isoladas voltam
+por venda. A rota não grava nada: o painel registra as pagas por
+`POST /orders/:type/:id/manual-payment`, depois que o administrador confirma.
+
 ### Cadastros administrativos
 
 Os recursos abaixo usam o mesmo contrato CRUD e aceitam apenas campos

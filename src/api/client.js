@@ -1562,6 +1562,16 @@ export async function listPaymentMethods(options = {}) {
   return response.data;
 }
 
+// Consulta no Asaas, só lendo, as cobranças externas abertas informadas.
+export async function checkAsaasPayments(orders, options = {}) {
+  const response = await apiRequest('/asaas/payment-check', {
+    ...options,
+    method: 'POST',
+    body: { orders: orders.map(order => ({ type: order.type, id: order.id })) },
+  });
+  return response.data;
+}
+
 export async function recordManualPayment(
   orderType,
   orderId,
