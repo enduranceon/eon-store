@@ -31,6 +31,7 @@ import {
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { communicationBlockReasonLabel } from '@/lib/communication-case';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
+import AsaasPaymentCheckDialog from '@/components/AsaasPaymentCheckDialog';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { readPageCache, writePageCache } from '@/lib/page-cache';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
@@ -39,8 +40,6 @@ import { toast } from 'sonner';
 // ─────────────────────────────────────────────────────────────────
 // CACHE
 // ─────────────────────────────────────────────────────────────────
-const RECEIVABLES_CACHE_KEY = 'asaas_receivables_cache_v1';
-const RECEIVABLES_CACHE_TTL = 5 * 60 * 1000;
 const FINANCIAL_PAGE_CACHE_TTL = 60 * 1000;
 const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview:v4';
 const ADJUSTABLE_DUE_DATE_STATUSES = new Set([
@@ -405,9 +404,6 @@ export default function Financial() {
     return () => { active = false; };
   }, [orders]);
   const [centers, setCenters]             = useState(() => cachedFinancialData?.centers || []);
-  const [receivables, setReceivables]     = useState([]);
-  const [loadingRec, setLoadingRec]       = useState(false);
-  const [fetchedAt, setFetchedAt]         = useState(null);
   const [pendingRefunds, setPendingRefunds] = useState(() => cachedFinancialData?.pendingRefunds || []);
   const [qualityIssues, setQualityIssues] = useState(() => cachedFinancialData?.qualityIssues || []);
   const [dueDateModal, setDueDateModal]       = useState(null);
@@ -419,43 +415,7 @@ export default function Financial() {
   const [payForm, setPayForm]             = useState({ method_id: '', date: '', value: '' });
   const [paySaving, setPaySaving]         = useState(false);
   const [financialMovements, setFinancialMovements] = useState(() => cachedFinancialData?.financialMovements || []);
-  const [syncingAsaas, setSyncingAsaas]   = useState(false);
-
-  // ── Fetch Asaas ───────────────────────────────────────────────
-  const fetchReceivables = useCallback(async (force = false) => {
-    if (!force) {
-      try {
-        const cached = localStorage.getItem(RECEIVABLES_CACHE_KEY);
-        if (cached) {
-          const { data, timestamp } = JSON.parse(cached);
-          if (Date.now() - timestamp < RECEIVABLES_CACHE_TTL) {
-            setReceivables(data); setFetchedAt(new Date(timestamp)); return;
-          }
-        }
-      } catch { /* ignora */ }
-    }
-    setLoadingRec(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('fetch-asaas-receivables');
-      if (error) {
-        let msg = error.message;
-        try { if (error.context?.json) { const b = await error.context.json(); if (b?.error) msg = b.error; } } catch { /* */ }
-        throw new Error(msg);
-      }
-      if (data?.error) throw new Error(data.error);
-      const payments = data?.payments || [];
-      setReceivables(payments);
-      const now = Date.now(); setFetchedAt(new Date(now));
-      try { localStorage.setItem(RECEIVABLES_CACHE_KEY, JSON.stringify({ data: payments, timestamp: now })); } catch { /* */ }
-    } catch (e) {
-      toast.error('Erro ao buscar recebíveis: ' + (e.message || 'desconhecido'));
-    } finally { setLoadingRec(false); }
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => { fetchReceivables(false); }, 0);
-    return () => clearTimeout(timer);
-  }, [fetchReceivables]);
+  const [asaasCheckOrders, setAsaasCheckOrders] = useState(null);
 
   // ── Fetch pedidos/contratos ────────────────────────────────────
   // useCallback (não só useEffect) porque o modal de "Receber" chama load(true)
@@ -715,26 +675,6 @@ export default function Financial() {
 
   const pipelineTotal = openSalesTotal;
 
-  // ── Recebíveis Asaas agrupados ────────────────────────────────
-  const receivablesByMonth = useMemo(() => {
-    const byMonth = {};
-    for (const p of receivables) {
-      const date = p.creditDate || p.dueDate; if (!date) continue;
-      const key = date.slice(0, 7);
-      if (!byMonth[key]) byMonth[key] = { month: key, total: 0, count: 0, confirmed: 0, pending: 0, overdue: 0, items: [] };
-      const m = byMonth[key];
-      m.total    += Number(p.value)    || 0;
-      m.count++;
-      if (p.status === 'CONFIRMED') m.confirmed++;
-      if (p.status === 'PENDING')   m.pending++;
-      if (p.status === 'OVERDUE')   m.overdue++;
-      m.items.push(p);
-    }
-    return Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month));
-  }, [receivables]);
-
-  const receivablesTotal = useMemo(() => receivablesByMonth.reduce((s, m) => s + m.total, 0), [receivablesByMonth]);
-
   // ── Centros de receita ────────────────────────────────────────
   const centerBreakdown = useMemo(() => {
     if (!centers.length || !paidThisMonth.length) return { rows: [], semCentro: 0 };
@@ -748,40 +688,6 @@ export default function Financial() {
       .filter(c => c.value > 0).sort((a, b) => b.value - a.value);
     return { rows, semCentro };
   }, [centers, paidThisMonth]);
-
-  // Backfill manual: chama edge function que busca parcelas no Asaas e upserta o cache
-  const syncAsaasPayments = async () => {
-    setSyncingAsaas(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('sync-asaas-payments', {
-        body: { since_days: 365 },
-      });
-      if (error) {
-        let msg = error.message;
-        try { if (error.context?.json) { const b = await error.context.json(); if (b?.error) msg = b.error; } } catch { /* */ }
-        throw new Error(msg);
-      }
-      if (data?.error) throw new Error(data.error);
-      toast.success(`Sincronizado! ${data.upserted} pagamentos atualizados de ${data.scanned} cobranças.`);
-      // Recarrega cache local
-      const sevenMonthsAgo = new Date();
-      sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
-      sevenMonthsAgo.setDate(1);
-      const movements = await listFinancialMovements({
-        movementKind: 'receipt',
-        isActual: true,
-        scheduledFrom: toLocalDateStr(sevenMonthsAgo),
-        sort: '-scheduled_on',
-      });
-      const nextMovements = movements.map(toPaymentRecord);
-      setFinancialMovements(nextMovements);
-      patchFinancialPageCache({ financialMovements: nextMovements });
-    } catch (e) {
-      toast.error('Erro ao sincronizar: ' + (e.message || ''));
-    } finally {
-      setSyncingAsaas(false);
-    }
-  };
 
   const openDueDateEditor = (order) => {
     setDueDateForm({
@@ -922,13 +828,6 @@ export default function Financial() {
           <p className="text-sm text-muted-foreground mt-0.5">
             Vendas que ainda precisam de cobrança ou pagamento · Loja · Pré-venda · Assessoria · Eventos
           </p>
-          {(loadingRec || fetchedAt) && (
-            <p className="text-xs text-muted-foreground mt-1">
-              {loadingRec
-                ? 'Atualizando recebíveis Asaas...'
-                : `Recebíveis Asaas atualizados às ${fetchedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`}
-            </p>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <Link to="/financeiro/fluxo-caixa">
@@ -936,9 +835,8 @@ export default function Financial() {
               <Wallet className="w-3.5 h-3.5 mr-1.5" /> Ver fluxo de caixa
             </Button>
           </Link>
-          <Button variant="outline" size="sm" onClick={syncAsaasPayments} disabled={syncingAsaas}>
-            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${syncingAsaas ? 'animate-spin' : ''}`} />
-            {syncingAsaas ? 'Sincronizando...' : 'Sincronizar Asaas'}
+          <Button variant="outline" size="sm" onClick={() => setAsaasCheckOrders(activeOrders)}>
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Conferir pagamentos no Asaas
           </Button>
         </div>
       </div>
@@ -1187,9 +1085,7 @@ export default function Financial() {
             <div>
               <p className="font-semibold text-sm text-gray-900">Quer ver o que já está confirmado pra entrar?</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {receivablesTotal > 0
-                  ? `Recebíveis Asaas carregados: ${formatCurrency(receivablesTotal)}. Parcelas e histórico ficam no Fluxo de Caixa.`
-                  : 'Parcelas de cartão, recebíveis Asaas e histórico ficam agora no Fluxo de Caixa.'}
+                Parcelas de cartão e histórico ficam no Fluxo de Caixa.
               </p>
             </div>
           </div>
@@ -1293,6 +1189,16 @@ export default function Financial() {
           />
         </DialogContent>
       </Dialog>
+
+      {asaasCheckOrders && (
+        <AsaasPaymentCheckDialog
+          orders={asaasCheckOrders}
+          onClose={({ registered }) => {
+            setAsaasCheckOrders(null);
+            if (registered) load(true);
+          }}
+        />
+      )}
 
       {/* ── Modal: confirmar estorno realizado ─────────────── */}
     </div>

@@ -5,6 +5,7 @@ import { createServiceClient } from "../_shared/serviceClient.ts";
 import { handleBillingRequest } from "./billing.ts";
 import { handleAdminRecordRequest } from "./admin-records.ts";
 import { handleAdminOperationRequest } from "./admin-operations.ts";
+import { handleAsaasPaymentCheckRequest } from "./asaas-payment-check.ts";
 import { handleCatalogRequest } from "./catalog.ts";
 import { handleChargeLifecycleRequest } from "./charge-lifecycle.ts";
 import { handleChargeRequest } from "./charges.ts";
@@ -136,6 +137,13 @@ Deno.serve(async (req: Request) => {
     serviceClient,
   );
   if (financialResponse) return financialResponse;
+
+  const asaasCheckResponse = await handleAsaasPaymentCheckRequest(
+    req,
+    path,
+    serviceClient,
+  );
+  if (asaasCheckResponse) return asaasCheckResponse;
 
   const catalogResponse = await handleCatalogRequest(req, path, serviceClient);
   if (catalogResponse) return catalogResponse;
