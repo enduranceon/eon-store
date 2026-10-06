@@ -16,19 +16,27 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import { PhoneInput } from '@/components/PhoneInput';
 import {
+  changeAssessmentContractCoach,
   changeAssessmentContractPlan,
   createManualAssessmentProspect,
   loseAssessmentProspect,
   markAssessmentProspectMessageSent,
   prepareAssessmentProspectProposal,
 } from '@/api/client';
-import { AssessmentCoach, AssessmentPlan } from '@/api/entities';
+import { AssessmentCoach, AssessmentModality, AssessmentPlan } from '@/api/entities';
 import { supabase } from '@/api/db';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { formatCustomerAddress } from '@/lib/br-address';
 import { formatCurrency, formatDate, formatDateTime, maskCpf, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import { prepareManualProspect, PROSPECT_GENDERS } from '@/lib/assessment-prospect-form';
+import {
+  coachServesModality,
+  contractPlanSnapshot,
+  describeProspectProposal,
+  planProspectProposalSave,
+  proposalFormFrom,
+} from '@/lib/assessment-prospect-proposal';
 import { toast } from 'sonner';
 
 const STAGES = {
@@ -85,6 +93,8 @@ const RELATIONSHIPS = {
     description: 'Já possui outro contrato ativo; revisar como novo serviço ou troca',
   },
 };
+
+const PROSPECT_CONTRACT_COLUMNS = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, discount_reason, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_charge_id, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at';
 
 const OPEN_PROSPECT_STAGES = new Set(['new', 'proposal_ready', 'payment_link_sent']);
 const OPEN_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid']);
@@ -247,50 +257,178 @@ function CustomerData({ customer, contract }) {
   );
 }
 
-function ProposalModal({ data, onClose, onDone }) {
-  const { draft, customer, coach, modality } = data;
+async function loadProspectContract(id) {
+  const { data, error } = await supabase
+    .from('assessment_contracts')
+    .select(PROSPECT_CONTRACT_COLUMNS)
+    .eq('id', id)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+function PlanSelectItems({ plans }) {
+  return plans.map(plan => (
+    <SelectItem key={plan.id} value={plan.id} className="[&>span:last-child]:min-w-0">
+      <span className="block whitespace-normal break-words">{plan.name || `Plano ${plan.period || ''}`}</span>
+      <span className="block whitespace-normal text-xs text-muted-foreground">
+        {formatCurrency(plan.price_total)} total · {getPlanMonths(plan)} {getPlanMonths(plan) === 1 ? 'mês' : 'meses'}
+      </span>
+    </SelectItem>
+  ));
+}
+
+function ProposalModal({ data, onClose, onDone, onSaved }) {
+  const { draft, customer } = data;
   const [contract, setContract] = useState(draft);
   const [step, setStep] = useState(draft.prospect_stage === 'new' || !paymentLinkFor(draft) ? 'proposal' : 'message');
-  const [enrollmentFee, setEnrollmentFee] = useState(Number(draft.enrollment_fee || 0));
-  const [manualDiscount, setManualDiscount] = useState(Number(draft.manual_discount || 0));
-  const [paymentLink, setPaymentLink] = useState(paymentLinkFor(draft));
-  const [dueDate, setDueDate] = useState(draft.due_date || tomorrowLocal());
+  const [form, setForm] = useState(() => proposalFormFrom(draft, {
+    paymentLink: paymentLinkFor(draft),
+    defaultDueDate: tomorrowLocal(),
+  }));
+  const [options, setOptions] = useState({ plans: [], coaches: [], modalities: [] });
+  const [loadingOptions, setLoadingOptions] = useState(true);
+  const [optionsError, setOptionsError] = useState(false);
+  const [optionsAttempt, setOptionsAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const planOperation = useRef(null);
 
-  const effectiveContract = {
-    ...contract,
-    enrollment_fee: enrollmentFee,
-    manual_discount: manualDiscount,
-    external_payment_link: paymentLink,
-    due_date: dueDate,
+  useEffect(() => {
+    let active = true;
+    setLoadingOptions(true);
+    setOptionsError(false);
+    Promise.all([
+      AssessmentPlan.filter({ active: true }),
+      AssessmentCoach.filter({ active: true }, 'name'),
+      AssessmentModality.list(),
+    ]).then(([plans, coaches, modalities]) => {
+      if (active) setOptions({ plans, coaches, modalities });
+    }).catch(() => {
+      if (active) setOptionsError(true);
+    }).finally(() => { if (active) setLoadingOptions(false); });
+    return () => { active = false; };
+  }, [optionsAttempt]);
+
+  const coachById = new Map(options.coaches.map(item => [item.id, item]));
+  const modalityById = new Map(options.modalities.map(item => [item.id, item]));
+  const proposal = describeProspectProposal({ contract, form, plans: options.plans });
+  const savedCoach = coachById.get(contract.coach_id) || (contract.coach_id === draft.coach_id ? data.coach : null);
+  const savedModality = modalityById.get(contract.plan_snapshot?.modality_id) || data.modality;
+  const message = buildMessage(contract, customer, savedCoach, savedModality);
+  const isReminder = contract.prospect_stage === 'payment_link_sent' && Boolean(contract.prospect_message_sent_at);
+
+  // Plano desativado continua na lista enquanto for o plano do prospect.
+  const optionsReady = !loadingOptions && !optionsError;
+  const planChoices = contract.plan_id && !options.plans.some(plan => plan.id === contract.plan_id)
+    ? [{
+      ...contractPlanSnapshot(contract),
+      id: contract.plan_id,
+      name: `${contract.plan_snapshot?.name || 'Plano atual'}${optionsReady ? ' (desativado)' : ''}`,
+    }, ...options.plans]
+    : options.plans;
+  const coachChoices = options.coaches.filter(coach => coachServesModality(coach, proposal.modalityId));
+  if (contract.coach_id && form.coach_id === contract.coach_id && !proposal.planChanged
+    && !coachChoices.some(coach => coach.id === contract.coach_id)) {
+    coachChoices.unshift({ id: contract.coach_id, name: savedCoach?.name || 'Coach atual' });
+  }
+  const coachValue = coachChoices.some(coach => coach.id === form.coach_id) ? form.coach_id : '';
+  const installmentChoices = Array.from(
+    { length: Math.max(proposal.maxInstallments, Number(form.installments) || 1) },
+    (_, index) => index + 1,
+  );
+  const savedLink = paymentLinkFor(contract);
+  const linkMayBeStale = Boolean(savedLink) && form.payment_link.trim() === savedLink
+    && (Math.abs(proposal.total - contractTotal(contract)) > 0.009
+      || proposal.installments !== (Number(contract.installments) || 1));
+  const modalityName = modalityById.get(proposal.modalityId)?.name;
+
+  const choosePlan = planId => {
+    if (planId === contract.plan_id) {
+      const originalModalityId = options.plans.find(plan => plan.id === planId)?.modality_id
+        || contract.plan_snapshot?.modality_id;
+      setForm(current => ({
+        ...current,
+        plan_id: planId,
+        installments: Number(contract.installments) || 1,
+        enrollment_fee: String(Number(contract.enrollment_fee || 0)),
+        coach_id: coachServesModality(coachById.get(current.coach_id), originalModalityId) ? current.coach_id : contract.coach_id,
+      }));
+      return;
+    }
+    const nextPlan = options.plans.find(plan => plan.id === planId);
+    setForm(current => ({
+      ...current,
+      plan_id: planId,
+      installments: Math.min(Math.max(1, Number(current.installments) || 1), Math.max(1, Number(nextPlan?.max_installments) || 1)),
+      enrollment_fee: String(Number(nextPlan?.enrollment_fee || 0)),
+      coach_id: coachServesModality(coachById.get(current.coach_id), nextPlan?.modality_id) ? current.coach_id : '',
+    }));
   };
-  const total = contractTotal(effectiveContract);
-  const message = buildMessage(effectiveContract, customer, coach, modality);
-  const isReminder = effectiveContract.prospect_stage === 'payment_link_sent' && Boolean(effectiveContract.prospect_message_sent_at);
 
   const saveProposal = async () => {
-    if (!paymentLink.trim()) return toast.error('Cole o link de pagamento');
-    if (!dueDate) return toast.error('Informe o vencimento');
+    if (saving) return;
+    const plan = planProspectProposalSave({
+      contract,
+      form,
+      plans: options.plans,
+      coaches: options.coaches,
+      today: todayLocalStr(),
+    });
+    if (plan.error) return toast.error(plan.error);
+    const { steps, values } = plan;
+    let current = contract;
+    let savedSomething = false;
     setSaving(true);
     try {
-      const result = await prepareAssessmentProspectProposal(contract.id, {
-        enrollmentFee,
-        manualDiscount,
-        externalPaymentLink: paymentLink.trim(),
-        dueDate,
-        expectedUpdatedAt: contract.updated_at,
-      });
-      const updated = result?.contract || effectiveContract;
-      setContract(updated);
-      setPaymentLink(paymentLinkFor(updated));
-      setDueDate(updated.due_date || dueDate);
+      for (const action of steps) {
+        if (action === 'plan') {
+          const fingerprint = JSON.stringify([current.id, current.updated_at, values.planId, values.startDate,
+            values.installments, values.enrollmentFee, values.manualDiscount]);
+          if (planOperation.current?.fingerprint !== fingerprint) {
+            planOperation.current = { fingerprint, key: crypto.randomUUID() };
+          }
+          await changeAssessmentContractPlan(current.id, {
+            planId: values.planId,
+            startDate: values.startDate,
+            installments: values.installments,
+            enrollmentFee: values.enrollmentFee,
+            manualDiscount: values.manualDiscount,
+            discountReason: current.discount_reason || null,
+          }, { idempotencyKey: planOperation.current.key });
+          savedSomething = true;
+          current = { ...current, ...(await loadProspectContract(current.id)) };
+        } else if (action === 'coach') {
+          // Prospect ainda não começou: o coach novo vale desde o início do contrato.
+          const result = await changeAssessmentContractCoach(current.id, {
+            coachId: values.coachId,
+            effectiveDate: current.start_date,
+            expectedUpdatedAt: current.updated_at,
+          });
+          savedSomething = true;
+          current = { ...current, ...(result?.contract || await loadProspectContract(current.id)) };
+        } else {
+          const result = await prepareAssessmentProspectProposal(current.id, {
+            enrollmentFee: values.enrollmentFee,
+            manualDiscount: values.manualDiscount,
+            externalPaymentLink: values.paymentLink,
+            dueDate: values.dueDate,
+            expectedUpdatedAt: current.updated_at,
+          });
+          savedSomething = true;
+          current = { ...current, ...(result?.contract || await loadProspectContract(current.id)) };
+        }
+        setContract(current);
+      }
+      setForm(proposalFormFrom(current, { paymentLink: paymentLinkFor(current), defaultDueDate: values.dueDate }));
       setStep('message');
       toast.success('Proposta pronta. O contrato continua aguardando pagamento.');
     } catch (error) {
-      toast.error(error.message || 'Não foi possível preparar a proposta');
+      const reason = error.message || 'Não foi possível preparar a proposta';
+      toast.error(savedSomething ? `${reason}. O que já foi salvo continua valendo; confira e salve de novo.` : reason);
     } finally {
       setSaving(false);
+      if (savedSomething) onSaved?.();
     }
   };
 
@@ -321,6 +459,7 @@ function ProposalModal({ data, onClose, onDone }) {
   };
 
   if (step === 'proposal') {
+    const enrollmentFeeValue = Number(form.enrollment_fee) || 0;
     return (
       <>
         <DialogHeader>
@@ -328,40 +467,138 @@ function ProposalModal({ data, onClose, onDone }) {
             <CircleDollarSign className="w-5 h-5 text-amber-600" /> Preparar proposta
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 mt-2">
+        <fieldset className="space-y-4 mt-2 min-w-0" disabled={saving}>
           <CustomerData customer={customer} contract={contract} />
-          <div className="bg-gray-50 rounded-xl p-4 text-sm grid grid-cols-2 gap-x-4 gap-y-1.5">
-            <span className="text-muted-foreground">Modalidade</span>
-            <span className="font-medium">{modality?.name || '—'}</span>
-            <span className="text-muted-foreground">Plano</span>
-            <span className="font-medium">{draft.plan_snapshot?.name || 'Assessoria'}</span>
-            <span className="text-muted-foreground">Coach</span>
-            <span className="font-medium">{coach?.name || '—'}</span>
-            <span className="text-muted-foreground">Total da proposta</span>
-            <span className="font-bold text-green-700">{formatCurrency(total)}</span>
+          {optionsError && (
+            <div role="alert" className="text-sm text-red-700">
+              Não foi possível carregar os planos e coaches. Dá para salvar matrícula, desconto e link, mas não trocar plano, coach, parcelas ou início.
+              <Button variant="link" onClick={() => setOptionsAttempt(value => value + 1)}>Tentar novamente</Button>
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="sm:col-span-2 min-w-0">
+              <Label htmlFor="proposal-plan">Plano *</Label>
+              <Select value={form.plan_id} onValueChange={choosePlan} disabled={!optionsReady}>
+                <SelectTrigger id="proposal-plan" className="mt-1 h-auto min-h-9 gap-2 text-left [&>span]:min-w-0 [&>svg]:shrink-0">
+                  <SelectValue placeholder={loadingOptions ? 'Carregando planos...' : 'Selecione...'} />
+                </SelectTrigger>
+                <SelectContent className="w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-2rem)]">
+                  <PlanSelectItems plans={planChoices} />
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="proposal-coach">Coach *</Label>
+              <Select value={coachValue} onValueChange={value => setForm(current => ({ ...current, coach_id: value }))}
+                disabled={!optionsReady}>
+                <SelectTrigger id="proposal-coach" className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  {coachChoices.map(coach => <SelectItem key={coach.id} value={coach.id}>{coach.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {!coachValue && optionsReady && (
+                <p className="text-xs text-amber-700 mt-1">
+                  Escolha um coach que atenda {modalityName || 'a modalidade do plano'}.
+                </p>
+              )}
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="proposal-installments">Parcelas</Label>
+              <Select value={String(form.installments)} disabled={!optionsReady}
+                onValueChange={value => setForm(current => ({ ...current, installments: Number(value) }))}>
+                <SelectTrigger id="proposal-installments" className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {installmentChoices.map(count => (
+                    <SelectItem key={count} value={String(count)}>
+                      {count}x de {formatCurrency(proposal.total / count)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="proposal-start">Início</Label>
+              <Input id="proposal-start" className="mt-1 min-w-0" type="date" value={form.start_date} disabled={!optionsReady}
+                onChange={event => setForm(current => ({ ...current, start_date: event.target.value }))} />
+            </div>
+            <div className="min-w-0">
+              <Label>Término</Label>
+              <p className="mt-1 h-9 flex items-center text-sm text-gray-700">
+                {proposal.endDate ? formatDate(proposal.endDate) : '—'}
+                <span className="ml-1.5 text-xs text-muted-foreground">
+                  ({proposal.months} {proposal.months === 1 ? 'mês' : 'meses'})
+                </span>
+              </p>
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="proposal-enrollment-fee">Matrícula</Label>
+                {enrollmentFeeValue > 0 ? (
+                  <button type="button" className="whitespace-nowrap text-xs font-medium text-red-600 hover:underline"
+                    onClick={() => setForm(current => ({ ...current, enrollment_fee: '0' }))}>
+                    Remover
+                  </button>
+                ) : proposal.planEnrollmentFee > 0 ? (
+                  <button type="button" className="whitespace-nowrap text-xs font-medium text-blue-600 hover:underline"
+                    onClick={() => setForm(current => ({ ...current, enrollment_fee: String(proposal.planEnrollmentFee) }))}>
+                    Cobrar {formatCurrency(proposal.planEnrollmentFee)}
+                  </button>
+                ) : null}
+              </div>
+              <Input id="proposal-enrollment-fee" className="mt-1" type="number" min="0" step="0.01" inputMode="decimal"
+                value={form.enrollment_fee}
+                onChange={event => setForm(current => ({ ...current, enrollment_fee: event.target.value }))} />
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="proposal-discount">Desconto</Label>
+              <Input id="proposal-discount" className="mt-1" type="number" min="0" step="0.01" inputMode="decimal"
+                value={form.manual_discount}
+                onChange={event => setForm(current => ({ ...current, manual_discount: event.target.value }))} />
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Taxa de matrícula</Label>
-              <Input className="mt-1" type="number" min="0" step="0.01" value={enrollmentFee}
-                onChange={event => setEnrollmentFee(Math.max(0, Number(event.target.value)))} />
+          <dl className="bg-gray-50 rounded-xl p-4 text-sm space-y-1.5" aria-label="Resumo da proposta">
+            <div className="flex justify-between gap-3">
+              <dt className="text-muted-foreground">Plano</dt>
+              <dd>{formatCurrency(proposal.base)}</dd>
             </div>
-            <div>
-              <Label>Desconto manual</Label>
-              <Input className="mt-1" type="number" min="0" step="0.01" value={manualDiscount}
-                onChange={event => setManualDiscount(Math.max(0, Number(event.target.value)))} />
+            <div className="flex justify-between gap-3">
+              <dt className="text-muted-foreground">Matrícula</dt>
+              <dd>{enrollmentFeeValue > 0 ? formatCurrency(enrollmentFeeValue) : 'Sem matrícula'}</dd>
             </div>
+            {Number(form.manual_discount) > 0 && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Desconto</dt>
+                <dd>− {formatCurrency(Number(form.manual_discount))}</dd>
+              </div>
+            )}
+            <div className="flex justify-between gap-3 border-t pt-2">
+              <dt className="font-semibold">Total da proposta</dt>
+              <dd className="text-right">
+                <span className="font-bold text-green-700">{formatCurrency(proposal.total)}</span>
+                {proposal.installments > 1 && (
+                  <span className="block text-xs text-muted-foreground">
+                    {proposal.installments}x de {formatCurrency(proposal.perInstallment)}
+                  </span>
+                )}
+              </dd>
+            </div>
+          </dl>
+          <div>
+            <Label htmlFor="proposal-link">Link de pagamento *</Label>
+            <Input id="proposal-link" className="mt-1" type="url" placeholder="https://..." value={form.payment_link}
+              onChange={event => setForm(current => ({ ...current, payment_link: event.target.value }))} />
+            <p className="text-xs text-muted-foreground mt-1">Gere o link com o total acima no Asaas ou no seu meio de cobrança e cole aqui.</p>
+            {linkMayBeStale && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                O valor mudou desde que este link foi salvo ({formatCurrency(contractTotal(contract))} em {Number(contract.installments) || 1}x).
+                Se o link foi gerado com o valor antigo, gere um novo e cole aqui.
+              </p>
+            )}
           </div>
           <div>
-            <Label>Link de pagamento *</Label>
-            <Input className="mt-1" type="url" placeholder="https://..." value={paymentLink}
-              onChange={event => setPaymentLink(event.target.value)} />
-            <p className="text-xs text-muted-foreground mt-1">Cole o link HTTPS gerado no Asaas ou no seu meio de cobrança.</p>
-          </div>
-          <div>
-            <Label>Vencimento *</Label>
-            <Input className="mt-1" type="date" min={todayLocalStr()} value={dueDate}
-              onChange={event => setDueDate(event.target.value)} />
+            <Label htmlFor="proposal-due-date">Vencimento *</Label>
+            <Input id="proposal-due-date" className="mt-1" type="date" min={todayLocalStr()} value={form.due_date}
+              onChange={event => setForm(current => ({ ...current, due_date: event.target.value }))} />
           </div>
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
             Salvar a proposta não ativa o contrato. A conversão acontecerá apenas quando o pagamento for confirmado.
@@ -373,7 +610,7 @@ function ProposalModal({ data, onClose, onDone }) {
               Salvar e montar mensagem
             </Button>
           </div>
-        </div>
+        </fieldset>
       </>
     );
   }
@@ -396,7 +633,7 @@ function ProposalModal({ data, onClose, onDone }) {
             {copied ? 'Copiado!' : 'Copiar'}
           </Button>
           <Button variant="outline" size="icon" asChild>
-            <a href={paymentLinkFor(effectiveContract)} target="_blank" rel="noreferrer" title="Abrir link de pagamento">
+            <a href={paymentLinkFor(contract)} target="_blank" rel="noreferrer" title="Abrir link de pagamento">
               <ExternalLink className="w-4 h-4" />
             </a>
           </Button>
@@ -593,6 +830,20 @@ function CreateProspectModal({ onClose, onDone }) {
 
   const selectedPlan = plans.find(plan => plan.id === form.plan_id);
   const maxInstallments = Math.max(1, Number(selectedPlan?.max_installments) || 1);
+  const coachChoices = selectedPlan
+    ? coaches.filter(coach => coachServesModality(coach, selectedPlan.modality_id))
+    : coaches;
+
+  const choosePlan = planId => setForm(current => {
+    const nextPlan = plans.find(plan => plan.id === planId);
+    const coach = coaches.find(item => item.id === current.coach_id);
+    return {
+      ...current,
+      plan_id: planId,
+      installments: 1,
+      coach_id: !current.coach_id || coachServesModality(coach, nextPlan?.modality_id) ? current.coach_id : '',
+    };
+  });
 
   const save = async () => {
     if (savingRef.current || loadingOptions || optionsError) return;
@@ -670,18 +921,10 @@ function CreateProspectModal({ onClose, onDone }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="min-w-0">
             <Label htmlFor="prospect-plan">Plano *</Label>
-            <Select value={form.plan_id}
-              onValueChange={value => setForm(f => ({ ...f, plan_id: value, installments: 1 }))}>
+            <Select value={form.plan_id} onValueChange={choosePlan}>
               <SelectTrigger id="prospect-plan" className="mt-1 h-auto min-h-9 gap-2 text-left [&>span]:min-w-0 [&>svg]:shrink-0"><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent className="w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-2rem)]">
-                {plans.map(plan => (
-                  <SelectItem key={plan.id} value={plan.id} className="[&>span:last-child]:min-w-0">
-                    <span className="block whitespace-normal break-words">{plan.name || `Plano ${plan.period || ''}`}</span>
-                    <span className="block whitespace-normal text-xs text-muted-foreground">
-                      {formatCurrency(plan.price_total)} total · {getPlanMonths(plan)} {getPlanMonths(plan) === 1 ? 'mês' : 'meses'}
-                    </span>
-                  </SelectItem>
-                ))}
+                <PlanSelectItems plans={plans} />
               </SelectContent>
             </Select>
             {Number(selectedPlan?.enrollment_fee) > 0 && (
@@ -702,7 +945,7 @@ function CreateProspectModal({ onClose, onDone }) {
             <Select value={form.coach_id} onValueChange={value => setForm(f => ({ ...f, coach_id: value }))}>
               <SelectTrigger id="prospect-coach" className="mt-1"><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent>
-                {coaches.map(coach => <SelectItem key={coach.id} value={coach.id}>{coach.name}</SelectItem>)}
+                {coachChoices.map(coach => <SelectItem key={coach.id} value={coach.id}>{coach.name}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -1092,7 +1335,7 @@ export default function Prospects() {
     try {
       const contractsResult = await supabase
         .from('assessment_contracts')
-        .select('id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at')
+        .select(PROSPECT_CONTRACT_COLUMNS)
         .not('prospect_stage', 'is', null)
         .is('parent_contract_id', null)
         .order('created_at', { ascending: false });
@@ -1340,7 +1583,7 @@ export default function Prospects() {
 
       <Dialog open={Boolean(proposal)} onOpenChange={open => { if (!open) setProposal(null); }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
-          {proposal && <ProposalModal data={proposal} onClose={() => setProposal(null)} onDone={finishModal} />}
+          {proposal && <ProposalModal data={proposal} onClose={() => setProposal(null)} onDone={finishModal} onSaved={load} />}
         </DialogContent>
       </Dialog>
       <Dialog open={Boolean(payment)} onOpenChange={open => { if (!open) setPayment(null); }}>
