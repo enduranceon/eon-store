@@ -190,7 +190,20 @@ backend relê cada venda, ignora as já pagas ou encerradas e as que têm cobran
 da integração automática, e só consulta links de fatura
 `https://www.asaas.com/i/<código>`, que correspondem à cobrança `pay_<código>`.
 Para cada venda devolve status, forma, valor e datas da cobrança e, num
-parcelamento, de cada parcela. Dados do cliente no Asaas não saem da rota.
+parcelamento, de cada parcela, incluindo a data de crédito (`creditDate` ou a
+previsão `estimatedCreditDate`). Dados do cliente no Asaas não saem da rota.
+O painel registra cada parcela com o valor e a data de crédito do Asaas; a
+última absorve os centavos para a soma bater com o total da venda. Sem data ou
+valor em alguma parcela, o registro usa a projeção do método de pagamento.
+
+Em cobranças pagas, a rota também compara o CPF do cliente da fatura no Asaas
+com o CPF do cliente da venda e devolve só `customer_check` (`match`,
+`mismatch`, `unknown`; `skipped` nas que não foram pagas). Os CPFs não saem do
+servidor. O painel só deixa registrar com `match`.
+
+Antes de gravar, o painel chama a rota de novo só para as vendas escolhidas e
+registra apenas as que continuam iguais (forma, data, total e parcelas) ao que
+foi mostrado; o administrador confirma num resumo com cada parcela.
 
 Sem `ASAAS_API_KEY` e `ASAAS_BASE_URL` a rota responde
 `503 asaas_not_configured`, sem consultar nada. Com chave (`$aact_hmlg_`) ou

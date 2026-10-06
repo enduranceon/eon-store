@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   asaasCheckCandidates,
+  asaasCreditSchedule,
   classifyAsaasCheck,
   methodForAsaasPayment,
+  reconfirmAsaasItems,
   registerAsaasPayments,
   summarizeAsaasCheck,
 } from './asaas-payment-check.js';
@@ -38,9 +40,11 @@ const fact = (overrides = {}) => ({
   client_payment_date: '2026-10-04',
   confirmed_date: '2026-10-04',
   payment_date: '2026-10-04',
+  credit_date: '2026-10-04',
+  estimated_credit_date: '2026-10-04',
   ...overrides,
 });
-const checked = (payment, installments = null) => ({ type: 'contract', id: 'order-1', result: 'checked', payment, installments });
+const checked = (payment, installments = null, customerCheck = 'match') => ({ type: 'contract', id: 'order-1', result: 'checked', payment, installments, customer_check: customerCheck });
 const cardParcels = (statuses = ['CONFIRMED', 'CONFIRMED', 'CONFIRMED'], overrides = {}) => statuses.map((status, index) => fact({
   status,
   billing_type: 'CREDIT_CARD',
@@ -49,6 +53,8 @@ const cardParcels = (statuses = ['CONFIRMED', 'CONFIRMED', 'CONFIRMED'], overrid
   client_payment_date: null,
   confirmed_date: '2026-10-03',
   payment_date: null,
+  credit_date: null,
+  estimated_credit_date: ['2026-11-05', '2026-12-07', '2027-01-05', '2027-02-05', '2027-03-05', '2027-04-05', '2027-05-05'][index],
   ...overrides,
 }));
 
@@ -91,6 +97,27 @@ test('a card paid in 3 installments is ready as "Cartão 3x"', () => {
   assert.equal(item.method.id, 'm-card3');
   assert.equal(item.installments, 3);
   assert.equal(item.paymentDate, '2026-10-03', 'falls back to the confirmation date');
+  assert.deepEqual(item.schedule, [
+    { number: 1, date: '2026-11-05', value: 200 },
+    { number: 2, date: '2026-12-07', value: 200 },
+    { number: 3, date: '2027-01-05', value: 200 },
+  ], 'value and credit date of each Asaas installment');
+});
+
+test('a single payment enters on the Asaas credit date', () => {
+  const pix = classifyAsaasCheck(order(), checked(fact({ credit_date: null, estimated_credit_date: '2026-10-05' })), methods, TODAY);
+  assert.deepEqual(pix.schedule, [{ number: 1, date: '2026-10-05', value: 600 }]);
+});
+
+test('the last installment absorbs the cents so the sum matches the sale', () => {
+  const schedule = asaasCreditSchedule([
+    fact({ value: 124.19, credit_date: '2026-11-07' }),
+    fact({ value: 124.19, credit_date: '2026-12-07' }),
+    fact({ value: 124.18, credit_date: '2027-01-07' }),
+  ], 372.55);
+  assert.deepEqual(schedule.map(row => row.value), [124.19, 124.19, 124.17]);
+  assert.equal(asaasCreditSchedule([fact({ credit_date: null, estimated_credit_date: null })], 600), null, 'no date: system projection');
+  assert.equal(asaasCreditSchedule([fact({ value: 0 })], 600), null, 'no value: system projection');
 });
 
 test('installment rounding cents do not block a card payment', () => {
@@ -146,6 +173,33 @@ test('anything that is not a clean full payment goes to review', () => {
   assert.match(missingMethod.reason, /Cartão 5x/);
 });
 
+test('the invoice must belong to the same CPF as the sale', () => {
+  const other = classifyAsaasCheck(order(), checked(fact(), null, 'mismatch'), methods, TODAY);
+  assert.equal(other.kind, 'review');
+  assert.match(other.reason, /outra pessoa \(CPF diferente\)/);
+  const unknown = classifyAsaasCheck(order(), checked(fact(), null, 'unknown'), methods, TODAY);
+  assert.equal(unknown.kind, 'review');
+  assert.match(unknown.reason, /Não deu para conferir o CPF/);
+  const open = classifyAsaasCheck(order(), checked(fact({ status: 'PENDING' }), null, 'skipped'), methods, TODAY);
+  assert.equal(open.kind, 'open', 'an open charge is not blocked by the CPF check');
+});
+
+test('second check before saving keeps only what did not change in Asaas', () => {
+  const orders = [order({ id: 'same' }), order({ id: 'refunded' }), order({ id: 'new-date' })];
+  const first = summarizeAsaasCheck(orders, orders.map(item => ({ ...checked(fact()), id: item.id })), methods, TODAY);
+  assert.equal(first.ready.length, 3);
+  const later = summarizeAsaasCheck(orders, [
+    { ...checked(fact()), id: 'same' },
+    { ...checked(fact({ status: 'REFUNDED' })), id: 'refunded' },
+    { ...checked(fact({ estimated_credit_date: '2026-10-08', credit_date: null })), id: 'new-date' },
+  ], methods, TODAY);
+  const { confirmed, changed } = reconfirmAsaasItems(first.ready, later);
+  assert.deepEqual(confirmed.map(item => item.order.id), ['same']);
+  assert.deepEqual(changed.map(entry => entry.item.order.id), ['refunded', 'new-date']);
+  assert.match(changed[0].reason, /Estornada no Asaas/);
+  assert.match(changed[1].reason, /mudaram no Asaas/);
+});
+
 test('a sale already closed in the system is skipped', () => {
   const item = classifyAsaasCheck(order(), { result: 'closed', local_status: 'paid' }, methods, TODAY);
   assert.equal(item.kind, 'skip');
@@ -154,7 +208,7 @@ test('a sale already closed in the system is skipped', () => {
 test('summary groups every checked sale', () => {
   const orders = [order({ id: 'a' }), order({ id: 'b' }), order({ id: 'c' })];
   const results = [
-    { type: 'contract', id: 'a', result: 'checked', payment: fact(), installments: null },
+    { type: 'contract', id: 'a', result: 'checked', payment: fact(), installments: null, customer_check: 'match' },
     { type: 'contract', id: 'b', result: 'checked', payment: fact({ status: 'PENDING' }), installments: null },
   ];
   const groups = summarizeAsaasCheck(orders, results, methods, TODAY);

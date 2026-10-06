@@ -24,6 +24,7 @@ const TABLE_ROWS: Record<string, Record<string, unknown>[]> = {
       payment_status: "charge_sent",
       external_payment_link: "https://www.asaas.com/i/pixpago0000000001",
       asaas_charge_id: null,
+      customer_id: "cust-pix",
     },
     {
       id: CONTRACT_MISSING_IN_ASAAS,
@@ -37,6 +38,7 @@ const TABLE_ROWS: Record<string, Record<string, unknown>[]> = {
     payment_status: "charge_sent",
     external_payment_link: " https://www.asaas.com/i/cartao3x00000001/ ",
     asaas_charge_id: null,
+    customer_id: "cust-card",
   }],
   stock_orders: [{
     id: STOCK_CLOSED,
@@ -44,6 +46,10 @@ const TABLE_ROWS: Record<string, Record<string, unknown>[]> = {
     external_payment_link: "https://www.asaas.com/i/japago0000000001",
     asaas_charge_id: null,
   }],
+  presale_customers: [
+    { id: "cust-pix", cpf: "123.456.789-01" },
+    { id: "cust-card", cpf: "987.654.321-00" },
+  ],
   event_registrations: [{
     id: EVENT_OTHER_LINK,
     payment_status: "charge_sent",
@@ -90,6 +96,8 @@ function asaasPayment(overrides: Record<string, unknown> = {}) {
     clientPaymentDate: "2026-10-04",
     paymentDate: "2026-10-04",
     confirmedDate: "2026-10-04",
+    creditDate: "2026-10-04",
+    estimatedCreditDate: "2026-10-04",
     deleted: false,
     ...overrides,
   };
@@ -103,6 +111,16 @@ function json(body: unknown, status = 200): Response {
 }
 
 type FetchCall = { url: URL; method: string };
+
+const ASAAS_CUSTOMERS: Record<string, string> = {
+  "/v3/customers/cus_cliente_ficticio": "12345678901",
+  "/v3/customers/cus_outra_pessoa": "11122233344",
+};
+
+function asaasCustomer(url: URL): Response | null {
+  const cpf = ASAAS_CUSTOMERS[url.pathname];
+  return cpf ? json({ id: url.pathname.split("/").pop(), cpfCnpj: cpf }) : null;
+}
 
 async function withAsaas(
   respond: (url: URL) => Response,
@@ -268,6 +286,7 @@ Deno.test("checks open charges in Asaas with read-only calls", async () => {
     }
     if (url.pathname === "/v3/payments/pay_cartao3x00000001") {
       return json(asaasPayment({
+        customer: "cus_outra_pessoa",
         billingType: "CREDIT_CARD",
         status: "CONFIRMED",
         value: 200,
@@ -288,6 +307,10 @@ Deno.test("checks open charges in Asaas with read-only calls", async () => {
             installmentNumber: number,
             dueDate: `2026-1${number - 1}-04`,
             paymentDate: null,
+            creditDate: null,
+            estimatedCreditDate: ["2026-11-05", "2026-12-07", "2027-01-05"][
+              number - 1
+            ],
           })
         ),
       });
@@ -295,7 +318,8 @@ Deno.test("checks open charges in Asaas with read-only calls", async () => {
     if (url.pathname === "/v3/payments/pay_sumiu00000000001") {
       return json({ errors: [{ description: "Não encontrado" }] }, 404);
     }
-    return json({ errors: [{ description: "rota inesperada" }] }, 500);
+    return asaasCustomer(url) ??
+      json({ errors: [{ description: "rota inesperada" }] }, 500);
   };
 
   await withAsaas(respond, async (calls) => {
@@ -332,6 +356,14 @@ Deno.test("checks open charges in Asaas with read-only calls", async () => {
       "pix date",
     );
     assert(byId[CONTRACT_PAID].installments === null, "single payment");
+    assert(
+      byId[CONTRACT_PAID].customer_check === "match",
+      "same CPF in Asaas and in the sale",
+    );
+    assert(
+      !text.includes("12345678901") && !text.includes("11122233344"),
+      "CPFs never leave the server",
+    );
 
     const card = byId[PRESALE_CARD];
     assert(card.result === "checked", "card checked");
@@ -341,6 +373,18 @@ Deno.test("checks open charges in Asaas with read-only calls", async () => {
         item.installment_number
       ).join() === "1,2,3",
       "installments in order",
+    );
+    assert(
+      card.installments.map((item: { estimated_credit_date: string }) =>
+        item.estimated_credit_date
+      ).join() === "2026-11-05,2026-12-07,2027-01-05",
+      "Asaas credit forecast per installment",
+    );
+    assert(card.installments[0].credit_date === null, "not credited yet");
+    assert(card.customer_check === "mismatch", "invoice of another person");
+    assert(
+      byId[CONTRACT_PAID].payment.credit_date === "2026-10-04",
+      "pix credit date",
     );
 
     assert(byId[STOCK_CLOSED].result === "closed", "already paid here");
@@ -358,6 +402,8 @@ Deno.test("checks open charges in Asaas with read-only calls", async () => {
     assert(
       calls.map((call) => call.url.pathname).sort().join() ===
         [
+          "/v3/customers/cus_cliente_ficticio",
+          "/v3/customers/cus_outra_pessoa",
           "/v3/installments/ins_cartao3x/payments",
           "/v3/payments/pay_cartao3x00000001",
           "/v3/payments/pay_pixpago0000000001",
@@ -366,11 +412,62 @@ Deno.test("checks open charges in Asaas with read-only calls", async () => {
       `unexpected calls ${calls.map((call) => call.url.pathname)}`,
     );
     assert(
-      queries.every((query) =>
+      queries.filter((query) => query.table !== "presale_customers").every((
+        query,
+      ) =>
         query.columns ===
-          "id, payment_status, external_payment_link, asaas_charge_id"
+          "id, payment_status, external_payment_link, asaas_charge_id, customer_id"
       ),
       "reads only the charge columns",
+    );
+    assert(
+      queries.some((query) =>
+        query.table === "presale_customers" && query.columns === "id, cpf"
+      ),
+      "reads the customers' CPF to compare",
+    );
+  });
+});
+
+Deno.test("the CPF is compared only for paid charges", async () => {
+  const respond = (url: URL) => {
+    if (url.pathname === "/v3/payments/pay_pixpago0000000001") {
+      return json(asaasPayment({ status: "PENDING", clientPaymentDate: null }));
+    }
+    return asaasCustomer(url) ??
+      json({ errors: [{ description: "rota inesperada" }] }, 500);
+  };
+  await withAsaas(respond, async (calls) => {
+    const { client } = fakeDatabase();
+    const response = await handleAsaasPaymentCheckRequest(
+      checkRequest([{ type: "contract", id: CONTRACT_PAID }]),
+      "/asaas/payment-check",
+      client,
+    );
+    const { data } = await response!.json();
+    assert(data.results[0].customer_check === "skipped", "open: not compared");
+    assert(
+      calls.every((call) => !call.url.pathname.startsWith("/v3/customers/")),
+      "no customer lookup for an open charge",
+    );
+  });
+
+  const paidWithoutLocalCpf = (url: URL) =>
+    url.pathname === "/v3/payments/pay_sumiu00000000001"
+      ? json(asaasPayment())
+      : asaasCustomer(url) ??
+        json({ errors: [{ description: "rota inesperada" }] }, 500);
+  await withAsaas(paidWithoutLocalCpf, async () => {
+    const { client } = fakeDatabase();
+    const response = await handleAsaasPaymentCheckRequest(
+      checkRequest([{ type: "contract", id: CONTRACT_MISSING_IN_ASAAS }]),
+      "/asaas/payment-check",
+      client,
+    );
+    const { data } = await response!.json();
+    assert(
+      data.results[0].customer_check === "unknown",
+      "sale without CPF cannot be compared",
     );
   });
 });
@@ -379,7 +476,8 @@ Deno.test("one failing charge does not hide the others", async () => {
   const respond = (url: URL) =>
     url.pathname === "/v3/payments/pay_pixpago0000000001"
       ? json(asaasPayment())
-      : json({ errors: [{ description: "Instabilidade" }] }, 500);
+      : asaasCustomer(url) ??
+        json({ errors: [{ description: "Instabilidade" }] }, 500);
   await withAsaas(respond, async () => {
     const { client } = fakeDatabase();
     const response = await handleAsaasPaymentCheckRequest(
