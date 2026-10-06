@@ -12,6 +12,7 @@ export default function CommunicationSendDialog({
   onSent,
   onManualPay,
   sourceUi,
+  preventOutsideClose = false,
 }) {
   if (!task && !caseId && !communicationCase) return null;
 
@@ -26,6 +27,7 @@ export default function CommunicationSendDialog({
       onChanged={onChanged}
       onSent={onSent}
       onManualPay={onManualPay}
+      preventOutsideClose={preventOutsideClose}
     />
   );
 }
