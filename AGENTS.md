@@ -14,6 +14,12 @@ Este arquivo guarda apenas referencias operacionais do projeto. Nao colocar toke
 
 Quando houver outros projetos Supabase visiveis, usar `bsiljrrodgtmtdilnuxr` para este software, salvo instrucao explicita do usuario.
 
+## Sistema irmao: EON Hub
+
+- GitHub: `enduranceon/eon-hub` (operacao: treinos, Strava/Intervals, portal do atleta).
+- Supabase do Hub: `qsaowltbnefzpbphhwmr` (us-east-1). Nao e o banco desta aplicacao; ali, so leitura, salvo pedido explicito do usuario.
+- Os alunos ainda sao cadastrados a mao nos dois sistemas. Diagnostico, desenho recomendado e decisoes pendentes da integracao: `docs/eon-hub-integration.md`. Nada implementado ate 2026-10-06.
+
 ## Operacao financeira atual
 
 - Confirmado pelo usuario em 2026-09-12: a operacao usa cadastro de cobranca externa e registro de pagamento externo/manual.
