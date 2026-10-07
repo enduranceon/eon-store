@@ -27,7 +27,7 @@ VALUES
 INSERT INTO public.presale_customers(id,full_name,whatsapp)
 SELECT ('c3000000-0000-4000-a000-0000000000'||lpad(n::text,2,'0'))::uuid,
   'Pessoa fictícia '||n,'119999800'||lpad(n::text,2,'0')
-FROM generate_series(1,16) n;
+FROM generate_series(1,19) n;
 
 CREATE FUNCTION pg_temp.customer(p_n integer) RETURNS uuid LANGUAGE sql AS $$
   SELECT ('c3000000-0000-4000-a000-0000000000'||lpad(p_n::text,2,'0'))::uuid;
@@ -134,6 +134,26 @@ SELECT pg_temp.add_contract(25,14,'scheduled',current_date+20,current_date+50,
 UPDATE public.assessment_contracts SET payment_date=current_date-1
 WHERE id=pg_temp.contract_id(25);
 SELECT ok(pg_temp.eligible(25),'recent payment for a future start is a new student');
+SELECT pg_temp.add_contract(32,17,'active',current_date-45,current_date+15,
+  now()-interval '45 days','new_customer');
+SELECT ok(NOT pg_temp.eligible(32),'without a welcome, a payment older than 30 days is out');
+INSERT INTO public.assessment_contract_event(contract_id,event_type,payload,created_at)
+VALUES(pg_temp.contract_id(32),'onboarding_welcome_sent','{"source":"communication_case"}',
+  now()-interval '25 days');
+SELECT ok(pg_temp.eligible(32),'after the welcome, the next steps follow for 30 days from it');
+SELECT pg_temp.add_contract(33,18,'active',current_date-50,current_date+10,
+  now()-interval '50 days','new_customer');
+INSERT INTO public.assessment_contract_event(contract_id,event_type,payload,created_at)
+VALUES(pg_temp.contract_id(33),'onboarding_welcome_sent','{"source":"communication_case"}',
+  now()-interval '35 days');
+SELECT ok(NOT pg_temp.eligible(33),'a welcome older than 30 days closes onboarding');
+SELECT pg_temp.add_contract(34,19,'active',current_date-12,current_date+18,
+  now()-interval '12 days','new_customer');
+SELECT ok(pg_temp.eligible(34),'a recent first membership is eligible');
+INSERT INTO public.assessment_contract_event(contract_id,event_type,payload,created_at)
+VALUES(pg_temp.contract_id(34),'onboarding_welcome_sent','{"source":"communication_center"}',now()-interval '12 days'),
+      (pg_temp.contract_id(34),'onboarding_checkin_sent','{"source":"communication_center"}',now()-interval '7 days');
+SELECT ok(NOT pg_temp.eligible(34),'a check-in from the previous panel completed that onboarding');
 
 -- Simulate a legacy direct contract whose INSERT predates case triggers.
 ALTER TABLE public.assessment_contracts DISABLE TRIGGER communication_contract_source;
@@ -213,10 +233,20 @@ SELECT is((SELECT count(*) FROM public.assessment_contract_event
   WHERE contract_id=pg_temp.contract_id(1) AND event_type='onboarding_welcome_sent'),
   1::bigint,'same-contract edits preserve one welcome event');
 INSERT INTO public.assessment_contract_event(contract_id,event_type,payload)
-VALUES(pg_temp.contract_id(1),'onboarding_checkin_sent','{"source":"fictional_test"}');
-SELECT ok(NOT pg_temp.eligible(1),'completed check-in cannot restart onboarding');
-SELECT is(pg_temp.case_count(1),0::bigint,
-  'completed check-in resolves the original case without a replacement');
+VALUES(pg_temp.contract_id(1),'onboarding_checkin_sent','{"source":"communication_case"}');
+SELECT ok(pg_temp.eligible(1),'the check-in keeps onboarding open for the day-20 feedback');
+SELECT is(pg_temp.case_count(1),1::bigint,'the check-in keeps the same case open');
+SELECT is((SELECT eon_private.communication_case_suggestion(c,
+    eon_private.communication_source_context('contract',pg_temp.contract_id(1)))->>'action_code'
+  FROM public.communication_cases c WHERE c.source_id=pg_temp.contract_id(1)
+    AND c.purpose='onboarding' AND c.status='open'),
+  'onboarding_feedback','after the check-in the case moves to the day-20 feedback');
+INSERT INTO public.assessment_contract_event(contract_id,event_type,payload)
+VALUES(pg_temp.contract_id(1),'onboarding_feedback_sent','{"source":"fictional_test"}');
+SELECT ok(NOT pg_temp.eligible(1),'the sent feedback completes onboarding');
+SELECT ok(eon_private.ensure_communication_case('contract',pg_temp.contract_id(1),'onboarding')
+  IS NULL,'re-evaluation after the feedback keeps the contract out');
+SELECT is(pg_temp.case_count(1),0::bigint,'completed onboarding has no open case');
 
 SELECT * FROM finish();
 ROLLBACK;
