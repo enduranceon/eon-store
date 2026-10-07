@@ -5,7 +5,9 @@ SET LOCAL timezone='America/Sao_Paulo';
 SELECT no_plan();
 
 -- Fictional contracts exercise historical membership, not just today's
--- status. end_date is exclusive; cancellation_date counts as an active day.
+-- status. Onboarding is only for a first membership paid in the last 30 days:
+-- any earlier membership, by contract dates and not by registration time,
+-- keeps a contract out.
 INSERT INTO public.assessment_modalities(id,name)
 VALUES('c1000000-0000-4000-a000-000000000001','onboarding-eligibility-test');
 INSERT INTO public.assessment_plans
@@ -24,7 +26,7 @@ VALUES
 INSERT INTO public.presale_customers(id,full_name,whatsapp)
 SELECT ('c3000000-0000-4000-a000-0000000000'||lpad(n::text,2,'0'))::uuid,
   'Pessoa fictícia '||n,'119999800'||lpad(n::text,2,'0')
-FROM generate_series(1,11) n;
+FROM generate_series(1,14) n;
 
 CREATE FUNCTION pg_temp.customer(p_n integer) RETURNS uuid LANGUAGE sql AS $$
   SELECT ('c3000000-0000-4000-a000-0000000000'||lpad(p_n::text,2,'0'))::uuid;
@@ -66,7 +68,7 @@ CREATE FUNCTION pg_temp.case_count(p_n integer) RETURNS bigint LANGUAGE sql AS $
     AND purpose='onboarding' AND status='open';
 $$;
 
-SELECT pg_temp.add_contract(1,1,'active',current_date-30,current_date+30,now()-interval '30 days',
+SELECT pg_temp.add_contract(1,1,'active',current_date-20,current_date+10,now()-interval '20 days',
   'new_customer');
 SELECT ok(pg_temp.eligible(1),'first paid membership is eligible');
 SELECT is(pg_temp.case_count(1),1::bigint,'first membership gets one open onboarding case');
@@ -86,8 +88,8 @@ SELECT pg_temp.add_contract(4,2,'finished',current_date-60,current_date-10,
   now()-interval '60 days');
 SELECT pg_temp.add_contract(5,2,'active',current_date-8,current_date+22,
   now()-interval '8 days','former_student',pg_temp.contract_id(4));
-SELECT ok(pg_temp.eligible(5),'former student returning after complete gap is eligible');
-SELECT is(pg_temp.case_count(5),1::bigint,'return after gap gets a case');
+SELECT ok(NOT pg_temp.eligible(5),'former student returning after a gap is not a new student');
+SELECT is(pg_temp.case_count(5),0::bigint,'return after gap gets no onboarding case');
 
 SELECT pg_temp.add_contract(6,3,'finished',current_date-60,current_date-10,
   now()-interval '60 days');
@@ -107,22 +109,37 @@ SELECT pg_temp.add_contract(10,5,'cancelled',current_date-60,current_date+10,
   now()-interval '60 days',NULL,NULL,NULL,current_date-10);
 SELECT pg_temp.add_contract(11,5,'active',current_date-8,current_date+20,
   now()-interval '8 days','former_student',pg_temp.contract_id(10));
-SELECT ok(pg_temp.eligible(11),'paid cancelled membership with full day gap allows return');
+SELECT ok(NOT pg_temp.eligible(11),'paid cancelled membership keeps a later return out');
 
-SELECT pg_temp.add_contract(12,6,'cancelled',current_date-60,current_date+10,
-  now()-interval '60 days',NULL,NULL,NULL,current_date-9);
-SELECT pg_temp.add_contract(13,6,'active',current_date-8,current_date+20,
-  now()-interval '8 days','former_student',pg_temp.contract_id(12));
-SELECT ok(NOT pg_temp.eligible(13),'entry day after cancellation has no complete gap');
+SELECT pg_temp.add_contract(12,6,'active',current_date-10,current_date+20,
+  now()-interval '10 days');
+SELECT is(pg_temp.case_count(12),1::bigint,'contract without known history opens a welcome');
+SELECT pg_temp.add_contract(13,6,'finished',current_date-100,current_date-10,now());
+SELECT ok(NOT pg_temp.eligible(12),
+  'history registered after the current contract still marks a continuing student');
+SELECT ok(eon_private.ensure_communication_case('contract',pg_temp.contract_id(12),'onboarding')
+  IS NULL,'re-evaluating the contract keeps it out of onboarding');
+SELECT is(pg_temp.case_count(12),0::bigint,'re-evaluation resolves the open welcome');
+SELECT is((SELECT resolution_reason FROM public.communication_cases
+  WHERE source_id=pg_temp.contract_id(12) AND purpose='onboarding'),
+  'source_resolved','the welcome is resolved as no longer applicable');
 
-SELECT pg_temp.add_contract(14,7,'finished',current_date-60,current_date-10,
-  now()-interval '60 days');
+SELECT pg_temp.add_contract(24,13,'active',current_date-45,current_date+15,
+  now()-interval '45 days','new_customer');
+SELECT ok(NOT pg_temp.eligible(24),'first membership paid more than 30 days ago is out');
+SELECT is(pg_temp.case_count(24),0::bigint,'stale first membership gets no welcome');
+SELECT pg_temp.add_contract(25,14,'scheduled',current_date+20,current_date+50,
+  now()-interval '1 day','new_customer');
+UPDATE public.assessment_contracts SET payment_date=current_date-1
+WHERE id=pg_temp.contract_id(25);
+SELECT ok(pg_temp.eligible(25),'recent payment for a future start is a new student');
+
 -- Simulate a legacy direct contract whose INSERT predates case triggers.
 ALTER TABLE public.assessment_contracts DISABLE TRIGGER communication_contract_source;
 SELECT pg_temp.add_contract(15,7,'active',current_date-8,current_date+20,
   now()-interval '8 days');
 ALTER TABLE public.assessment_contracts ENABLE TRIGGER communication_contract_source;
-SELECT ok(pg_temp.eligible(15),'legacy direct root contract infers a real return');
+SELECT ok(pg_temp.eligible(15),'legacy direct first membership is eligible');
 SELECT ok((public.preview_communication_case_sync('contract',50)->'sample') @>
   jsonb_build_array(jsonb_build_object('source_type','contract',
     'source_id',pg_temp.contract_id(15),'purpose','onboarding','obligation_key','welcome')),
@@ -142,7 +159,7 @@ SELECT ok(pg_temp.eligible(17),'a different customer remains an independent firs
 SELECT pg_temp.add_contract(18,9,'active',current_date-3,current_date+27,
   now()-interval '5 days');
 SELECT ok(NOT pg_temp.eligible(18),
-  'canonical contract numbers order additional contracts in the same transaction');
+  'a later contract of the same customer is not a first membership');
 SELECT ok(pg_temp.eligible(17),
   'same-timestamp later contract cannot turn the first membership into a return');
 
@@ -150,14 +167,14 @@ SELECT pg_temp.add_contract(19,10,'overdue',current_date-60,current_date-10,
   now()-interval '60 days');
 SELECT pg_temp.add_contract(20,10,'active',current_date-8,current_date+22,
   now()-interval '8 days','former_student',pg_temp.contract_id(19));
-SELECT ok(pg_temp.eligible(20),
-  'past exclusive end allows return even when older contract still says overdue');
+SELECT ok(NOT pg_temp.eligible(20),
+  'any earlier membership keeps a return out, even with a stale overdue status');
 SELECT pg_temp.add_contract(21,11,'active',current_date-60,current_date-10,
   now()-interval '60 days');
 SELECT pg_temp.add_contract(22,11,'active',current_date-8,current_date+22,
   now()-interval '8 days');
-SELECT ok(pg_temp.eligible(22),
-  'past exclusive end allows return despite stale active status on older contract');
+SELECT ok(NOT pg_temp.eligible(22),
+  'any earlier membership keeps a return out, even with a stale active status');
 
 INSERT INTO public.assessment_contract_event(contract_id,event_type,payload)
 VALUES(pg_temp.contract_id(1),'onboarding_welcome_sent','{"source":"fictional_test"}');

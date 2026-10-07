@@ -29,6 +29,11 @@ Quando houver outros projetos Supabase visiveis, usar `bsiljrrodgtmtdilnuxr` par
 - A tabela `asaas_payments` tambem guarda lancamentos manuais (`source = 'manual'`). Seu nome nao significa que a API Asaas esta em uso; preservar esses lancamentos e suas regras financeiras.
 - Uma previa de frontend pode apontar para o Supabase de producao. Conferir o backend antes de testar qualquer acao que escreva dados; uma URL de preview nao isola o banco.
 
+## Comunicacao com alunos
+
+- Regras e fluxogramas das conversas da Central de Comunicacao (onboarding primeiro; cobranca, renovacao e proposta a seguir): `docs/fluxos-de-mensagens.md`.
+- Onboarding e so para a primeira adesao paga nos ultimos 30 dias. Quem ja teve contrato (renovacao, retorno, historico importado ou migrado) fica de fora.
+
 ## Preflight antes de mudancas relevantes
 
 1. Conferir branch, remotes e estado local:
