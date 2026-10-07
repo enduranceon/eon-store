@@ -32,7 +32,7 @@ Quando houver outros projetos Supabase visiveis, usar `bsiljrrodgtmtdilnuxr` par
 ## Comunicacao com alunos
 
 - Regras e fluxogramas das conversas da Central de Comunicacao (onboarding primeiro; cobranca, renovacao e proposta a seguir): `docs/fluxos-de-mensagens.md`.
-- Onboarding e so para a primeira adesao paga nos ultimos 30 dias. Quem ja teve contrato (renovacao, retorno, historico importado ou migrado) fica de fora.
+- Onboarding vale para a primeira adesao e para o ex-aluno que volta depois de mais de 30 dias sem contrato, com pagamento nos ultimos 30 dias. Renovacao (inclusive atrasada ate 30 dias), historico importado e aluno migrado que so continuou ficam de fora.
 
 ## Preflight antes de mudancas relevantes
 
