@@ -49,9 +49,11 @@ Todos os caminhos abaixo são relativos a `/functions/v1/api-v1`.
 - Revisar mensagem e destinatário; abrir/copiar WhatsApp não registra envio.
   Confirmar envio apenas após realizar o contato manualmente.
 - Registrar uma data combinada e verificar que ela vale em todos os acessos.
-- Onboarding atende primeira adesão e retorno com uma pausa real no histórico.
-  Renovação e plano adicional de aluno ativo ficam de fora. Alterar plano ou
-  treinador no mesmo contrato preserva o progresso do onboarding.
+- Onboarding atende só a primeira adesão, paga nos últimos 30 dias. Quem já teve
+  qualquer contrato (renovação, retorno, plano adicional, histórico importado ou
+  migrado) fica de fora; a ordem vem das datas dos contratos, não da data de
+  cadastro. Alterar plano ou treinador no mesmo contrato preserva o progresso do
+  onboarding. Fluxo completo em `docs/fluxos-de-mensagens.md`.
 - Informar “já paguei”: exige conferência. Registrar o pagamento na operação
   financeira encerra a cobrança. “Concluir revisão” exige nota e não quita dívida.
 - Conferir D+3, D+5, D+7 e retorno diário a partir de D+8. O aviso D−1/D0 inicia
