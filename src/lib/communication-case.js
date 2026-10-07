@@ -32,3 +32,32 @@ export function communicationBlockReasonLabel(reason) {
 export function canCompleteCommunicationReview(reason) {
   return ['review_requested', 'payment_review', 'dispute', 'needs_agent', 'renewal_review', 'source_reopened_review'].includes(reason);
 }
+
+// O envio é manual: o painel só impede registrar o que o servidor recusaria.
+// No onboarding, telefone ausente ou um passo antes da data não travam; só
+// impedem etapa já concluída, contrato fora do onboarding ou modelo ausente.
+export function communicationSendState({
+  purpose,
+  caseBlock = null,
+  suggestionBlock = null,
+  hasPhone = false,
+  isFuture = false,
+  ruleVersion = null,
+  hasPaymentLink = false,
+  canSendWithoutLink = false,
+} = {}) {
+  const hasRule = Number.isInteger(Number(ruleVersion)) && Number(ruleVersion) > 0;
+  if (purpose === 'onboarding') {
+    const block = suggestionBlock
+      || (caseBlock === 'source_reopened_review' ? null : caseBlock)
+      || null;
+    return { canRegister: hasRule && !block, block, early: Boolean(isFuture) };
+  }
+  const block = suggestionBlock || caseBlock || null;
+  return {
+    canRegister: hasPhone && !block && !isFuture && hasRule
+      && (purpose !== 'billing' || hasPaymentLink || canSendWithoutLink),
+    block,
+    early: false,
+  };
+}

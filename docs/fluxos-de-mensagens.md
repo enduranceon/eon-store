@@ -10,8 +10,9 @@ Próximos fluxos a documentar: cobrança, renovação e proposta para prospect.
 ## 1. Onboarding
 
 Regra de entrada: `eon_private.communication_onboarding_eligible` (migrações
-`20261007170000_onboarding_first_membership_only.sql` e
-`20261007190000_onboarding_returning_students.sql`). O caso de onboarding é
+`20261007170000_onboarding_first_membership_only.sql`,
+`20261007190000_onboarding_returning_students.sql` e
+`20261007210000_onboarding_three_steps.sql`). O caso de onboarding é
 aberto pelo gatilho do contrato e reavaliado a cada mudança relevante; quando a
 regra deixa de valer, o caso fecha como `source_resolved`.
 
@@ -29,9 +30,11 @@ flowchart TD
   K -- não, renovação --> X
   K -- sim, retorno --> F
   F --> G[Passo 1: boas-vindas<br/>no dia do pagamento]
-  G -- enviada --> H[Espera 5 dias]
+  G -- enviada --> H[Dia 5 da boas-vindas]
   H --> I[Passo 2: check-in]
-  I -- enviado --> J([Onboarding concluído])
+  I -- enviado --> L[Dia 20 da boas-vindas]
+  L --> M[Passo 3: feedback]
+  M -- enviado --> J([Onboarding concluído])
 ```
 
 - Entram no mesmo onboarding o **aluno novo** (nunca teve contrato real na
@@ -44,17 +47,30 @@ flowchart TD
   Histórico importado depois (Tecnofit) e contratos de alunos migrados contam
   como contrato anterior.
 - A boas-vindas só vale para pagamento dos últimos 30 dias (data do pagamento
-  ou, sem ela, data de início).
-- Trava o envio: falta de WhatsApp válido, falta do link da comunidade
-  (boas-vindas) ou pagamento reaberto.
+  ou, sem ela, data de início). Depois dela, o check-in (dia 5) e o feedback
+  (dia 20, pelo menos 7 dias depois do check-in) seguem por até 30 dias a partir
+  da boas-vindas. O onboarding termina quando o feedback é registrado.
+- Onboarding iniciado no painel anterior e com check-in registrado lá (evento
+  com `source` diferente de `communication_case`) terminou no check-in e não
+  volta para o feedback.
+- Envio manual, sem travas: a Central mostra o texto para copiar, o atalho do
+  WhatsApp e o botão “Registrar que enviei”. No onboarding, WhatsApp ausente,
+  link da comunidade ausente ou passo antes da data não impedem o registro; só
+  impedem etapa já concluída, contrato fora do onboarding (inclusive pagamento
+  reaberto) ou modelo ausente. Cobrança e renovação mantêm as conferências.
+- Textos: modelos `onboarding-welcome`, `onboarding-checkin-5d` e
+  `onboarding-feedback-20d`, editáveis em Comunicação → Modelos e regras.
 
 ### Decisões em aberto
 
-Decidido em 07/10/2026: ex-aluno que volta recebe o mesmo onboarding do aluno
-novo. O limite de 30 dias sem contrato para contar como retorno é o padrão
-adotado e pode ser ajustado.
+Decidido em 07/10/2026:
+
+- Ex-aluno que volta recebe o mesmo onboarding do aluno novo. O limite de 30
+  dias sem contrato para contar como retorno é o padrão adotado e pode ser
+  ajustado.
+- Três passos: boas-vindas no dia do pagamento, check-in no dia 5 e feedback no
+  dia 20 (saber se deu certo, se está conseguindo e se ficou dúvida).
+- Sem travas no envio: copiar o texto e registrar que enviou.
 
 1. Mensagem apresentando o novo treinador quando a renovação troca de treinador.
 2. Prazo da boas-vindas: hoje 30 dias depois do pagamento; sugestão inicial de 7.
-3. Passos do onboarding: manter boas-vindas no dia e check-in em 5 dias, ou
-   acrescentar outro (ex.: check-in de 30 dias).

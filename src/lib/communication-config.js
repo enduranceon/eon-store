@@ -110,9 +110,9 @@ Estou te chamando para entender como podemos resolver a cobranca em aberto do se
     channel: 'whatsapp',
     active: true,
     order_index: 30,
-    message_template: `Ola, {nome}! Tudo certo?
+    message_template: `Olá, {nome}! Tudo certo?
 
-Pagamento confirmado. Seja bem-vindo(a) a Assessoria Esportiva Endurance ON.
+Pagamento confirmado. Seja bem-vindo(a) à Assessoria Esportiva Endurance ON.
 
 Modalidade: *{modalidade}*
 Plano: *{plano}*
@@ -121,7 +121,7 @@ Coach: *{coach}*
 Comunidade Endurance ON:
 {comunidade}
 
-Nos proximos passos, o time vai alinhar seu inicio e acompanhar sua adaptacao. Qualquer duvida, me chama por aqui.`,
+Nos próximos passos, o coach vai receber seu contato e te chamar assim que tiver disponibilidade!`,
   },
   {
     slug: 'onboarding-checkin-5d',
@@ -133,11 +133,29 @@ Nos proximos passos, o time vai alinhar seu inicio e acompanhar sua adaptacao. Q
     channel: 'whatsapp',
     active: true,
     order_index: 40,
-    message_template: `Ola, {nome}! Tudo bem?
+    message_template: `Olá, {nome}! Tudo bem?
 
-Passando para saber se deu tudo certo nesses primeiros dias e se o treinador ja entrou em contato com voce.
+Passando para saber se deu tudo certo nesses primeiros dias e se o treinador já entrou em contato com você.
 
-Se ficou alguma duvida para comecar ou se precisar de qualquer ajuste, me chama por aqui.`,
+Se ficou alguma dúvida para começar ou se precisar de qualquer ajuste, me chama por aqui.`,
+  },
+  {
+    slug: 'onboarding-feedback-20d',
+    name: 'Feedback de 20 dias',
+    journey: 'onboarding',
+    trigger_event: 'onboarding_welcome_sent',
+    task_kind: 'onboarding_feedback',
+    days_offset: 20,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 45,
+    message_template: `Olá, {nome}! Tudo bem?
+
+Já faz uns 20 dias que você começou com a gente e eu queria saber como está sendo.
+
+Está conseguindo seguir os treinos? Ficou claro como funciona o dia a dia da assessoria e o contato com o seu coach?
+
+Se tiver qualquer dúvida ou feedback, me manda por aqui. Sua opinião ajuda muito a gente a melhorar!`,
   },
   {
     slug: 'renewal-reminder-14d',

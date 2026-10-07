@@ -16,6 +16,7 @@ export const COMMUNICATION_EVENT_TYPES = [
   'payment_message_sent',
   'onboarding_welcome_sent',
   'onboarding_checkin_sent',
+  'onboarding_feedback_sent',
   'renewal_message_sent',
   'communication_task_ignored',
 ];
@@ -849,6 +850,7 @@ export const COMMUNICATION_EVENT_META = {
   payment_message_sent:       { label: 'Cobrança enviada', tone: 'info' },
   onboarding_welcome_sent:    { label: 'Boas-vindas',      tone: 'success' },
   onboarding_checkin_sent:    { label: 'Check-in',         tone: 'success' },
+  onboarding_feedback_sent:   { label: 'Feedback 20 dias', tone: 'success' },
   renewal_message_sent:       { label: 'Renovação',        tone: 'purple' },
   communication_task_ignored: { label: 'Ignorada',         tone: 'secondary' },
 };

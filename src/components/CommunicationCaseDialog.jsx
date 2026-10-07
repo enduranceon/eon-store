@@ -15,7 +15,7 @@ import {
 } from '@/api/client';
 import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
-import { canCompleteCommunicationReview, communicationBlockReasonLabel } from '@/lib/communication-case';
+import { canCompleteCommunicationReview, communicationBlockReasonLabel, communicationSendState } from '@/lib/communication-case';
 import { buildTaskMessage } from '@/lib/communication-tasks';
 
 const RESPONSE_OPTIONS = {
@@ -101,7 +101,6 @@ export default function CommunicationCaseDialog({
   const [staleNotice, setStaleNotice] = useState('');
   const [panel, setPanel] = useState('message');
   const [message, setMessage] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
   const [copied, setCopied] = useState(false);
   const [nextActionAt, setNextActionAt] = useState('');
   const [responseCode, setResponseCode] = useState('');
@@ -138,7 +137,6 @@ export default function CommunicationCaseDialog({
           });
       setDetail(next);
       setMessage(initialMessage(task, next));
-      setConfirmed(false);
       setNextActionAt('');
       setResponseCode('');
       setResponseNote('');
@@ -208,7 +206,7 @@ export default function CommunicationCaseDialog({
         idempotency_key: lastAttempt.current.key,
       });
       lastAttempt.current = null;
-      toast.success(action === 'message_sent' ? 'Envio manual registrado' : 'Acompanhamento atualizado');
+      toast.success(action === 'message_sent' ? 'Envio registrado' : 'Acompanhamento atualizado');
       await loadDetail({ knownCaseId: activeCase.id });
       onChanged?.();
       if (action === 'message_sent') onSent?.();
@@ -230,13 +228,19 @@ export default function CommunicationCaseDialog({
   const today = todayLocalStr();
   const eligibleAt = suggestion?.eligible_at || null;
   const contactIsFuture = Boolean((eligibleAt && eligibleAt > today) || (activeCase?.next_action_at && activeCase.next_action_at > today));
-  const canSend = hasPhone
-    && !activeCase?.blocked_reason
-    && !suggestion?.blocked_reason
-    && !contactIsFuture
-    && Number.isInteger(Number(suggestion?.rule_version))
-    && Number(suggestion?.rule_version) > 0
-    && (activeCase?.purpose !== 'billing' || activeCase.payment_link || activeCase.can_send_without_link);
+  const sendState = communicationSendState({
+    purpose: activeCase?.purpose,
+    caseBlock: activeCase?.blocked_reason || null,
+    suggestionBlock: suggestion?.blocked_reason || null,
+    hasPhone,
+    isFuture: contactIsFuture,
+    ruleVersion: suggestion?.rule_version,
+    hasPaymentLink: Boolean(activeCase?.payment_link),
+    canSendWithoutLink: Boolean(activeCase?.can_send_without_link),
+  });
+  const canSend = sendState.canRegister;
+  const isOnboarding = activeCase?.purpose === 'onboarding';
+  const visibleBlock = sendState.block;
   const isResolved = activeCase?.workflow_stage === 'resolved';
   const suggestedReturn = suggestion?.proposed_next_action_at;
   const responseOptions = RESPONSE_OPTIONS[activeCase?.purpose] || RESPONSE_OPTIONS.onboarding;
@@ -261,7 +265,6 @@ export default function CommunicationCaseDialog({
   const send = () => {
     if (!message.trim()) return toast.error('A mensagem está vazia');
     if (!canSend) return toast.error('Resolva o bloqueio antes de registrar envio');
-    if (!confirmed) return toast.error('Confirme que a mensagem foi enviada fora do EON Store');
     applyAction('message_sent', {
       message: message.trim(),
       channel: 'whatsapp',
@@ -362,13 +365,13 @@ export default function CommunicationCaseDialog({
                 </div>
               </div>
 
-              {(activeCase.blocked_reason || suggestion?.blocked_reason) && (
+              {visibleBlock && (
                 <div role="note" className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                   <span>
-                    {suggestion?.blocked_reason === 'not_due_yet' && activeCase.next_action_at
+                    {visibleBlock === 'not_due_yet' && activeCase.next_action_at
                       ? `Aguardar até ${formatDate(activeCase.next_action_at)} para o próximo contato.`
-                      : `${communicationBlockReasonLabel(suggestion?.blocked_reason || activeCase.blocked_reason)}. O caso permanece visível até a revisão ou resolução.`}
+                      : `${communicationBlockReasonLabel(visibleBlock)}. O caso permanece visível até a revisão ou resolução.`}
                   </span>
                 </div>
               )}
@@ -394,23 +397,26 @@ export default function CommunicationCaseDialog({
                   </p>
                   {contactIsFuture && suggestion?.blocked_reason !== 'not_due_yet' && (
                     <p role="note" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-                      Contato previsto para {formatDate(activeCase.next_action_at && activeCase.next_action_at > today ? activeCase.next_action_at : eligibleAt)}. O combinado permanece agendado até essa data.
+                      {isOnboarding
+                        ? `Previsto para ${formatDate(activeCase.next_action_at && activeCase.next_action_at > today ? activeCase.next_action_at : eligibleAt)}. Se quiser, pode enviar antes.`
+                        : `Contato previsto para ${formatDate(activeCase.next_action_at && activeCase.next_action_at > today ? activeCase.next_action_at : eligibleAt)}. O combinado permanece agendado até essa data.`}
                     </p>
                   )}
                   <div>
                     <Label htmlFor="case-message">Mensagem editável</Label>
-                    <Textarea id="case-message" rows={11} value={message} onChange={event => { setMessage(event.target.value); setConfirmed(false); }} className="mt-1 text-sm leading-relaxed" />
+                    <Textarea id="case-message" rows={11} value={message} onChange={event => setMessage(event.target.value)} className="mt-1 text-sm leading-relaxed" />
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    <Button variant="outline" onClick={copyMessage} disabled={!canSend || !message.trim()} className="min-h-11">
+                    <Button variant="outline" onClick={copyMessage} disabled={!message.trim()} className="min-h-11">
                       {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
                       {copied ? 'Copiada' : 'Copiar texto'}
                     </Button>
-                    <Button variant="outline" onClick={openWhatsApp} disabled={!canSend || !message.trim()} className="min-h-11">
+                    <Button variant="outline" onClick={openWhatsApp} disabled={!hasPhone || !message.trim()} className="min-h-11">
                       <ExternalLink className="mr-2 h-4 w-4" /> Abrir WhatsApp
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">Abrir o WhatsApp não comprova envio. O registro abaixo é manual.</p>
+                  <p className="text-xs text-muted-foreground">Depois de enviar a mensagem, clique em “Registrar que enviei”.</p>
+                  {!isOnboarding && (
                   <div>
                     <Label htmlFor="case-next-action">Próximo retorno após este contato</Label>
                     <Input
@@ -427,18 +433,10 @@ export default function CommunicationCaseDialog({
                         : 'Se não escolher outra data, o servidor definirá a próxima revisão.'}
                     </p>
                   </div>
-                  <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={confirmed}
-                      onChange={event => setConfirmed(event.target.checked)}
-                      className="mt-1 h-4 w-4 accent-blue-600"
-                    />
-                    Confirmo que enviei esta mensagem fora do EON Store.
-                  </label>
-                  <Button onClick={send} disabled={saving || isResolved || !canSend || !confirmed} className="min-h-11 w-full">
+                  )}
+                  <Button onClick={send} disabled={saving || isResolved || !canSend} className="min-h-11 w-full">
                     {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Registrar envio manual
+                    Registrar que enviei
                   </Button>
                   {onManualPay && activeCase.purpose === 'billing' && !isResolved && (
                     <Button type="button" variant="outline" onClick={onManualPay} className="min-h-11 w-full">

@@ -30,6 +30,7 @@ const TASK_KIND_LABEL = {
   charge_overdue: 'Acompanhar saldo pendente',
   onboarding_welcome: 'Boas-vindas após pagamento',
   onboarding_checkin: 'Check-in inicial',
+  onboarding_feedback: 'Feedback de 20 dias',
   renewal_reminder: 'Conversar sobre renovação',
 };
 
@@ -42,6 +43,7 @@ const MODEL_STAGES = {
   onboarding: [
     { key: 'welcome', label: 'Boas-vindas após pagamento', trigger_event: 'payment_confirmed', task_kind: 'onboarding_welcome', offsets: [[0, 'Após pagamento']] },
     { key: 'checkin', label: 'Check-in inicial', trigger_event: 'onboarding_welcome_sent', task_kind: 'onboarding_checkin', offsets: [[5, 'D+5 após boas-vindas']] },
+    { key: 'feedback', label: 'Feedback de 20 dias', trigger_event: 'onboarding_welcome_sent', task_kind: 'onboarding_feedback', offsets: [[20, 'D+20 após boas-vindas']] },
   ],
   renewal: [
     { key: 'renewal', label: 'Contato de renovação', trigger_event: 'contract_end_date', task_kind: 'renewal_reminder', offsets: [[-10, 'D−10 antes do fim']] },
