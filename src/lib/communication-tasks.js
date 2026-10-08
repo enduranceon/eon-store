@@ -11,6 +11,7 @@ import {
   RENEWAL_STAGE,
   renewalDueLabel,
   renewalDueNotice,
+  RENEWAL_CONTACT_STEPS,
 } from '@/lib/assessment-renewal-pipeline';
 
 export const COMMUNICATION_EVENT_TYPES = [
@@ -532,18 +533,29 @@ function buildRenewalTask(contractSale, events, todayStr, rule) {
     planLabel: contractSale.planLabel,
     modalityName: contractSale.modalityName,
     coachName: contractSale.coachName,
-    endDate: renewalDate,
+    endDate: renewalDate ? addDays(renewalDate, -1) : '',
     renewalStage: stage,
     renewalFollowUp: followUpDue,
   }));
 }
 
-// Mensagem de intenção (ou nova mensagem) de uma renovação aberta no quadro,
-// no mesmo formato da Central: o envio registra a mensagem e move o card.
+// Mensagem da régua da renovação aberta no quadro (Pebinha, lembrete, último
+// dia, encerramento, "ainda pensando" ou despedida), no mesmo formato da
+// Central: o envio registra a mensagem e o servidor anota o passo.
+export function renewalRuleForStep(rules, step) {
+  const meta = RENEWAL_CONTACT_STEPS[step] || RENEWAL_CONTACT_STEPS.intent;
+  const renewalRules = activeRulesByKind(rules)[TASK_KIND.RENEWAL_REMINDER] || [];
+  return renewalRules.find(rule => (rule.trigger_event || 'contract_end_date') === meta.trigger
+    && Number(rule.days_offset) === meta.offset)
+    || DEFAULT_COMMUNICATION_RULES.find(rule => rule.task_kind === TASK_KIND.RENEWAL_REMINDER
+      && rule.trigger_event === meta.trigger && Number(rule.days_offset) === meta.offset)
+    || null;
+}
+
 export function buildRenewalMessageTask(contract, data = {}, options = {}) {
   const todayStr = options.todayStr || todayLocalStr();
-  const rules = activeRulesByKind(options.rules || data.communicationRules || DEFAULT_COMMUNICATION_RULES);
-  const rule = (rules[TASK_KIND.RENEWAL_REMINDER] || [])[0] || null;
+  const step = options.step || 'intent';
+  const rule = renewalRuleForStep(options.rules || data.communicationRules || DEFAULT_COMMUNICATION_RULES, step);
   const maps = {
     customers: mapById(data.customers || []),
     plans: mapById(data.plans || []),
@@ -554,9 +566,11 @@ export function buildRenewalMessageTask(contract, data = {}, options = {}) {
   };
   const sale = normalizeContract(contract, maps);
   const followUp = sale.renewalStage === RENEWAL_STAGE.WAITING_RESPONSE;
+  // O plano que vence é o anterior; sem ele, a véspera do início da renovação.
+  const planEnd = options.parentEndDate || (sale.startDate ? addDays(sale.startDate, -1) : '');
   return baseTask(TASK_KIND.RENEWAL_REMINDER, TASK_BUCKET.RENEWAL, sale, withRule(rule, {
-    id: `renewal-board:${followUp ? 'follow-up' : 'intent'}:contract:${sale.sourceId}`,
-    title: followUp ? 'Nova mensagem de renovação' : (rule?.name || 'Intenção de renovação'),
+    id: `renewal-board:${step}:contract:${sale.sourceId}`,
+    title: RENEWAL_CONTACT_STEPS[step]?.label || rule?.name || 'Intenção de renovação',
     statusLabel: renewalDueLabel(daysUntil(sale.startDate, todayStr)),
     scheduledDate: sale.startDate,
     sortDate: sale.startDate,
@@ -564,7 +578,7 @@ export function buildRenewalMessageTask(contract, data = {}, options = {}) {
     planLabel: sale.planLabel,
     modalityName: sale.modalityName,
     coachName: sale.coachName,
-    endDate: sale.startDate,
+    endDate: planEnd,
     renewalStage: sale.renewalStage,
     renewalFollowUp: followUp,
   }));
@@ -672,7 +686,9 @@ export function buildCommunicationTasks(data, options = {}) {
 
   renewalSales.forEach(contractSale => {
     const events = eventsByContract.get(contractSale.sourceId) || [];
-    renewalRules.forEach(rule => { const t = buildRenewalTask(contractSale, events, todayStr, rule); if (t) tasks.push(t); });
+    renewalRules.filter(rule => (rule.trigger_event || 'contract_end_date') === 'contract_end_date'
+      && Number(rule.days_offset) === RENEWAL_CONTACT_STEPS.intent.offset).slice(0, 1)
+      .forEach(rule => { const t = buildRenewalTask(contractSale, events, todayStr, rule); if (t) tasks.push(t); });
   });
 
   return tasks.sort((a, b) => {
@@ -726,8 +742,9 @@ function renderCommunicationTemplate(template, task, options = {}) {
     '{coach}': task.coachName || 'a definir',
     '{comunidade}': communityLink || '(link da comunidade nao configurado)',
     '{data_fim}': task.endDate ? formatDate(task.endDate) : '',
+    '{fim_plano}': task.endDate ? formatDate(task.endDate).slice(0, 5) : '',
     '{dias}': daysToEnd == null ? '' : String(daysToEnd),
-    '{aviso_vencimento}': renewalDueNotice(task.endDate, todayLocalStr()),
+    '{aviso_vencimento}': renewalDueNotice(task.endDate, todayLocalStr(), task.planLabel),
   };
 
   return Object.entries(values).reduce(

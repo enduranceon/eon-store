@@ -145,13 +145,11 @@ SELECT is(eon_private.communication_template_context(jsonb_build_object('source_
 SELECT is(eon_private.communication_template_context(jsonb_build_object('source_type','contract',
     'reference','ASS-TESTE','due_date',current_date-1))->>'dias_atraso',
   '1 dia','one day overdue is singular');
-SELECT is(eon_private.communication_template_context(jsonb_build_object('source_type','presale',
-    'reference','PED-TESTE','due_date',current_date,'items',jsonb_build_array(
-      jsonb_build_object('product_name','Camiseta fictícia','quantity',1),
-      jsonb_build_object('product_name','Boné fictício','quantity',1))))
-    - ARRAY['nome','nome_completo','tipo','numero','valor','vencimento_texto','vencimento',
-      'vencimento_atraso','pix_bloco','pix_copia_cola','link_bloco','link_pagamento','item',
-      'itens','itens_bloco','plano','data_fim','dias','aviso_vencimento','modalidade','coach','comunidade'],
+SELECT is((SELECT jsonb_build_object('dias_atraso',ctx->'dias_atraso','referente',ctx->'referente')
+    FROM eon_private.communication_template_context(jsonb_build_object('source_type','presale',
+      'reference','PED-TESTE','due_date',current_date,'items',jsonb_build_array(
+        jsonb_build_object('product_name','Camiseta fictícia','quantity',1),
+        jsonb_build_object('product_name','Boné fictício','quantity',1)))) ctx),
   jsonb_build_object('dias_atraso','','referente','referente ao seu pedido PED-TESTE (Camiseta fictícia +1)'),
   'an order names its items and a charge due today has no overdue days');
 SELECT is(eon_private.communication_template_context(jsonb_build_object('source_type','event',

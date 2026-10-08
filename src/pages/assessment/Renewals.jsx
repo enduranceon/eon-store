@@ -39,6 +39,7 @@ import RenewalDetailDialog from '@/components/renewals/RenewalDetailDialog';
 import RenewalResponseDialog from '@/components/renewals/RenewalResponseDialog';
 import RenewalFollowUpDialog from '@/components/renewals/RenewalFollowUpDialog';
 import RenewalPaymentDialog from '@/components/renewals/RenewalPaymentDialog';
+import RenewalFarewellDialog from '@/components/renewals/RenewalFarewellDialog';
 
 // ─────────────────────────────────────────────────────────────────
 // Quadro de Renovações. A etapa é gravada e movida pelo servidor; esta tela só
@@ -54,7 +55,7 @@ const RENEWAL_FIELDS = [
   'asaas_pix_qrcode', 'external_payment_link', 'external_invoice_number', 'payment_message_sent_at',
   'created_at', 'updated_at', 'renewal_stage', 'renewal_entered_at', 'renewal_stage_updated_at',
   'renewal_response_code', 'renewal_response_at', 'renewal_follow_up_at', 'renewal_last_contact_at',
-  'renewal_resolved_at',
+  'renewal_resolved_at', 'renewal_contact_step', 'renewal_contact_step_at',
 ].join(', ');
 
 const ALL = 'all';
@@ -137,6 +138,7 @@ export default function Renewals() {
   const [paymentCard, setPaymentCard] = useState(null);
   const [changeCard, setChangeCard] = useState(null);
   const [messageTask, setMessageTask] = useState(null);
+  const [farewellTarget, setFarewellTarget] = useState(null);
   const [resolutionTarget, setResolutionTarget] = useState(null);
   const [activationCard, setActivationCard] = useState(null);
   const [externalChargeModal, setExternalChargeModal] = useState(null);
@@ -287,6 +289,29 @@ export default function Renewals() {
     setExternalChargeModal(contract);
   }, []);
 
+  // Mensagem da régua (ou a despedida), com o texto do passo e o fim do plano atual.
+  const openRenewalMessage = (contract, parent, step) => {
+    setMessageTask(buildRenewalMessageTask(contract, {
+      customers: Object.values(customers),
+      coaches: Object.values(coaches),
+      modalities: Object.values(modalities),
+    }, { rules: communicationRules || undefined, todayStr, step, parentEndDate: parent?.end_date }));
+  };
+
+  // Depois do "Não vai renovar", abre a despedida com o contrato já encerrado.
+  const openFarewell = async (contractId, parent) => {
+    const { data, error } = await supabase.from('assessment_contracts')
+      .select(RENEWAL_FIELDS).eq('id', contractId).maybeSingle();
+    if (error || data?.renewal_stage !== 'not_renewed') return;
+    setFarewellTarget({
+      contract: data,
+      parent,
+      customer: customers[data.customer_id],
+      coaches: Object.values(coaches),
+      modalities: Object.values(modalities),
+    });
+  };
+
   const lookupsFor = (contract) => ({
     customer: customers[contract.customer_id],
     coach: coaches[contract.coach_id],
@@ -303,11 +328,10 @@ export default function Renewals() {
       return;
     }
     if (key === 'message') {
-      setMessageTask(buildRenewalMessageTask(contract, {
-        customers: Object.values(customers),
-        coaches: Object.values(coaches),
-        modalities: Object.values(modalities),
-      }, { rules: communicationRules || undefined, todayStr }));
+      const step = card.state.contactStep?.step;
+      openRenewalMessage(contract, card.parent, step && step !== 'close' ? step : 'intent');
+    } else if (key === 'close_no_response') {
+      openResolution(card, 'no_response');
     } else if (key === 'response') {
       setResponseCard(card);
     } else if (key === 'followup') {
@@ -665,6 +689,7 @@ export default function Renewals() {
           onNotRenewing={card => { setResponseCard(null); openResolution(card, 'customer_declined'); }}
           onChangeRequested={(card, target) => { setResponseCard(null); navigate(renewalChangeHref(card.contract.id, target)); }}
           onWillRenew={(card, contract) => { setResponseCard(null); openExternalCharge(contract); load(); }}
+          onThinking={(card, contract) => { setResponseCard(null); openRenewalMessage(contract, card.parent, 'thinking_ack'); load(); }}
         />
       )}
 
@@ -719,12 +744,27 @@ export default function Renewals() {
         />
       )}
 
+      {farewellTarget && (
+        <RenewalFarewellDialog
+          key={farewellTarget.contract.id}
+          target={farewellTarget}
+          rules={communicationRules || undefined}
+          onClose={() => setFarewellTarget(null)}
+          onDone={() => setFarewellTarget(null)}
+        />
+      )}
+
       {resolutionTarget && (
         <RenewalResolutionDialog
           key={`${resolutionTarget.contract.id}:${resolutionTarget.initialChoice}`}
           target={resolutionTarget}
           onClose={() => setResolutionTarget(null)}
-          onResolved={load}
+          onResolved={async (result, choice) => {
+            await load();
+            if (choice === 'customer_declined') {
+              await openFarewell(resolutionTarget.contract.id, resolutionTarget.parent);
+            }
+          }}
           onRefresh={load}
         />
       )}

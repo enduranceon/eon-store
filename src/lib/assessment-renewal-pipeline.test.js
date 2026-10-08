@@ -14,7 +14,10 @@ import {
   renewalCardState,
   renewalChangeHref,
   renewalDueLabel,
+  renewalContactPlan,
+  renewalContactStep,
   renewalDueNotice,
+  renewalStepLabel,
   summarizeRenewalBoard,
   terminalDaysLeft,
 } from './assessment-renewal-pipeline.js';
@@ -35,11 +38,52 @@ test('follow-up labels count the days late', () => {
   assert.equal(followUpLabel(2), 'follow-up atrasado há 2 dias');
 });
 
-test('the Pebinha notice changes once the plan has ended', () => {
-  assert.equal(renewalDueNotice('2026-10-17', '2026-10-07'), 'seu plano vence nos próximos dias');
-  assert.equal(renewalDueNotice('2026-10-17', '2026-10-17'), 'seu plano vence nos próximos dias');
+test('the Pebinha notice names the plan and its last day', () => {
+  assert.equal(renewalDueNotice('2026-10-17', '2026-10-07', 'Corrida - Trimestral'), 'seu plano Corrida - Trimestral vence em 17/10');
+  assert.equal(renewalDueNotice('2026-10-17', '2026-10-17'), 'seu plano vence em 17/10');
   assert.equal(renewalDueNotice('2026-10-05', '2026-10-09'), 'seu plano venceu em 05/10');
-  assert.equal(renewalDueNotice('', '2026-10-09'), 'seu plano vence nos próximos dias');
+  assert.equal(renewalDueNotice('', '2026-10-09'), 'a data de vencimento do seu plano precisa ser confirmada');
+});
+
+// Mesmos casos de supabase/tests/assessment_renewal_contact_flow_test.sql.
+const at = day => `${day}T15:00:00.000Z`;
+const plan = (step, stepDay, responseCode, responseDay, followUpAt, endDate) => renewalContactPlan({
+  step, stepAt: stepDay ? at(stepDay) : null, responseCode,
+  responseAt: responseDay ? `${responseDay}T14:00:00.000Z` : null, followUpAt, endDate,
+}, '2026-10-08');
+
+test('renewal contact cadence without an answer', () => {
+  assert.deepEqual(plan(null, null, null, null, null, '2026-11-20'), { step: 'intent', eligibleAt: '2026-10-08' });
+  assert.deepEqual(plan(null, null, null, null, null, '2026-10-12'), { step: 'intent', eligibleAt: '2026-10-02' });
+  assert.deepEqual(plan('intent', '2026-11-10', null, null, null, '2026-11-20'), { step: 'reminder', eligibleAt: '2026-11-12' });
+  assert.deepEqual(plan('intent', '2026-11-18', null, null, null, '2026-11-20'), { step: 'last_day', eligibleAt: '2026-11-20' });
+  assert.deepEqual(plan('reminder', '2026-11-12', null, null, null, '2026-11-20'), { step: 'last_day', eligibleAt: '2026-11-20' });
+  assert.deepEqual(plan('last_day', '2026-11-20', null, null, null, '2026-11-20'), { step: 'closing', eligibleAt: '2026-11-25' });
+  assert.deepEqual(plan('intent', '2026-11-22', null, null, null, '2026-11-20'), { step: 'closing', eligibleAt: '2026-11-25' });
+  assert.deepEqual(plan('closing', '2026-11-25', null, null, null, '2026-11-20'), { step: 'close', eligibleAt: '2026-11-25' });
+  assert.deepEqual(plan('intent', '2026-11-10', null, null, '2026-11-16', '2026-11-20'), { step: 'reminder', eligibleAt: '2026-11-16' });
+});
+
+test('"still thinking" gets an answer now and a return two days later', () => {
+  assert.deepEqual(plan('intent', '2026-11-10', 'thinking', '2026-11-11', '2026-11-13', '2026-11-20'), { step: 'thinking_ack', eligibleAt: '2026-11-11' });
+  assert.deepEqual(plan('thinking_ack', '2026-11-11', 'thinking', '2026-11-11', '2026-11-13', '2026-11-20'), { step: 'thinking_return', eligibleAt: '2026-11-13' });
+  assert.deepEqual(plan('thinking_return', '2026-11-13', 'thinking', '2026-11-11', null, '2026-11-20'), { step: 'last_day', eligibleAt: '2026-11-20' });
+  assert.deepEqual(plan('thinking_return', '2026-11-21', 'thinking', '2026-11-19', null, '2026-11-20'), { step: 'closing', eligibleAt: '2026-11-25' });
+  assert.equal(plan('intent', '2026-11-10', 'will_renew', '2026-11-11', null, '2026-11-20').step, 'none');
+});
+
+test('the card shows the next contact step and asks for attention when it is due', () => {
+  const contract = {
+    renewal_stage: 'waiting_response', renewal_contact_step: 'intent',
+    renewal_contact_step_at: at('2026-10-06'), start_date: '2026-10-15',
+  };
+  const due = renewalContactStep(contract, { end_date: '2026-10-14' }, '2026-10-08');
+  assert.deepEqual(due, { step: 'reminder', eligibleAt: '2026-10-08', due: true });
+  assert.equal(renewalStepLabel(due, '2026-10-08'), 'Lembrete: hoje');
+  const later = renewalContactStep(contract, { end_date: '2026-10-14' }, '2026-10-07');
+  assert.equal(renewalStepLabel(later, '2026-10-07'), 'Lembrete: 08/10');
+  assert.equal(renewalContactStep({ ...contract, auto_renewal: true }, null, '2026-10-08'), null);
+  assert.equal(renewalContactStep({ ...contract, renewal_stage: 'waiting_payment' }, null, '2026-10-08'), null);
 });
 
 test('resolution dates use the São Paulo business day', () => {

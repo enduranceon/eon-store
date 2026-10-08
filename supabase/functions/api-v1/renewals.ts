@@ -21,6 +21,7 @@ const OPEN_PAYMENT_STATUSES = new Set([
 ]);
 const RENEWAL_REASON_TEXT: Record<RenewalReasonCode, string> = {
   customer_declined: "Atleta decidiu não renovar",
+  no_response: "Atleta não respondeu à renovação",
   duplicate: "Renovação criada em duplicidade",
   created_in_error: "Renovação criada por engano",
   parent_cancelled: "Contrato anterior foi cancelado",
@@ -40,6 +41,7 @@ const BODY_KEYS = new Set([
 type RenewalResolution = "non_renewal" | "discard";
 type RenewalReasonCode =
   | "customer_declined"
+  | "no_response"
   | "duplicate"
   | "created_in_error"
   | "parent_cancelled";
@@ -214,7 +216,8 @@ function parseResolutionBody(
   const externalConfirmationNote = body.external_confirmation_note;
 
   const resolutionMatchesReason =
-    (resolution === "non_renewal" && reasonCode === "customer_declined") ||
+    (resolution === "non_renewal" &&
+      (reasonCode === "customer_declined" || reasonCode === "no_response")) ||
     (resolution === "discard" &&
       (reasonCode === "duplicate" || reasonCode === "created_in_error" ||
         reasonCode === "parent_cancelled"));

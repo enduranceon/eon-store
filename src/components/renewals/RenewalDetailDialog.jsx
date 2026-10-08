@@ -7,16 +7,18 @@ import {
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/api/db';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateTime, todayLocalStr } from '@/lib/utils';
 import { isSafePaymentUrl } from '@/lib/sales';
 import { canResolveAssessmentRenewal } from '@/lib/assessment-renewal-resolution';
 import {
   awaitsRenewalChange,
   buildRenewalTimeline,
   renewalChangeHref,
+  RENEWAL_CONTACT_STEPS,
   RENEWAL_RESPONSE_LABELS,
   RENEWAL_STAGE,
   RENEWAL_STAGE_LABELS,
+  renewalStepLabel,
 } from '@/lib/assessment-renewal-pipeline';
 import { RenewalAlert, RenewalBadge } from '@/components/renewals/RenewalCard';
 
@@ -53,12 +55,23 @@ function actionsFor(contract, state) {
   }
   if (stage === RENEWAL_STAGE.WAITING_RESPONSE) {
     const change = contract.renewal_response_code === 'change_plan_or_coach';
+    const step = state.contactStep;
+    const close = step?.step === 'close';
+    const stepDue = Boolean(step?.due) && !change;
     return [
       ...(change ? [
         { key: 'change_resolved', label: 'Mudança resolvida: seguir para cobrança', Icon: CheckCircle2, primary: true },
       ] : []),
-      { key: 'response', label: 'Registrar resposta', Icon: CheckCircle2, primary: !change },
-      { key: 'message', label: 'Enviar nova mensagem', Icon: MessageCircle },
+      ...(close && resolvable ? [
+        { key: 'close_no_response', label: 'Encerrar como “Não renovou”: não respondeu', Icon: Ban, tone: 'amber', primary: stepDue },
+      ] : []),
+      { key: 'response', label: 'Registrar resposta', Icon: CheckCircle2, primary: !change && !stepDue },
+      ...(!close ? [{
+        key: 'message',
+        label: step ? RENEWAL_CONTACT_STEPS[step.step]?.action || 'Enviar mensagem' : 'Enviar nova mensagem',
+        Icon: MessageCircle,
+        primary: stepDue,
+      }] : []),
       { key: 'followup', label: contract.renewal_follow_up_at ? 'Mudar follow-up' : 'Marcar follow-up', Icon: CalendarClock },
       ...(change ? closing.filter(action => action.key !== 'change_plan') : closing),
     ];
@@ -204,6 +217,9 @@ export default function RenewalDetailDialog({ card, coach, modality, onClose, on
             )}
             {contract.renewal_last_contact_at && (
               <InfoRow label="Último contato">{formatDateTime(contract.renewal_last_contact_at)}</InfoRow>
+            )}
+            {state.contactStep && (
+              <InfoRow label="Próxima mensagem">{renewalStepLabel(state.contactStep, todayLocalStr())}</InfoRow>
             )}
             {contract.renewal_entered_at && (
               <InfoRow label="Entrou no quadro">{formatDateTime(contract.renewal_entered_at)}</InfoRow>
