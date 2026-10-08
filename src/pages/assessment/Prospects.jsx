@@ -2,9 +2,9 @@ import { studentProfilePath } from '@/lib/customer-profile';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ArchiveX, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
-  Clock3, Copy, CreditCard, ExternalLink, Loader2, MessageCircle, Plus, Send,
-  TrendingUp, UserCheck, UserPlus, UserRoundCheck,
+  AlertTriangle, ArchiveX, BellRing, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
+  Clock3, Copy, CreditCard, ExternalLink, HelpCircle, Loader2, MessageCircle, Plus, SearchCheck, Send,
+  ThumbsUp, TrendingUp, UserCheck, UserPlus, UserRoundCheck,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,14 +14,19 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
+import AsaasPaymentCheckDialog from '@/components/AsaasPaymentCheckDialog';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { PhoneInput } from '@/components/PhoneInput';
 import {
   changeAssessmentContractCoach,
   changeAssessmentContractPlan,
+  checkAsaasPayments,
   createManualAssessmentProspect,
+  listPaymentMethods,
   loseAssessmentProspect,
   markAssessmentProspectMessageSent,
   prepareAssessmentProspectProposal,
+  registerAssessmentProspectContact,
 } from '@/api/client';
 import { AssessmentCoach, AssessmentModality, AssessmentPlan } from '@/api/entities';
 import { supabase } from '@/api/db';
@@ -37,10 +42,27 @@ import {
   planProspectProposalSave,
   proposalFormFrom,
 } from '@/lib/assessment-prospect-proposal';
+import {
+  LINK_DEADLINE_DAYS,
+  PROSPECT_STEP_LABELS,
+  addDays,
+  formatDeadline,
+  hoursSince,
+  isStepDue,
+  needsActionToday,
+  prospectClosingMessage,
+  prospectFirstContactMessage,
+  prospectFollowUpMessage,
+  prospectNextStep,
+  prospectPaymentClosingMessage,
+} from '@/lib/assessment-prospect-flow';
+import { asaasCheckCandidates, hasAsaasInvoiceLink, summarizeAsaasCheck } from '@/lib/asaas-payment-check';
 import { toast } from 'sonner';
 
 const STAGES = {
   new: { label: 'Novo', badge: 'bg-blue-100 text-blue-700', border: 'border-blue-200' },
+  awaiting_reply: { label: 'Aguardando resposta', badge: 'bg-sky-100 text-sky-800', border: 'border-sky-200' },
+  clarifying: { label: 'Tirando dúvidas', badge: 'bg-orange-100 text-orange-800', border: 'border-orange-200' },
   proposal_ready: { label: 'Proposta pronta', badge: 'bg-amber-100 text-amber-800', border: 'border-amber-200' },
   payment_link_sent: { label: 'Link enviado', badge: 'bg-violet-100 text-violet-700', border: 'border-violet-200' },
   converted: { label: 'Convertido', badge: 'bg-green-100 text-green-700', border: 'border-green-200' },
@@ -48,17 +70,22 @@ const STAGES = {
 };
 
 const BOARD_COLUMNS = [
-  { key: 'new', title: 'Novos', hint: 'Cadastros que ainda precisam de proposta.' },
+  { key: 'new', title: 'Novos', hint: 'Primeiro contato, sem link.' },
+  { key: 'awaiting_reply', title: 'Aguardando resposta', hint: 'Lembrete no dia 2 e encerramento no dia 5.' },
+  { key: 'clarifying', title: 'Tirando dúvidas', hint: 'Mesmo relógio, contado da última conversa.' },
   { key: 'proposal_ready', title: 'Proposta pronta', hint: 'Link montado, falta enviar ou registrar envio.' },
-  { key: 'payment_link_sent', title: 'Link enviado', hint: 'Aguardando pagamento ou reenvio.' },
+  { key: 'payment_link_sent', title: 'Link enviado', hint: 'Lembrete no dia seguinte ao vencimento; encerramento 5 dias depois.' },
   { key: 'converted', title: 'Convertidos', hint: 'Pagamento confirmado.' },
   { key: 'lost', title: 'Não convertidos', hint: 'Arquivados sem conversão.' },
 ];
 
 const FILTERS = [
   ['all', 'Todos'],
+  ['today', 'Para hoje'],
   ['open', 'Em negociação'],
   ['new', 'Novos'],
+  ['awaiting_reply', 'Aguardando resposta'],
+  ['clarifying', 'Tirando dúvidas'],
   ['proposal_ready', 'Proposta pronta'],
   ['payment_link_sent', 'Link enviado'],
   ['needs_review', 'Alterações'],
@@ -73,6 +100,8 @@ const LOSS_REASONS = [
   ['changed_mind', 'Desistiu'],
   ['chose_competitor', 'Escolheu outra assessoria'],
   ['coach_availability', 'Indisponibilidade de coach'],
+  ['invalid_contact', 'Contato inválido (número não funciona)'],
+  ['other_service', 'Queria outro serviço'],
   ['other', 'Outro motivo'],
 ];
 
@@ -94,9 +123,9 @@ const RELATIONSHIPS = {
   },
 };
 
-const PROSPECT_CONTRACT_COLUMNS = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, discount_reason, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_charge_id, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at';
+const PROSPECT_CONTRACT_COLUMNS = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, discount_reason, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_charge_id, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at, prospect_first_contact_at, prospect_last_contact_at, prospect_followup_sent_at, prospect_payment_reminder_sent_at, prospect_closing_sent_at, prospect_close_deadline';
 
-const OPEN_PROSPECT_STAGES = new Set(['new', 'proposal_ready', 'payment_link_sent']);
+const OPEN_PROSPECT_STAGES = new Set(['new', 'awaiting_reply', 'clarifying', 'proposal_ready', 'payment_link_sent']);
 const OPEN_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid']);
 
 function contractTotal(contract) {
@@ -151,8 +180,9 @@ function prospectVisualStage(draft) {
   return draft?.prospect_stage || 'new';
 }
 
-function matchesProspectFilter(item, filter) {
+function matchesProspectFilter(item, filter, today) {
   if (filter === 'all') return true;
+  if (filter === 'today') return isOpenProspect(item) && needsActionToday(item, today);
   if (filter === 'returns') return item.prospect_customer_relationship === 'former_student';
   if (filter === 'needs_review') return isOpenProspect(item) && hasSubmissionChange(item);
   if (filter === 'open') return isOpenProspect(item);
@@ -176,6 +206,9 @@ function buildMessage(contract, customer, coach, modality) {
   let message = `Olá, ${firstName}! 👋\n\n`;
   if (isReminder) {
     message += 'Passando só para lembrar que sua proposta para treinar com a *Endurance On* ficou reservada e o pagamento ainda está em aberto.\n\n';
+  } else if (contract.prospect_first_contact_at || contract.prospect_last_contact_at) {
+    // Depois do primeiro contato, a proposta responde ao "quer seguir".
+    message += 'Que bom que você quer seguir! Sua proposta está pronta:\n\n';
   } else {
     message += contract.prospect_customer_relationship === 'former_student'
       ? 'Que bom ter você de volta à *Endurance On*! Sua nova proposta está pronta:\n\n'
@@ -195,12 +228,375 @@ function buildMessage(contract, customer, coach, modality) {
   message += `⏰ Vencimento: *${formatDate(contract.due_date)}*\n\n`;
   if (isReminder) {
     message += `Para confirmar sua vaga, é só finalizar pelo link abaixo:\n🔗 ${paymentLink}\n\n`;
-    message += `Assim que o pagamento for confirmado, ${coach?.name ? `o coach *${coach.name}*` : 'o coach escolhido'} entra em contato para dar início ao atendimento. Qualquer dúvida, me chama por aqui.`;
+    message += `Assim que o pagamento for confirmado, ${coach?.name ? `o coach *${coach.name}*` : 'o coach escolhido'} entra em contato para dar início ao atendimento. Se você já fez o pagamento, pode desconsiderar esta mensagem. Qualquer dúvida, me chama por aqui.`;
   } else {
     message += `Para confirmar sua vaga, faça o pagamento pelo link:\n🔗 ${paymentLink}\n\n`;
     message += `Assim que o pagamento for confirmado, ${coach?.name ? `o coach *${coach.name}*` : 'o coach escolhido'} entrará em contato para iniciar seu atendimento. 🏆`;
   }
   return message;
+}
+
+// Formato que a conferência do Asaas usa (o mesmo da tela de Cobranças).
+function asaasOrderFor(draft, customer) {
+  return {
+    type: 'contract',
+    id: draft.id,
+    order_number: draft.contract_number,
+    customer: customer?.full_name || '—',
+    is_prospect: true,
+    total_value: contractTotal(draft),
+    payment_status: draft.payment_status,
+    payment_method: draft.payment_method,
+    due_date: draft.due_date,
+    asaas_charge_id: draft.asaas_charge_id,
+    external_payment_link: draft.external_payment_link,
+    installments: Number(draft.installments) || 1,
+    updated_at: draft.updated_at,
+    status: draft.status,
+  };
+}
+
+// Antes de cobrar de novo, consulta no Asaas (só leitura) se a fatura já foi
+// paga. Se foi, o pagamento é registrado pela conferência, com confirmação.
+function AsaasPaidNotice({ draft, customer, onRegister }) {
+  const order = useMemo(() => asaasOrderFor(draft, customer), [draft, customer]);
+  const canCheck = asaasCheckCandidates([order]).length > 0;
+  const [state, setState] = useState(() => ({ phase: canCheck ? 'loading' : 'none' }));
+
+  useEffect(() => {
+    if (!canCheck) return undefined;
+    let active = true;
+    Promise.all([checkAsaasPayments([order]), listPaymentMethods()])
+      .then(([check, methods]) => {
+        if (!active) return;
+        const groups = summarizeAsaasCheck([order], check?.results, methods, todayLocalStr());
+        const paid = groups.ready[0] || groups.review[0];
+        if (paid) setState({ phase: 'paid', reason: groups.ready[0] ? '' : paid.reason });
+        else if (groups.open[0]) setState({ phase: 'open', label: groups.open[0].label });
+        else setState({ phase: 'none' });
+      })
+      .catch(() => { if (active) setState({ phase: 'error' }); });
+    return () => { active = false; };
+  }, [canCheck, order]);
+
+  if (!hasAsaasInvoiceLink(order)) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Este link não é uma fatura do Asaas. Confira se a pessoa já pagou antes de enviar.
+      </p>
+    );
+  }
+  if (state.phase === 'loading') {
+    return (
+      <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Conferindo no Asaas se já foi pago...
+      </p>
+    );
+  }
+  if (state.phase === 'paid') {
+    return (
+      <div className="rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-950">
+        <p className="font-semibold">Já pagou no Asaas</p>
+        <p className="mt-0.5 text-xs">
+          {state.reason || 'Registre o pagamento em vez de mandar a mensagem. Depois, a boas-vindas abre na hora.'}
+        </p>
+        <Button size="sm" className="mt-2 bg-green-600 hover:bg-green-700" onClick={() => onRegister(order)}>
+          <CheckCheck className="mr-1 h-3.5 w-3.5" /> Registrar pagamento
+        </Button>
+      </div>
+    );
+  }
+  if (state.phase === 'open') {
+    return <p className="text-xs text-muted-foreground">Conferido no Asaas agora: {state.label}.</p>;
+  }
+  if (state.phase === 'error') {
+    return (
+      <p role="alert" className="text-xs text-amber-800">
+        Não deu para conferir no Asaas agora. Confira lá se a pessoa já pagou antes de enviar.
+      </p>
+    );
+  }
+  return null;
+}
+
+const CONTACT_TITLES = {
+  first_contact: 'Primeiro contato',
+  follow_up: 'Lembrete',
+  closing: 'Encerramento',
+  payment_closing: 'Encerramento com prazo final',
+};
+
+// Mensagens da conversa antes e depois do link. Envio manual: copiar (ou abrir
+// o WhatsApp) e registrar. Sem travas de data: dá para enviar antes do previsto.
+function ContactModal({ data, onClose, onDone, onRegisterPaid }) {
+  const { draft, customer, coach, modality, kind } = data;
+  const today = todayLocalStr();
+  const deadline = addDays(today, LINK_DEADLINE_DAYS);
+  const step = prospectNextStep(draft);
+  const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [externalCancelled, setExternalCancelled] = useState(false);
+  const fullName = customer?.full_name;
+  const message = kind === 'first_contact'
+    ? prospectFirstContactMessage({
+      fullName,
+      modality: modality?.name,
+      plan: draft.plan_snapshot?.name,
+      coach: coach?.name,
+      returning: draft.prospect_customer_relationship === 'former_student',
+    })
+    : kind === 'follow_up'
+      ? prospectFollowUpMessage({ fullName, coach: coach?.name })
+      : kind === 'closing'
+        ? prospectClosingMessage({ fullName })
+        : prospectPaymentClosingMessage({ fullName, deadline, paymentLink: paymentLinkFor(draft) });
+  const archives = kind === 'closing';
+  const needsLinkConfirmation = archives && Boolean(draft.external_payment_link);
+  const early = step?.kind === kind && step.dueDate > today;
+  const lastContact = kind === 'payment_closing'
+    ? draft.prospect_payment_reminder_sent_at || draft.prospect_message_sent_at
+    : draft.prospect_last_contact_at;
+
+  const copyMessage = async () => {
+    await navigator.clipboard.writeText(message);
+    setCopied(true);
+    toast.success('Mensagem copiada!');
+    window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  const openWhatsApp = () => {
+    const phone = phoneDigitsForWhatsApp(customer?.whatsapp);
+    if (!phone || phone === '55') return toast.error('WhatsApp do prospect não cadastrado');
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const register = async () => {
+    if (needsLinkConfirmation && !externalCancelled) return toast.error('Confirme o cancelamento do link externo');
+    setSaving(true);
+    try {
+      await registerAssessmentProspectContact(draft.id, {
+        action: kind === 'payment_closing' ? 'closing' : kind,
+        externalCancellationConfirmed: externalCancelled,
+        expectedUpdatedAt: draft.updated_at,
+      });
+      toast.success({
+        first_contact: 'Primeiro contato registrado. O card foi para “Aguardando resposta”.',
+        follow_up: 'Lembrete registrado.',
+        closing: 'Encerramento registrado. A proposta foi arquivada como “Não respondeu”.',
+        payment_closing: `Encerramento registrado. O link fica ativo até ${formatDeadline(deadline)}.`,
+      }[kind]);
+      onDone();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível registrar o envio');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <MessageCircle className="w-5 h-5 text-green-600" /> {CONTACT_TITLES[kind]}
+        </DialogTitle>
+      </DialogHeader>
+      <div className="space-y-4 mt-2">
+        {kind === 'payment_closing' && (
+          <AsaasPaidNotice draft={draft} customer={customer} onRegister={onRegisterPaid} />
+        )}
+        {kind !== 'first_contact' && lastContact && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {kind === 'payment_closing'
+              ? `Último envio do link em ${formatDateTime(lastContact)}. Confira a conversa no WhatsApp antes de enviar.`
+              : `Último contato registrado em ${formatDateTime(lastContact)}. Confira a conversa no WhatsApp antes de enviar: se a pessoa respondeu, marque a resposta no card.`}
+          </p>
+        )}
+        {early && (
+          <p className="text-xs text-muted-foreground">
+            Previsto para {formatDate(step.dueDate)}. Se quiser, pode enviar antes.
+          </p>
+        )}
+        <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm whitespace-pre-wrap text-gray-800 max-h-72 overflow-y-auto">
+          {message}
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={copyMessage}>
+            {copied ? <Check className="w-4 h-4 mr-1.5 text-green-600" /> : <Copy className="w-4 h-4 mr-1.5" />}
+            {copied ? 'Copiado!' : 'Copiar'}
+          </Button>
+          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={openWhatsApp} disabled={!customer?.whatsapp}>
+            <MessageCircle className="w-4 h-4 mr-1.5" /> Abrir WhatsApp
+          </Button>
+        </div>
+        {kind === 'payment_closing' && (
+          <p className="text-xs text-muted-foreground">
+            O link continua valendo até {formatDeadline(deadline)}. Nesse dia, o card pede para arquivar: aí você cancela o link no Asaas.
+          </p>
+        )}
+        {needsLinkConfirmation && (
+          <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={externalCancelled}
+              onChange={event => setExternalCancelled(event.target.checked)} />
+            <span>Confirmo que o link de pagamento externo foi cancelado e não poderá mais ser pago.</span>
+          </label>
+        )}
+        <div className="flex items-center justify-end gap-2 border-t pt-3">
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Voltar</Button>
+          <Button className="bg-violet-600 hover:bg-violet-700" onClick={register} disabled={saving}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Send className="w-4 h-4 mr-1.5" />}
+            {archives ? 'Registrar que enviei e arquivar' : 'Registrar que enviei'}
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function elapsedLabel(hours) {
+  if (hours === null) return '';
+  if (hours < 1) return 'menos de 1h';
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days} ${days === 1 ? 'dia' : 'dias'}`;
+}
+
+// O próximo passo do card e quando ele vence ("Lembrete hoje", "Encerramento
+// em 13/10"). No primeiro contato, mostra há quanto tempo o cadastro chegou.
+function NextStepLine({ draft }) {
+  const step = isOpenProspect(draft) ? prospectNextStep(draft) : null;
+  if (!step) return null;
+  const today = todayLocalStr();
+  const due = isStepDue(step, today);
+  let text;
+  let urgent = due;
+  if (step.kind === 'first_contact') {
+    const hours = hoursSince(draft.created_at);
+    text = `Chegou há ${elapsedLabel(hours)}: primeiro contato`;
+    urgent = hours !== null && hours >= 2;
+  } else {
+    const when = step.dueDate === today ? 'hoje' : due ? `desde ${formatDate(step.dueDate)}` : `em ${formatDate(step.dueDate)}`;
+    text = `${PROSPECT_STEP_LABELS[step.kind]} ${when}`;
+    if (step.kind === 'archive' && !due) text += ' (link ativo até lá)';
+  }
+  return (
+    <p className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium ${
+      urgent ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'
+    }`}>
+      <Clock3 className="h-3.5 w-3.5 shrink-0" /> {text}
+    </p>
+  );
+}
+
+// Botões do card (quadro e lista), conforme a etapa e o próximo passo.
+function ProspectActionButtons({
+  draft, customer, coach, modality, compact = false,
+  onProposal, onPayment, onLoss, onContact, onQuickContact, quickBusy,
+}) {
+  const isOpen = isOpenProspect(draft);
+  const canAct = isOpen && isDraftProspect(draft);
+  const managedInContract = isOpen && !canAct;
+  const hasPaymentLink = Boolean(paymentLinkFor(draft));
+  const stage = draft.prospect_stage;
+  const step = canAct ? prospectNextStep(draft) : null;
+  const due = isStepDue(step, todayLocalStr());
+  const size = compact ? 'h-8 text-xs' : '';
+  const text = (full, short) => (compact ? short : full);
+  const args = [draft, customer, coach, modality];
+  const busy = quickBusy === draft.id;
+  const icon = 'w-3.5 h-3.5 mr-1';
+  const primary = (color = 'bg-green-600 hover:bg-green-700') => `${size} ${color}`;
+  const outline = `${size}`;
+
+  return (
+    <>
+      {canAct && stage === 'new' && step?.kind === 'first_contact' && (
+        <Button size="sm" className={primary('bg-sky-600 hover:bg-sky-700')} onClick={() => onContact(...args, 'first_contact')}>
+          <MessageCircle className={icon} /> {text('Primeiro contato', '1º contato')}
+        </Button>
+      )}
+      {canAct && stage === 'new' && (
+        <Button size="sm" variant={step?.kind === 'first_contact' ? 'outline' : 'default'}
+          className={step?.kind === 'first_contact' ? outline : primary('bg-amber-600 hover:bg-amber-700')}
+          onClick={() => onProposal(...args)}>
+          <CircleDollarSign className={icon} /> {text('Preparar proposta', 'Proposta')}
+        </Button>
+      )}
+      {canAct && ['awaiting_reply', 'clarifying'].includes(stage) && (
+        <Button size="sm" className={primary('bg-amber-600 hover:bg-amber-700')} onClick={() => onProposal(...args)}>
+          <ThumbsUp className={icon} /> Quer seguir
+        </Button>
+      )}
+      {canAct && ['new', 'awaiting_reply'].includes(stage) && (
+        <Button size="sm" variant="outline" className={outline} disabled={busy}
+          onClick={() => onQuickContact(draft, 'has_questions')}>
+          <HelpCircle className={icon} /> {text('Tem dúvidas', 'Dúvidas')}
+        </Button>
+      )}
+      {canAct && stage === 'clarifying' && (
+        <Button size="sm" variant="outline" className={outline} disabled={busy}
+          onClick={() => onQuickContact(draft, 'conversation')}>
+          <MessageCircle className={icon} /> {text('Conversamos hoje', 'Conversamos')}
+        </Button>
+      )}
+      {canAct && ['awaiting_reply', 'clarifying'].includes(stage) && step && (
+        <Button size="sm" variant={due ? 'default' : 'outline'}
+          className={due ? primary('bg-violet-600 hover:bg-violet-700') : outline}
+          onClick={() => onContact(...args, step.kind)}>
+          {step.kind === 'closing'
+            ? <><ArchiveX className={icon} /> Encerrar</>
+            : <><BellRing className={icon} /> Lembrete</>}
+        </Button>
+      )}
+      {canAct && stage === 'proposal_ready' && (
+        <Button size="sm" className={primary()} onClick={() => onProposal(...args)}>
+          <Send className={icon} /> {text('Enviar mensagem', 'Enviar')}
+        </Button>
+      )}
+      {canAct && stage === 'payment_link_sent' && hasPaymentLink && (
+        <>
+          <Button size="sm" variant={step?.kind === 'payment_reminder' && due ? 'default' : 'outline'}
+            className={step?.kind === 'payment_reminder' && due ? primary('bg-violet-600 hover:bg-violet-700') : `${outline} text-green-700`}
+            onClick={() => onProposal(...args)}>
+            {step?.kind === 'payment_reminder'
+              ? <><BellRing className={icon} /> Lembrete</>
+              : <><MessageCircle className={icon} /> Reenviar</>}
+          </Button>
+          {step?.kind === 'payment_closing' && (
+            <Button size="sm" variant={due ? 'default' : 'outline'}
+              className={due ? primary('bg-violet-600 hover:bg-violet-700') : outline}
+              onClick={() => onContact(...args, 'payment_closing')}>
+              <ArchiveX className={icon} /> Encerrar
+            </Button>
+          )}
+          {step?.kind === 'archive' && (
+            <Button size="sm" variant={due ? 'default' : 'outline'}
+              className={due ? primary('bg-gray-700 hover:bg-gray-800') : outline}
+              onClick={() => onLoss(draft, customer, 'no_response')}>
+              <ArchiveX className={icon} /> Arquivar
+            </Button>
+          )}
+          <Button size="sm" className={primary()} onClick={() => onPayment(...args)}>
+            <CheckCheck className={icon} /> {text('Confirmar pagamento', 'Pago')}
+          </Button>
+        </>
+      )}
+      {canAct && stage === 'payment_link_sent' && !hasPaymentLink && (
+        <Button size="sm" className={primary('bg-amber-600 hover:bg-amber-700')} onClick={() => onProposal(...args)}>
+          <CircleDollarSign className={icon} /> {text('Refazer proposta', 'Refazer')}
+        </Button>
+      )}
+      {canAct && (
+        <Button size="sm" variant="outline" className={`${outline} text-gray-700`} onClick={() => onLoss(draft, customer)}>
+          <ArchiveX className={icon} /> {text('Não convertido', 'Perda')}
+        </Button>
+      )}
+      <Button size="sm" variant="outline" className={outline} asChild>
+        <Link to={`/assessoria/contratos/${draft.id}`}>
+          {managedInContract ? text('Abrir contrato', 'Contrato') : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
+        </Link>
+      </Button>
+    </>
+  );
 }
 
 function CustomerData({ customer, contract }) {
@@ -278,10 +674,12 @@ function PlanSelectItems({ plans }) {
   ));
 }
 
-function ProposalModal({ data, onClose, onDone, onSaved }) {
+function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
   const { draft, customer } = data;
   const [contract, setContract] = useState(draft);
-  const [step, setStep] = useState(draft.prospect_stage === 'new' || !paymentLinkFor(draft) ? 'proposal' : 'message');
+  const [step, setStep] = useState(
+    ['proposal_ready', 'payment_link_sent'].includes(draft.prospect_stage) && paymentLinkFor(draft) ? 'message' : 'proposal',
+  );
   const [form, setForm] = useState(() => proposalFormFrom(draft, {
     paymentLink: paymentLinkFor(draft),
     defaultDueDate: tomorrowLocal(),
@@ -624,6 +1022,7 @@ function ProposalModal({ data, onClose, onDone, onSaved }) {
         </DialogTitle>
       </DialogHeader>
       <div className="space-y-4 mt-2">
+        {isReminder && <AsaasPaidNotice draft={contract} customer={customer} onRegister={onRegisterPaid} />}
         <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm whitespace-pre-wrap text-gray-800 max-h-72 overflow-y-auto">
           {message}
         </div>
@@ -692,7 +1091,7 @@ function PaymentModal({ data, onClose, onDone }) {
         external_reference: draft.contract_number,
       }, total);
       toast.success(`Pagamento confirmado. ${customer?.full_name || 'O prospect'} foi convertido.`);
-      onDone();
+      onDone(draft.id);
     } catch (error) {
       toast.error(error.message || 'Não foi possível confirmar o pagamento');
     } finally {
@@ -726,8 +1125,8 @@ function PaymentModal({ data, onClose, onDone }) {
 }
 
 function LossModal({ data, onClose, onDone }) {
-  const { draft, customer } = data;
-  const [reasonCode, setReasonCode] = useState('');
+  const { draft, customer, presetReason } = data;
+  const [reasonCode, setReasonCode] = useState(presetReason || '');
   const [reasonNotes, setReasonNotes] = useState('');
   const [externalCancelled, setExternalCancelled] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -764,6 +1163,11 @@ function LossModal({ data, onClose, onDone }) {
         <p className="text-sm text-muted-foreground">
           {customer?.full_name || draft.contract_number} continuará salvo para histórico e métricas. Isso não será contado como churn.
         </p>
+        {draft.prospect_close_deadline && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            O prazo final do link era {formatDate(draft.prospect_close_deadline)}. Cancele o link no Asaas antes de arquivar.
+          </p>
+        )}
         <div>
           <Label>Motivo *</Label>
           <select className="w-full mt-1 h-10 border rounded-lg px-3 text-sm bg-white" value={reasonCode}
@@ -984,6 +1388,9 @@ function ProspectRow({
   onProposal,
   onPayment,
   onLoss,
+  onContact,
+  onQuickContact,
+  quickBusy,
   onApplyLatestSubmission,
   applyingSubmission,
 }) {
@@ -996,7 +1403,6 @@ function ProspectRow({
   const isOpen = isOpenProspect(draft);
   const canUseProspectActions = isDraftProspect(draft);
   const managedInContract = isOpen && !canUseProspectActions;
-  const hasPaymentLink = Boolean(paymentLinkFor(draft));
   const latestSubmission = draft.latest_submission;
   const submissionChanged = isOpen && hasSubmissionChange(draft);
   const submittedPlanName = latestSubmission?.plan?.name || 'plano informado';
@@ -1042,6 +1448,7 @@ function ProspectRow({
               {draft.prospect_converted_at && <span>Convertido: {formatDateTime(draft.prospect_converted_at)}</span>}
               {draft.prospect_lost_at && <span>Encerrado: {formatDateTime(draft.prospect_lost_at)}</span>}
             </div>
+            <div className="mt-2 max-w-sm"><NextStepLine draft={draft} /></div>
             {draft.prospect_stage === 'lost' && (
               <p className="text-xs text-gray-600 mt-2">
                 Motivo: <b>{LOSS_REASONS.find(([code]) => code === draft.prospect_loss_reason_code)?.[1] || 'Outro'}</b>
@@ -1099,41 +1506,11 @@ function ProspectRow({
           <div className="flex flex-col items-end gap-2 shrink-0">
             <span className="font-bold text-green-700 text-base">{formatCurrency(total)}</span>
             <div className="flex gap-1.5 flex-wrap justify-end">
-              {isOpen && canUseProspectActions && (
-                <Button size="sm" variant="outline" className="text-gray-700" onClick={() => onLoss(draft, customer)}>
-                  <ArchiveX className="w-3.5 h-3.5 mr-1" /> Não convertido
-                </Button>
-              )}
-              <Button size="sm" variant="outline" asChild>
-                <Link to={`/assessoria/contratos/${draft.id}`}>
-                  {managedInContract ? 'Abrir contrato' : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
-                </Link>
-              </Button>
-              {isOpen && canUseProspectActions && draft.prospect_stage === 'new' && (
-                <Button size="sm" className="bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
-                  <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Preparar proposta
-                </Button>
-              )}
-              {isOpen && canUseProspectActions && draft.prospect_stage === 'proposal_ready' && (
-                <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
-                  <Send className="w-3.5 h-3.5 mr-1" /> Enviar mensagem
-                </Button>
-              )}
-              {isOpen && canUseProspectActions && draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
-                <>
-                  <Button size="sm" variant="outline" className="text-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
-                    <MessageCircle className="w-3.5 h-3.5 mr-1" /> Reenviar
-                  </Button>
-                  <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => onPayment(draft, customer, coach, modality)}>
-                    <CheckCheck className="w-3.5 h-3.5 mr-1" /> Confirmar pagamento
-                  </Button>
-                </>
-              )}
-              {isOpen && canUseProspectActions && draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
-                <Button size="sm" className="bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
-                  <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Refazer proposta
-                </Button>
-              )}
+              <ProspectActionButtons
+                draft={draft} customer={customer} coach={coach} modality={modality}
+                onProposal={onProposal} onPayment={onPayment} onLoss={onLoss}
+                onContact={onContact} onQuickContact={onQuickContact} quickBusy={quickBusy}
+              />
             </div>
           </div>
         </div>
@@ -1150,6 +1527,9 @@ function ProspectKanbanCard({
   onProposal,
   onPayment,
   onLoss,
+  onContact,
+  onQuickContact,
+  quickBusy,
   onApplyLatestSubmission,
   applyingSubmission,
 }) {
@@ -1162,7 +1542,6 @@ function ProspectKanbanCard({
   const isOpen = isOpenProspect(draft);
   const canUseProspectActions = isDraftProspect(draft);
   const managedInContract = isOpen && !canUseProspectActions;
-  const hasPaymentLink = Boolean(paymentLinkFor(draft));
   const latestSubmission = draft.latest_submission;
   const submissionChanged = isOpen && hasSubmissionChange(draft);
   const planChanged = latestSubmission?.plan_id && latestSubmission.plan_id !== draft.plan_id;
@@ -1224,42 +1603,15 @@ function ProspectKanbanCard({
           </div>
         )}
 
+        <NextStepLine draft={draft} />
+
         <div className="flex flex-wrap gap-1.5 pt-1">
-          {isOpen && canUseProspectActions && (
-            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => onLoss(draft, customer)}>
-              <ArchiveX className="w-3.5 h-3.5 mr-1" /> Perda
-            </Button>
-          )}
-          <Button size="sm" variant="outline" className="h-8 text-xs" asChild>
-            <Link to={`/assessoria/contratos/${draft.id}`}>
-              {managedInContract ? 'Contrato' : 'Ver'} <ChevronRight className="w-3.5 h-3.5 ml-1" />
-            </Link>
-          </Button>
-          {isOpen && canUseProspectActions && draft.prospect_stage === 'new' && (
-            <Button size="sm" className="h-8 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
-              <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Proposta
-            </Button>
-          )}
-          {isOpen && canUseProspectActions && draft.prospect_stage === 'proposal_ready' && (
-            <Button size="sm" className="h-8 text-xs bg-green-600 hover:bg-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
-              <Send className="w-3.5 h-3.5 mr-1" /> Enviar
-            </Button>
-          )}
-          {isOpen && canUseProspectActions && draft.prospect_stage === 'payment_link_sent' && hasPaymentLink && (
-            <>
-              <Button size="sm" variant="outline" className="h-8 text-xs text-green-700" onClick={() => onProposal(draft, customer, coach, modality)}>
-                <MessageCircle className="w-3.5 h-3.5 mr-1" /> Reenviar
-              </Button>
-              <Button size="sm" className="h-8 text-xs bg-green-600 hover:bg-green-700" onClick={() => onPayment(draft, customer, coach, modality)}>
-                <CheckCheck className="w-3.5 h-3.5 mr-1" /> Pago
-              </Button>
-            </>
-          )}
-          {isOpen && canUseProspectActions && draft.prospect_stage === 'payment_link_sent' && !hasPaymentLink && (
-            <Button size="sm" className="h-8 text-xs bg-amber-600 hover:bg-amber-700" onClick={() => onProposal(draft, customer, coach, modality)}>
-              <CircleDollarSign className="w-3.5 h-3.5 mr-1" /> Refazer
-            </Button>
-          )}
+          <ProspectActionButtons
+            compact
+            draft={draft} customer={customer} coach={coach} modality={modality}
+            onProposal={onProposal} onPayment={onPayment} onLoss={onLoss}
+            onContact={onContact} onQuickContact={onQuickContact} quickBusy={quickBusy}
+          />
         </div>
       </CardContent>
     </Card>
@@ -1269,15 +1621,14 @@ function ProspectKanbanCard({
 function ProspectsKanban({
   groups,
   modalData,
-  setProposal,
-  setPayment,
-  setLoss,
+  handlers,
+  onCheckAsaas,
   applyLatestSubmission,
   applyingSubmission,
 }) {
   return (
     <div className="overflow-x-auto pb-2">
-      <div className="grid min-w-[940px] grid-cols-5 gap-3">
+      <div className="grid min-w-[1540px] grid-cols-7 gap-3">
         {groups.map(column => (
           <div key={column.key} className="rounded-2xl border bg-slate-50/70 p-3">
             <div className="mb-3 flex items-start justify-between gap-2">
@@ -1289,6 +1640,11 @@ function ProspectsKanban({
                 {column.items.length}
               </span>
             </div>
+            {column.key === 'payment_link_sent' && column.items.length > 0 && (
+              <Button size="sm" variant="outline" className="mb-3 h-8 w-full bg-white text-xs" onClick={() => onCheckAsaas(column.items)}>
+                <SearchCheck className="w-3.5 h-3.5 mr-1" /> Conferir no Asaas
+              </Button>
+            )}
             {column.items.length === 0 ? (
               <div className="rounded-xl border border-dashed bg-white/70 px-3 py-8 text-center text-xs text-muted-foreground">
                 Sem cards aqui.
@@ -1300,9 +1656,7 @@ function ProspectsKanban({
                     key={draft.id}
                     {...modalData(draft)}
                     draft={draft}
-                    onProposal={selected => setProposal(modalData(selected))}
-                    onPayment={selected => setPayment(modalData(selected))}
-                    onLoss={selected => setLoss(modalData(selected))}
+                    {...handlers}
                     onApplyLatestSubmission={applyLatestSubmission}
                     applyingSubmission={applyingSubmission}
                   />
@@ -1329,6 +1683,11 @@ export default function Prospects() {
   const [loss, setLoss] = useState(null);
   const [creatingProspect, setCreatingProspect] = useState(false);
   const [applyingSubmission, setApplyingSubmission] = useState(null);
+  const [contact, setContact] = useState(null);
+  const [quickBusy, setQuickBusy] = useState(null);
+  const [asaasOrders, setAsaasOrders] = useState(null);
+  const [welcomeContractId, setWelcomeContractId] = useState(null);
+  const today = todayLocalStr();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1407,8 +1766,11 @@ export default function Prospects() {
   const counts = useMemo(() => {
     const result = {
       all: prospects.length,
+      today: 0,
       open: 0,
       new: 0,
+      awaiting_reply: 0,
+      clarifying: 0,
       proposal_ready: 0,
       payment_link_sent: 0,
       converted: 0,
@@ -1422,6 +1784,7 @@ export default function Prospects() {
       const visualStage = prospectVisualStage(item);
       if (result[visualStage] !== undefined) result[visualStage] += 1;
       if (isOpenProspect(item)) result.open += 1;
+      if (isOpenProspect(item) && needsActionToday(item, today)) result.today += 1;
       if (isOpenProspect(item) && hasSubmissionChange(item)) result.needs_review += 1;
       if (item.prospect_customer_relationship === 'former_student') {
         result.returns += 1;
@@ -1430,9 +1793,12 @@ export default function Prospects() {
       }
     });
     return result;
-  }, [prospects]);
+  }, [prospects, today]);
 
-  const filtered = useMemo(() => prospects.filter(item => matchesProspectFilter(item, filter)), [prospects, filter]);
+  const filtered = useMemo(
+    () => prospects.filter(item => matchesProspectFilter(item, filter, today)),
+    [prospects, filter, today],
+  );
   const boardGroups = useMemo(() => BOARD_COLUMNS.map(column => ({
     ...column,
     items: filtered.filter(item => prospectVisualStage(item) === column.key),
@@ -1449,7 +1815,46 @@ export default function Prospects() {
     modality: modalities[draft.plan_snapshot?.modality_id],
   });
   const finishModal = () => {
-    setProposal(null); setPayment(null); setLoss(null); setCreatingProspect(false); load();
+    setProposal(null); setPayment(null); setLoss(null); setContact(null); setCreatingProspect(false); load();
+  };
+  // Pagamento registrado: o prospect vira aluno e a boas-vindas abre na hora.
+  const finishPayment = contractId => {
+    finishModal();
+    if (contractId) setWelcomeContractId(contractId);
+  };
+  const welcomeTask = useMemo(() => (welcomeContractId
+    ? { sourceType: 'contract', sourceId: welcomeContractId, purpose: 'onboarding' }
+    : null), [welcomeContractId]);
+  const registerQuickContact = async (draft, action) => {
+    setQuickBusy(draft.id);
+    try {
+      await registerAssessmentProspectContact(draft.id, { action, expectedUpdatedAt: draft.updated_at });
+      toast.success(action === 'has_questions'
+        ? 'O card foi para “Tirando dúvidas”. O lembrete conta a partir da última conversa.'
+        : 'Conversa registrada. O lembrete volta a contar a partir de hoje.');
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível registrar');
+    } finally {
+      setQuickBusy(null);
+    }
+  };
+  const openAsaasCheck = orders => {
+    setProposal(null); setContact(null);
+    setAsaasOrders(orders);
+  };
+  const handlers = {
+    onProposal: selected => setProposal(modalData(selected)),
+    onPayment: selected => setPayment(modalData(selected)),
+    onLoss: (selected, _customer, presetReason) => setLoss({ ...modalData(selected), presetReason }),
+    onContact: (selected, _customer, _coach, _modality, kind) => setContact({ ...modalData(selected), kind }),
+    onQuickContact: registerQuickContact,
+    quickBusy,
+  };
+  const checkColumnInAsaas = items => {
+    const orders = asaasCheckCandidates(items.map(item => asaasOrderFor(item, customers[item.customer_id])));
+    if (!orders.length) return toast.info('Nenhum link desta coluna é fatura do Asaas.');
+    openAsaasCheck(orders);
   };
   const applyLatestSubmission = async draft => {
     const submission = draft.latest_submission;
@@ -1523,8 +1928,9 @@ export default function Prospects() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
+          ['Para hoje', counts.today, BellRing, 'text-violet-700', 'bg-violet-50'],
           ['Em negociação', counts.open, UserPlus, 'text-blue-700', 'bg-blue-50'],
           ['Valor potencial', formatCurrency(potentialValue), CircleDollarSign, 'text-amber-700', 'bg-amber-50'],
           ['Alterações', counts.needs_review, AlertTriangle, 'text-orange-700', 'bg-orange-50'],
@@ -1561,9 +1967,8 @@ export default function Prospects() {
           <ProspectsKanban
             groups={boardGroups}
             modalData={modalData}
-            setProposal={setProposal}
-            setPayment={setPayment}
-            setLoss={setLoss}
+            handlers={handlers}
+            onCheckAsaas={checkColumnInAsaas}
             applyLatestSubmission={applyLatestSubmission}
             applyingSubmission={applyingSubmission}
           />
@@ -1571,9 +1976,7 @@ export default function Prospects() {
           <div className="space-y-3">
             {filtered.map(draft => (
               <ProspectRow key={draft.id} {...modalData(draft)} draft={draft}
-                onProposal={selected => setProposal(modalData(selected))}
-                onPayment={selected => setPayment(modalData(selected))}
-                onLoss={selected => setLoss(modalData(selected))}
+                {...handlers}
                 onApplyLatestSubmission={applyLatestSubmission}
                 applyingSubmission={applyingSubmission} />
             ))}
@@ -1583,17 +1986,50 @@ export default function Prospects() {
 
       <Dialog open={Boolean(proposal)} onOpenChange={open => { if (!open) setProposal(null); }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
-          {proposal && <ProposalModal data={proposal} onClose={() => setProposal(null)} onDone={finishModal} onSaved={load} />}
+          {proposal && (
+            <ProposalModal data={proposal} onClose={() => setProposal(null)} onDone={finishModal} onSaved={load}
+              onRegisterPaid={order => openAsaasCheck([order])} />
+          )}
         </DialogContent>
       </Dialog>
       <Dialog open={Boolean(payment)} onOpenChange={open => { if (!open) setPayment(null); }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
-          {payment && <PaymentModal data={payment} onClose={() => setPayment(null)} onDone={finishModal} />}
+          {payment && <PaymentModal data={payment} onClose={() => setPayment(null)} onDone={finishPayment} />}
         </DialogContent>
       </Dialog>
       <Dialog open={Boolean(loss)} onOpenChange={open => { if (!open) setLoss(null); }}>
         <DialogContent className="max-w-md">{loss && <LossModal data={loss} onClose={() => setLoss(null)} onDone={finishModal} />}</DialogContent>
       </Dialog>
+      <Dialog open={Boolean(contact)} onOpenChange={open => { if (!open) setContact(null); }}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
+          {contact && (
+            <ContactModal data={contact} onClose={() => setContact(null)} onDone={finishModal}
+              onRegisterPaid={order => openAsaasCheck([order])} />
+          )}
+        </DialogContent>
+      </Dialog>
+      {asaasOrders && (
+        <AsaasPaymentCheckDialog
+          orders={asaasOrders}
+          onClose={({ registered }) => {
+            const single = asaasOrders.length === 1 ? asaasOrders[0].id : null;
+            setAsaasOrders(null);
+            if (!registered) return;
+            load();
+            if (single) setWelcomeContractId(single);
+            else toast.success('As boas-vindas de quem pagou estão na Central de Comunicação.');
+          }}
+        />
+      )}
+      {welcomeTask && (
+        <CommunicationSendDialog
+          task={welcomeTask}
+          sourceUi="prospects_board"
+          onClose={() => setWelcomeContractId(null)}
+          onChanged={() => load()}
+          onSent={() => { setWelcomeContractId(null); load(); }}
+        />
+      )}
       <Dialog open={creatingProspect} onOpenChange={open => { if (!open) setCreatingProspect(false); }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
           {creatingProspect && <CreateProspectModal onClose={() => setCreatingProspect(false)} onDone={finishModal} />}
