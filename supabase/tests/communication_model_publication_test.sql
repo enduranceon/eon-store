@@ -67,7 +67,7 @@ SELECT throws_ok($$SELECT public.communication_model_command('save_draft','22222
 SELECT throws_ok($$SELECT public.communication_model_command('save_draft','22222222-2222-4222-8222-222222222222',
   '{"policy":{"pre_due_enabled":true,"pre_due_offset":0,"daily_after":1},"base_policy_version":1}')$$,
   '22023','Política pré-vencimento inválida','cadência aprovada não é alterada por campos extras');
-SELECT is((SELECT pre_due_enabled FROM public.communication_cadence_policies WHERE slug='billing_overdue'),false,'aviso pré-vencimento inicia desativado');
+SELECT is((SELECT pre_due_enabled FROM public.communication_cadence_policies WHERE slug='billing_overdue'),true,'aviso pré-vencimento ligado (decisão de 08/10/2026)');
 
 SELECT * FROM finish();
 ROLLBACK;

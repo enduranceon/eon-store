@@ -180,8 +180,11 @@ flowchart TD
   cadastrar a cobrança" e aponta para a venda ("Ver origem").
 - Passos: cobrança com link no cadastro; lembrete na véspera do vencimento para
   planos trimestrais e semestrais (política em Comunicação → Modelos e regras,
-  desligada até ser publicada); vencida, todo dia a partir do 3º dia, até a
+  ligada desde 08/10/2026); vencida, todo dia a partir do 3º dia, até a
   pessoa responder.
+- Os textos da primeira cobrança e dos lembretes de véspera e do dia também
+  dizem a que se refere a cobrança (`{referente}`), com acentos e no mesmo tom
+  das outras mensagens (migração `20261008230000_billing_texts_pre_due.sql`).
 - A mensagem de atraso é uma só e diz há quantos dias a cobrança venceu
   (`{dias_atraso}`) e a que se refere (`{referente}`: "referente ao seu plano
   Corrida - Trimestral (ASS-…)", "ao seu pedido PED-… (item)" ou "à sua
@@ -218,7 +221,6 @@ Decidido em 08/10/2026:
   vencimento.
 
 1. O que acontece com o treino de quem não paga a renovação (fica para depois).
-2. Textos de cobrança: acentos e tom dos modelos antigos.
 
 ## 4. Renovação
 

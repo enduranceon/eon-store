@@ -456,7 +456,7 @@ function PolicyEditor({ policy, savedDraft, onPublished }) {
         </p>
         <div className="rounded-md border bg-gray-50 p-3">
           <p className="font-semibold">Lembrete antes do vencimento para contratos trimestrais e semestrais</p>
-          <p className="mt-1 text-xs text-muted-foreground">Desativado por padrão. Não se aplica à renovação mensal automática.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Ligado desde 08/10/2026. Não se aplica à renovação mensal automática.</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className="flex min-h-11 items-center gap-2">
               <input type="checkbox" checked={preDueEnabled} onChange={event => edit(event.target.checked, preDueOffset)} className="h-4 w-4 accent-blue-600" />
