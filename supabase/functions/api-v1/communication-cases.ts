@@ -9,6 +9,8 @@ const PURPOSE = new Set(["billing", "onboarding", "renewal"]);
 const STATE = new Set(["to_do", "following_up", "scheduled", "resolved", "open"]);
 const ACTION_FIELDS: Record<string, string[]> = {
   message_sent: ["message", "channel", "confirmed_external_send", "expected_rule_version", "next_action_at"],
+  // Cobrança: "Desconsiderar mensagem" pula o passo da vez sem envio.
+  message_skipped: [],
   response_recorded: ["response_code", "note", "follow_up_at"],
   return_scheduled: ["next_action_at", "note"],
   review_requested: ["reason", "note", "next_action_at"],
