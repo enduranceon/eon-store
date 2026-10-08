@@ -1219,6 +1219,29 @@ export async function markAssessmentProspectMessageSent(
   return response.data;
 }
 
+// Passos da conversa da proposta: first_contact, follow_up, has_questions,
+// conversation ou closing. O envio é manual; aqui só se registra.
+export async function registerAssessmentProspectContact(
+  contractId,
+  { action, externalCancellationConfirmed = false, expectedUpdatedAt },
+  options = {},
+) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/prospect-contact`,
+    {
+      ...options,
+      method: 'POST',
+      body: {
+        action,
+        external_cancellation_confirmed: externalCancellationConfirmed,
+        expected_updated_at: expectedUpdatedAt,
+      },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function loseAssessmentProspect(
   contractId,
   {

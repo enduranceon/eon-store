@@ -24,16 +24,17 @@ Quando houver outros projetos Supabase visiveis, usar `bsiljrrodgtmtdilnuxr` par
 
 - Confirmado pelo usuario em 2026-09-12: a operacao usa cadastro de cobranca externa e registro de pagamento externo/manual.
 - A integracao automatica com a API Asaas esta preparada para uso futuro e ainda nao e o fluxo operacional. Nao ativa-la nem fazer cobrancas, cancelamentos ou estornos no provedor durante manutencao ou testes.
-- Excecao pedida pelo usuario em 2026-10-06: o botao "Conferir pagamentos no Asaas" (tela Cobrancas, rota `POST /asaas/payment-check` do `api-v1`) so consulta (GET) as cobrancas cujo link externo e uma fatura do Asaas (`https://www.asaas.com/i/<codigo>` = cobranca `pay_<codigo>`). Nao cria, altera, cancela nem estorna nada no provedor; o pagamento so e registrado pelo fluxo manual, depois que o administrador confirma, com o valor e a data de credito de cada parcela vindos do Asaas e sem registrar taxas. So entra como paga se o CPF do cliente da fatura no Asaas for o mesmo da venda, e a gravacao passa por uma segunda consulta ao Asaas e por uma tela de confirmacao. Exige `ASAAS_API_KEY` e `ASAAS_BASE_URL` nos secrets das Edge Functions (nunca no Git, no frontend ou no chat). Testes usam respostas simuladas do Asaas.
+- Excecao pedida pelo usuario em 2026-10-06 (e estendida em 2026-10-08 ao quadro de Prospects: lembrete de pagamento, encerramento com link e "Conferir no Asaas" da coluna Link enviado): o botao "Conferir pagamentos no Asaas" (tela Cobrancas, rota `POST /asaas/payment-check` do `api-v1`) so consulta (GET) as cobrancas cujo link externo e uma fatura do Asaas (`https://www.asaas.com/i/<codigo>` = cobranca `pay_<codigo>`). Nao cria, altera, cancela nem estorna nada no provedor; o pagamento so e registrado pelo fluxo manual, depois que o administrador confirma, com o valor e a data de credito de cada parcela vindos do Asaas e sem registrar taxas. So entra como paga se o CPF do cliente da fatura no Asaas for o mesmo da venda, e a gravacao passa por uma segunda consulta ao Asaas e por uma tela de confirmacao. Exige `ASAAS_API_KEY` e `ASAAS_BASE_URL` nos secrets das Edge Functions (nunca no Git, no frontend ou no chat). Testes usam respostas simuladas do Asaas.
 - Priorizar testes dos fluxos externos/manuais com dados ficticios e dependencias simuladas. Nao usar clientes, pedidos ou contratos reais como fixtures.
 - A tabela `asaas_payments` tambem guarda lancamentos manuais (`source = 'manual'`). Seu nome nao significa que a API Asaas esta em uso; preservar esses lancamentos e suas regras financeiras.
 - Uma previa de frontend pode apontar para o Supabase de producao. Conferir o backend antes de testar qualquer acao que escreva dados; uma URL de preview nao isola o banco.
 
 ## Comunicacao com alunos
 
-- Regras e fluxogramas das conversas da Central de Comunicacao (onboarding primeiro; cobranca, renovacao e proposta a seguir): `docs/fluxos-de-mensagens.md`.
+- Regras e fluxogramas das conversas da Central de Comunicacao (onboarding e proposta; cobranca e renovacao a seguir): `docs/fluxos-de-mensagens.md`.
 - Onboarding vale para a primeira adesao e para o ex-aluno que volta depois de mais de 30 dias sem contrato, com pagamento nos ultimos 30 dias. Renovacao (inclusive atrasada ate 30 dias), historico importado e aluno migrado que so continuou ficam de fora.
 - Onboarding em tres passos (boas-vindas, check-in no dia 5, feedback no dia 20). O envio e manual e sem travas: copiar o texto e "Registrar que enviei".
+- Proposta no quadro de Prospects: primeiro contato sem link, respostas marcadas no card, lembrete no dia 2 e encerramento no dia 5; com link, lembrete no dia seguinte ao vencimento e encerramento 5 dias depois com mais 2 dias de link ativo. Antes de cobrar, o card so consulta o Asaas (mesma regra do botao de Cobrancas); nada e arquivado nem pago sozinho.
 
 ## Preflight antes de mudancas relevantes
 

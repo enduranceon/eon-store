@@ -5,7 +5,7 @@ fluxo registra quem entra, os passos, o que trava e as decisões em aberto. As
 mensagens são enviadas manualmente pelo WhatsApp; o sistema sugere o texto e
 registra o envio quando o operador confirma.
 
-Próximos fluxos a documentar: cobrança, renovação e proposta para prospect.
+Próximos fluxos a documentar: cobrança e renovação.
 
 ## 1. Onboarding
 
@@ -74,3 +74,76 @@ Decidido em 07/10/2026:
 
 1. Mensagem apresentando o novo treinador quando a renovação troca de treinador.
 2. Prazo da boas-vindas: hoje 30 dias depois do pagamento; sugestão inicial de 7.
+
+## 2. Proposta
+
+Do cadastro do prospect ao pagamento, no quadro de Prospects. Migração
+`20261008150000_prospect_contact_flow.sql` (etapas `awaiting_reply` e
+`clarifying`, datas do relógio e `register_assessment_prospect_contact`);
+próximo passo e textos em `src/lib/assessment-prospect-flow.js`.
+
+```mermaid
+flowchart TD
+  A([Prospect novo<br/>site ou cadastro manual]) --> B[1: Primeiro contato, sem link]
+  B --> C{O que a pessoa respondeu?<br/>você marca no card}
+  C -- tem dúvidas --> D[Tirando dúvidas]
+  D -- decidiu --> C
+  C -- quer seguir --> E[Preparar proposta<br/>plano, parcelas, link e vencimento]
+  C -- não quer agora --> X[Não convertido, com motivo]
+  C -- sem resposta --> F[Lembrete no dia 2]
+  F -- continua sem resposta --> G[Encerramento no dia 5]
+  G --> Y[Não convertido: não respondeu]
+  E --> H[2: Proposta com link]
+  H --> I{Pagou?}
+  I -- sim --> J([Vira aluno e abre a boas-vindas])
+  I -- não --> K[3: Lembrete no dia seguinte ao vencimento]
+  K --> L[4: Encerramento 5 dias depois do vencimento<br/>link ativo por mais 2 dias]
+  L -- pagou no prazo --> J
+  L -- prazo final --> M[Arquivar: cancelar o link no Asaas]
+  M --> Z[Não convertido: não respondeu]
+```
+
+- Colunas: Novos → Aguardando resposta → Tirando dúvidas → Proposta pronta →
+  Link enviado → Convertidos / Não convertidos. O card mostra o próximo passo e
+  quando ele vence; o filtro e o contador "Para hoje" juntam o que já venceu.
+- Primeiro contato: para cadastros do site. Cadastro manual e aluno atual vão
+  direto para "Preparar proposta" (o atalho também vale para qualquer card).
+  Em Novos, o card mostra há quanto tempo o cadastro chegou.
+- Respostas: "Quer seguir" abre a proposta; "Tem dúvidas" leva a Tirando
+  dúvidas; "Conversamos hoje" reinicia o relógio; "Não quer agora" e "Número
+  não funciona" são motivos de Não convertido (`invalid_contact`, e também
+  `other_service` para quem queria outro serviço).
+- Relógio sem link (Aguardando resposta e Tirando dúvidas): lembrete 2 dias
+  depois do último contato registrado; encerramento no dia 5, pelo menos 3 dias
+  depois do lembrete. Registrar o encerramento arquiva como "Não respondeu".
+- Relógio com link: lembrete de pagamento (o reenvio do link) no dia seguinte
+  ao vencimento; encerramento 5 dias depois do vencimento, pelo menos 3 dias
+  depois do lembrete. O encerramento deixa o link ativo por mais 2 dias; no
+  prazo final o card pede para arquivar e, antes, cancelar o link no Asaas.
+  Reenviar o link depois do encerramento retira o prazo.
+- Antes do lembrete de pagamento e do encerramento com link, a janela consulta a
+  fatura no Asaas (só leitura, a mesma do botão de Cobranças). Se já foi paga,
+  mostra "Já pagou no Asaas" e o pagamento é registrado pela conferência, com
+  confirmação. A coluna Link enviado tem "Conferir no Asaas" para todos de uma
+  vez. Pagamento registrado converte o prospect e abre a boas-vindas.
+- Envio manual e sem travas de data: copiar o texto (ou abrir o WhatsApp) e
+  "Registrar que enviei". A janela avisa a data do último contato para conferir a
+  conversa antes de cobrar.
+- Textos ainda fixos no código (`assessment-prospect-flow.js` e a mensagem da
+  proposta em `Prospects.jsx`).
+
+### Decisões
+
+Decidido em 08/10/2026:
+
+- Primeiro contato sem link, perguntando se quer seguir ou se tem dúvidas.
+- Sem resposta: lembrete no dia 2 e encerramento no dia 5, arquivando como "Não
+  respondeu". O lembrete traz ajuda (explicação, áudio ou ligação), não "viu
+  minha mensagem?".
+- Com link: lembrete no dia seguinte ao vencimento e encerramento 5 dias depois,
+  com o link ativo por mais 2 dias antes de arquivar.
+- Conferência no Asaas no próprio card, com um clique para registrar e a
+  boas-vindas abrindo em seguida.
+
+1. Textos editáveis em Comunicação → Modelos e regras, como os do onboarding.
+2. Retomar um prospect arquivado em um clique (hoje: "Novo prospect").

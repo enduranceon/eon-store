@@ -5,14 +5,24 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
 const ACTION_PATH =
-  /^\/orders\/contract\/([^/]+)\/(renewal|renewal-activation|auto-renewal|non-renewal|enrollment-confirmation|enrollment-refusal|prospect-proposal|prospect-message-sent|prospect-lost)$/;
+  /^\/orders\/contract\/([^/]+)\/(renewal|renewal-activation|auto-renewal|non-renewal|enrollment-confirmation|enrollment-refusal|prospect-proposal|prospect-message-sent|prospect-contact|prospect-lost)$/;
 const PROSPECT_LOSS_REASONS = new Set([
   "price",
   "no_response",
   "changed_mind",
   "chose_competitor",
   "coach_availability",
+  "invalid_contact",
+  "other_service",
   "other",
+]);
+// Passos da conversa da proposta registrados pelo operador (o envio é manual).
+const PROSPECT_CONTACT_ACTIONS = new Set([
+  "first_contact",
+  "follow_up",
+  "has_questions",
+  "conversation",
+  "closing",
 ]);
 
 function isTimestamp(value: unknown): value is string {
@@ -219,6 +229,26 @@ export async function handleContractMembershipRequest(
       }, 400);
     }
     rpc = "mark_assessment_prospect_message_sent";
+  } else if (action === "prospect-contact") {
+    if (
+      !exactKeys(body, [
+        "action",
+        "external_cancellation_confirmed",
+        "expected_updated_at",
+      ]) || typeof body.action !== "string" ||
+      !PROSPECT_CONTACT_ACTIONS.has(body.action) ||
+      typeof body.external_cancellation_confirmed !== "boolean"
+    ) {
+      return jsonResponse({
+        error: "Dados do contato são inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+    rpc = "register_assessment_prospect_contact";
+    args = {
+      p_action: body.action,
+      p_external_cancellation_confirmed: body.external_cancellation_confirmed,
+    };
   } else {
     const reasonNotes = body.reason_notes;
     if (

@@ -336,6 +336,75 @@ Deno.test("Prospect loss validates the reason and cancellation confirmation", as
   );
 });
 
+Deno.test("Prospect contact accepts only the known conversation steps", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = `/orders/contract/${CONTRACT_ID}/prospect-contact`;
+  for (
+    const invalidBody of [
+      {
+        action: "call",
+        external_cancellation_confirmed: false,
+        expected_updated_at: UPDATED_AT,
+      },
+      { action: "closing", expected_updated_at: UPDATED_AT },
+      {
+        action: "closing",
+        external_cancellation_confirmed: "yes",
+        expected_updated_at: UPDATED_AT,
+      },
+    ]
+  ) {
+    const invalid = await handleContractMembershipRequest(
+      request("prospect-contact", invalidBody),
+      path,
+      client(calls),
+      ACTOR_ID,
+    );
+    assert(invalid?.status === 400, "invalid contact was accepted");
+  }
+  assert(calls.length === 0, "database was called for an invalid contact");
+
+  const valid = await handleContractMembershipRequest(
+    request("prospect-contact", {
+      action: "first_contact",
+      external_cancellation_confirmed: false,
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(valid?.status === 200, "valid contact failed");
+  assert(
+    calls[0].name === "register_assessment_prospect_contact",
+    "wrong contact RPC",
+  );
+  assert(calls[0].args.p_action === "first_contact", "action changed");
+  assert(calls[0].args.p_contract_id === CONTRACT_ID, "contract changed");
+  assert(calls[0].args.p_actor_id === ACTOR_ID, "actor changed");
+  assert(Object.keys(calls[0].args).length === 5, "unexpected contact fields");
+});
+
+Deno.test("Prospect loss accepts wrong number and another service", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = `/orders/contract/${CONTRACT_ID}/prospect-lost`;
+  for (const reason of ["invalid_contact", "other_service"]) {
+    const response = await handleContractMembershipRequest(
+      request("prospect-lost", {
+        reason_code: reason,
+        reason_notes: null,
+        external_cancellation_confirmed: false,
+        expected_updated_at: UPDATED_AT,
+      }),
+      path,
+      client(calls),
+      ACTOR_ID,
+    );
+    assert(response?.status === 200, `${reason} was rejected`);
+  }
+  assert(calls.length === 2, "both reasons reach the database");
+});
+
 Deno.test("Database conflicts become HTTP 409", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const path = `/orders/contract/${CONTRACT_ID}/non-renewal`;
