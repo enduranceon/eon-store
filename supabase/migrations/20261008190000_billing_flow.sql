@@ -7,8 +7,11 @@ SET LOCAL lock_timeout = '5s';
 -- 2. Depois do vencimento, a régua de atraso começa mesmo sem a primeira
 --    mensagem registrada; o lembrete da véspera também não se repete.
 -- 3. "Desconsiderar mensagem" (message_skipped): o passo da vez fica feito sem
---    envio e a régua segue. Depois do 7º dia, a cobrança continua diária até
---    a pessoa responder (resposta ou combinado pausam a régua).
+--    envio e a régua segue.
+-- 4. Vencida: a partir do 3º dia, uma mensagem por dia até a pessoa responder
+--    (resposta ou combinado pausam a régua). Um só modelo, que diz há quantos
+--    dias venceu ({dias_atraso}) e a que se refere ({referente}). Os modelos
+--    antigos de 5, 7, 8, 10 e 11 dias saem de uso.
 
 CREATE OR REPLACE FUNCTION eon_private.ensure_communication_case(
   p_source_type text, p_source_id uuid, p_purpose text
@@ -194,6 +197,102 @@ END;
 $$;
 
 
+CREATE OR REPLACE FUNCTION eon_private.communication_template_context(p_context jsonb)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+  v_due date;
+  v_end date;
+  v_today date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
+  v_type text;
+  v_balance numeric;
+  v_link text := NULLIF(p_context->>'payment_link', '');
+  v_pix text := NULLIF(p_context->>'pix_copy', '');
+  v_name text := COALESCE(NULLIF(btrim(p_context->>'person_name'),''),'Cliente');
+  v_item jsonb;
+  v_items text := '';
+  v_first_item text;
+  v_item_name text;
+  v_item_count integer:=0;
+  v_quantity integer;
+  v_ref text := NULLIF(p_context->>'reference', '');
+  v_overdue integer;
+  v_about text;
+BEGIN
+  v_due := NULLIF(p_context->>'due_date', '')::date;
+  v_end := NULLIF(p_context->>'end_date', '')::date;
+  v_balance := NULLIF(p_context->>'balance', '')::numeric;
+  v_type := CASE p_context->>'source_type'
+    WHEN 'contract' THEN 'contrato' WHEN 'event' THEN 'inscricao'
+    ELSE 'pedido' END;
+  IF jsonb_typeof(p_context->'items')='array' THEN
+    FOR v_item IN SELECT value FROM jsonb_array_elements(p_context->'items') LOOP
+      IF COALESCE(v_item->>'cancelled','false')='true' THEN CONTINUE; END IF;
+      v_item_name:=COALESCE(NULLIF(v_item->>'product_name',''),
+        NULLIF(v_item->>'name',''),NULLIF(v_item->>'description',''));
+      IF v_item_name IS NULL THEN CONTINUE; END IF;
+      v_item_count:=v_item_count+1;
+      v_first_item:=COALESCE(v_first_item,v_item_name);
+      v_quantity:=CASE WHEN COALESCE(v_item->>'quantity','') ~ '^[0-9]{1,4}$'
+        THEN GREATEST(1,(v_item->>'quantity')::integer) ELSE 1 END;
+      v_items:=v_items || CASE WHEN v_items='' THEN '' ELSE E'\n' END ||
+        '- ' || v_item_name || ' x' || v_quantity;
+    END LOOP;
+  END IF;
+  -- Cobrança vencida: há quantos dias e a que se refere.
+  v_overdue := v_today - v_due;
+  v_first_item := CASE WHEN v_item_count>1 THEN v_first_item||' +'||(v_item_count-1)
+    ELSE v_first_item END;
+  v_about := CASE p_context->>'source_type'
+    WHEN 'contract' THEN CASE
+      WHEN NULLIF(p_context->>'plan_name','') IS NOT NULL
+        THEN 'referente ao seu plano ' || (p_context->>'plan_name')
+          || COALESCE(' (' || v_ref || ')', '')
+      ELSE 'referente ao seu contrato' || COALESCE(' ' || v_ref, '') END
+    WHEN 'event' THEN 'referente à sua inscrição' || COALESCE(' ' || v_ref, '')
+      || COALESCE(' (' || v_first_item || ')', '')
+    ELSE 'referente ao seu pedido' || COALESCE(' ' || v_ref, '')
+      || COALESCE(' (' || v_first_item || ')', '') END;
+  RETURN jsonb_build_object(
+    'nome', split_part(v_name,' ',1),
+    'nome_completo', v_name,
+    'tipo', v_type,
+    'numero', COALESCE(NULLIF(p_context->>'reference', ''), 'sem numero'),
+    'valor', CASE WHEN v_balance IS NULL THEN 'saldo a conferir'
+      ELSE 'R$ ' || replace(to_char(v_balance, 'FM999999999990.00'), '.', ',') END,
+    'vencimento_texto', CASE WHEN v_due IS NULL THEN ''
+      ELSE ', com vencimento em *' || to_char(v_due, 'DD/MM/YYYY') || '*' END,
+    'vencimento', CASE WHEN v_due IS NULL THEN '' ELSE to_char(v_due, 'DD/MM/YYYY') END,
+    'vencimento_atraso', CASE WHEN v_due IS NULL THEN ''
+      ELSE ' em ' || to_char(v_due, 'DD/MM/YYYY') END,
+    'pix_bloco', CASE WHEN v_pix IS NULL THEN ''
+      ELSE 'PIX Copia e Cola:' || E'\n' || v_pix || E'\n\n' END,
+    'pix_copia_cola', COALESCE(v_pix,''),
+    'link_bloco', CASE WHEN v_link IS NULL THEN ''
+      ELSE 'Link de pagamento:' || E'\n' || v_link || E'\n\n' END,
+    'link_pagamento', COALESCE(v_link,''),
+    'item', COALESCE(v_first_item,''),
+    'dias_atraso', CASE WHEN v_overdue IS NULL OR v_overdue <= 0 THEN ''
+      WHEN v_overdue = 1 THEN '1 dia' ELSE v_overdue || ' dias' END,
+    'referente', v_about,
+    'itens', v_items,
+    'itens_bloco', CASE WHEN v_items='' THEN ''
+      ELSE 'Itens:' || E'\n' || v_items || E'\n\n' END,
+    'plano', COALESCE(NULLIF(p_context->>'plan_name', ''), 'seu plano'),
+    'data_fim', CASE WHEN v_end IS NULL THEN '' ELSE to_char(v_end, 'DD/MM/YYYY') END,
+    'dias', CASE WHEN v_end IS NULL THEN '' ELSE (v_end-v_today)::text END,
+    'aviso_vencimento', CASE WHEN v_end IS NULL
+      THEN 'a data de vencimento do seu plano precisa ser confirmada'
+      WHEN v_end>=v_today THEN 'seu plano vence nos próximos dias'
+      ELSE 'seu plano venceu em ' || to_char(v_end,'DD/MM') END,
+    'modalidade', COALESCE(NULLIF(p_context->>'modality_name',''),'a confirmar'),
+    'coach', COALESCE(NULLIF(p_context->>'coach_name',''),'a definir'),
+    'comunidade', COALESCE(NULLIF(p_context->>'community_link',''),
+      '(link da comunidade não configurado)')
+  );
+END;
+$$;
+
+
 CREATE OR REPLACE FUNCTION eon_private.communication_case_suggestion(
   p_case public.communication_cases, p_context jsonb,
   p_rule_override jsonb DEFAULT NULL, p_policy_override jsonb DEFAULT NULL
@@ -273,10 +372,12 @@ BEGIN
       v_slug := 'billing-charge-overdue'; v_action := 'overdue';
       v_block := COALESCE(v_block, 'missing_due_date');
     ELSE
+      -- Vencida: todo dia a partir do 3º dia, com o mesmo modelo.
       v_days := v_today - v_due;
+      v_slug := 'billing-charge-overdue'; v_action := 'overdue_daily';
+      v_next := GREATEST(v_due + 3, v_today) + 1;
       IF v_days < 3 THEN
-        v_slug := 'billing-charge-overdue'; v_action := 'overdue_d3';
-        v_eligible := v_due + 3; v_next := v_due + 5;
+        v_eligible := v_due + 3;
         IF v_policy.pre_due_enabled
            AND (p_context->>'period_months')::integer = ANY(v_policy.pre_due_months)
            AND COALESCE(p_context->>'auto_renewal', 'false') <> 'true'
@@ -288,18 +389,6 @@ BEGIN
           v_eligible := v_due + v_policy.pre_due_offset;
           v_next := v_due + 3;
         END IF;
-      ELSIF v_days < 5 THEN
-        v_slug := 'billing-charge-overdue'; v_action := 'overdue_d3';
-        v_next := v_due + 5;
-      ELSIF v_days < 7 THEN
-        v_slug := 'billing-charge-overdue-5d'; v_action := 'overdue_d5';
-        v_next := v_due + 7;
-      ELSIF v_days = 7 THEN
-        v_slug := 'billing-charge-overdue-7d'; v_action := 'overdue_d7';
-        v_next := v_due + 8;
-      ELSE
-        v_slug := 'billing-charge-overdue-daily'; v_action := 'overdue_daily';
-        v_next := v_today + 1;
       END IF;
     END IF;
     IF v_last = v_today THEN
@@ -307,14 +396,6 @@ BEGIN
         WHEN v_last_sent IS DISTINCT FROM v_today THEN 'skipped_today'
         ELSE 'already_contacted_today' END);
       v_eligible := v_today + 1;
-    ELSIF v_last IS NOT NULL AND v_due IS NOT NULL THEN
-      IF v_last >= v_due + 7 THEN
-        v_eligible := GREATEST(v_eligible, v_last + 1);
-      ELSIF v_last >= v_due + 5 THEN
-        v_eligible := GREATEST(v_eligible, v_due + 7);
-      ELSIF v_last >= v_due + 3 THEN
-        v_eligible := GREATEST(v_eligible, v_due + 5);
-      END IF;
     END IF;
     IF NULLIF(p_context->>'payment_link', '') IS NULL
        AND NULLIF(p_context->>'pix_copy', '') IS NULL THEN
@@ -403,8 +484,7 @@ BEGIN
       ELSE 'charge_overdue' END;
     v_rule_offset:=CASE v_action
       WHEN 'initial_charge' THEN 0 WHEN 'pre_due' THEN v_policy.pre_due_offset
-      WHEN 'overdue_d3' THEN 3 WHEN 'overdue_d5' THEN 5
-      WHEN 'overdue_d7' THEN 7 ELSE 8 END;
+      ELSE 3 END;
   ELSIF p_case.purpose='renewal' THEN
     v_rule_journey:='renewal';v_rule_trigger:='contract_end_date';
     v_rule_kind:='renewal_reminder';v_rule_offset:=-10;
@@ -746,6 +826,10 @@ REVOKE ALL ON FUNCTION eon_private.ensure_communication_case(text,uuid,text)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION eon_private.ensure_communication_case(text,uuid,text)
   TO service_role;
+REVOKE ALL ON FUNCTION eon_private.communication_template_context(jsonb)
+  FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION eon_private.communication_template_context(jsonb)
+  TO service_role;
 REVOKE ALL ON FUNCTION eon_private.communication_case_suggestion(public.communication_cases,jsonb,jsonb,jsonb)
   FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION eon_private.communication_case_suggestion(public.communication_cases,jsonb,jsonb,jsonb)
@@ -754,6 +838,52 @@ REVOKE ALL ON FUNCTION public.apply_communication_case_action(uuid,jsonb,text,uu
   FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.apply_communication_case_action(uuid,jsonb,text,uuid)
   TO service_role;
+
+-- Vencida: um só modelo, todo dia a partir do 3º dia. Os de 5, 7, 8, 10 e 11
+-- dias ficam desativados (continuam no histórico de versões).
+UPDATE public.communication_rules
+SET name = 'Cobrança vencida · todo dia a partir do 3º dia',
+    message_template = $tpl$Oi, {nome}! Tudo bem?
+
+A cobrança de *{valor}* {referente} está vencida há *{dias_atraso}* (venceu em {vencimento}).
+
+{link_bloco}Consegue me dar um retorno sobre o pagamento? Se já pagou, me avisa que a gente confere.$tpl$,
+    active = true, updated_at = now()
+WHERE slug = 'billing-charge-overdue';
+UPDATE public.communication_rules SET active = false, updated_at = now()
+WHERE journey = 'billing' AND task_kind = 'charge_overdue' AND active
+  AND slug IN ('billing-charge-overdue-5d', 'billing-charge-overdue-7d',
+    'billing-charge-overdue-daily', 'billing-charge-overdue-10d',
+    'billing-charge-overdue-return-11d');
+
+ALTER TABLE public.communication_cadence_policies
+  DROP CONSTRAINT communication_cadence_policies_milestones_check,
+  DROP CONSTRAINT communication_cadence_policies_check;
+UPDATE public.communication_cadence_policies
+SET milestones = ARRAY[3], daily_after = 3, updated_at = now()
+WHERE slug = 'billing_overdue';
+ALTER TABLE public.communication_cadence_policies
+  ADD CONSTRAINT communication_cadence_policies_milestones_check
+    CHECK (milestones = ARRAY[3]),
+  ADD CONSTRAINT communication_cadence_policies_check
+    CHECK (daily_after = 3 AND recurrence_days = 1);
+
+-- Quem já recebeu a cobrança vencida e estava esperando o 5º ou o 7º dia
+-- volta para a fila no dia seguinte ao último contato.
+WITH last_contact AS (
+  SELECT c.id, max(e.contact_date) AS last_date,
+    NULLIF(eon_private.communication_source_context(c.source_type, c.source_id)->>'due_date', '')::date AS due
+  FROM public.communication_cases c
+  JOIN public.communication_case_events e
+    ON e.case_id = c.id AND e.event_type IN ('message_sent', 'message_skipped')
+  WHERE c.purpose = 'billing' AND c.status = 'open' AND c.hold_kind = 'contact_wait'
+    AND c.blocked_reason IS NULL
+  GROUP BY c.id
+)
+UPDATE public.communication_cases c
+SET next_action_at = l.last_date + 1, version = c.version + 1, updated_at = now()
+FROM last_contact l
+WHERE c.id = l.id AND l.last_date >= l.due + 3 AND c.next_action_at > l.last_date + 1;
 
 -- Fecha a cobrança da Central que já estava aberta para prospect em rascunho.
 SELECT eon_private.ensure_communication_case('contract', c.source_id, 'billing')

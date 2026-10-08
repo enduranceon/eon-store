@@ -2,6 +2,7 @@ import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_COMMUNICATION_RULES, RENEWAL_INTENT_TEMPLATE } from '@/lib/communication-config';
 import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
+import { chargeReference, overdueDaysText } from '@/lib/billing-message';
 import { getContractTotalValue } from '@/lib/assessment-contract-lifecycle';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import {
@@ -700,13 +701,17 @@ function renderCommunicationTemplate(template, task, options = {}) {
   const daysToEnd = task.endDate ? daysBetween(task.endDate, todayLocalStr()) : null;
   const items = task.items || [];
   const itemsText = itemLines(items);
+  const item = task.itemSummary || items[0]?.label || '';
+  const overdueDays = dueDate ? -daysBetween(dueDate, todayLocalStr()) : null;
   const values = {
     '{nome}': firstName(task.customerName),
     '{nome_completo}': task.customerName || '',
     '{tipo}': saleType,
     '{numero}': task.orderNumber || '',
     '{valor}': formatCurrency(task.totalValue || 0),
-    '{item}': task.itemSummary || items[0]?.label || '',
+    '{item}': item,
+    '{dias_atraso}': overdueDaysText(overdueDays),
+    '{referente}': chargeReference(task, item),
     '{itens}': itemsText,
     '{itens_bloco}': itemsText ? `Itens:\n${itemsText}\n\n` : '',
     '{vencimento}': due,

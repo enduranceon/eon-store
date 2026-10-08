@@ -66,11 +66,13 @@ SELECT is((pg_temp.suggest(pg_temp.order_id(2))->>'eligible_at')::date,
 SELECT is(pg_temp.suggest(pg_temp.order_id(3))->>'rule_slug',
   'billing-charge-overdue','D+3 resolves to the first overdue model');
 SELECT is(pg_temp.suggest(pg_temp.order_id(5))->>'rule_slug',
-  'billing-charge-overdue-5d','D+5 resolves to its own model');
+  'billing-charge-overdue','D+5 uses the same daily overdue model');
 SELECT is(pg_temp.suggest(pg_temp.order_id(7))->>'rule_slug',
-  'billing-charge-overdue-7d','D+7 resolves to its own model');
+  'billing-charge-overdue','D+7 uses the same daily overdue model');
 SELECT is(pg_temp.suggest(pg_temp.order_id(8))->>'rule_slug',
-  'billing-charge-overdue-daily','D+8 resolves to daily model');
+  'billing-charge-overdue','D+8 uses the same daily overdue model');
+SELECT is((pg_temp.suggest(pg_temp.order_id(3))->>'proposed_next_action_at')::date,
+  current_date+1,'from D+3 the next contact is tomorrow');
 SELECT is((pg_temp.suggest(pg_temp.order_id(8))->>'proposed_next_action_at')::date,
   current_date+1,'after D+7 next contact is tomorrow');
 SELECT is((pg_temp.auto_suggest(current_date+1)->>'eligible_at')::date,

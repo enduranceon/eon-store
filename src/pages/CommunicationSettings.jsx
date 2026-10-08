@@ -38,7 +38,7 @@ const MODEL_STAGES = {
   billing: [
     { key: 'initial', label: 'Cobrança inicial', trigger_event: 'charge_created', task_kind: 'charge_send', offsets: [[0, 'Ao cadastrar cobrança']] },
     { key: 'pre_due', label: 'Lembrete antes ou no vencimento', trigger_event: 'charge_due_date', task_kind: 'charge_send', offsets: [[-1, 'D−1 · véspera'], [0, 'D0 · vencimento']] },
-    { key: 'overdue', label: 'Saldo em atraso', trigger_event: 'charge_due_date', task_kind: 'charge_overdue', offsets: [[3, 'D+3'], [5, 'D+5'], [7, 'D+7'], [8, 'D+8 em diante · revisão diária']] },
+    { key: 'overdue', label: 'Saldo em atraso', trigger_event: 'charge_due_date', task_kind: 'charge_overdue', offsets: [[3, 'D+3 em diante · todo dia']] },
   ],
   onboarding: [
     { key: 'welcome', label: 'Boas-vindas após pagamento', trigger_event: 'payment_confirmed', task_kind: 'onboarding_welcome', offsets: [[0, 'Após pagamento']] },
@@ -309,7 +309,7 @@ function RuleEditor({ rule, savedDraft, isNew = false, onPublished, onDraftSaved
         </div>
         <p className="text-xs text-muted-foreground">
           O texto é escolhido pela etapa e pelo marco. Entre modelos ativos da mesma etapa, a menor ordem tem prioridade.
-          {draft.journey === 'billing' && ' A cadência de D+3, D+5, D+7 e revisão diária permanece fixa.'}
+          {draft.journey === 'billing' && ' A cobrança vencida sai todo dia a partir do D+3, até a pessoa responder.'}
         </p>
         <div>
           <Label htmlFor={`model-template-${draft.slug}`}>Texto sugerido</Label>
@@ -450,7 +450,7 @@ function PolicyEditor({ policy, savedDraft, onPublished }) {
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         <p>
-          Cobranças em atraso: D+3, D+5, D+7 e revisão diária depois disso enquanto houver saldo aberto.
+          Cobranças em atraso: todo dia a partir do D+3, até a pessoa responder, enquanto houver saldo aberto.
           Promessas, contestação, pagamento e revisão prevalecem. O EON Store sugere tarefas; mensagens são enviadas manualmente.
         </p>
         <div className="rounded-md border bg-gray-50 p-3">

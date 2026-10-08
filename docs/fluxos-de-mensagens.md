@@ -166,8 +166,7 @@ flowchart TD
   B --> D{Trimestral ou semestral<br/>e lembrete ligado?}
   D -- sim --> E[2: Lembrete na véspera do vencimento]
   D -- não --> F
-  E --> F[3: Vencida com 3, 5 e 7 dias]
-  F --> G[4: Todo dia a partir do 8º dia]
+  E --> G[3: Vencida: todo dia a partir do 3º dia<br/>há quantos dias venceu e a que se refere]
   G --> G
   G -. resposta registrada .-> R[Pausa: vai pagar dia X volta nesse dia;<br/>já pagou ou contestou vai para conferência]
   B -. pagamento registrado .-> Z([Cobrança encerrada])
@@ -181,14 +180,19 @@ flowchart TD
   cadastrar a cobrança" e aponta para a venda ("Ver origem").
 - Passos: cobrança com link no cadastro; lembrete na véspera do vencimento para
   planos trimestrais e semestrais (política em Comunicação → Modelos e regras,
-  desligada até ser publicada); vencida com 3, 5 e 7 dias; a partir do 8º dia,
-  todo dia, até a pessoa responder.
+  desligada até ser publicada); vencida, todo dia a partir do 3º dia, até a
+  pessoa responder.
+- A mensagem de atraso é uma só e diz há quantos dias a cobrança venceu
+  (`{dias_atraso}`) e a que se refere (`{referente}`: "referente ao seu plano
+  Corrida - Trimestral (ASS-…)", "ao seu pedido PED-… (item)" ou "à sua
+  inscrição …"). Como a contagem é pelo calendário, um dia sem envio não
+  desarruma a fila: no dia seguinte a mensagem já sai com o número certo.
 - Resposta registrada pausa a régua: "Vai pagar" com data volta nesse dia;
   "Informou que já pagou" vai para a conferência de pagamento; "Contestou" e
   "Precisa de atendimento" vão para revisão.
 - "Desconsiderar mensagem e pular para a próxima": o passo da vez fica feito
-  sem envio e sem mexer na venda (`message_skipped`). O lembrete diário volta no dia
-  seguinte; o 3º dia pula para o 5º, e assim por diante.
+  sem envio e sem mexer na venda (`message_skipped`). A cobrança vencida volta
+  no dia seguinte.
 - Sem travar a régua: se a cobrança com link ou o lembrete da véspera não forem
   enviados nem registrados, depois do vencimento a régua de atraso começa
   sozinha (as mensagens de atraso também levam o link). O lembrete da véspera
@@ -198,14 +202,17 @@ flowchart TD
   com confirmação; o caso fecha sozinho.
 - Diferente do onboarding, a cobrança mantém as conferências de data, link e
   WhatsApp no "Registrar que enviei".
-- Textos: modelos `billing-*` em Comunicação → Modelos e regras. Os modelos de
-  10 e 11 dias existem, mas a régua não usa (o diário começa no 8º dia).
+- Textos: modelos `billing-*` em Comunicação → Modelos e regras. A vencida usa
+  `billing-charge-overdue`; os modelos antigos de 5, 7, 8, 10 e 11 dias ficaram
+  desativados (o histórico de versões guarda os textos).
 
 ### Decisões
 
 Decidido em 08/10/2026:
 
-- Cobrança todo dia depois do 7º dia, até a pessoa dar uma resposta.
+- Cobrança vencida todo dia a partir do 3º dia, até a pessoa dar uma resposta,
+  com uma mensagem só que diz há quantos dias venceu e a que se refere (no
+  lugar de 3, 5 e 7 dias e diário depois do 7º).
 - Lembrete na véspera para trimestral e semestral, com "Desconsiderar mensagem".
 - Se nada for enviado nem registrado, a régua de atraso segue depois do
   vencimento.

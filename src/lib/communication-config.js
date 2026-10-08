@@ -38,7 +38,7 @@ Segue a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*{vencimento_text
   },
   {
     slug: 'billing-charge-overdue',
-    name: 'Cobranca vencida - 3 dias',
+    name: 'Cobrança vencida · todo dia a partir do 3º dia',
     journey: 'billing',
     trigger_event: 'charge_due_date',
     task_kind: 'charge_overdue',
@@ -46,11 +46,11 @@ Segue a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*{vencimento_text
     channel: 'whatsapp',
     active: true,
     order_index: 20,
-    message_template: `Oi, {nome}!
+    message_template: `Oi, {nome}! Tudo bem?
 
-Passando pra lembrar da cobranca de *{valor}* que venceu{vencimento_atraso}.
+A cobrança de *{valor}* {referente} está vencida há *{dias_atraso}* (venceu em {vencimento}).
 
-{link_bloco}Se ja tiver pago, e so desconsiderar. Qualquer duvida, me chama aqui!`,
+{link_bloco}Consegue me dar um retorno sobre o pagamento? Se já pagou, me avisa que a gente confere.`,
   },
   {
     slug: 'billing-charge-overdue-7d',
@@ -60,7 +60,7 @@ Passando pra lembrar da cobranca de *{valor}* que venceu{vencimento_atraso}.
     task_kind: 'charge_overdue',
     days_offset: 7,
     channel: 'whatsapp',
-    active: true,
+    active: false,
     order_index: 21,
     message_template: `Oi, {nome}!
 
@@ -76,7 +76,7 @@ Passando de novo pra lembrar da cobranca de *{valor}*, que venceu{vencimento_atr
     task_kind: 'charge_overdue',
     days_offset: 10,
     channel: 'whatsapp',
-    active: true,
+    active: false,
     order_index: 22,
     message_template: `Oi, {nome}!
 
@@ -92,7 +92,7 @@ A cobranca de *{valor}* segue em aberto desde *{vencimento}*.
     task_kind: 'charge_overdue',
     days_offset: 11,
     channel: 'whatsapp',
-    active: true,
+    active: false,
     order_index: 23,
     message_template: `Ola, {nome}! Tudo bem?
 
