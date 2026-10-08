@@ -5,8 +5,8 @@ import { RENEWAL_ATTENTION_WINDOW_OFFSET } from '@/lib/assessment-renewal-window
 
 export const DEFAULT_COMMUNITY_LINK = 'https://chat.whatsapp.com/Eow2KTzNHwr0Q5n5XrTow3';
 
-// Mensagem de intenção de renovação (quadro de Renovações). {aviso_vencimento}
-// vira "seu plano vence nos próximos dias" ou "seu plano venceu em DD/MM".
+// Mensagem de intenção de renovação (Pebinha). {aviso_vencimento} vira "seu
+// plano Corrida - Trimestral vence em 18/10" (ou "venceu em").
 export const RENEWAL_INTENT_TEMPLATE = `Oi, {nome}! Tudo bem?
 
 Sou o Pebinha, assistente virtual da EON. Estou aqui pra te lembrar que {aviso_vencimento}.
@@ -168,6 +168,106 @@ Se tiver qualquer dúvida ou feedback, me manda por aqui. Sua opinião ajuda mui
     active: true,
     order_index: 50,
     message_template: RENEWAL_INTENT_TEMPLATE,
+  },
+  // Régua da renovação (docs/fluxos-de-mensagens.md, seção 4). O offset
+  // identifica o passo; os de gatilho "manual" respondem a uma resposta.
+  {
+    slug: 'renewal-reminder-2d',
+    name: 'Renovação · lembrete (2 dias depois do Pebinha)',
+    journey: 'renewal',
+    trigger_event: 'contract_end_date',
+    task_kind: 'renewal_reminder',
+    days_offset: -8,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 61,
+    message_template: `Oi, {nome}! Passando de novo sobre a renovação: {aviso_vencimento}.
+
+É só me responder com o número:
+1. Sim, vou renovar.
+2. Ainda estou pensando.
+3. Gostaria de mudar de plano/treinador.
+4. Gostaria de falar com um atendente.
+5. Não vou renovar.`,
+  },
+  {
+    slug: 'renewal-last-day',
+    name: 'Renovação · último dia do plano',
+    journey: 'renewal',
+    trigger_event: 'contract_end_date',
+    task_kind: 'renewal_reminder',
+    days_offset: 0,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 62,
+    message_template: `Oi, {nome}! Hoje é o último dia do seu plano {plano}.
+
+Pra seus treinos seguirem sem pausa, me confirma se vamos renovar? Qualquer dúvida, me chama aqui.`,
+  },
+  {
+    slug: 'renewal-closing-5d',
+    name: 'Renovação · encerramento sem resposta (5 dias depois do fim)',
+    journey: 'renewal',
+    trigger_event: 'contract_end_date',
+    task_kind: 'renewal_reminder',
+    days_offset: 5,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 63,
+    message_template: `Oi, {nome}! Como não tivemos retorno, estamos encerrando por aqui a renovação do seu plano.
+
+Foi muito bom ter você treinando com a gente! Quando quiser voltar, é só chamar aqui que a gente retoma. 💙🧡`,
+  },
+  {
+    slug: 'renewal-thinking-ack',
+    name: 'Renovação · ainda pensando (na hora)',
+    journey: 'renewal',
+    trigger_event: 'manual',
+    task_kind: 'renewal_reminder',
+    days_offset: 1,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 64,
+    message_template: `Combinado, {nome}! Em breve a gente retoma o contato.
+
+Enquanto isso, posso te ajudar em alguma coisa? Se tiver qualquer dúvida sobre o plano ou os treinos, é só me chamar aqui.`,
+  },
+  {
+    slug: 'renewal-thinking-return',
+    name: 'Renovação · ainda pensando (retorno em 2 dias)',
+    journey: 'renewal',
+    trigger_event: 'manual',
+    task_kind: 'renewal_reminder',
+    days_offset: 2,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 65,
+    message_template: `Oi, {nome}! Tudo bem?
+
+Passando pra saber se você já decidiu sobre a renovação. Lembrando que {aviso_vencimento}.
+
+É só me responder com o número:
+1. Sim, vou renovar.
+2. Ainda estou pensando.
+3. Gostaria de mudar de plano/treinador.
+4. Gostaria de falar com um atendente.
+5. Não vou renovar.`,
+  },
+  {
+    slug: 'renewal-farewell',
+    name: 'Renovação · não vou renovar (despedida)',
+    journey: 'renewal',
+    trigger_event: 'manual',
+    task_kind: 'renewal_reminder',
+    days_offset: 3,
+    channel: 'whatsapp',
+    active: true,
+    order_index: 66,
+    message_template: `Oi, {nome}! Obrigado por ter treinado com a gente esse tempo todo, foi muito bom ter você na Endurance ON! 💙🧡
+
+Se quiser, deixa um feedback sobre a sua experiência: o que foi bom e o que podemos melhorar. Isso ajuda muito a gente.
+
+E quando quiser voltar, é só chamar aqui.`,
   },
 ];
 

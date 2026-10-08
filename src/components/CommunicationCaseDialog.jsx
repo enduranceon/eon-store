@@ -395,6 +395,8 @@ export default function CommunicationCaseDialog({
                       ? `Aguardar até ${formatDate(activeCase.next_action_at)} para o próximo contato.`
                       : visibleBlock === 'missing_payment_link'
                         ? 'Falta cadastrar a cobrança. Abra “Ver origem”, cadastre o link de pagamento e volte aqui.'
+                        : visibleBlock === 'renewal_close_pending'
+                          ? 'A mensagem de encerramento já foi enviada. No quadro de Renovações, use “Encerrar: não respondeu” para registrar o “Não renovou”.'
                         : ['skipped_today', 'already_contacted_today'].includes(visibleBlock)
                           ? `${communicationBlockReasonLabel(visibleBlock)}.`
                           : `${communicationBlockReasonLabel(visibleBlock)}. O caso permanece visível até a revisão ou resolução.`}

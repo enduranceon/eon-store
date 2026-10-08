@@ -1,10 +1,10 @@
 import {
-  AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, CreditCard, Info,
+  AlertTriangle, Ban, CalendarClock, CheckCircle2, ChevronRight, CreditCard, Info,
   Link2, Loader2, MessageCircle, PenLine, Wallet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { RENEWAL_STAGE } from '@/lib/assessment-renewal-pipeline';
+import { RENEWAL_CONTACT_STEPS, RENEWAL_STAGE } from '@/lib/assessment-renewal-pipeline';
 
 export const BADGE_TONES = {
   red: 'bg-red-100 text-red-700',
@@ -24,13 +24,22 @@ export const ALERT_TONES = {
 // Ação principal de cada etapa. O resto fica na janela de detalhes.
 export function primaryAction(card) {
   const { contract, state } = card;
+  const step = state.contactStep;
   switch (contract.renewal_stage) {
     case RENEWAL_STAGE.CONTACT_PENDING:
       return { key: 'message', label: state.daysToEnd !== null && state.daysToEnd < 0 ? 'Enviar agora' : 'Enviar mensagem', Icon: MessageCircle };
     case RENEWAL_STAGE.WAITING_RESPONSE:
-      return contract.renewal_response_code === 'change_plan_or_coach'
-        ? { key: 'details', label: 'Resolver mudança', Icon: PenLine }
-        : { key: 'response', label: 'Registrar resposta', Icon: CheckCircle2 };
+      if (contract.renewal_response_code === 'change_plan_or_coach') {
+        return { key: 'details', label: 'Resolver mudança', Icon: PenLine };
+      }
+      // Passo da régua do dia: mensagem ou, depois do encerramento, "Não renovou".
+      if (step?.due && step.step === 'close') {
+        return { key: 'close_no_response', label: RENEWAL_CONTACT_STEPS.close.action, Icon: Ban };
+      }
+      if (step?.due) {
+        return { key: 'message', label: RENEWAL_CONTACT_STEPS[step.step]?.action || 'Enviar mensagem', Icon: MessageCircle };
+      }
+      return { key: 'response', label: 'Registrar resposta', Icon: CheckCircle2 };
     case RENEWAL_STAGE.CHARGE_PENDING:
       return { key: 'charge', label: 'Registrar cobrança', Icon: CreditCard };
     case RENEWAL_STAGE.WAITING_PAYMENT:

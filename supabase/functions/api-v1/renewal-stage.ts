@@ -2,8 +2,9 @@ import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { jsonResponse } from "../_shared/http.ts";
 
 // Ações do quadro de Renovações que não têm efeito financeiro: registrar a
-// mensagem de intenção, a resposta do atleta, o follow-up e a mudança de
-// plano/treinador resolvida. Cobrança, pagamento e "Não vou renovar" seguem
+// mensagem da régua (o servidor anota qual passo foi), a resposta do atleta, o
+// follow-up, a mudança de plano/treinador resolvida e a despedida de quem não
+// renovou. Cobrança, pagamento e "Não vou renovar" seguem
 // pelas rotas que já existem; a etapa acompanha essas rotas no banco.
 
 const UUID_PATTERN =
@@ -22,6 +23,7 @@ const ACTION_KEYS: Record<string, string[]> = {
   ],
   set_follow_up: ["action", "expected_updated_at", "follow_up_at"],
   change_resolved: ["action", "expected_updated_at", "notes"],
+  farewell_sent: ["action", "expected_updated_at", "message"],
 };
 const RESPONSE_CODES = new Set([
   "will_renew",
@@ -131,6 +133,12 @@ export async function handleRenewalStageRequest(
   }
   if ("message" in body && !isOptionalText(body.message, 4000)) {
     return invalid("Mensagem inválida");
+  }
+  if (
+    action === "farewell_sent" &&
+    (typeof body.message !== "string" || !body.message.trim())
+  ) {
+    return invalid("Informe a mensagem de despedida");
   }
   if ("notes" in body && !isOptionalText(body.notes, 500)) {
     return invalid("Observação inválida");

@@ -279,3 +279,33 @@ Deno.test("database errors keep their meaning without leaking internals", async 
     }
   }
 });
+
+Deno.test("the farewell is forwarded with its message and needs one", async () => {
+  const calls: Call[] = [];
+  const sent = await handleRenewalStageRequest(
+    request({
+      action: "farewell_sent",
+      expected_updated_at: UPDATED_AT,
+      message: "Obrigado por treinar com a gente!",
+    }, { idempotencyKey: "rs:farewell_sent:test:0001" }),
+    PATH,
+    client(calls),
+    ACTOR_ID,
+  );
+  const empty = await handleRenewalStageRequest(
+    request({
+      action: "farewell_sent",
+      expected_updated_at: UPDATED_AT,
+      message: "   ",
+    }, { idempotencyKey: "rs:farewell_sent:test:0002" }),
+    PATH,
+    client(calls),
+    ACTOR_ID,
+  );
+
+  assert(sent?.status === 200, "farewell was not accepted");
+  assert(calls[0].args.p_action === "farewell_sent", "farewell action changed");
+  assert(calls[0].args.p_message === "Obrigado por treinar com a gente!", "farewell message changed");
+  assert(empty?.status === 400, "an empty farewell was accepted");
+  assert(calls.length === 1, "the empty farewell reached the database");
+});

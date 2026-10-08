@@ -13,6 +13,7 @@ import { canResolveAssessmentRenewal } from '@/lib/assessment-renewal-resolution
 
 const REASON_BY_CHOICE = {
   customer_declined: 'Atleta decidiu não renovar',
+  no_response: 'Atleta não respondeu à renovação',
   duplicate: 'Renovação criada em duplicidade',
   created_in_error: 'Renovação criada por engano',
   parent_cancelled: 'Contrato anterior foi cancelado',
@@ -31,7 +32,8 @@ export default function RenewalResolutionDialog({
   const [noServiceStartedConfirmed, setNoServiceStartedConfirmed] = useState(false);
   const [resolving, setResolving] = useState(false);
 
-  const isNonRenewal = choice === 'customer_declined';
+  // "Não respondeu" também é saída real: o atleta não seguiu na assessoria.
+  const isNonRenewal = choice === 'customer_declined' || choice === 'no_response';
   const isParentCancellation = choice === 'parent_cancelled';
   const hasExternalReference = !!(
     contract.external_payment_link || contract.external_invoice_number
@@ -83,7 +85,7 @@ export default function RenewalResolutionDialog({
           ? 'Renovação descartada; o cancelamento anterior foi preservado.'
           : 'Venda de renovação descartada sem registrar saída da atleta.');
       onClose();
-      await onResolved?.(result);
+      await onResolved?.(result, choice);
     } catch (error) {
       const protocol = error.details?.operation_id
         ? ` Protocolo: ${error.details.operation_id}.`
@@ -137,6 +139,7 @@ export default function RenewalResolutionDialog({
                 ) : (
                   <>
                     <SelectItem value="customer_declined">Atleta não vai continuar</SelectItem>
+                    <SelectItem value="no_response">Atleta não respondeu</SelectItem>
                     <SelectItem value="duplicate">Venda criada em duplicidade</SelectItem>
                     <SelectItem value="created_in_error">Venda criada por engano</SelectItem>
                   </>

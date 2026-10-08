@@ -31,11 +31,12 @@ Quando houver outros projetos Supabase visiveis, usar `bsiljrrodgtmtdilnuxr` par
 
 ## Comunicacao com alunos
 
-- Regras e fluxogramas das conversas da Central de Comunicacao (onboarding, proposta e cobranca; renovacao a seguir): `docs/fluxos-de-mensagens.md`.
+- Regras e fluxogramas das conversas da Central de Comunicacao (onboarding, proposta, cobranca e renovacao): `docs/fluxos-de-mensagens.md`.
 - Onboarding vale para a primeira adesao e para o ex-aluno que volta depois de mais de 30 dias sem contrato, com pagamento nos ultimos 30 dias. Renovacao (inclusive atrasada ate 30 dias), historico importado e aluno migrado que so continuou ficam de fora.
 - Onboarding em tres passos (boas-vindas, check-in no dia 5, feedback no dia 20). O envio e manual e sem travas: copiar o texto e "Registrar que enviei".
 - Proposta no quadro de Prospects: primeiro contato sem link, respostas marcadas no card, lembrete no dia 2 e encerramento no dia 5; com link, lembrete no dia seguinte ao vencimento e encerramento 5 dias depois com mais 2 dias de link ativo. Antes de cobrar, o card so consulta o Asaas (mesma regra do botao de Cobrancas); nada e arquivado nem pago sozinho.
 - Cobranca na Central: cobranca com link, lembrete na vespera (trimestral e semestral, quando a politica estiver ligada), vencida todo dia a partir do 3o dia ate a pessoa responder (mensagem unica com dias de atraso e referencia); resposta registrada pausa a regua. "Desconsiderar mensagem" pula o passo sem envio. Prospect em rascunho nao entra (fica no quadro de Prospects).
+- Renovacao: Pebinha 10 dias antes do fim; sem resposta, lembrete 2 dias depois, mensagem no ultimo dia do plano e encerramento 5 dias depois do fim, que leva a "Nao renovou" com motivo `no_response` pela janela segura. "Ainda pensando" recebe o combinado na hora e retorno em 2 dias; "Nao vou renovar" recebe a despedida com pedido de feedback (so historico). Mensal automatica fica fora da regua (vai direto para Aguardando pagamento).
 
 ## Preflight antes de mudancas relevantes
 

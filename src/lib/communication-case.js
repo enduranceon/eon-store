@@ -18,6 +18,7 @@ const BLOCK_REASON_LABELS = {
   already_contacted_today: 'Contato já registrado hoje',
   skipped_today: 'Mensagem desconsiderada hoje; a próxima vem na data seguinte',
   renewal_stage_changed: 'Etapa da renovação mudou; confira o quadro',
+  renewal_close_pending: 'Encerramento enviado; falta encerrar a renovação como “Não renovou”',
   payment_changed: 'Situação de pagamento mudou; confira o Financeiro',
   onboarding_not_eligible: 'Onboarding não se aplica a esta adesão; confira o histórico do aluno',
   community_link_missing: 'Link da comunidade ausente',

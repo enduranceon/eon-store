@@ -113,12 +113,96 @@ export function followUpLabel(daysLate) {
   return `follow-up atrasado há ${daysLate} dia${daysLate === 1 ? '' : 's'}`;
 }
 
-// Trecho da mensagem do Pebinha: antes do fim, "seu plano vence nos próximos
-// dias"; depois, "seu plano venceu em DD/MM".
-export function renewalDueNotice(endDate, todayStr) {
+// Trecho das mensagens da renovação, igual ao {aviso_vencimento} do banco:
+// "seu plano Corrida - Trimestral vence em 18/10" (ou "venceu em").
+export function renewalDueNotice(endDate, todayStr, planName = '') {
   const days = daysUntil(endDate, todayStr);
-  if (days === null || days >= 0) return 'seu plano vence nos próximos dias';
-  return `seu plano venceu em ${shortDate(endDate)}`;
+  if (days === null) return 'a data de vencimento do seu plano precisa ser confirmada';
+  const plan = String(planName || '').trim();
+  return `seu plano${plan ? ` ${plan}` : ''} ${days >= 0 ? 'vence' : 'venceu'} em ${shortDate(endDate)}`;
+}
+
+// ── Régua de contato (igual a eon_private.assessment_renewal_contact_plan) ──
+// Pebinha 10 dias antes; sem resposta, lembrete 2 dias depois, mensagem no
+// último dia do plano e encerramento 5 dias depois do fim. "Ainda pensando"
+// recebe o "combinado" na hora e o retorno na data marcada (padrão: 2 dias).
+
+export const RENEWAL_CONTACT_STEPS = {
+  intent: { label: 'Pebinha', action: 'Enviar mensagem', offset: -10, trigger: 'contract_end_date' },
+  reminder: { label: 'Lembrete', action: 'Enviar lembrete', offset: -8, trigger: 'contract_end_date' },
+  last_day: { label: 'Último dia do plano', action: 'Enviar último dia', offset: 0, trigger: 'contract_end_date' },
+  closing: { label: 'Encerramento sem resposta', action: 'Enviar encerramento', offset: 5, trigger: 'contract_end_date' },
+  thinking_ack: { label: '"Combinado" (ainda pensando)', action: 'Enviar "combinado"', offset: 1, trigger: 'manual' },
+  thinking_return: { label: 'Retorno (ainda pensando)', action: 'Enviar retorno', offset: 2, trigger: 'manual' },
+  farewell: { label: 'Despedida', action: 'Enviar despedida', offset: 3, trigger: 'manual' },
+  close: { label: 'Encerrar como "Não renovou"', action: 'Encerrar: não respondeu' },
+};
+
+const DECIDED_RESPONSES = new Set(['will_renew', 'change_plan_or_coach', 'needs_agent', 'not_renewing']);
+
+function laterDate(a, b) {
+  return String(a || '') > String(b || '') ? a : b;
+}
+
+export function renewalContactPlan({
+  step = null, stepAt = null, responseCode = null, responseAt = null, followUpAt = null, endDate = null,
+} = {}, todayStr) {
+  if (DECIDED_RESPONSES.has(responseCode) || step === 'farewell') return { step: 'none', eligibleAt: null };
+  const last = businessDate(stepAt);
+  if (step === 'closing') return { step: 'close', eligibleAt: last };
+  const stepTime = Date.parse(stepAt || '');
+  const responseTime = Date.parse(responseAt || '');
+  let next;
+  let at;
+  if (responseCode === 'thinking'
+    && (!stepAt || responseTime > stepTime || !['thinking_ack', 'thinking_return'].includes(step))) {
+    next = 'thinking_ack';
+    at = businessDate(responseAt) || todayStr;
+  } else if (!step) {
+    next = 'intent';
+    at = endDate && addDays(endDate, -10) < todayStr ? addDays(endDate, -10) : todayStr;
+  } else if (step === 'thinking_ack') {
+    next = 'thinking_return';
+    at = followUpAt || addDays(last, 2);
+  } else if (!endDate) {
+    return { step: 'none', eligibleAt: null };
+  } else if (step === 'intent' && addDays(last, 2) < endDate) {
+    next = 'reminder';
+    at = addDays(last, 2);
+  } else if (['intent', 'reminder', 'thinking_return'].includes(step) && last < endDate) {
+    next = 'last_day';
+    at = endDate;
+  } else {
+    next = 'closing';
+    at = laterDate(addDays(endDate, 5), addDays(last, 1));
+  }
+  if (followUpAt && !['thinking_ack', 'thinking_return'].includes(next)) at = laterDate(at, followUpAt);
+  return { step: next, eligibleAt: at };
+}
+
+// O passo da vez de um card aberto em "Enviar mensagem" ou "Aguardando decisão".
+export function renewalContactStep(contract, parent, todayStr) {
+  if (!contract || contract.auto_renewal) return null;
+  if (![RENEWAL_STAGE.CONTACT_PENDING, RENEWAL_STAGE.WAITING_RESPONSE].includes(contract.renewal_stage)) return null;
+  const plan = renewalContactPlan({
+    step: contract.renewal_contact_step,
+    stepAt: contract.renewal_contact_step_at,
+    responseCode: contract.renewal_response_code,
+    responseAt: contract.renewal_response_at,
+    followUpAt: contract.renewal_follow_up_at,
+    endDate: parent?.end_date || (contract.start_date ? addDays(contract.start_date, -1) : null),
+  }, todayStr);
+  if (plan.step === 'none') return null;
+  return { ...plan, due: !plan.eligibleAt || plan.eligibleAt <= todayStr };
+}
+
+export function renewalStepLabel(plan, todayStr) {
+  if (!plan) return '';
+  const meta = RENEWAL_CONTACT_STEPS[plan.step];
+  if (!meta) return '';
+  if (plan.step === 'close') return `${meta.label}: falta encerrar`;
+  if (!plan.eligibleAt || plan.eligibleAt <= todayStr) return `${meta.label}: hoje`;
+  return `${meta.label}: ${shortDate(plan.eligibleAt)}`;
 }
 
 // Quantos dias um card final ainda fica no quadro (0 = último dia).
@@ -263,6 +347,13 @@ export function renewalCardState(contract, { parent = null, issues = [], todaySt
     alerts.push({ tone: 'red', text: 'A abordagem ficou atrasada, mas o card continua no quadro.' });
   }
 
+  // Próximo passo da régua de contato: mensagem do dia deixa o card em atenção.
+  const contactStep = renewalContactStep(contract, parent, todayStr);
+  if (contactStep) {
+    badges.push({ tone: contactStep.due ? 'amber' : 'gray', text: renewalStepLabel(contactStep, todayStr) });
+    if (contactStep.due) needsAttention = true;
+  }
+
   let followUpDaysLate = null;
   if (stage === RENEWAL_STAGE.WAITING_RESPONSE) {
     const response = contract.renewal_response_code;
@@ -322,6 +413,7 @@ export function renewalCardState(contract, { parent = null, issues = [], todaySt
     isOpen,
     endDate,
     daysToEnd,
+    contactStep,
     followUpDaysLate,
     termStartedDays,
     missingLink,
@@ -424,6 +516,7 @@ export const RENEWAL_EVENT_LABELS = {
   renewal_drafted: 'Rascunho de renovação criado',
   renewal_pipeline_entered: 'Entrou no quadro',
   renewal_message_sent: 'Mensagem de renovação enviada',
+  renewal_farewell_sent: 'Despedida enviada',
   renewal_response_recorded: 'Resposta registrada',
   renewal_follow_up_set: 'Follow-up',
   renewal_change_resolved: 'Mudança de plano/coach resolvida',

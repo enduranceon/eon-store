@@ -1463,6 +1463,7 @@ const RENEWAL_STAGE_BODY_KEYS = {
   register_response: ['response_code', 'follow_up_at', 'notes'],
   set_follow_up: ['follow_up_at'],
   change_resolved: ['notes'],
+  farewell_sent: ['message'],
 };
 
 export async function transitionAssessmentRenewalStage(

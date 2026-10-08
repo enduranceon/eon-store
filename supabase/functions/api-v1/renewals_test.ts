@@ -1242,3 +1242,64 @@ Deno.test("Renewal resolution reports reconciliation and in-progress states", as
   );
   assert(calls === 2, "in-progress operation performed extra work");
 });
+
+Deno.test("'Não respondeu' closes the renewal as a non-renewal with its own reason", async () => {
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const client = {
+    rpc: (name: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ name, args });
+      if (name === "prepare_assessment_renewal_resolution") {
+        return Promise.resolve({
+          data: {
+            operation_id: OPERATION_ID,
+            status: "prepared",
+            renewal_id: RENEWAL_ID,
+            resolution: "non_renewal",
+            reason_code: "no_response",
+          },
+          error: null,
+        });
+      }
+      if (name === "claim_assessment_renewal_resolution") {
+        return Promise.resolve({
+          data: { status: "prepared", lease_acquired: true, lease_token: LEASE_TOKEN },
+          error: null,
+        });
+      }
+      if (name === "record_assessment_renewal_external_result") {
+        return Promise.resolve({ data: { external_result: args.p_external_result }, error: null });
+      }
+      if (name === "complete_assessment_renewal_resolution") {
+        return Promise.resolve({ data: completedResult({ reason_code: "no_response" }), error: null });
+      }
+      throw new Error(`unexpected RPC ${name}`);
+    },
+  } as unknown as SupabaseClient;
+
+  const response = await handleRenewalRequest(
+    request(validBody({ reason_code: "no_response", reason: "Atleta não respondeu à renovação" })),
+    PATH,
+    client,
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "no-response resolution did not complete");
+  assert(rpcCalls[0].args.p_reason_code === "no_response", "reason code was not forwarded");
+
+  const calls: string[] = [];
+  const guard = { rpc: (name: string) => { calls.push(name); return Promise.resolve({ data: null, error: null }); } } as unknown as SupabaseClient;
+  const wrongText = await handleRenewalRequest(
+    request(validBody({ reason_code: "no_response", reason: "Atleta decidiu não renovar" }), "renewal:test:0002"),
+    PATH,
+    guard,
+    ACTOR_ID,
+  );
+  const asDiscard = await handleRenewalRequest(
+    request(validBody({ resolution: "discard", reason_code: "no_response", reason: "Atleta não respondeu à renovação" }), "renewal:test:0003"),
+    PATH,
+    guard,
+    ACTOR_ID,
+  );
+  assert(wrongText?.status === 400, "a non-canonical reason text was accepted");
+  assert(asDiscard?.status === 400, "no response was accepted as a discard");
+  assert(calls.length === 0, "invalid requests reached the database");
+});

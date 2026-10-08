@@ -5,7 +5,7 @@ fluxo registra quem entra, os passos, o que trava e as decisões em aberto. As
 mensagens são enviadas manualmente pelo WhatsApp; o sistema sugere o texto e
 registra o envio quando o operador confirma.
 
-Próximo fluxo a documentar: renovação.
+Os quatro fluxos estão abaixo: onboarding, proposta, cobrança e renovação.
 
 ## 1. Onboarding
 
@@ -219,3 +219,67 @@ Decidido em 08/10/2026:
 
 1. O que acontece com o treino de quem não paga a renovação (fica para depois).
 2. Textos de cobrança: acentos e tom dos modelos antigos.
+
+## 4. Renovação
+
+Quadro de Renovações e Central de Comunicação. Régua em
+`eon_private.assessment_renewal_contact_plan` (e
+`assessment_renewal_contact_plan_for`, que lê o contrato); o passo enviado
+fica em `assessment_contracts.renewal_contact_step` e é gravado só por
+`transition_assessment_renewal_stage`. Migração
+`20261008220000_renewal_contact_flow.sql`.
+
+```mermaid
+flowchart TD
+  A([Plano perto do fim<br/>entra no quadro 10 dias antes]) --> M{Mensal automática?}
+  M -- sim --> W[Aguardando pagamento<br/>5 dias antes, sem Pebinha]
+  M -- não --> P[1: Pebinha<br/>10 dias antes, 5 opções]
+  P --> R{Respondeu?}
+  R -- vou renovar --> C[Cobrança + renovação confirmada<br/>depois, régua da Cobrança]
+  R -- ainda pensando --> T[Combinado na hora<br/>retorno em 2 dias]
+  T --> R
+  R -- mudar plano/treinador --> X[Troca no contrato e cobrança]
+  R -- atendente --> V[Revisão]
+  R -- não vou renovar --> D[Despedida com pedido de feedback<br/>Não renovou]
+  R -- não --> L2[2: Lembrete<br/>2 dias depois]
+  L2 --> L3[3: Último dia do plano]
+  L3 --> L4[4: Encerramento<br/>5 dias depois do fim]
+  L4 --> N([Não renovou<br/>motivo: não respondeu])
+```
+
+- Entra no quadro a renovação manual 10 dias antes do fim do plano; a mensal
+  automática entra 5 dias antes, direto em "Aguardando pagamento", sem Pebinha.
+- Pebinha: "seu plano {plano} vence em {fim_plano}" (ou "venceu em"), com as 5
+  opções de resposta.
+- Sem resposta: lembrete 2 dias depois do Pebinha (se ainda faltar mais de 2
+  dias para o fim), mensagem no último dia do plano e encerramento 5 dias
+  depois do fim. Depois do encerramento, o card pede "Encerrar: não respondeu",
+  que registra "Não renovou" com o motivo `no_response` ("Atleta não respondeu
+  à renovação") pela janela segura de encerramento. Conta como saída.
+- "Ainda pensando": a mensagem de combinado sai na hora ("em breve a gente
+  retoma; posso te ajudar em algo?") e o retorno vem na data marcada (padrão:
+  2 dias). Se continuar sem decisão, segue o último dia e o encerramento.
+- "Não vou renovar": depois do encerramento seguro, abre a despedida
+  (agradece e pede um feedback). O envio fica no histórico do contrato
+  (`renewal_farewell_sent`), sem mudar o resultado.
+- "Vou renovar": cadastro da cobrança e a mensagem "Sua renovação está
+  confirmada". Na Central, a primeira cobrança da renovação usa o mesmo texto
+  (modelo `billing-renewal-confirmed`); depois vale a régua da Cobrança.
+- Um follow-up marcado à mão segura o próximo passo até a data. A data só
+  ordena a fila: no quadro, cada card mostra o próximo passo ("Lembrete:
+  hoje", "Último dia do plano: 14/10").
+- Textos: modelos `renewal-*` em Comunicação → Modelos e regras (etapas
+  "Contato de renovação" e "Respostas da renovação").
+
+### Decisões
+
+Decidido em 08/10/2026:
+
+- Sem resposta: lembrete 2 dias depois do Pebinha e outro no último dia do plano.
+- Encerramento 5 dias depois do fim, com a porta aberta, e a renovação vai para
+  "Não renovou" (não respondeu).
+- "Não vou renovar": mensagem agradecendo e pedindo feedback.
+- "Ainda pensando": "em breve retomamos o contato, posso ajudar em algo?" e
+  retorno 2 dias depois.
+
+1. O que acontece com o treino de quem não paga a renovação (fica para depois).

@@ -12,7 +12,7 @@ import { RENEWAL_CHANGE_TARGETS, RENEWAL_RESPONSE_LABELS } from '@/lib/assessmen
 
 const OPTIONS = [
   { code: 'will_renew', hint: 'Já abre o cadastro da cobrança; depois de salvar, abre a mensagem para enviar.' },
-  { code: 'thinking', hint: 'Fica em "Aguardando decisão"; marque quando voltar a falar.' },
+  { code: 'thinking', hint: 'Abre a mensagem de "combinado"; a gente volta a falar na data marcada (padrão: 2 dias).' },
   { code: 'change_plan_or_coach', hint: 'Já abre a troca no contrato; depois segue para a cobrança. Não conta como saída.' },
   { code: 'needs_agent', hint: 'Fica aguardando, com atendimento pendente.' },
   { code: 'not_renewing', hint: 'Abre o encerramento seguro da renovação.' },
@@ -29,7 +29,7 @@ function plusDays(days) {
 // "Mudar plano/treinador" grava a resposta e já abre a troca escolhida;
 // "Vou renovar" já abre o cadastro da cobrança.
 export default function RenewalResponseDialog({
-  card, onClose, onDone, onNotRenewing, onChangeRequested, onWillRenew, onConflict,
+  card, onClose, onDone, onNotRenewing, onChangeRequested, onWillRenew, onThinking, onConflict,
 }) {
   const [code, setCode] = useState('');
   const [changeTarget, setChangeTarget] = useState('');
@@ -42,7 +42,7 @@ export default function RenewalResponseDialog({
 
   const choose = (next) => {
     setCode(next);
-    if (next === 'thinking' && !followUpAt) setFollowUpAt(plusDays(3));
+    if (next === 'thinking' && !followUpAt) setFollowUpAt(plusDays(2));
     if (!['thinking', 'needs_agent'].includes(next)) setFollowUpAt('');
   };
 
@@ -71,6 +71,11 @@ export default function RenewalResponseDialog({
       if (code === 'will_renew' && result?.stage_after === 'charge_pending' && result.contract && onWillRenew) {
         toast.success('Resposta registrada. Cadastre a cobrança da renovação.');
         onWillRenew(card, { ...contract, ...result.contract });
+        return;
+      }
+      if (code === 'thinking' && result?.contract && onThinking) {
+        toast.success('Resposta registrada. Envie a mensagem de "combinado".');
+        onThinking(card, { ...contract, ...result.contract });
         return;
       }
       toast.success(code === 'will_renew'

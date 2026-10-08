@@ -36,7 +36,7 @@ const TASK_KIND_LABEL = {
 
 const MODEL_STAGES = {
   billing: [
-    { key: 'initial', label: 'Cobrança inicial', trigger_event: 'charge_created', task_kind: 'charge_send', offsets: [[0, 'Ao cadastrar cobrança']] },
+    { key: 'initial', label: 'Cobrança inicial', trigger_event: 'charge_created', task_kind: 'charge_send', offsets: [[0, 'Ao cadastrar cobrança'], [1, 'Renovação confirmada (cobrança da renovação)']] },
     { key: 'pre_due', label: 'Lembrete antes ou no vencimento', trigger_event: 'charge_due_date', task_kind: 'charge_send', offsets: [[-1, 'D−1 · véspera'], [0, 'D0 · vencimento']] },
     { key: 'overdue', label: 'Saldo em atraso', trigger_event: 'charge_due_date', task_kind: 'charge_overdue', offsets: [[3, 'D+3 em diante · todo dia']] },
   ],
@@ -46,7 +46,8 @@ const MODEL_STAGES = {
     { key: 'feedback', label: 'Feedback de 20 dias', trigger_event: 'onboarding_welcome_sent', task_kind: 'onboarding_feedback', offsets: [[20, 'D+20 após boas-vindas']] },
   ],
   renewal: [
-    { key: 'renewal', label: 'Contato de renovação', trigger_event: 'contract_end_date', task_kind: 'renewal_reminder', offsets: [[-10, 'D−10 antes do fim']] },
+    { key: 'renewal', label: 'Contato de renovação', trigger_event: 'contract_end_date', task_kind: 'renewal_reminder', offsets: [[-10, 'Pebinha · 10 dias antes do fim'], [-8, 'Lembrete · 2 dias depois do Pebinha'], [0, 'Último dia do plano'], [5, 'Encerramento · 5 dias depois do fim']] },
+    { key: 'renewal_answer', label: 'Respostas da renovação', trigger_event: 'manual', task_kind: 'renewal_reminder', offsets: [[1, 'Ainda pensando · na hora'], [2, 'Ainda pensando · retorno em 2 dias'], [3, 'Não vou renovar · despedida']] },
   ],
 };
 
