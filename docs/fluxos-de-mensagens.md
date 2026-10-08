@@ -5,7 +5,7 @@ fluxo registra quem entra, os passos, o que trava e as decisões em aberto. As
 mensagens são enviadas manualmente pelo WhatsApp; o sistema sugere o texto e
 registra o envio quando o operador confirma.
 
-Próximos fluxos a documentar: cobrança e renovação.
+Próximo fluxo a documentar: renovação.
 
 ## 1. Onboarding
 
@@ -147,3 +147,68 @@ Decidido em 08/10/2026:
 
 1. Textos editáveis em Comunicação → Modelos e regras, como os do onboarding.
 2. Retomar um prospect arquivado em um clique (hoje: "Novo prospect").
+
+## 3. Cobrança
+
+Toda venda com saldo em aberto, na Central de Comunicação. Regra em
+`eon_private.communication_case_suggestion` (cobrança) e
+`eon_private.ensure_communication_case`; ajustes na migração
+`20261008190000_billing_flow.sql`.
+
+```mermaid
+flowchart TD
+  A([Venda com saldo em aberto<br/>assessoria, renovação, loja, pré-venda, evento]) --> P{Prospect em rascunho?}
+  P -- sim --> X[Fica no quadro de Prospects]
+  P -- não --> L{Cobrança cadastrada?<br/>link ou PIX}
+  L -- não --> C0[Falta cadastrar a cobrança<br/>Ver origem]
+  C0 --> L
+  L -- sim --> B[1: Cobrança com link]
+  B --> D{Trimestral ou semestral<br/>e lembrete ligado?}
+  D -- sim --> E[2: Lembrete na véspera do vencimento]
+  D -- não --> F
+  E --> F[3: Vencida com 3, 5 e 7 dias]
+  F --> G[4: Todo dia a partir do 8º dia]
+  G --> G
+  G -. resposta registrada .-> R[Pausa: vai pagar dia X volta nesse dia;<br/>já pagou ou contestou vai para conferência]
+  B -. pagamento registrado .-> Z([Cobrança encerrada])
+```
+
+- Entram as vendas com saldo em aberto: assessoria, renovação, loja,
+  pré-venda e eventos. Prospect em rascunho fica no quadro de Prospects, com o
+  lembrete e o encerramento da proposta. Renovação ainda na conversa do Pebinha
+  fica no fluxo de renovação.
+- Sem cobrança cadastrada (nem link nem PIX), o caso aparece como "Falta
+  cadastrar a cobrança" e aponta para a venda ("Ver origem").
+- Passos: cobrança com link no cadastro; lembrete na véspera do vencimento para
+  planos trimestrais e semestrais (política em Comunicação → Modelos e regras,
+  desligada até ser publicada); vencida com 3, 5 e 7 dias; a partir do 8º dia,
+  todo dia, até a pessoa responder.
+- Resposta registrada pausa a régua: "Vai pagar" com data volta nesse dia;
+  "Informou que já pagou" vai para a conferência de pagamento; "Contestou" e
+  "Precisa de atendimento" vão para revisão.
+- "Desconsiderar mensagem e pular para a próxima": o passo da vez fica feito
+  sem envio e sem mexer na venda (`message_skipped`). O lembrete diário volta no dia
+  seguinte; o 3º dia pula para o 5º, e assim por diante.
+- Sem travar a régua: se a cobrança com link ou o lembrete da véspera não forem
+  enviados nem registrados, depois do vencimento a régua de atraso começa
+  sozinha (as mensagens de atraso também levam o link). O lembrete da véspera
+  não se repete no dia do vencimento.
+- Antes de cobrar, a janela consulta a fatura no Asaas (só leitura). Se já foi
+  paga, mostra "Já pagou no Asaas" e registra o pagamento pela conferência,
+  com confirmação; o caso fecha sozinho.
+- Diferente do onboarding, a cobrança mantém as conferências de data, link e
+  WhatsApp no "Registrar que enviei".
+- Textos: modelos `billing-*` em Comunicação → Modelos e regras. Os modelos de
+  10 e 11 dias existem, mas a régua não usa (o diário começa no 8º dia).
+
+### Decisões
+
+Decidido em 08/10/2026:
+
+- Cobrança todo dia depois do 7º dia, até a pessoa dar uma resposta.
+- Lembrete na véspera para trimestral e semestral, com "Desconsiderar mensagem".
+- Se nada for enviado nem registrado, a régua de atraso segue depois do
+  vencimento.
+
+1. O que acontece com o treino de quem não paga a renovação (fica para depois).
+2. Textos de cobrança: acentos e tom dos modelos antigos.

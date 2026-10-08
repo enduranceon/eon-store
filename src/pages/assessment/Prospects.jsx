@@ -14,15 +14,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
+import AsaasPaidNotice from '@/components/AsaasPaidNotice';
 import AsaasPaymentCheckDialog from '@/components/AsaasPaymentCheckDialog';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { PhoneInput } from '@/components/PhoneInput';
 import {
   changeAssessmentContractCoach,
   changeAssessmentContractPlan,
-  checkAsaasPayments,
   createManualAssessmentProspect,
-  listPaymentMethods,
   loseAssessmentProspect,
   markAssessmentProspectMessageSent,
   prepareAssessmentProspectProposal,
@@ -56,7 +55,7 @@ import {
   prospectNextStep,
   prospectPaymentClosingMessage,
 } from '@/lib/assessment-prospect-flow';
-import { asaasCheckCandidates, hasAsaasInvoiceLink, summarizeAsaasCheck } from '@/lib/asaas-payment-check';
+import { asaasCheckCandidates } from '@/lib/asaas-payment-check';
 import { toast } from 'sonner';
 
 const STAGES = {
@@ -256,69 +255,6 @@ function asaasOrderFor(draft, customer) {
   };
 }
 
-// Antes de cobrar de novo, consulta no Asaas (só leitura) se a fatura já foi
-// paga. Se foi, o pagamento é registrado pela conferência, com confirmação.
-function AsaasPaidNotice({ draft, customer, onRegister }) {
-  const order = useMemo(() => asaasOrderFor(draft, customer), [draft, customer]);
-  const canCheck = asaasCheckCandidates([order]).length > 0;
-  const [state, setState] = useState(() => ({ phase: canCheck ? 'loading' : 'none' }));
-
-  useEffect(() => {
-    if (!canCheck) return undefined;
-    let active = true;
-    Promise.all([checkAsaasPayments([order]), listPaymentMethods()])
-      .then(([check, methods]) => {
-        if (!active) return;
-        const groups = summarizeAsaasCheck([order], check?.results, methods, todayLocalStr());
-        const paid = groups.ready[0] || groups.review[0];
-        if (paid) setState({ phase: 'paid', reason: groups.ready[0] ? '' : paid.reason });
-        else if (groups.open[0]) setState({ phase: 'open', label: groups.open[0].label });
-        else setState({ phase: 'none' });
-      })
-      .catch(() => { if (active) setState({ phase: 'error' }); });
-    return () => { active = false; };
-  }, [canCheck, order]);
-
-  if (!hasAsaasInvoiceLink(order)) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Este link não é uma fatura do Asaas. Confira se a pessoa já pagou antes de enviar.
-      </p>
-    );
-  }
-  if (state.phase === 'loading') {
-    return (
-      <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Conferindo no Asaas se já foi pago...
-      </p>
-    );
-  }
-  if (state.phase === 'paid') {
-    return (
-      <div className="rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-950">
-        <p className="font-semibold">Já pagou no Asaas</p>
-        <p className="mt-0.5 text-xs">
-          {state.reason || 'Registre o pagamento em vez de mandar a mensagem. Depois, a boas-vindas abre na hora.'}
-        </p>
-        <Button size="sm" className="mt-2 bg-green-600 hover:bg-green-700" onClick={() => onRegister(order)}>
-          <CheckCheck className="mr-1 h-3.5 w-3.5" /> Registrar pagamento
-        </Button>
-      </div>
-    );
-  }
-  if (state.phase === 'open') {
-    return <p className="text-xs text-muted-foreground">Conferido no Asaas agora: {state.label}.</p>;
-  }
-  if (state.phase === 'error') {
-    return (
-      <p role="alert" className="text-xs text-amber-800">
-        Não deu para conferir no Asaas agora. Confira lá se a pessoa já pagou antes de enviar.
-      </p>
-    );
-  }
-  return null;
-}
-
 const CONTACT_TITLES = {
   first_contact: 'Primeiro contato',
   follow_up: 'Lembrete',
@@ -402,7 +338,7 @@ function ContactModal({ data, onClose, onDone, onRegisterPaid }) {
       </DialogHeader>
       <div className="space-y-4 mt-2">
         {kind === 'payment_closing' && (
-          <AsaasPaidNotice draft={draft} customer={customer} onRegister={onRegisterPaid} />
+          <AsaasPaidNotice order={asaasOrderFor(draft, customer)} onRegister={onRegisterPaid} />
         )}
         {kind !== 'first_contact' && lastContact && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -1022,7 +958,7 @@ function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
         </DialogTitle>
       </DialogHeader>
       <div className="space-y-4 mt-2">
-        {isReminder && <AsaasPaidNotice draft={contract} customer={customer} onRegister={onRegisterPaid} />}
+        {isReminder && <AsaasPaidNotice order={asaasOrderFor(contract, customer)} onRegister={onRegisterPaid} />}
         <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm whitespace-pre-wrap text-gray-800 max-h-72 overflow-y-auto">
           {message}
         </div>

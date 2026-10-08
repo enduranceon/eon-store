@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Check, Copy, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import AsaasPaidNotice from '@/components/AsaasPaidNotice';
+import AsaasPaymentCheckDialog from '@/components/AsaasPaymentCheckDialog';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -117,6 +119,7 @@ export default function CommunicationCaseDialog({
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventsError, setEventsError] = useState('');
   const lastAttempt = useRef(null);
+  const [asaasOrders, setAsaasOrders] = useState(null);
 
   const activeCase = detail?.case || communicationCase || null;
   const activeId = activeCase?.id || caseId || null;
@@ -206,7 +209,9 @@ export default function CommunicationCaseDialog({
         idempotency_key: lastAttempt.current.key,
       });
       lastAttempt.current = null;
-      toast.success(action === 'message_sent' ? 'Envio registrado' : 'Acompanhamento atualizado');
+      toast.success(action === 'message_sent' ? 'Envio registrado'
+        : action === 'message_skipped' ? 'Mensagem desconsiderada. A cobrança segue para o próximo passo.'
+          : 'Acompanhamento atualizado');
       await loadDetail({ knownCaseId: activeCase.id });
       onChanged?.();
       if (action === 'message_sent') onSent?.();
@@ -244,6 +249,17 @@ export default function CommunicationCaseDialog({
   const isResolved = activeCase?.workflow_stage === 'resolved';
   const suggestedReturn = suggestion?.proposed_next_action_at;
   const responseOptions = RESPONSE_OPTIONS[activeCase?.purpose] || RESPONSE_OPTIONS.onboarding;
+  const isBilling = activeCase?.purpose === 'billing';
+  // Cobrança: antes de mandar, confere a fatura no Asaas (só leitura). O aviso
+  // só refaz a consulta quando estes dados mudam.
+  const billingOrder = isBilling && activeCase?.source_id ? {
+    type: activeCase.source_type,
+    id: activeCase.source_id,
+    order_number: activeCase.reference,
+    customer: activeCase.person_name,
+    total_value: Number(activeCase.balance) || 0,
+    external_payment_link: activeCase.payment_link,
+  } : null;
 
   const copyMessage = async () => {
     try {
@@ -260,6 +276,12 @@ export default function CommunicationCaseDialog({
     if (!message.trim()) return toast.error('Escreva a mensagem antes de abrir o WhatsApp');
     const number = phoneDigitsForWhatsApp(phone);
     window.open(`https://wa.me/${number}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+  };
+
+  // Desconsiderar: o passo da vez fica feito sem envio e a régua segue.
+  const skip = () => {
+    if (!canSend) return toast.error('Resolva o bloqueio antes de desconsiderar a mensagem');
+    applyAction('message_skipped', {});
   };
 
   const send = () => {
@@ -371,7 +393,11 @@ export default function CommunicationCaseDialog({
                   <span>
                     {visibleBlock === 'not_due_yet' && activeCase.next_action_at
                       ? `Aguardar até ${formatDate(activeCase.next_action_at)} para o próximo contato.`
-                      : `${communicationBlockReasonLabel(visibleBlock)}. O caso permanece visível até a revisão ou resolução.`}
+                      : visibleBlock === 'missing_payment_link'
+                        ? 'Falta cadastrar a cobrança. Abra “Ver origem”, cadastre o link de pagamento e volte aqui.'
+                        : ['skipped_today', 'already_contacted_today'].includes(visibleBlock)
+                          ? `${communicationBlockReasonLabel(visibleBlock)}.`
+                          : `${communicationBlockReasonLabel(visibleBlock)}. O caso permanece visível até a revisão ou resolução.`}
                   </span>
                 </div>
               )}
@@ -392,6 +418,9 @@ export default function CommunicationCaseDialog({
 
               {panel === 'message' && (
                 <section className="space-y-4" aria-label="Mensagem">
+                  {isBilling && !isResolved && billingOrder && (
+                    <AsaasPaidNotice order={billingOrder} onRegister={order => setAsaasOrders([order])} />
+                  )}
                   <p className="text-sm text-muted-foreground">
                     Sugestão baseada na situação atual. Você pode editar o texto antes de abrir o WhatsApp.
                   </p>
@@ -438,6 +467,11 @@ export default function CommunicationCaseDialog({
                     {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Registrar que enviei
                   </Button>
+                  {isBilling && !isResolved && (
+                    <Button type="button" variant="ghost" onClick={skip} disabled={saving || !canSend} className="min-h-11 w-full text-gray-600">
+                      Desconsiderar mensagem e pular para a próxima
+                    </Button>
+                  )}
                   {onManualPay && activeCase.purpose === 'billing' && !isResolved && (
                     <Button type="button" variant="outline" onClick={onManualPay} className="min-h-11 w-full">
                       Cliente já pagou? Registrar pagamento manual
@@ -576,6 +610,17 @@ export default function CommunicationCaseDialog({
             </div>
           )}
         </div>
+        {asaasOrders && (
+          <AsaasPaymentCheckDialog
+            orders={asaasOrders}
+            onClose={({ registered }) => {
+              setAsaasOrders(null);
+              if (!registered) return;
+              loadDetail({ knownCaseId: activeCase?.id });
+              onChanged?.();
+            }}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -130,6 +130,24 @@ Deno.test("response and scheduling keep dates in the request sent to the atomic 
   assert(forwarded.response_code === "thinking", "response lost");
 });
 
+Deno.test("skipping a billing message sends only the case snapshot", async () => {
+  const calls: Call[] = [];
+  const path = `/communications/cases/${CASE_ID}/actions`;
+  const withMessage = await handleCommunicationCaseRequest(req(path, {
+    ...common, action: "message_skipped", message: "não deveria ir",
+  }, KEY), path, client(calls), ACTOR_ID);
+  assert(withMessage?.status === 400, "skip accepted a message");
+  assert(calls.length === 0, "invalid skip reached the database");
+  const response = await handleCommunicationCaseRequest(req(path, {
+    ...common, action: "message_skipped",
+  }, KEY), path, client(calls), ACTOR_ID);
+  assert(response?.status === 200, "skip failed");
+  assert(calls[0].name === "apply_communication_case_action", "wrong RPC");
+  const forwarded = calls[0].args.p_request as Record<string, unknown>;
+  assert(forwarded.action === "message_skipped", "action lost");
+  assert(calls[0].args.p_idempotency_key === KEY, "idempotency key lost");
+});
+
 Deno.test("database stale-state conflicts are returned as 409", async () => {
   const calls: Call[] = [];
   const path = `/communications/cases/${CASE_ID}/actions`;
