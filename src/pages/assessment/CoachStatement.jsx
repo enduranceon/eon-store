@@ -113,7 +113,12 @@ export default function CoachStatement() {
       };
     };
 
-    const enriched = items.map(enrich);
+    // Extrato (tela e PDF) lista os alunos em ordem alfabética; ignora acento e
+    // maiúscula. Em liderança, empata pelo treinador.
+    const porAluno = (a, b) => a.aluno.localeCompare(b.aluno, 'pt-BR', { sensitivity: 'base' })
+      || (a.sobre || '').localeCompare(b.sobre || '', 'pt-BR', { sensitivity: 'base' });
+
+    const enriched = items.map(enrich).sort(porAluno);
     const isCarried = (it) => it.reference_competence && it.reference_competence !== competence && it.source_type !== 'manual_adjustment';
     const alunos = enriched.filter((i) => i.source_type === 'athlete_repasse' && !isCarried(i));
     const liderancas = enriched.filter((i) => ['direct_leadership', 'co_leadership'].includes(i.source_type) && !isCarried(i));
@@ -140,7 +145,7 @@ export default function CoachStatement() {
       const e = enrich(p);
       const due = dueByContract[p.contract_id];
       return { ...e, overdue: !!due && due < todayStr };
-    });
+    }).sort(porAluno);
     const total = items.reduce((a, i) => a + Number(i.amount), 0);
 
     // Resumo por modalidade (soma alunos + liderança + resgatados; conta alunos próprios)
@@ -179,7 +184,7 @@ export default function CoachStatement() {
         modalidade: modalitiesById[ct.plan_snapshot?.modality_id || plansById[ct.plan_id]?.modality_id]?.name || '',
         licenca: licencaDoContrato(ct.id),
       }))
-      .sort((a, b) => a.aluno.localeCompare(b.aluno));
+      .sort(porAluno);
 
     return {
       coach,
