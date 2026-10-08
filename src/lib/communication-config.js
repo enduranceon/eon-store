@@ -22,7 +22,7 @@ Pra ajudar nosso time nesse processo, você gostaria de realizar a renovação?
 export const DEFAULT_COMMUNICATION_RULES = [
   {
     slug: 'billing-charge-send',
-    name: 'Enviar cobranca',
+    name: 'Cobrança · primeira mensagem com o link',
     journey: 'billing',
     trigger_event: 'charge_created',
     task_kind: 'charge_send',
@@ -30,11 +30,11 @@ export const DEFAULT_COMMUNICATION_RULES = [
     channel: 'whatsapp',
     active: true,
     order_index: 10,
-    message_template: `Ola, {nome}! Tudo bem?
+    message_template: `Olá, {nome}! Tudo bem?
 
-Segue a cobranca do seu {tipo} *{numero}*, no valor de *{valor}*{vencimento_texto}.
+Segue a cobrança {referente}, no valor de *{valor}*{vencimento_texto}.
 
-{itens_bloco}{pix_bloco}{link_bloco}Se o pagamento ja foi realizado, pode desconsiderar esta mensagem. Qualquer duvida, estou por aqui.`,
+{itens_bloco}{pix_bloco}{link_bloco}Se o pagamento já foi feito, é só desconsiderar esta mensagem. Qualquer dúvida, estou por aqui!`,
   },
   {
     slug: 'billing-charge-overdue',
