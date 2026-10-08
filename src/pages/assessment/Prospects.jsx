@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ArchiveX, BellRing, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
-  Clock3, Copy, CreditCard, ExternalLink, HelpCircle, Loader2, MessageCircle, Plus, SearchCheck, Send,
+  Clock3, Copy, CreditCard, ExternalLink, HelpCircle, Loader2, MessageCircle, Plus, RefreshCw, Search,
+  SearchCheck, Send,
   ThumbsUp, TrendingUp, UserCheck, UserPlus, UserRoundCheck,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -56,6 +57,15 @@ import {
   prospectPaymentClosingMessage,
 } from '@/lib/assessment-prospect-flow';
 import { asaasCheckCandidates } from '@/lib/asaas-payment-check';
+import {
+  hasProspectSubmissionIdentityDifference,
+  matchesProspectSearch,
+  prospectContactCustomer,
+  prospectLatestActivityAt,
+  prospectSubmittedAddress,
+  prospectSubmissionIdentityDifferences,
+  sortProspectsByLatestSubmission,
+} from '@/lib/assessment-prospect-submission';
 import { toast } from 'sonner';
 
 const STAGES = {
@@ -126,6 +136,7 @@ const PROSPECT_CONTRACT_COLUMNS = 'id, contract_number, customer_id, coach_id, p
 
 const OPEN_PROSPECT_STAGES = new Set(['new', 'awaiting_reply', 'clarifying', 'proposal_ready', 'payment_link_sent']);
 const OPEN_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid']);
+const AUTO_REFRESH_INTERVAL_MS = 60_000;
 
 function contractTotal(contract) {
   const base = Number(contract.plan_snapshot?.price_total ?? 0);
@@ -146,11 +157,12 @@ function getPlanMonths(plan) {
     || 1;
 }
 
-function hasSubmissionChange(draft) {
+function hasSubmissionChange(draft, customer) {
   const submission = draft?.latest_submission;
   if (!submission) return false;
   return (submission.plan_id && submission.plan_id !== draft.plan_id)
-    || (submission.coach_id && submission.coach_id !== draft.coach_id);
+    || (submission.coach_id && submission.coach_id !== draft.coach_id)
+    || hasProspectSubmissionIdentityDifference(customer, submission);
 }
 
 function isDraftProspect(draft) {
@@ -179,11 +191,11 @@ function prospectVisualStage(draft) {
   return draft?.prospect_stage || 'new';
 }
 
-function matchesProspectFilter(item, filter, today) {
+function matchesProspectFilter(item, filter, today, customer) {
   if (filter === 'all') return true;
   if (filter === 'today') return isOpenProspect(item) && needsActionToday(item, today);
   if (filter === 'returns') return item.prospect_customer_relationship === 'former_student';
-  if (filter === 'needs_review') return isOpenProspect(item) && hasSubmissionChange(item);
+  if (filter === 'needs_review') return isOpenProspect(item) && hasSubmissionChange(item, customer);
   if (filter === 'open') return isOpenProspect(item);
   return prospectVisualStage(item) === filter;
 }
@@ -265,14 +277,14 @@ const CONTACT_TITLES = {
 // Mensagens da conversa antes e depois do link. Envio manual: copiar (ou abrir
 // o WhatsApp) e registrar. Sem travas de data: dá para enviar antes do previsto.
 function ContactModal({ data, onClose, onDone, onRegisterPaid }) {
-  const { draft, customer, coach, modality, kind } = data;
+  const { draft, customer, contactCustomer = customer, coach, modality, kind } = data;
   const today = todayLocalStr();
   const deadline = addDays(today, LINK_DEADLINE_DAYS);
   const step = prospectNextStep(draft);
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [externalCancelled, setExternalCancelled] = useState(false);
-  const fullName = customer?.full_name;
+  const fullName = contactCustomer?.full_name;
   const message = kind === 'first_contact'
     ? prospectFirstContactMessage({
       fullName,
@@ -301,7 +313,7 @@ function ContactModal({ data, onClose, onDone, onRegisterPaid }) {
   };
 
   const openWhatsApp = () => {
-    const phone = phoneDigitsForWhatsApp(customer?.whatsapp);
+    const phone = phoneDigitsForWhatsApp(contactCustomer?.whatsapp);
     if (!phone || phone === '55') return toast.error('WhatsApp do prospect não cadastrado');
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
   };
@@ -337,6 +349,7 @@ function ContactModal({ data, onClose, onDone, onRegisterPaid }) {
         </DialogTitle>
       </DialogHeader>
       <div className="space-y-4 mt-2">
+        <SubmittedContactNotice draft={draft} customer={customer} />
         {kind === 'payment_closing' && (
           <AsaasPaidNotice order={asaasOrderFor(draft, customer)} onRegister={onRegisterPaid} />
         )}
@@ -360,7 +373,7 @@ function ContactModal({ data, onClose, onDone, onRegisterPaid }) {
             {copied ? <Check className="w-4 h-4 mr-1.5 text-green-600" /> : <Copy className="w-4 h-4 mr-1.5" />}
             {copied ? 'Copiado!' : 'Copiar'}
           </Button>
-          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={openWhatsApp} disabled={!customer?.whatsapp}>
+          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={openWhatsApp} disabled={!contactCustomer?.whatsapp}>
             <MessageCircle className="w-4 h-4 mr-1.5" /> Abrir WhatsApp
           </Button>
         </div>
@@ -406,7 +419,7 @@ function NextStepLine({ draft }) {
   let text;
   let urgent = due;
   if (step.kind === 'first_contact') {
-    const hours = hoursSince(draft.created_at);
+    const hours = hoursSince(prospectLatestActivityAt(draft));
     text = `Chegou há ${elapsedLabel(hours)}: primeiro contato`;
     urgent = hours !== null && hours >= 2;
   } else {
@@ -589,6 +602,61 @@ function CustomerData({ customer, contract }) {
   );
 }
 
+function SubmittedContactNotice({ draft, customer, compact = false }) {
+  const submission = draft?.latest_submission;
+  if (!submission) return null;
+  const protocol = submission.request_id
+    ? `EON-${String(submission.request_id).slice(0, 8).toUpperCase()}`
+    : '';
+  const differences = prospectSubmissionIdentityDifferences(customer, submission);
+  const contactCustomer = prospectContactCustomer(customer, submission);
+  const submittedAddress = prospectSubmittedAddress(submission);
+  const hasDifference = differences.length > 0;
+  const tone = hasDifference
+    ? 'border-amber-200 bg-amber-50 text-amber-950'
+    : 'border-blue-200 bg-blue-50 text-blue-950';
+
+  return (
+    <div className={`rounded-lg border ${tone} ${compact ? 'px-2.5 py-2 text-[11px]' : 'p-3 text-sm'}`} role={hasDifference ? 'alert' : undefined}>
+      <div className="flex items-start gap-2">
+        {hasDifference && <AlertTriangle className={`${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} mt-0.5 shrink-0 text-amber-700`} />}
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">
+            {hasDifference ? 'Dados enviados diferem do cliente vinculado' : 'Dados do último formulário'}
+          </p>
+          <p className="mt-0.5 opacity-80">
+            Enviado em {formatDateTime(submission.submitted_at)}{protocol ? ` · Protocolo ${protocol}` : ''}
+          </p>
+          <div className={`${compact ? 'mt-1 space-y-0.5' : 'mt-2 space-y-1'} min-w-0`}>
+            <p className="truncate"><span className="font-medium">Nome:</span> {contactCustomer?.full_name || '—'}</p>
+            <p className="truncate"><span className="font-medium">WhatsApp:</span> {contactCustomer?.whatsapp || '—'}</p>
+            <p className="break-all"><span className="font-medium">E-mail:</span> {contactCustomer?.email || '—'}</p>
+            {!compact && submittedAddress && (
+              <p><span className="font-medium">Endereço enviado:</span> {submittedAddress}</p>
+            )}
+          </div>
+          {hasDifference && (
+            <>
+              {!compact && (
+                <div className="mt-2 border-t border-amber-200 pt-2 text-xs">
+                  {differences.map(item => (
+                    <p key={item.field}>
+                      {item.label} no cliente: <b>{item.customerValue || 'não informado'}</b>
+                    </p>
+                  ))}
+                </div>
+              )}
+              <p className={`${compact ? 'mt-1.5' : 'mt-2'} font-medium`}>
+                Mensagens e WhatsApp usam os dados do formulário. Confirme a identidade antes de registrar o contato.
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 async function loadProspectContract(id) {
   const { data, error } = await supabase
     .from('assessment_contracts')
@@ -611,7 +679,7 @@ function PlanSelectItems({ plans }) {
 }
 
 function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
-  const { draft, customer } = data;
+  const { draft, customer, contactCustomer = customer } = data;
   const [contract, setContract] = useState(draft);
   const [step, setStep] = useState(
     ['proposal_ready', 'payment_link_sent'].includes(draft.prospect_stage) && paymentLinkFor(draft) ? 'message' : 'proposal',
@@ -649,7 +717,7 @@ function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
   const proposal = describeProspectProposal({ contract, form, plans: options.plans });
   const savedCoach = coachById.get(contract.coach_id) || (contract.coach_id === draft.coach_id ? data.coach : null);
   const savedModality = modalityById.get(contract.plan_snapshot?.modality_id) || data.modality;
-  const message = buildMessage(contract, customer, savedCoach, savedModality);
+  const message = buildMessage(contract, contactCustomer, savedCoach, savedModality);
   const isReminder = contract.prospect_stage === 'payment_link_sent' && Boolean(contract.prospect_message_sent_at);
 
   // Plano desativado continua na lista enquanto for o plano do prospect.
@@ -774,7 +842,7 @@ function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
   };
 
   const openWhatsApp = () => {
-    const phone = phoneDigitsForWhatsApp(customer?.whatsapp);
+    const phone = phoneDigitsForWhatsApp(contactCustomer?.whatsapp);
     if (!phone || phone === '55') return toast.error('WhatsApp do prospect não cadastrado');
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
   };
@@ -803,6 +871,7 @@ function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
         </DialogHeader>
         <fieldset className="space-y-4 mt-2 min-w-0" disabled={saving}>
           <CustomerData customer={customer} contract={contract} />
+          <SubmittedContactNotice draft={draft} customer={customer} />
           {optionsError && (
             <div role="alert" className="text-sm text-red-700">
               Não foi possível carregar os planos e coaches. Dá para salvar matrícula, desconto e link, mas não trocar plano, coach, parcelas ou início.
@@ -958,6 +1027,7 @@ function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
         </DialogTitle>
       </DialogHeader>
       <div className="space-y-4 mt-2">
+        <SubmittedContactNotice draft={draft} customer={customer} />
         {isReminder && <AsaasPaidNotice order={asaasOrderFor(contract, customer)} onRegister={onRegisterPaid} />}
         <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm whitespace-pre-wrap text-gray-800 max-h-72 overflow-y-auto">
           {message}
@@ -972,7 +1042,7 @@ function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
               <ExternalLink className="w-4 h-4" />
             </a>
           </Button>
-          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={openWhatsApp} disabled={!customer?.whatsapp}>
+          <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={openWhatsApp} disabled={!contactCustomer?.whatsapp}>
             <MessageCircle className="w-4 h-4 mr-1.5" /> Abrir WhatsApp
           </Button>
         </div>
@@ -1340,11 +1410,12 @@ function ProspectRow({
   const canUseProspectActions = isDraftProspect(draft);
   const managedInContract = isOpen && !canUseProspectActions;
   const latestSubmission = draft.latest_submission;
-  const submissionChanged = isOpen && hasSubmissionChange(draft);
+  const contactCustomer = prospectContactCustomer(customer, latestSubmission);
   const submittedPlanName = latestSubmission?.plan?.name || 'plano informado';
   const submittedCoachName = latestSubmission?.coach?.name;
   const planChanged = latestSubmission?.plan_id && latestSubmission.plan_id !== draft.plan_id;
   const coachChanged = latestSubmission?.coach_id && latestSubmission.coach_id !== draft.coach_id;
+  const selectionChanged = planChanged || coachChanged;
 
   return (
     <Card className={`${stage.border} transition-colors`}>
@@ -1360,9 +1431,11 @@ function ProspectRow({
                   cobrança em aberto
                 </span>
               )}
-              <span className="text-[11px] text-muted-foreground">Recebido em {formatDateTime(draft.created_at)}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {latestSubmission ? 'Último formulário' : 'Recebido'} em {formatDateTime(prospectLatestActivityAt(draft))}
+              </span>
             </div>
-            <p className="text-base font-semibold text-gray-900 mt-1">{customer?.full_name || '—'}</p>
+            <p className="text-base font-semibold text-gray-900 mt-1">{contactCustomer?.full_name || '—'}</p>
             <p className="text-xs text-muted-foreground mt-0.5">{modality?.name || '—'} · {planName}</p>
             <div className="flex items-center gap-3 mt-1.5 text-xs">
               {customer?.id && (
@@ -1404,7 +1477,8 @@ function ProspectRow({
                 </div>
               </div>
             )}
-            {isOpen && submissionChanged && (
+            {latestSubmission && <div className="mt-3"><SubmittedContactNotice draft={draft} customer={customer} /></div>}
+            {isOpen && selectionChanged && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
@@ -1479,8 +1553,10 @@ function ProspectKanbanCard({
   const canUseProspectActions = isDraftProspect(draft);
   const managedInContract = isOpen && !canUseProspectActions;
   const latestSubmission = draft.latest_submission;
-  const submissionChanged = isOpen && hasSubmissionChange(draft);
+  const contactCustomer = prospectContactCustomer(customer, latestSubmission);
   const planChanged = latestSubmission?.plan_id && latestSubmission.plan_id !== draft.plan_id;
+  const coachChanged = latestSubmission?.coach_id && latestSubmission.coach_id !== draft.coach_id;
+  const selectionChanged = planChanged || coachChanged;
 
   return (
     <Card className={`${stage.border} bg-white shadow-sm hover:shadow-md transition-shadow`}>
@@ -1490,9 +1566,12 @@ function ProspectKanbanCard({
             <span className="font-mono text-[11px] font-semibold text-gray-600">{draft.contract_number}</span>
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${relationship.badge}`}>{relationship.label}</span>
           </div>
-          <p className="text-sm font-semibold text-gray-950 leading-tight">{customer?.full_name || '—'}</p>
+          <p className="text-sm font-semibold text-gray-950 leading-tight">{contactCustomer?.full_name || '—'}</p>
           <p className="text-[11px] text-muted-foreground line-clamp-2">
             {modality?.name || '—'} · {planName}
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            {latestSubmission ? 'Último formulário' : 'Recebido'} em {formatDateTime(prospectLatestActivityAt(draft))}
           </p>
         </div>
 
@@ -1518,7 +1597,9 @@ function ProspectKanbanCard({
           </div>
         )}
 
-        {submissionChanged && (
+        {latestSubmission && <SubmittedContactNotice compact draft={draft} customer={customer} />}
+
+        {isOpen && selectionChanged && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-950">
             <p className="font-semibold">Alteração solicitada</p>
             <p className="mt-0.5">Novo formulário recebido em {formatDateTime(latestSubmission.submitted_at)}.</p>
@@ -1612,8 +1693,12 @@ export default function Prospects() {
   const [coaches, setCoaches] = useState({});
   const [modalities, setModalities] = useState({});
   const [filter, setFilter] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState('kanban');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const [refreshError, setRefreshError] = useState('');
   const [proposal, setProposal] = useState(null);
   const [payment, setPayment] = useState(null);
   const [loss, setLoss] = useState(null);
@@ -1623,10 +1708,15 @@ export default function Prospects() {
   const [quickBusy, setQuickBusy] = useState(null);
   const [asaasOrders, setAsaasOrders] = useState(null);
   const [welcomeContractId, setWelcomeContractId] = useState(null);
+  const loadInFlightRef = useRef(false);
+  const mountedRef = useRef(true);
   const today = todayLocalStr();
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ initial = false, quiet = false } = {}) => {
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+    if (initial) setLoading(true);
+    else setRefreshing(true);
     try {
       const contractsResult = await supabase
         .from('assessment_contracts')
@@ -1643,7 +1733,7 @@ export default function Prospects() {
       const submissionsResult = contractIds.length
         ? await supabase
           .from('assessment_prospect_submissions')
-          .select('id, contract_id, plan_id, coach_id, submitted_full_name, submitted_whatsapp, submitted_email, submitted_cpf, region, submitted_at, landing_page')
+          .select('id, request_id, contract_id, plan_id, coach_id, submitted_full_name, submitted_whatsapp, submitted_email, submitted_cpf, submitted_address_zip, submitted_address_street, submitted_address_number, submitted_address_complement, submitted_address_neighborhood, submitted_address_city, submitted_address_state, region, submitted_at, landing_page')
           .in('contract_id', contractIds)
           .order('submitted_at', { ascending: false })
         : { data: [], error: null };
@@ -1671,7 +1761,7 @@ export default function Prospects() {
       if (submittedPlanResult.error) throw submittedPlanResult.error;
       const coachMap = Object.fromEntries((coachResult.data || []).map(item => [item.id, item]));
       const submittedPlanMap = Object.fromEntries((submittedPlanResult.data || []).map(item => [item.id, item]));
-      list = list.map(item => {
+      list = sortProspectsByLatestSubmission(list.map(item => {
         const latest = latestByContract[item.id];
         return {
           ...item,
@@ -1681,22 +1771,48 @@ export default function Prospects() {
             coach: coachMap[latest.coach_id] || null,
           } : null,
         };
-      });
+      }));
+      if (!mountedRef.current) return;
       setProspects(list);
       setCustomers(Object.fromEntries((customerResult.data || []).map(item => [item.id, item])));
       setCoaches(coachMap);
       setModalities(Object.fromEntries((modalityResult.data || []).map(item => [item.id, item])));
+      setLastUpdatedAt(new Date().toISOString());
+      setRefreshError('');
     } catch (error) {
       console.error(error);
-      toast.error(`Erro ao carregar prospects: ${error.message || ''}`);
+      if (!mountedRef.current) return;
+      const message = error.message || 'Não foi possível consultar o banco';
+      setRefreshError(message);
+      if (!quiet) toast.error(`Erro ao carregar prospects: ${message}`);
     } finally {
-      setLoading(false);
+      loadInFlightRef.current = false;
+      if (mountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => { load(); }, 0);
-    return () => window.clearTimeout(timer);
+    mountedRef.current = true;
+    const refreshQuietly = () => { load({ quiet: true }); };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshQuietly();
+    };
+    const timer = window.setTimeout(() => { load({ initial: true }); }, 0);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refreshQuietly();
+    }, AUTO_REFRESH_INTERVAL_MS);
+    window.addEventListener('focus', refreshQuietly);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshQuietly);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [load]);
 
   const counts = useMemo(() => {
@@ -1721,7 +1837,7 @@ export default function Prospects() {
       if (result[visualStage] !== undefined) result[visualStage] += 1;
       if (isOpenProspect(item)) result.open += 1;
       if (isOpenProspect(item) && needsActionToday(item, today)) result.today += 1;
-      if (isOpenProspect(item) && hasSubmissionChange(item)) result.needs_review += 1;
+      if (isOpenProspect(item) && hasSubmissionChange(item, customers[item.customer_id])) result.needs_review += 1;
       if (item.prospect_customer_relationship === 'former_student') {
         result.returns += 1;
         if (isOpenProspect(item)) result.returns_open += 1;
@@ -1729,11 +1845,15 @@ export default function Prospects() {
       }
     });
     return result;
-  }, [prospects, today]);
+  }, [prospects, customers, today]);
 
   const filtered = useMemo(
-    () => prospects.filter(item => matchesProspectFilter(item, filter, today)),
-    [prospects, filter, today],
+    () => prospects.filter(item => {
+      const customer = customers[item.customer_id];
+      return matchesProspectFilter(item, filter, today, customer)
+        && matchesProspectSearch(item, customer, searchTerm);
+    }),
+    [prospects, customers, filter, searchTerm, today],
   );
   const boardGroups = useMemo(() => BOARD_COLUMNS.map(column => ({
     ...column,
@@ -1747,6 +1867,7 @@ export default function Prospects() {
   const modalData = draft => ({
     draft,
     customer: customers[draft.customer_id],
+    contactCustomer: prospectContactCustomer(customers[draft.customer_id], draft.latest_submission),
     coach: coaches[draft.coach_id],
     modality: modalities[draft.plan_snapshot?.modality_id],
   });
@@ -1840,7 +1961,15 @@ export default function Prospects() {
             Do cadastro público à confirmação do pagamento. Link enviado continua em negociação até o pagamento cair.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-col items-end gap-1">
+            <Button variant="outline" size="sm" onClick={() => load()} disabled={loading || refreshing}>
+              <RefreshCw className={`w-4 h-4 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} /> Atualizar
+            </Button>
+            <span className="text-[10px] text-muted-foreground" aria-live="polite">
+              {lastUpdatedAt ? `Atualizado em ${formatDateTime(lastUpdatedAt)}` : 'Aguardando primeira atualização'}
+            </span>
+          </div>
           <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setCreatingProspect(true)}>
             <Plus className="w-4 h-4 mr-1.5" /> Novo prospect
           </Button>
@@ -1863,6 +1992,12 @@ export default function Prospects() {
           </div>
         </div>
       </div>
+
+      {refreshError && (
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          A última atualização falhou: {refreshError}. Os dados anteriores continuam na tela; use “Atualizar” para tentar novamente.
+        </p>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
@@ -1890,13 +2025,38 @@ export default function Prospects() {
         ))}
       </div>
 
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            className="pl-9"
+            placeholder="Buscar por nome, WhatsApp, e-mail, CPF ou contrato"
+            aria-label="Buscar prospects"
+          />
+        </div>
+        {searchTerm.trim() && (
+          <span className="text-xs text-muted-foreground">
+            {filtered.length} {filtered.length === 1 ? 'resultado' : 'resultados'} nesta etapa
+          </span>
+        )}
+      </div>
+
       {loading ? (
         <div className="flex items-center justify-center py-16 gap-3 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /><span className="text-sm">Carregando...</span></div>
       ) : filtered.length === 0 ? (
         <Card><CardContent className="flex flex-col items-center py-16 text-center">
           <Clock3 className="w-10 h-10 text-gray-400 mb-3" />
-          <p className="text-base font-semibold text-gray-700">Nenhum prospect nesta etapa</p>
-          <p className="text-sm text-muted-foreground mt-1">Os novos cadastros do site aparecerão automaticamente aqui.</p>
+          <p className="text-base font-semibold text-gray-700">
+            {searchTerm.trim() ? 'Nenhum prospect encontrado' : 'Nenhum prospect nesta etapa'}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {searchTerm.trim()
+              ? 'Tente outro nome, contato, CPF ou número de contrato.'
+              : 'Os novos cadastros do site aparecerão automaticamente aqui.'}
+          </p>
         </CardContent></Card>
       ) : (
         viewMode === 'kanban' ? (
