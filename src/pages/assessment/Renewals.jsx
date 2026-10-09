@@ -637,6 +637,11 @@ export default function Renewals() {
                     {column.stage === 'waiting_payment' && column.items.length > 0 && (
                       <p className="text-[11px] font-semibold text-gray-700 mt-0.5">{formatCurrency(column.total)}</p>
                     )}
+                    {column.missingLinkCount > 0 && (
+                      <p className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                        {column.missingLinkCount} sem link
+                      </p>
+                    )}
                   </div>
                   <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${column.badge}`}>
                     {column.items.length}

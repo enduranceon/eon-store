@@ -16,6 +16,7 @@ import {
 } from '@/api/client';
 import { DEFAULT_COMMUNITY_LINK, loadCommunicationConfig, saveCommunityLink } from '@/lib/communication-config';
 import { communicationBlockReasonLabel } from '@/lib/communication-case';
+import { PROSPECT_MESSAGES, PROSPECT_TASK_KIND, PROSPECT_TEMPLATE_VARIABLES } from '@/lib/prospect-messages';
 import { formatDateTime } from '@/lib/utils';
 
 const JOURNEY_LABEL = {
@@ -23,8 +24,9 @@ const JOURNEY_LABEL = {
   onboarding: 'Boas-vindas',
   renewal: 'Renovações',
   reactivation: 'Reativação',
+  proposal: 'Propostas',
 };
-const JOURNEY_ORDER = ['billing', 'onboarding', 'renewal'];
+const JOURNEY_ORDER = ['billing', 'onboarding', 'renewal', 'proposal'];
 const TASK_KIND_LABEL = {
   charge_send: 'Preparar cobrança',
   charge_overdue: 'Acompanhar saldo pendente',
@@ -32,7 +34,16 @@ const TASK_KIND_LABEL = {
   onboarding_checkin: 'Check-in inicial',
   onboarding_feedback: 'Feedback de 20 dias',
   renewal_reminder: 'Conversar sobre renovação',
+  prospect_contact: 'Conversa antes do link',
+  prospect_proposal: 'Proposta com o link',
 };
+
+// Etapas da proposta no quadro de Prospects: o marco só identifica o texto.
+function prospectOffsets(taskKind) {
+  return Object.values(PROSPECT_MESSAGES)
+    .filter(step => step.taskKind === taskKind)
+    .map(step => [step.offset, step.label]);
+}
 
 const MODEL_STAGES = {
   billing: [
@@ -48,6 +59,10 @@ const MODEL_STAGES = {
   renewal: [
     { key: 'renewal', label: 'Contato de renovação', trigger_event: 'contract_end_date', task_kind: 'renewal_reminder', offsets: [[-10, 'Pebinha · 10 dias antes do fim'], [-8, 'Lembrete · 2 dias depois do Pebinha'], [0, 'Último dia do plano'], [5, 'Encerramento · 5 dias depois do fim']] },
     { key: 'renewal_answer', label: 'Respostas da renovação', trigger_event: 'manual', task_kind: 'renewal_reminder', offsets: [[1, 'Ainda pensando · na hora'], [2, 'Ainda pensando · retorno em 2 dias'], [3, 'Não vou renovar · despedida']] },
+  ],
+  proposal: [
+    { key: 'prospect_contact', label: 'Conversa antes do link', trigger_event: 'manual', task_kind: PROSPECT_TASK_KIND.CONTACT, offsets: prospectOffsets(PROSPECT_TASK_KIND.CONTACT) },
+    { key: 'prospect_proposal', label: 'Proposta com o link', trigger_event: 'manual', task_kind: PROSPECT_TASK_KIND.PROPOSAL, offsets: prospectOffsets(PROSPECT_TASK_KIND.PROPOSAL) },
   ],
 };
 
@@ -79,7 +94,7 @@ function copyRule(rule) {
 
 function newSlug(base) {
   const suffix = globalThis.crypto?.randomUUID?.().slice(0, 8) || Math.random().toString(36).slice(2, 10);
-  return `${base}-${suffix}`;
+  return `${String(base).replace(/_/g, '-')}-${suffix}`;
 }
 
 function savedDraftRecord(value) {
@@ -99,7 +114,7 @@ function SimulationResults({ simulation }) {
         <p className="text-xs text-blue-800">
           {simulation.affected_open_cases == null
             ? 'Impacto em casos abertos não informado.'
-            : `Casos abertos dessa finalidade: ${simulation.affected_open_cases}.`}
+            : `${simulation.affected_label || 'Casos abertos dessa finalidade'}: ${simulation.affected_open_cases}.`}
           {' '}Nenhuma mensagem foi enviada.
         </p>
         {simulation.scope_note && <p className="mt-1 text-xs text-blue-800">{simulation.scope_note}</p>}
@@ -311,7 +326,18 @@ function RuleEditor({ rule, savedDraft, isNew = false, onPublished, onDraftSaved
         <p className="text-xs text-muted-foreground">
           O texto é escolhido pela etapa e pelo marco. Entre modelos ativos da mesma etapa, a menor ordem tem prioridade.
           {draft.journey === 'billing' && ' A cobrança vencida sai todo dia a partir do D+3, até a pessoa responder.'}
+          {draft.journey === 'proposal' && ' O texto aparece no quadro de Prospects para copiar; sem modelo ativo no passo, o quadro usa o texto padrão.'}
         </p>
+        {draft.journey === 'proposal' && (
+          <details className="rounded-md border bg-gray-50 p-2 text-xs text-gray-700">
+            <summary className="cursor-pointer font-medium">Variáveis da proposta</summary>
+            <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+              {PROSPECT_TEMPLATE_VARIABLES.map(([token, meaning]) => (
+                <li key={token}><code className="font-mono">{token}</code> · {meaning}</li>
+              ))}
+            </ul>
+          </details>
+        )}
         <div>
           <Label htmlFor={`model-template-${draft.slug}`}>Texto sugerido</Label>
           <Textarea

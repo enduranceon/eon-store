@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ArchiveX, BellRing, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
-  Clock3, Copy, CreditCard, ExternalLink, HelpCircle, Loader2, MessageCircle, Plus, RefreshCw, Search,
+  Clock3, Copy, CreditCard, ExternalLink, HelpCircle, Loader2, MessageCircle, Plus, RefreshCw, RotateCcw, Search,
   SearchCheck, Send,
   ThumbsUp, TrendingUp, UserCheck, UserPlus, UserRoundCheck,
 } from 'lucide-react';
@@ -27,6 +27,7 @@ import {
   markAssessmentProspectMessageSent,
   prepareAssessmentProspectProposal,
   registerAssessmentProspectContact,
+  reopenAssessmentProspect,
 } from '@/api/client';
 import { AssessmentCoach, AssessmentModality, AssessmentPlan } from '@/api/entities';
 import { supabase } from '@/api/db';
@@ -50,12 +51,10 @@ import {
   hoursSince,
   isStepDue,
   needsActionToday,
-  prospectClosingMessage,
-  prospectFirstContactMessage,
-  prospectFollowUpMessage,
   prospectNextStep,
-  prospectPaymentClosingMessage,
 } from '@/lib/assessment-prospect-flow';
+import { buildProspectMessage, contactMessageKey, proposalMessageKey } from '@/lib/prospect-messages';
+import { loadCommunicationConfig } from '@/lib/communication-config';
 import { asaasCheckCandidates } from '@/lib/asaas-payment-check';
 import {
   hasProspectSubmissionIdentityDifference,
@@ -132,7 +131,7 @@ const RELATIONSHIPS = {
   },
 };
 
-const PROSPECT_CONTRACT_COLUMNS = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, discount_reason, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_charge_id, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at, prospect_first_contact_at, prospect_last_contact_at, prospect_followup_sent_at, prospect_payment_reminder_sent_at, prospect_closing_sent_at, prospect_close_deadline';
+const PROSPECT_CONTRACT_COLUMNS = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, discount_reason, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_charge_id, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at, prospect_first_contact_at, prospect_last_contact_at, prospect_followup_sent_at, prospect_payment_reminder_sent_at, prospect_closing_sent_at, prospect_close_deadline, prospect_reopened_at';
 
 const OPEN_PROSPECT_STAGES = new Set(['new', 'awaiting_reply', 'clarifying', 'proposal_ready', 'payment_link_sent']);
 const OPEN_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid']);
@@ -204,47 +203,22 @@ function paymentLinkFor(contract) {
   return contract.external_payment_link || contract.asaas_payment_link || '';
 }
 
-function buildMessage(contract, customer, coach, modality) {
-  const total = contractTotal(contract);
-  const installments = Number(contract.installments) || 1;
+// Proposta com o link (ou o lembrete de pagamento), pelo modelo publicado em
+// Modelos e regras; sem modelo ativo, o texto padrão.
+function buildMessage(contract, customer, coach, modality, rules) {
   const months = Number(contract.plan_snapshot?.period_months) || 1;
-  const planName = contract.plan_snapshot?.name
-    || (modality ? `${modality.name} · ${months}m` : 'Assessoria');
-  const firstName = customer?.full_name?.trim().split(' ')[0] || 'atleta';
-  const paymentLink = paymentLinkFor(contract);
-  const isReminder = contract.prospect_stage === 'payment_link_sent' && Boolean(contract.prospect_message_sent_at);
-
-  let message = `Olá, ${firstName}! 👋\n\n`;
-  if (isReminder) {
-    message += 'Passando só para lembrar que sua proposta para treinar com a *Endurance On* ficou reservada e o pagamento ainda está em aberto.\n\n';
-  } else if (contract.prospect_first_contact_at || contract.prospect_last_contact_at) {
-    // Depois do primeiro contato, a proposta responde ao "quer seguir".
-    message += 'Que bom que você quer seguir! Sua proposta está pronta:\n\n';
-  } else {
-    message += contract.prospect_customer_relationship === 'former_student'
-      ? 'Que bom ter você de volta à *Endurance On*! Sua nova proposta está pronta:\n\n'
-      : 'Recebemos seu cadastro para treinar com a *Endurance On*. Sua proposta está pronta:\n\n';
-  }
-  if (modality) message += `🏃 Modalidade: *${modality.name}*\n`;
-  message += `📅 Plano: *${planName}* (${months} ${months === 1 ? 'mês' : 'meses'})\n`;
-  if (coach) message += `👤 Coach: *${coach.name}*\n`;
-  message += `💰 Total: *${formatCurrency(total)}*`;
-  if (installments > 1) {
-    message += ` em *${installments}x de ${formatCurrency(total / installments)}*`;
-  }
-  message += '\n';
-  if (Number(contract.enrollment_fee) > 0) {
-    message += `📌 Matrícula: ${formatCurrency(contract.enrollment_fee)}\n`;
-  }
-  message += `⏰ Vencimento: *${formatDate(contract.due_date)}*\n\n`;
-  if (isReminder) {
-    message += `Para confirmar sua vaga, é só finalizar pelo link abaixo:\n🔗 ${paymentLink}\n\n`;
-    message += `Assim que o pagamento for confirmado, ${coach?.name ? `o coach *${coach.name}*` : 'o coach escolhido'} entra em contato para dar início ao atendimento. Se você já fez o pagamento, pode desconsiderar esta mensagem. Qualquer dúvida, me chama por aqui.`;
-  } else {
-    message += `Para confirmar sua vaga, faça o pagamento pelo link:\n🔗 ${paymentLink}\n\n`;
-    message += `Assim que o pagamento for confirmado, ${coach?.name ? `o coach *${coach.name}*` : 'o coach escolhido'} entrará em contato para iniciar seu atendimento. 🏆`;
-  }
-  return message;
+  return buildProspectMessage(proposalMessageKey(contract), {
+    fullName: customer?.full_name,
+    modality: modality?.name,
+    plan: contract.plan_snapshot?.name || (modality ? `${modality.name} · ${months}m` : 'Assessoria'),
+    periodMonths: months,
+    coach: coach?.name,
+    total: contractTotal(contract),
+    installments: Number(contract.installments) || 1,
+    enrollmentFee: Number(contract.enrollment_fee) || 0,
+    dueDate: contract.due_date,
+    paymentLink: paymentLinkFor(contract),
+  }, rules);
 }
 
 // Formato que a conferência do Asaas usa (o mesmo da tela de Cobranças).
@@ -276,7 +250,7 @@ const CONTACT_TITLES = {
 
 // Mensagens da conversa antes e depois do link. Envio manual: copiar (ou abrir
 // o WhatsApp) e registrar. Sem travas de data: dá para enviar antes do previsto.
-function ContactModal({ data, onClose, onDone, onRegisterPaid }) {
+function ContactModal({ data, rules, onClose, onDone, onRegisterPaid }) {
   const { draft, customer, contactCustomer = customer, coach, modality, kind } = data;
   const today = todayLocalStr();
   const deadline = addDays(today, LINK_DEADLINE_DAYS);
@@ -284,20 +258,18 @@ function ContactModal({ data, onClose, onDone, onRegisterPaid }) {
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [externalCancelled, setExternalCancelled] = useState(false);
-  const fullName = contactCustomer?.full_name;
-  const message = kind === 'first_contact'
-    ? prospectFirstContactMessage({
-      fullName,
+  const message = buildProspectMessage(
+    contactMessageKey(kind, draft.prospect_customer_relationship === 'former_student'),
+    {
+      fullName: contactCustomer?.full_name,
       modality: modality?.name,
       plan: draft.plan_snapshot?.name,
       coach: coach?.name,
-      returning: draft.prospect_customer_relationship === 'former_student',
-    })
-    : kind === 'follow_up'
-      ? prospectFollowUpMessage({ fullName, coach: coach?.name })
-      : kind === 'closing'
-        ? prospectClosingMessage({ fullName })
-        : prospectPaymentClosingMessage({ fullName, deadline, paymentLink: paymentLinkFor(draft) });
+      deadline,
+      paymentLink: paymentLinkFor(draft),
+    },
+    rules,
+  );
   const archives = kind === 'closing';
   const needsLinkConfirmation = archives && Boolean(draft.external_payment_link);
   const early = step?.kind === kind && step.dueDate > today;
@@ -439,7 +411,7 @@ function NextStepLine({ draft }) {
 // Botões do card (quadro e lista), conforme a etapa e o próximo passo.
 function ProspectActionButtons({
   draft, customer, coach, modality, compact = false,
-  onProposal, onPayment, onLoss, onContact, onQuickContact, quickBusy,
+  onProposal, onPayment, onLoss, onContact, onQuickContact, onReopen, quickBusy,
 }) {
   const isOpen = isOpenProspect(draft);
   const canAct = isOpen && isDraftProspect(draft);
@@ -537,6 +509,11 @@ function ProspectActionButtons({
       {canAct && (
         <Button size="sm" variant="outline" className={`${outline} text-gray-700`} onClick={() => onLoss(draft, customer)}>
           <ArchiveX className={icon} /> {text('Não convertido', 'Perda')}
+        </Button>
+      )}
+      {stage === 'lost' && draft.status === 'voided' && onReopen && (
+        <Button size="sm" variant="outline" className={`${outline} text-sky-700`} onClick={() => onReopen(draft)}>
+          <RotateCcw className={icon} /> Retomar
         </Button>
       )}
       <Button size="sm" variant="outline" className={outline} asChild>
@@ -678,7 +655,7 @@ function PlanSelectItems({ plans }) {
   ));
 }
 
-function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
+function ProposalModal({ data, rules, onClose, onDone, onSaved, onRegisterPaid }) {
   const { draft, customer, contactCustomer = customer } = data;
   const [contract, setContract] = useState(draft);
   const [step, setStep] = useState(
@@ -717,7 +694,7 @@ function ProposalModal({ data, onClose, onDone, onSaved, onRegisterPaid }) {
   const proposal = describeProspectProposal({ contract, form, plans: options.plans });
   const savedCoach = coachById.get(contract.coach_id) || (contract.coach_id === draft.coach_id ? data.coach : null);
   const savedModality = modalityById.get(contract.plan_snapshot?.modality_id) || data.modality;
-  const message = buildMessage(contract, contactCustomer, savedCoach, savedModality);
+  const message = buildMessage(contract, contactCustomer, savedCoach, savedModality, rules);
   const isReminder = contract.prospect_stage === 'payment_link_sent' && Boolean(contract.prospect_message_sent_at);
 
   // Plano desativado continua na lista enquanto for o plano do prospect.
@@ -1206,6 +1183,55 @@ function LossModal({ data, onClose, onDone }) {
   );
 }
 
+// Retomar um prospect arquivado: volta para "Tirando dúvidas" com o relógio
+// de hoje. O link antigo não volta; para cobrar, prepara-se outra proposta.
+function ReopenModal({ data, onClose, onDone }) {
+  const { draft, customer } = data;
+  const [saving, setSaving] = useState(false);
+  const startPassed = Boolean(draft.start_date) && draft.start_date < todayLocalStr();
+
+  const reopen = async () => {
+    setSaving(true);
+    try {
+      await reopenAssessmentProspect(draft.id, draft.updated_at);
+      toast.success('Prospect retomado. O card voltou para “Tirando dúvidas”.');
+      onDone();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível retomar o prospect');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <RotateCcw className="w-5 h-5 text-sky-600" /> Retomar prospect
+        </DialogTitle>
+      </DialogHeader>
+      <div className="space-y-4 mt-2 text-sm">
+        <p>
+          <b>{customer?.full_name || draft.contract_number}</b> volta para “Tirando dúvidas”, com o histórico preservado.
+          Use quando a pessoa voltou a conversar.
+        </p>
+        <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+          <li>O relógio recomeça hoje: lembrete em 2 dias e encerramento em 5, se ela sumir de novo.</li>
+          <li>O link antigo não volta. Para cobrar, prepare uma nova proposta com outro link.</li>
+          {startPassed && <li>O início do plano está em {formatDate(draft.start_date)}. Ajuste a data ao preparar a proposta.</li>}
+        </ul>
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>Voltar</Button>
+          <Button className="flex-1 bg-sky-600 hover:bg-sky-700" onClick={reopen} disabled={saving}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}
+            Retomar
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function CreateProspectModal({ onClose, onDone }) {
   const [plans, setPlans] = useState([]);
   const [coaches, setCoaches] = useState([]);
@@ -1396,6 +1422,7 @@ function ProspectRow({
   onLoss,
   onContact,
   onQuickContact,
+  onReopen,
   quickBusy,
   onApplyLatestSubmission,
   applyingSubmission,
@@ -1456,6 +1483,7 @@ function ProspectRow({
               {draft.prospect_message_sent_at && <span>Último envio: {formatDateTime(draft.prospect_message_sent_at)}</span>}
               {draft.prospect_converted_at && <span>Convertido: {formatDateTime(draft.prospect_converted_at)}</span>}
               {draft.prospect_lost_at && <span>Encerrado: {formatDateTime(draft.prospect_lost_at)}</span>}
+              {draft.prospect_reopened_at && draft.prospect_stage !== 'lost' && <span>Retomado: {formatDateTime(draft.prospect_reopened_at)}</span>}
             </div>
             <div className="mt-2 max-w-sm"><NextStepLine draft={draft} /></div>
             {draft.prospect_stage === 'lost' && (
@@ -1519,7 +1547,7 @@ function ProspectRow({
               <ProspectActionButtons
                 draft={draft} customer={customer} coach={coach} modality={modality}
                 onProposal={onProposal} onPayment={onPayment} onLoss={onLoss}
-                onContact={onContact} onQuickContact={onQuickContact} quickBusy={quickBusy}
+                onContact={onContact} onQuickContact={onQuickContact} onReopen={onReopen} quickBusy={quickBusy}
               />
             </div>
           </div>
@@ -1539,6 +1567,7 @@ function ProspectKanbanCard({
   onLoss,
   onContact,
   onQuickContact,
+  onReopen,
   quickBusy,
   onApplyLatestSubmission,
   applyingSubmission,
@@ -1627,7 +1656,7 @@ function ProspectKanbanCard({
             compact
             draft={draft} customer={customer} coach={coach} modality={modality}
             onProposal={onProposal} onPayment={onPayment} onLoss={onLoss}
-            onContact={onContact} onQuickContact={onQuickContact} quickBusy={quickBusy}
+            onContact={onContact} onQuickContact={onQuickContact} onReopen={onReopen} quickBusy={quickBusy}
           />
         </div>
       </CardContent>
@@ -1708,6 +1737,8 @@ export default function Prospects() {
   const [quickBusy, setQuickBusy] = useState(null);
   const [asaasOrders, setAsaasOrders] = useState(null);
   const [welcomeContractId, setWelcomeContractId] = useState(null);
+  const [messageRules, setMessageRules] = useState(null);
+  const [reopen, setReopen] = useState(null);
   const loadInFlightRef = useRef(false);
   const mountedRef = useRef(true);
   const today = todayLocalStr();
@@ -1815,6 +1846,15 @@ export default function Prospects() {
     };
   }, [load]);
 
+  // Textos de Modelos e regras; se não carregarem, ficam os padrões.
+  useEffect(() => {
+    let active = true;
+    loadCommunicationConfig()
+      .then(config => { if (active) setMessageRules(config.rules || null); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
   const counts = useMemo(() => {
     const result = {
       all: prospects.length,
@@ -1872,7 +1912,7 @@ export default function Prospects() {
     modality: modalities[draft.plan_snapshot?.modality_id],
   });
   const finishModal = () => {
-    setProposal(null); setPayment(null); setLoss(null); setContact(null); setCreatingProspect(false); load();
+    setProposal(null); setPayment(null); setLoss(null); setContact(null); setReopen(null); setCreatingProspect(false); load();
   };
   // Pagamento registrado: o prospect vira aluno e a boas-vindas abre na hora.
   const finishPayment = contractId => {
@@ -1906,6 +1946,7 @@ export default function Prospects() {
     onLoss: (selected, _customer, presetReason) => setLoss({ ...modalData(selected), presetReason }),
     onContact: (selected, _customer, _coach, _modality, kind) => setContact({ ...modalData(selected), kind }),
     onQuickContact: registerQuickContact,
+    onReopen: selected => setReopen(modalData(selected)),
     quickBusy,
   };
   const checkColumnInAsaas = items => {
@@ -2083,7 +2124,7 @@ export default function Prospects() {
       <Dialog open={Boolean(proposal)} onOpenChange={open => { if (!open) setProposal(null); }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
           {proposal && (
-            <ProposalModal data={proposal} onClose={() => setProposal(null)} onDone={finishModal} onSaved={load}
+            <ProposalModal data={proposal} rules={messageRules} onClose={() => setProposal(null)} onDone={finishModal} onSaved={load}
               onRegisterPaid={order => openAsaasCheck([order])} />
           )}
         </DialogContent>
@@ -2096,10 +2137,13 @@ export default function Prospects() {
       <Dialog open={Boolean(loss)} onOpenChange={open => { if (!open) setLoss(null); }}>
         <DialogContent className="max-w-md">{loss && <LossModal data={loss} onClose={() => setLoss(null)} onDone={finishModal} />}</DialogContent>
       </Dialog>
+      <Dialog open={Boolean(reopen)} onOpenChange={open => { if (!open) setReopen(null); }}>
+        <DialogContent className="max-w-md">{reopen && <ReopenModal data={reopen} onClose={() => setReopen(null)} onDone={finishModal} />}</DialogContent>
+      </Dialog>
       <Dialog open={Boolean(contact)} onOpenChange={open => { if (!open) setContact(null); }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">
           {contact && (
-            <ContactModal data={contact} onClose={() => setContact(null)} onDone={finishModal}
+            <ContactModal data={contact} rules={messageRules} onClose={() => setContact(null)} onDone={finishModal}
               onRegisterPaid={order => openAsaasCheck([order])} />
           )}
         </DialogContent>

@@ -5,7 +5,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
 const ACTION_PATH =
-  /^\/orders\/contract\/([^/]+)\/(renewal|renewal-activation|auto-renewal|non-renewal|enrollment-confirmation|enrollment-refusal|prospect-proposal|prospect-message-sent|prospect-contact|prospect-lost)$/;
+  /^\/orders\/contract\/([^/]+)\/(renewal|renewal-activation|auto-renewal|non-renewal|enrollment-confirmation|enrollment-refusal|prospect-proposal|prospect-message-sent|prospect-contact|prospect-lost|prospect-reopen)$/;
 const PROSPECT_LOSS_REASONS = new Set([
   "price",
   "no_response",
@@ -229,6 +229,15 @@ export async function handleContractMembershipRequest(
       }, 400);
     }
     rpc = "mark_assessment_prospect_message_sent";
+  } else if (action === "prospect-reopen") {
+    // Retomar um prospect arquivado: o servidor decide etapa e limpeza.
+    if (!exactKeys(body, ["expected_updated_at"])) {
+      return jsonResponse({
+        error: "Requisição inválida",
+        code: "invalid_request",
+      }, 400);
+    }
+    rpc = "reopen_assessment_prospect";
   } else if (action === "prospect-contact") {
     if (
       !exactKeys(body, [

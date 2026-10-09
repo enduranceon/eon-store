@@ -1269,6 +1269,21 @@ export async function loseAssessmentProspect(
   return response.data;
 }
 
+// Devolve ao quadro um prospect arquivado como não convertido. O servidor
+// decide a etapa (Tirando dúvidas) e guarda o histórico da perda.
+export async function reopenAssessmentProspect(contractId, expectedUpdatedAt, options = {}) {
+  const response = await apiRequest(
+    `/orders/contract/${contractId}/prospect-reopen`,
+    {
+      ...options,
+      method: 'POST',
+      body: { expected_updated_at: expectedUpdatedAt },
+    },
+  );
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function saveAssessmentContractExternalCharge(
   contractId,
   {

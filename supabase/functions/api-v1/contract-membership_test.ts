@@ -299,6 +299,36 @@ Deno.test("Prospect message tracking forwards only the concurrency snapshot", as
   assert(Object.keys(calls[0].args).length === 3, "unexpected message fields");
 });
 
+Deno.test("Prospect reopening forwards only the concurrency snapshot", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const path = `/orders/contract/${CONTRACT_ID}/prospect-reopen`;
+  const response = await handleContractMembershipRequest(
+    request("prospect-reopen", { expected_updated_at: UPDATED_AT }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "reopening failed");
+  assert(calls[0].name === "reopen_assessment_prospect", "wrong reopening RPC");
+  assert(
+    JSON.stringify(Object.keys(calls[0].args).sort()) ===
+      JSON.stringify(["p_actor_id", "p_contract_id", "p_expected_updated_at"]),
+    "unexpected reopening fields",
+  );
+
+  const extra = await handleContractMembershipRequest(
+    request("prospect-reopen", {
+      expected_updated_at: UPDATED_AT,
+      prospect_stage: "proposal_ready",
+    }),
+    path,
+    client(calls),
+    ACTOR_ID,
+  );
+  assert(extra?.status === 400, "client-controlled stage was accepted");
+  assert(calls.length === 1, "invalid reopening reached the database");
+});
+
 Deno.test("Prospect loss validates the reason and cancellation confirmation", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const path = `/orders/contract/${CONTRACT_ID}/prospect-lost`;

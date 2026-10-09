@@ -1,6 +1,7 @@
 // Conversa da proposta (docs/fluxos-de-mensagens.md, seção 2): primeiro
 // contato sem link, lembrete, encerramento e o prazo final do link. O envio é
-// manual; aqui só se calcula o próximo passo de cada card e os textos.
+// manual; aqui só se calcula o próximo passo de cada card. Os textos ficam em
+// prospect-messages.js.
 import { utcToLocalDateStr } from './utils.js';
 
 export const FOLLOW_UP_DAYS = 2;
@@ -119,42 +120,4 @@ export function formatDeadline(dateStr) {
 
 export function prospectFirstName(fullName) {
   return String(fullName || '').trim().split(/\s+/)[0] || 'atleta';
-}
-
-export function prospectFirstContactMessage({ fullName, modality, plan, coach, returning = false }) {
-  const interest = [
-    returning ? 'Que bom ver você de volta! Recebemos seu interesse em voltar a treinar' : 'Recebemos seu interesse em treinar',
-    modality ? ` *${modality}*` : '',
-    ' com a gente',
-    plan ? `, no plano *${plan}*` : '',
-    coach ? `, com acompanhamento de *${coach}*` : '',
-    '. 🙌',
-  ].join('');
-  return `Olá, ${prospectFirstName(fullName)}! Tudo bem?\n\n`
-    + `Aqui é da Endurance ON! ${interest}\n\n`
-    + 'Quer seguir com a contratação? Se preferir tirar alguma dúvida antes, sobre os treinos, '
-    + 'o plano ou o dia a dia da assessoria, é só me falar que eu te ajudo!';
-}
-
-export function prospectFollowUpMessage({ fullName, coach }) {
-  return `Oi, ${prospectFirstName(fullName)}! Tudo bem?\n\n`
-    + `Se ajudar na decisão, posso te explicar como funcionam as primeiras semanas ${coach ? `com *${coach}*` : 'na assessoria'} `
-    + 'ou tirar qualquer dúvida por aqui, por áudio ou numa ligação rápida, como for melhor para você.\n\n'
-    + 'Quer seguir com a contratação?';
-}
-
-export function prospectClosingMessage({ fullName }) {
-  return `Oi, ${prospectFirstName(fullName)}! Tudo bem?\n\n`
-    + 'Como não consegui falar com você, imagino que agora não seja o melhor momento. '
-    + 'Vou arquivar sua proposta por aqui para não ficar te mandando mensagem.\n\n'
-    + 'Se quiser treinar com a gente mais para frente, é só me chamar. Vai ser um prazer te receber na Endurance ON! 🙌';
-}
-
-export function prospectPaymentClosingMessage({ fullName, deadline, paymentLink }) {
-  return `Oi, ${prospectFirstName(fullName)}! Tudo bem?\n\n`
-    + 'Como o pagamento da sua proposta ainda não foi concluído, imagino que agora não seja o melhor momento. '
-    + `Vou deixar o link ativo até ${formatDeadline(deadline)}; depois disso, arquivo a proposta por aqui.\n\n`
-    + (paymentLink ? `🔗 ${paymentLink}\n\n` : '')
-    + 'Se você já fez o pagamento, pode desconsiderar esta mensagem. '
-    + 'E se quiser retomar mais para frente, é só me chamar. 🙌';
 }
