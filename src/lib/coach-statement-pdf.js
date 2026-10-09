@@ -8,6 +8,15 @@ const money = (value) => new Intl.NumberFormat('pt-BR', {
 
 const safe = (value) => (value == null || value === '' ? '-' : String(value));
 
+const shortDate = (value) => {
+  const text = String(value || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text.slice(8, 10)}/${text.slice(5, 7)}/${text.slice(0, 4)}` : '-';
+};
+
+const percent = (value) => `${(Number(value) || 0).toFixed(1).replace('.', ',')}%`;
+
+const signed = (value) => (value > 0 ? `+${value}` : String(value));
+
 function addFooter(doc) {
   const pageCount = doc.internal.getNumberOfPages();
   for (let page = 1; page <= pageCount; page += 1) {
@@ -33,10 +42,15 @@ function sectionTitle(doc, title, y, color = [37, 99, 235]) {
   doc.text(title, 49, y);
 }
 
-function drawRowsSection(doc, { title, y, color, head, body, foot }) {
+function drawRowsSection(doc, { title, y, color, head, body, foot, columnStyles }) {
   if (!body.length) return y;
+  if (y > 740) {
+    doc.addPage();
+    y = 44;
+  }
   sectionTitle(doc, title, y, color);
   autoTable(doc, {
+    columnStyles,
     startY: y + 8,
     head: [head],
     body,
@@ -66,6 +80,141 @@ function drawRowsSection(doc, { title, y, color, head, body, foot }) {
     alternateRowStyles: { fillColor: [252, 253, 255] },
   });
   return doc.lastAutoTable.finalY + 18;
+}
+
+const KPI_CARDS = [
+  { key: 'baseStart', label: 'ALUNOS NO INICIO', sub: 'contratos vigentes', color: [15, 23, 42] },
+  { key: 'entries', label: 'ENTRADAS', sub: 'novos alunos', color: [22, 163, 74], sign: '+' },
+  { key: 'returns', label: 'RETORNOS', sub: 'ex-alunos que voltaram', color: [234, 88, 12], sign: '+' },
+  { key: 'exits', label: 'SAIDAS', sub: 'saidas reais', color: [220, 38, 38], sign: '-' },
+  { key: 'renewals', label: 'RENOVACOES', sub: 'renovaram no mes', color: [124, 58, 237] },
+  { key: 'baseEnd', label: 'ALUNOS NO FIM', sub: 'contratos vigentes', color: [37, 99, 235] },
+];
+
+const TABLE_STYLE = {
+  theme: 'grid',
+  margin: { left: 40, right: 40, bottom: 48 },
+  styles: {
+    font: 'helvetica', fontSize: 8.5, cellPadding: { top: 4, right: 5, bottom: 4, left: 5 },
+    lineColor: [226, 232, 240], lineWidth: 0.5, overflow: 'linebreak', valign: 'middle',
+  },
+  headStyles: { fillColor: [248, 250, 252], textColor: [100, 116, 139], fontStyle: 'bold', lineColor: [203, 213, 225] },
+  footStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontStyle: 'bold' },
+};
+
+const right = (content) => ({ content, styles: { halign: 'right' } });
+
+// Título de seção não fica sozinho no pé da página.
+function ensureSpace(doc, y, needed = 90) {
+  if (y + needed <= doc.internal.pageSize.getHeight() - 50) return y;
+  doc.addPage();
+  return 44;
+}
+
+// Primeira página: o mês do coach em números, por modalidade, quem entrou e
+// saiu, e de onde vem o valor a receber.
+function drawPanorama(doc, view, y, width) {
+  const panorama = view.panorama;
+  if (!panorama) return y;
+  const k = panorama.kpis;
+  sectionTitle(doc, `Panorama de ${view.mesLabel}${panorama.partial ? ` (ate ${shortDate(panorama.to)})` : ''}`, y);
+  y += 12;
+
+  const gap = 8;
+  const cardWidth = (width - 80 - gap * 2) / 3;
+  KPI_CARDS.forEach((card, index) => {
+    const x = 40 + (index % 3) * (cardWidth + gap);
+    const top = y + Math.floor(index / 3) * (52 + gap);
+    const value = Number(k[card.key]) || 0;
+    doc.setFillColor(251, 252, 254);
+    doc.setDrawColor(230, 235, 242);
+    doc.roundedRect(x, top, cardWidth, 52, 6, 6, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(card.label, x + 10, top + 15);
+    doc.setFontSize(16);
+    doc.setTextColor(...card.color);
+    doc.text(`${card.sign && value ? card.sign : ''}${value}`, x + 10, top + 34);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text(card.sub, x + 10, top + 46);
+  });
+  y += 2 * 52 + gap + 16;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Saldo do mes: ${signed(k.net)} aluno(s)   -   Churn: ${percent(k.churnRate)} (saidas / alunos no inicio)`, 40, y);
+  y += 22;
+
+  if (panorama.modalidades?.length) {
+    y = ensureSpace(doc, y);
+    sectionTitle(doc, 'Por modalidade', y, [14, 116, 144]);
+    autoTable(doc, {
+      ...TABLE_STYLE,
+      startY: y + 8,
+      head: [['Modalidade', ...['Inicio', 'Entradas', 'Retornos', 'Saidas', 'Fim', 'Repasse'].map(right)]],
+      body: panorama.modalidades.map((row) => [
+        safe(row.modalidade), row.baseStart, row.entries, row.returns, row.exits, row.baseEnd, money(row.repasse),
+      ]),
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
+    });
+    y = doc.lastAutoTable.finalY + 18;
+  }
+
+  const movimento = [
+    ...(panorama.entradas || []).map((row) => ['Entrada', row]),
+    ...(panorama.retornos || []).map((row) => ['Retorno', row]),
+    ...(panorama.saidas || []).map((row) => ['Saida', row]),
+  ];
+  y = ensureSpace(doc, y);
+  sectionTitle(doc, `Quem entrou e quem saiu (${movimento.length})`, y, [22, 163, 74]);
+  if (movimento.length) {
+    autoTable(doc, {
+      ...TABLE_STYLE,
+      startY: y + 8,
+      head: [['Movimento', 'Aluno', 'Modalidade', right('Data')]],
+      body: movimento.map(([tipo, row]) => [tipo, safe(row.aluno), safe(row.modalidade), shortDate(row.data)]),
+      columnStyles: { 3: { halign: 'right' } },
+      didParseCell: (cell) => {
+        if (cell.section === 'body' && cell.column.index === 0) {
+          cell.cell.styles.textColor = cell.cell.raw === 'Saida' ? [185, 28, 28] : cell.cell.raw === 'Retorno' ? [194, 65, 12] : [21, 128, 61];
+          cell.cell.styles.fontStyle = 'bold';
+        }
+      },
+    });
+    y = doc.lastAutoTable.finalY + 18;
+  } else {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Nenhuma entrada, retorno ou saida no mes.', 49, y + 16);
+    y += 34;
+  }
+
+  if (view.composicao?.length) {
+    y = ensureSpace(doc, y, 120);
+    sectionTitle(doc, 'Composicao do repasse', y, [22, 101, 52]);
+    autoTable(doc, {
+      ...TABLE_STYLE,
+      startY: y + 8,
+      head: [['Origem', right('Valor')]],
+      body: view.composicao.map((row) => [row.label, money(row.valor)]),
+      foot: [['Total a receber', right(money(view.total))]],
+      columnStyles: { 1: { halign: 'right' } },
+    });
+    y = doc.lastAutoTable.finalY + 14;
+  }
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text(
+    doc.splitTextToSize('Alunos no inicio e no fim: contratos vigentes no dia anterior ao mes e no ultimo dia. Saida: cancelamento ou nao renovacao sem outro contrato em ate 45 dias; troca de plano e venda desfeita nao contam.', width - 80),
+    40, y,
+  );
+  return y + 24;
 }
 
 export function downloadCoachStatementPdf(view, fileName, title = fileName) {
@@ -118,30 +267,20 @@ export function downloadCoachStatementPdf(view, fileName, title = fileName) {
   doc.text(`Gerado em ${safe(view.generatedAt)}`, width - 54, y + 22, { align: 'right' });
   doc.text(`Situacao: ${safe(view.statusLabel)}`, width - 54, y + 38, { align: 'right' });
 
-  y += 76;
+  drawPanorama(doc, view, y + 76, width);
 
-  if (view.porModalidade?.length) {
-    const cardGap = 8;
-    const cardWidth = (width - 80 - cardGap * (view.porModalidade.length - 1)) / view.porModalidade.length;
-    view.porModalidade.forEach((item, index) => {
-      const x = 40 + index * (cardWidth + cardGap);
-      doc.setFillColor(251, 252, 254);
-      doc.setDrawColor(230, 235, 242);
-      doc.roundedRect(x, y, cardWidth, 52, 6, 6, 'FD');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(100, 116, 139);
-      doc.text(safe(item.modalidade).toUpperCase(), x + 10, y + 17);
-      doc.setFontSize(14);
-      doc.setTextColor(15, 23, 42);
-      doc.text(money(item.total), x + 10, y + 35);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(148, 163, 184);
-      doc.text(`${item.alunos} ${item.alunos === 1 ? 'aluno' : 'alunos'}`, x + 10, y + 46);
-    });
-    y += 74;
-  }
+  // Detalhamento em ordem alfabética, a partir da segunda página.
+  doc.addPage();
+  y = 44;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Detalhamento do repasse', 40, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`${safe(view.coach?.name)} - ${view.mesLabel} - alunos em ordem alfabetica`, 40, y + 14);
+  y += 40;
 
   const alunoBody = (view.alunos || []).map((item) => [
     [safe(item.aluno), item.refLabel ? `ref. ${item.refLabel}` : '', item.licenca ? 'em licenca' : ''].filter(Boolean).join('\n'),

@@ -4,11 +4,12 @@ import { ArrowLeft, Download, Loader2 } from 'lucide-react';
 import StatementPreview from './StatementPreview';
 import {
   PayoutMonthlyClosing, PayoutMonthlyStatementItem, AssessmentCoach,
-  AssessmentContract, PreSaleCustomer, AssessmentPlan, AssessmentModality,
+  AssessmentContract, PreSaleCustomer, AssessmentPlan, AssessmentModality, AssessmentContractCoachHist,
 } from '@/api/entities';
 import { supabase } from '@/api/db';
-import { formatCompetence, formatDate } from '@/lib/utils';
+import { formatCompetence, formatDate, todayLocalStr } from '@/lib/utils';
 import { expenseCategoryLabel, manualEntryKind } from '@/lib/payout-expenses';
+import { buildCoachPanorama, sortByStudentName } from '@/lib/coach-statement-panorama';
 import { toast } from 'sonner';
 
 const SOURCE_LABEL = { direct_leadership: 'Liderança', co_leadership: 'Co-liderança', manual_adjustment: 'Ajuste' };
@@ -30,7 +31,7 @@ export default function CoachStatement() {
     let alive = true;
     const load = async () => {
       try {
-        const [closing, coaches, items, contracts, customers, plans, modalities] = await Promise.all([
+        const [closing, coaches, items, contracts, customers, plans, modalities, coachHistory] = await Promise.all([
           PayoutMonthlyClosing.get(id),
           AssessmentCoach.list('name').catch(() => []),
           PayoutMonthlyStatementItem.filter({ closing_id: id, coach_id: coachId }).catch(() => []),
@@ -38,6 +39,7 @@ export default function CoachStatement() {
           PreSaleCustomer.list().catch(() => []),
           AssessmentPlan.list().catch(() => []),
           AssessmentModality.list().catch(() => []),
+          AssessmentContractCoachHist.list('started_at').catch(() => []),
         ]);
         const { data: pend } = await supabase
           .from('payout_pending_repasse')
@@ -54,6 +56,7 @@ export default function CoachStatement() {
         setData({
           closing, coach: (coaches || []).find((c) => c.id === coachId) || null,
           items: items || [], pendings: pend || [], dueByContract, leaves: leaves || [],
+          contracts: contracts || [], plans: plans || [], coachHistory: coachHistory || [],
           contractsById: Object.fromEntries((contracts || []).map((c) => [c.id, c])),
           customersById: Object.fromEntries((customers || []).map((c) => [c.id, c])),
           plansById: Object.fromEntries((plans || []).map((p) => [p.id, p])),
@@ -72,9 +75,12 @@ export default function CoachStatement() {
   // PDF (mesma fonte, então não há risco de divergirem).
   const view = useMemo(() => {
     if (!data || data.error || !data.closing) return null;
-    const { closing, coach, items, pendings, dueByContract, leaves = [], contractsById, customersById, plansById, modalitiesById } = data;
+    const {
+      closing, coach, items, pendings, dueByContract, leaves = [], contractsById, customersById, plansById, modalitiesById,
+      contracts = [], plans = [], coachHistory = [],
+    } = data;
     const competence = closing.competence;
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = todayLocalStr();
 
     // Licença que pega a competência. end_date nulo = licença em aberto (segue
     // valendo). Serve só para explicar no extrato por que o aluno rendeu menos —
@@ -115,9 +121,10 @@ export default function CoachStatement() {
 
     const enriched = items.map(enrich);
     const isCarried = (it) => it.reference_competence && it.reference_competence !== competence && it.source_type !== 'manual_adjustment';
-    const alunos = enriched.filter((i) => i.source_type === 'athlete_repasse' && !isCarried(i));
-    const liderancas = enriched.filter((i) => ['direct_leadership', 'co_leadership'].includes(i.source_type) && !isCarried(i));
-    const resgatados = enriched.filter(isCarried);
+    // Listas em ordem alfabética pelo nome do aluno (tela e PDF).
+    const alunos = sortByStudentName(enriched.filter((i) => i.source_type === 'athlete_repasse' && !isCarried(i)));
+    const liderancas = sortByStudentName(enriched.filter((i) => ['direct_leadership', 'co_leadership'].includes(i.source_type) && !isCarried(i)));
+    const resgatados = sortByStudentName(enriched.filter(isCarried));
     // Lançamentos manuais: repasse extra e desconto mexem no repasse; gasto e
     // reembolso vêm à parte. A descrição só aparece quando diz algo além do tipo.
     const ajustes = items
@@ -136,11 +143,11 @@ export default function CoachStatement() {
       });
     const extras = ajustes.filter((a) => a.kind !== 'gasto');
     const gastos = ajustes.filter((a) => a.kind === 'gasto');
-    const pends = pendings.map((p) => {
+    const pends = sortByStudentName(pendings.map((p) => {
       const e = enrich(p);
       const due = dueByContract[p.contract_id];
       return { ...e, overdue: !!due && due < todayStr };
-    });
+    }));
     const total = items.reduce((a, i) => a + Number(i.amount), 0);
 
     // Resumo por modalidade (soma alunos + liderança + resgatados; conta alunos próprios)
@@ -179,9 +186,25 @@ export default function CoachStatement() {
         modalidade: modalitiesById[ct.plan_snapshot?.modality_id || plansById[ct.plan_id]?.modality_id]?.name || '',
         licenca: licencaDoContrato(ct.id),
       }))
-      .sort((a, b) => a.aluno.localeCompare(b.aluno));
+      .sort((a, b) => a.aluno.localeCompare(b.aluno, 'pt-BR', { sensitivity: 'base' }));
+
+    // Primeira página: o mês do coach em números e a composição do repasse.
+    const panorama = buildCoachPanorama({
+      contracts, plans, coachHistory, coachId, competence, today: todayStr,
+      customersById, modalitiesById, repasseByModality: porModalidade,
+    });
+    const soma = (list) => list.reduce((a, i) => a + Number(i.amount), 0);
+    const composicao = [
+      { label: `Alunos (${alunos.length})`, valor: soma(alunos) },
+      { label: `Liderança e co-liderança (${liderancas.length})`, valor: soma(liderancas) },
+      { label: `Resgatado de meses anteriores (${resgatados.length})`, valor: soma(resgatados) },
+      { label: `Repasse extra e descontos (${extras.length})`, valor: soma(extras) },
+      { label: `Gastos e reembolsos (${gastos.length})`, valor: soma(gastos) },
+    ].filter((linha) => linha.valor !== 0 || linha.label.startsWith('Alunos'));
 
     return {
+      panorama,
+      composicao,
       coach,
       emLicencaIntegral,
       mesLabel: formatCompetence(competence),
