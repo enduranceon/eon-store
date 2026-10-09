@@ -12,6 +12,130 @@ import { formatCurrency } from '@/lib/utils';
 // Recebe o mesmo objeto `view` que alimenta o StatementDocument (o PDF), entao
 // tela e arquivo nao podem divergir.
 
+const shortDate = (value) => {
+  const text = String(value || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text.slice(8, 10)}/${text.slice(5, 7)}/${text.slice(0, 4)}` : '—';
+};
+
+const KPIS = [
+  { key: 'baseStart', label: 'Alunos no início', sub: 'contratos vigentes', color: '#0f172a' },
+  { key: 'entries', label: 'Entradas', sub: 'novos alunos', color: '#16a34a', sign: '+' },
+  { key: 'returns', label: 'Retornos', sub: 'ex-alunos que voltaram', color: '#ea580c', sign: '+' },
+  { key: 'exits', label: 'Saídas', sub: 'saídas reais', color: '#dc2626', sign: '−' },
+  { key: 'renewals', label: 'Renovações', sub: 'renovaram no mês', color: '#7c3aed' },
+  { key: 'baseEnd', label: 'Alunos no fim', sub: 'contratos vigentes', color: '#2563eb' },
+];
+
+const MOVE_COLORS = { Entrada: '#15803d', Retorno: '#c2410c', Saída: '#b91c1c' };
+
+const cell = { padding: '6px 6px', borderBottom: '1px solid #eef2f7' };
+const numCell = { ...cell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+
+function SectionTitle({ color, children }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '18px 0 6px' }}>
+      <span style={{ width: 3, height: 13, borderRadius: 2, background: color, display: 'inline-block' }} />
+      <strong style={{ fontSize: 13, color: '#0f172a' }}>{children}</strong>
+    </div>
+  );
+}
+
+// Mesma primeira página do PDF: o mês do coach em números.
+function Panorama({ v }) {
+  const p = v.panorama;
+  if (!p) return null;
+  const movimento = [
+    ...p.entradas.map((row) => ['Entrada', row]),
+    ...p.retornos.map((row) => ['Retorno', row]),
+    ...p.saidas.map((row) => ['Saída', row]),
+  ];
+  return (
+    <div style={{ marginBottom: 22, paddingBottom: 18, borderBottom: '2px dashed #e2e8f0' }}>
+      <SectionTitle color="#2563eb">Panorama de {v.mesLabel}{p.partial ? ` (até ${shortDate(p.to)})` : ''}</SectionTitle>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+        {KPIS.map((kpi) => {
+          const value = Number(p.kpis[kpi.key]) || 0;
+          return (
+            <div key={kpi.key} style={{ background: '#fbfcfe', border: '1px solid #e6ebf2', borderRadius: 8, padding: 10 }}>
+              <div style={{ fontSize: 10.5, color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>{kpi.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: kpi.color }}>{kpi.sign && value ? kpi.sign : ''}{value}</div>
+              <div style={{ fontSize: 11, color: '#94a3b8' }}>{kpi.sub}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 12, color: '#475569', marginTop: 8 }}>
+        Saldo do mês: <b>{p.kpis.net > 0 ? '+' : ''}{p.kpis.net}</b> · Churn: <b>{(Number(p.kpis.churnRate) || 0).toFixed(1).replace('.', ',')}%</b> (saídas ÷ alunos no início)
+      </div>
+
+      {p.modalidades.length > 0 && (
+        <>
+          <SectionTitle color="#0e7490">Por modalidade</SectionTitle>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: 520, borderCollapse: 'collapse', fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ color: '#64748b', fontSize: 11 }}>
+                  <th style={{ ...cell, textAlign: 'left' }}>Modalidade</th>
+                  <th style={numCell}>Início</th><th style={numCell}>Entradas</th><th style={numCell}>Retornos</th>
+                  <th style={numCell}>Saídas</th><th style={numCell}>Fim</th><th style={numCell}>Repasse</th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.modalidades.map((row) => (
+                  <tr key={row.modalidade}>
+                    <td style={{ ...cell, textTransform: 'capitalize' }}>{row.modalidade}</td>
+                    <td style={numCell}>{row.baseStart}</td><td style={numCell}>{row.entries}</td><td style={numCell}>{row.returns}</td>
+                    <td style={numCell}>{row.exits}</td><td style={numCell}>{row.baseEnd}</td>
+                    <td style={{ ...numCell, fontWeight: 700 }}>{formatCurrency(row.repasse)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      <SectionTitle color="#16a34a">Quem entrou e quem saiu ({movimento.length})</SectionTitle>
+      {movimento.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: '#64748b' }}>Nenhuma entrada, retorno ou saída no mês.</div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <tbody>
+            {movimento.map(([tipo, row]) => (
+              <tr key={`${tipo}:${row.aluno}:${row.data}`}>
+                <td style={{ ...cell, width: 80, fontWeight: 700, color: MOVE_COLORS[tipo] }}>{tipo}</td>
+                <td style={cell}>{row.aluno}</td>
+                <td style={{ ...cell, color: '#475569', textTransform: 'capitalize' }}>{row.modalidade || '—'}</td>
+                <td style={{ ...numCell, color: '#64748b', width: 90 }}>{shortDate(row.data)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {v.composicao?.length > 0 && (
+        <>
+          <SectionTitle color="#166534">Composição do repasse</SectionTitle>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <tbody>
+              {v.composicao.map((row) => (
+                <tr key={row.label}>
+                  <td style={cell}>{row.label}</td>
+                  <td style={{ ...numCell, fontWeight: 600, color: row.valor < 0 ? '#b91c1c' : '#0f172a' }}>{formatCurrency(row.valor)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td style={{ ...cell, fontWeight: 700 }}>Total a receber</td>
+                <td style={{ ...numCell, fontWeight: 700, color: '#16a34a' }}>{formatCurrency(v.total)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function StatementPreview({ view: v }) {
   if (!v) return null;
   return (
@@ -40,17 +164,10 @@ export default function StatementPreview({ view: v }) {
         </div>
       </div>
 
-      {v.porModalidade.length > 0 && (
-        <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
-          {v.porModalidade.map((m) => (
-            <div key={m.modalidade} style={{ flex: '1 1 140px', background: '#fbfcfe', border: '1px solid #e6ebf2', borderRadius: 8, padding: 12 }}>
-              <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, textTransform: 'capitalize' }}>{m.modalidade}</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a' }}>{formatCurrency(m.total)}</div>
-              <div style={{ fontSize: 11, color: '#94a3b8' }}>{m.alunos} {m.alunos === 1 ? 'aluno' : 'alunos'}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      <Panorama v={v} />
+
+      <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', margin: '4px 0 2px' }}>Detalhamento do repasse</div>
+      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>Alunos em ordem alfabética.</div>
 
       {[
         { titulo: `Alunos (${v.alunos.length})`, cor: '#2563eb', lista: v.alunos },
