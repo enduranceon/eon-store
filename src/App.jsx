@@ -74,6 +74,7 @@ const CashFlow = lazy(() => import('@/pages/CashFlow'));
 const FinancialReconciliation = lazy(() => import('@/pages/FinancialReconciliation'));
 const AssPainel = lazy(() => import('@/pages/assessment/Painel'));
 const AssIndicators = lazy(() => import('@/pages/assessment/Indicators'));
+const AssMovement = lazy(() => import('@/pages/assessment/Movement'));
 const AssCentralFinanceira = lazy(() => import('@/pages/assessment/CentralFinanceira'));
 
 function LegacyOrderListRedirect({ origin }) {
@@ -165,6 +166,7 @@ export default function App() {
           {/* Assessoria */}
           <Route path="/assessoria"               element={<AdminLayout><AssPainel /></AdminLayout>} />
           <Route path="/assessoria/indicadores"   element={<AdminLayout><AssIndicators /></AdminLayout>} />
+          <Route path="/assessoria/movimento"     element={<AdminLayout><AssMovement /></AdminLayout>} />
           <Route path="/assessoria/planos"        element={<AdminLayout><AssPlanos /></AdminLayout>} />
           {/* A antiga "Régua" foi absorvida pela Central de Comunicação (regras) e Renovações */}
           <Route path="/assessoria/regua"         element={<Navigate to="/comunicacao/configuracoes" replace />} />

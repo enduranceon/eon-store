@@ -48,6 +48,7 @@ export const NAV_AREAS = [
     items: [
       { id: 'overview', label: 'Visão geral', to: '/admin', icon: 'overview', exact: true },
       { id: 'assessment_indicators', label: 'Assessoria', to: '/assessoria/indicadores', icon: 'indicators' },
+      { id: 'assessment_movement', label: 'Entradas e saídas', to: '/assessoria/movimento', icon: 'indicators' },
       { id: 'analytics', label: 'Analytics', to: '/analytics', icon: 'analytics' },
       { id: 'reports', label: 'Relatórios', to: '/relatorios', icon: 'reports' },
     ],

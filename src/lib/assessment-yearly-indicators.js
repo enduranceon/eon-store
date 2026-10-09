@@ -5,7 +5,7 @@ const OPERATIVE_STATUSES = new Set(['active', 'overdue', 'on_leave', 'finished',
 const TERMINAL_PAYMENT_STATUSES = new Set(['cancelled', 'refunded']);
 const MONTH_LABELS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-function dateOnly(value) {
+export function dateOnly(value) {
   if (!value) return '';
   const text = String(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
@@ -18,7 +18,7 @@ function dateOnly(value) {
   return `${year}-${month}-${day}`;
 }
 
-function addDays(date, days) {
+export function addDays(date, days) {
   if (!date) return '';
   const parsed = new Date(`${date}T12:00:00`);
   if (Number.isNaN(parsed.getTime())) return '';
@@ -46,7 +46,7 @@ function monthEnd(year, monthIndex) {
   return addDays(nextMonthStart(year, monthIndex), -1);
 }
 
-function getContractStart(contract) {
+export function getContractStart(contract) {
   return dateOnly(contract?.start_date) || dateOnly(contract?.created_at);
 }
 
@@ -90,7 +90,7 @@ function isOperativeContract(contract) {
   return contract.status !== 'cancelled' || hasPaidContract(contract);
 }
 
-function isContractActiveAtEnd(contract, referenceDate) {
+export function isContractActiveAtEnd(contract, referenceDate) {
   if (!isOperativeContract(contract)) return false;
 
   const start = getContractStart(contract);
@@ -230,13 +230,12 @@ export function getAssessmentIndicatorYears(contracts = [], now = new Date()) {
   return [...years].sort((left, right) => right - left);
 }
 
-export function buildAssessmentYearlyIndicators(contracts = [], plans = [], options = {}) {
-  const requestedYear = Number(options.year);
-  const asOfDate = dateOnly(options.asOf || new Date());
-  const year = Number.isInteger(requestedYear) ? requestedYear : Number(asOfDate.slice(0, 4));
+// Classificação usada pelos indicadores e pelo painel de entradas e saídas:
+// contratos que contam, o tipo de cada início (entrada, retorno, renovação ou
+// continuidade) e a data da saída real de cada contrato (vazia se não saiu).
+export function classifyAssessmentContracts(contracts = [], plans = [], asOfDate = dateOnly(new Date())) {
   const plansById = Object.fromEntries(plans.map(plan => [plan.id, plan]));
   const operativeContracts = contracts.filter(isOperativeContract);
-  const earliest = earliestKnownDate(operativeContracts);
   const startKinds = new Map(operativeContracts.map(contract => [
     contract.id,
     getStartKind(contract, operativeContracts),
@@ -245,6 +244,15 @@ export function buildAssessmentYearlyIndicators(contracts = [], plans = [], opti
     contract.id,
     getRealExitDate(contract, operativeContracts, asOfDate, plansById),
   ]));
+  return { plansById, operativeContracts, startKinds, exitDates };
+}
+
+export function buildAssessmentYearlyIndicators(contracts = [], plans = [], options = {}) {
+  const requestedYear = Number(options.year);
+  const asOfDate = dateOnly(options.asOf || new Date());
+  const year = Number.isInteger(requestedYear) ? requestedYear : Number(asOfDate.slice(0, 4));
+  const { plansById, operativeContracts, startKinds, exitDates } = classifyAssessmentContracts(contracts, plans, asOfDate);
+  const earliest = earliestKnownDate(operativeContracts);
 
   const months = Array.from({ length: 12 }, (_, monthIndex) => {
     const start = monthStart(year, monthIndex);

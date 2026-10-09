@@ -5,6 +5,7 @@ const GROUPS = {
   assessment: [
     { label: 'Panorama atual', to: '/assessoria' },
     { label: 'Evolução', to: '/assessoria/indicadores' },
+    { label: 'Entradas e saídas', to: '/assessoria/movimento' },
     { label: 'Previsões', to: '/assessoria/central-financeira' },
   ],
   payouts: [
