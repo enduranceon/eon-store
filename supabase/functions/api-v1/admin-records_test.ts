@@ -113,6 +113,56 @@ Deno.test("plan transitions only change the type of an existing pair", async () 
   assert(response?.status === 405, "a pair was deleted through the API");
 });
 
+Deno.test("coach site plans pick one plan per modality and duration", async () => {
+  const payload = normalizeAdminRecordPayload("coach-site-plans", {
+    coach_id: TARGET_ID,
+    modality_id: DUPLICATE_ID,
+    period_months: 3,
+    plan_id: ACTOR_ID,
+  }, "create");
+  assert(payload.period_months === 3, "duration was not kept");
+  const update = normalizeAdminRecordPayload("coach-site-plans", { plan_id: TARGET_ID }, "update");
+  assert(update.plan_id === TARGET_ID, "plan was not updated");
+  expectError(() =>
+    normalizeAdminRecordPayload("coach-site-plans", { period_months: 6 }, "update"), "invalid_field");
+  expectError(() =>
+    normalizeAdminRecordPayload("coach-site-plans", {
+      coach_id: TARGET_ID,
+      modality_id: DUPLICATE_ID,
+      period_months: 0,
+      plan_id: ACTOR_ID,
+    }, "create"), "invalid_field");
+
+  // A regra do banco (plano de outra duração) chega na tela com a mensagem dela.
+  const databaseClient = {
+    from(table: string) {
+      assert(table === "assessment_coach_site_plans", "wrong table");
+      return {
+        insert: () => ({
+          select: () => ({
+            single: () => Promise.resolve({
+              data: null,
+              error: { code: "22023", message: "O plano escolhido é de outra duração" },
+            }),
+          }),
+        }),
+      };
+    },
+  } as unknown as SupabaseClient;
+  const response = await handleAdminRecordRequest(
+    new Request("https://example.test", {
+      method: "POST",
+      body: JSON.stringify({ coach_id: TARGET_ID, modality_id: DUPLICATE_ID, period_months: 1, plan_id: ACTOR_ID }),
+    }),
+    "/admin-records/coach-site-plans",
+    databaseClient,
+    ACTOR_ID,
+  );
+  assert(response?.status === 400, `expected 400, received ${response?.status}`);
+  const body = await response.json();
+  assert(body.error === "O plano escolhido é de outra duração", "database message was lost");
+});
+
 Deno.test("legacy presale updates reject identity fields before the database", async () => {
   const protectedFields: Record<string, unknown>[] = [
     { customer_id: TARGET_ID },

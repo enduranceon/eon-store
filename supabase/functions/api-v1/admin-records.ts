@@ -375,6 +375,22 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
     updatedColumn: "updated_at",
     allowCreate: true,
   },
+  // Plano que o coach vende no site em cada modalidade e duração; o banco
+  // confere que o plano é ativo, da mesma modalidade e da mesma duração.
+  "coach-site-plans": {
+    table: "assessment_coach_site_plans",
+    fields: {
+      coach_id: u({ required: true, createOnly: true }),
+      modality_id: u({ required: true, createOnly: true }),
+      period_months: i({ required: true, createOnly: true, min: 1, max: 120 }),
+      plan_id: u({ required: true }),
+    },
+    defaultSort: "coach_id",
+    sortFields: ["id", "coach_id", "modality_id", "period_months", "created_at", "updated_at"],
+    updatedColumn: "updated_at",
+    allowCreate: true,
+    allowDelete: true,
+  },
   "payout-rates": {
     table: "payout_role_modality_rates",
     fields: { role: s(32), modality_id: u(), rate: n({ min: 0 }) },
@@ -897,6 +913,14 @@ function databaseError(
   if (["22001", "22P02", "23514", "23502"].includes(error.code ?? "")) {
     return jsonResponse(
       { error: "Dados inválidos", code: "invalid_request" },
+      400,
+    );
+  }
+  // Regra de negócio conferida no banco (por exemplo, o plano do coach no site
+  // precisa ser da mesma modalidade e duração): a mensagem já é para a tela.
+  if (error.code === "22023" && error.message) {
+    return jsonResponse(
+      { error: error.message.slice(0, 200), code: "invalid_request" },
       400,
     );
   }
