@@ -119,11 +119,15 @@ function KpiCard({ icon: Icon, tone, label, value, sub, previousLabel, previousV
   );
 }
 
+// Todo número da tabela ocupa a mesma caixa (clicável ou não), para as
+// colunas ficarem alinhadas também quando o valor é zero.
+const NUMBER_BOX = 'inline-block min-w-10 rounded-md px-2 py-1 text-right tabular-nums';
+
 function CountButton({ value, onClick, tone }) {
-  if (!value) return <span className="text-gray-300">0</span>;
+  if (!value) return <span className={cn(NUMBER_BOX, 'text-gray-300')}>0</span>;
   return (
     <button type="button" onClick={onClick}
-      className={cn('min-w-8 rounded-md px-2 py-1 font-semibold hover:bg-blue-50 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500', tone)}>
+      className={cn(NUMBER_BOX, 'font-semibold hover:bg-blue-50 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500', tone)}>
       {value}
     </button>
   );
@@ -144,13 +148,13 @@ function BreakdownTable({ title, rows, nameOf, onOpen }) {
               <thead className="border-b text-xs text-muted-foreground">
                 <tr>
                   <th className="py-2 text-left font-medium">Nome</th>
-                  <th className="py-2 text-right font-medium">Base início</th>
-                  <th className="py-2 text-right font-medium">Entradas</th>
-                  <th className="py-2 text-right font-medium">Retornos</th>
-                  <th className="py-2 text-right font-medium">Saídas</th>
-                  <th className="py-2 text-right font-medium">Saldo</th>
-                  <th className="py-2 text-right font-medium">Churn</th>
-                  <th className="py-2 text-right font-medium">Base fim</th>
+                  <th className="py-2 pr-2 text-right font-medium">Base início</th>
+                  <th className="py-2 pr-2 text-right font-medium">Entradas</th>
+                  <th className="py-2 pr-2 text-right font-medium">Retornos</th>
+                  <th className="py-2 pr-2 text-right font-medium">Saídas</th>
+                  <th className="py-2 pr-2 text-right font-medium">Saldo</th>
+                  <th className="py-2 pr-2 text-right font-medium">Churn</th>
+                  <th className="py-2 pr-2 text-right font-medium">Base fim</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -164,10 +168,14 @@ function BreakdownTable({ title, rows, nameOf, onOpen }) {
                       <td className="py-2 text-right"><CountButton value={row.entries} onClick={() => open('entries')} tone="text-emerald-700" /></td>
                       <td className="py-2 text-right"><CountButton value={row.returns} onClick={() => open('returns')} tone="text-orange-700" /></td>
                       <td className="py-2 text-right"><CountButton value={row.exits} onClick={() => open('exits')} tone="text-red-700" /></td>
-                      <td className={cn('py-2 text-right font-semibold', row.net > 0 ? 'text-emerald-700' : row.net < 0 ? 'text-red-700' : 'text-gray-500')}>
-                        {row.net > 0 ? '+' : ''}{row.net}
+                      <td className="py-2 text-right">
+                        <span className={cn(NUMBER_BOX, 'font-semibold', row.net > 0 ? 'text-emerald-700' : row.net < 0 ? 'text-red-700' : 'text-gray-500')}>
+                          {row.net > 0 ? '+' : ''}{row.net}
+                        </span>
                       </td>
-                      <td className="py-2 text-right text-gray-700">{row.baseStart ? formatPercent(row.churnRate) : '—'}</td>
+                      <td className="py-2 text-right">
+                        <span className={cn(NUMBER_BOX, 'text-gray-700')}>{row.baseStart ? formatPercent(row.churnRate) : '—'}</span>
+                      </td>
                       <td className="py-2 text-right"><CountButton value={row.baseEnd} onClick={() => open('baseEnd')} /></td>
                     </tr>
                   );
