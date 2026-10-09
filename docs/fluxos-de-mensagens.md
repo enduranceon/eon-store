@@ -80,7 +80,9 @@ Decidido em 07/10/2026:
 Do cadastro do prospect ao pagamento, no quadro de Prospects. Migração
 `20261008150000_prospect_contact_flow.sql` (etapas `awaiting_reply` e
 `clarifying`, datas do relógio e `register_assessment_prospect_contact`);
-próximo passo e textos em `src/lib/assessment-prospect-flow.js`.
+próximo passo em `src/lib/assessment-prospect-flow.js`; textos em
+`src/lib/prospect-messages.js` e em Modelos e regras (migração
+`20261009120000_prospect_messages_and_reopen.sql`).
 
 ```mermaid
 flowchart TD
@@ -129,8 +131,21 @@ flowchart TD
 - Envio manual e sem travas de data: copiar o texto (ou abrir o WhatsApp) e
   "Registrar que enviei". A janela avisa a data do último contato para conferir a
   conversa antes de cobrar.
-- Textos ainda fixos no código (`assessment-prospect-flow.js` e a mensagem da
-  proposta em `Prospects.jsx`).
+- Textos: modelos `proposal-*` em Comunicação → Modelos e regras, seção
+  "Propostas" (etapas "Conversa antes do link" e "Proposta com o link"). São 9:
+  primeiro contato (cadastro novo e ex-aluno), lembrete do dia 2, encerramento
+  sem link, envio do link (depois da conversa, cadastro sem conversa e ex-aluno
+  sem conversa), lembrete de pagamento e encerramento com link. O marco só
+  identifica o texto; o relógio continua no quadro. Sem modelo ativo no passo,
+  o quadro usa o texto padrão do código. Variáveis próprias da proposta
+  (`{resumo_proposta}`, `{coach_texto}`, `{prazo_link}`...), listadas no editor;
+  a simulação bloqueia variável desconhecida.
+- Retomar: o card em Não convertidos tem "Retomar" (`reopen_assessment_prospect`).
+  Volta para Tirando dúvidas com o relógio de hoje (lembrete no dia 2,
+  encerramento no dia 5); motivo da perda e link antigo ficam só no histórico
+  (`prospect_reopened`), e para cobrar prepara-se uma proposta nova. Bloqueia se
+  a pessoa já tem outra proposta aberta, se virou aluna depois ou se há
+  movimentação financeira.
 
 ### Decisões
 
@@ -145,8 +160,7 @@ Decidido em 08/10/2026:
 - Conferência no Asaas no próprio card, com um clique para registrar e a
   boas-vindas abrindo em seguida.
 
-1. Textos editáveis em Comunicação → Modelos e regras, como os do onboarding.
-2. Retomar um prospect arquivado em um clique (hoje: "Novo prospect").
+- Textos editáveis em Modelos e regras e "Retomar" no card arquivado (09/10/2026).
 
 ## 3. Cobrança
 
@@ -251,6 +265,9 @@ flowchart TD
 
 - Entra no quadro a renovação manual 10 dias antes do fim do plano; a mensal
   automática entra 5 dias antes, direto em "Aguardando pagamento", sem Pebinha.
+  A automática é só para o plano mensal (assinatura no Asaas; confirmado em
+  09/10/2026). Na coluna, quem está sem link vem primeiro, com o selo "Sem
+  link", o contador no cabeçalho e o botão "Adicionar link".
 - Pebinha: "seu plano {plano} vence em {fim_plano}" (ou "venceu em"), com as 5
   opções de resposta.
 - Sem resposta: lembrete 2 dias depois do Pebinha (se ainda faltar mais de 2

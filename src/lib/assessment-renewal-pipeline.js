@@ -381,6 +381,7 @@ export function renewalCardState(contract, { parent = null, issues = [], todaySt
   const missingLink = stage === RENEWAL_STAGE.WAITING_PAYMENT && !hasRenewalChargeLink(contract);
   if (stage === RENEWAL_STAGE.WAITING_PAYMENT) {
     if (missingLink) {
+      badges.push({ tone: 'amber', text: 'Sem link' });
       alerts.push({
         tone: 'amber',
         text: contract.auto_renewal
@@ -483,6 +484,8 @@ export function buildRenewalBoard(contracts = [], {
           if (TERMINAL_STAGES.has(column.stage)) {
             return String(b.contract.renewal_resolved_at || '').localeCompare(String(a.contract.renewal_resolved_at || ''));
           }
+          // Em "Aguardando pagamento", quem ainda está sem link vem primeiro.
+          if (a.state.missingLink !== b.state.missingLink) return a.state.missingLink ? -1 : 1;
           if (a.state.needsAttention !== b.state.needsAttention) return a.state.needsAttention ? -1 : 1;
           const byDate = String(a.state.endDate || '9999').localeCompare(String(b.state.endDate || '9999'));
           if (byDate !== 0) return byDate;
@@ -492,6 +495,7 @@ export function buildRenewalBoard(contracts = [], {
         ...column,
         items,
         total: items.reduce((sum, card) => sum + card.state.total, 0),
+        missingLinkCount: items.filter(card => card.state.missingLink).length,
       };
     });
 

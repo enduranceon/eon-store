@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ArchiveX, BellRing, Calendar, Check, CheckCheck, ChevronRight, CircleDollarSign,
-  Clock3, Copy, CreditCard, ExternalLink, HelpCircle, Loader2, MessageCircle, Plus, SearchCheck, Send,
+  Clock3, Copy, CreditCard, ExternalLink, HelpCircle, Loader2, MessageCircle, Plus, RotateCcw, SearchCheck, Send,
   ThumbsUp, TrendingUp, UserCheck, UserPlus, UserRoundCheck,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,6 +26,7 @@ import {
   markAssessmentProspectMessageSent,
   prepareAssessmentProspectProposal,
   registerAssessmentProspectContact,
+  reopenAssessmentProspect,
 } from '@/api/client';
 import { AssessmentCoach, AssessmentModality, AssessmentPlan } from '@/api/entities';
 import { supabase } from '@/api/db';
@@ -120,7 +121,7 @@ const RELATIONSHIPS = {
   },
 };
 
-const PROSPECT_CONTRACT_COLUMNS = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, discount_reason, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_charge_id, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at, prospect_first_contact_at, prospect_last_contact_at, prospect_followup_sent_at, prospect_payment_reminder_sent_at, prospect_closing_sent_at, prospect_close_deadline';
+const PROSPECT_CONTRACT_COLUMNS = 'id, contract_number, customer_id, coach_id, plan_id, plan_snapshot, start_date, end_date, installments, enrollment_fee, manual_discount, discount_reason, payment_method, payment_status, payment_date, payment_message_sent_at, due_date, external_payment_link, asaas_charge_id, asaas_payment_link, created_at, updated_at, status, prospect_stage, prospect_proposal_ready_at, prospect_message_sent_at, prospect_converted_at, prospect_lost_at, prospect_loss_reason_code, prospect_loss_notes, prospect_customer_relationship, prospect_previous_contract_id, prospect_reactivated_at, prospect_first_contact_at, prospect_last_contact_at, prospect_followup_sent_at, prospect_payment_reminder_sent_at, prospect_closing_sent_at, prospect_close_deadline, prospect_reopened_at';
 
 const OPEN_PROSPECT_STAGES = new Set(['new', 'awaiting_reply', 'clarifying', 'proposal_ready', 'payment_link_sent']);
 const OPEN_PAYMENT_STATUSES = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue', 'partially_paid']);
@@ -397,7 +398,7 @@ function NextStepLine({ draft }) {
 // Botões do card (quadro e lista), conforme a etapa e o próximo passo.
 function ProspectActionButtons({
   draft, customer, coach, modality, compact = false,
-  onProposal, onPayment, onLoss, onContact, onQuickContact, quickBusy,
+  onProposal, onPayment, onLoss, onContact, onQuickContact, onReopen, quickBusy,
 }) {
   const isOpen = isOpenProspect(draft);
   const canAct = isOpen && isDraftProspect(draft);
@@ -495,6 +496,11 @@ function ProspectActionButtons({
       {canAct && (
         <Button size="sm" variant="outline" className={`${outline} text-gray-700`} onClick={() => onLoss(draft, customer)}>
           <ArchiveX className={icon} /> {text('Não convertido', 'Perda')}
+        </Button>
+      )}
+      {stage === 'lost' && draft.status === 'voided' && onReopen && (
+        <Button size="sm" variant="outline" className={`${outline} text-sky-700`} onClick={() => onReopen(draft)}>
+          <RotateCcw className={icon} /> Retomar
         </Button>
       )}
       <Button size="sm" variant="outline" className={outline} asChild>
@@ -1107,6 +1113,55 @@ function LossModal({ data, onClose, onDone }) {
   );
 }
 
+// Retomar um prospect arquivado: volta para "Tirando dúvidas" com o relógio
+// de hoje. O link antigo não volta; para cobrar, prepara-se outra proposta.
+function ReopenModal({ data, onClose, onDone }) {
+  const { draft, customer } = data;
+  const [saving, setSaving] = useState(false);
+  const startPassed = Boolean(draft.start_date) && draft.start_date < todayLocalStr();
+
+  const reopen = async () => {
+    setSaving(true);
+    try {
+      await reopenAssessmentProspect(draft.id, draft.updated_at);
+      toast.success('Prospect retomado. O card voltou para “Tirando dúvidas”.');
+      onDone();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível retomar o prospect');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <RotateCcw className="w-5 h-5 text-sky-600" /> Retomar prospect
+        </DialogTitle>
+      </DialogHeader>
+      <div className="space-y-4 mt-2 text-sm">
+        <p>
+          <b>{customer?.full_name || draft.contract_number}</b> volta para “Tirando dúvidas”, com o histórico preservado.
+          Use quando a pessoa voltou a conversar.
+        </p>
+        <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+          <li>O relógio recomeça hoje: lembrete em 2 dias e encerramento em 5, se ela sumir de novo.</li>
+          <li>O link antigo não volta. Para cobrar, prepare uma nova proposta com outro link.</li>
+          {startPassed && <li>O início do plano está em {formatDate(draft.start_date)}. Ajuste a data ao preparar a proposta.</li>}
+        </ul>
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>Voltar</Button>
+          <Button className="flex-1 bg-sky-600 hover:bg-sky-700" onClick={reopen} disabled={saving}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}
+            Retomar
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function CreateProspectModal({ onClose, onDone }) {
   const [plans, setPlans] = useState([]);
   const [coaches, setCoaches] = useState([]);
@@ -1297,6 +1352,7 @@ function ProspectRow({
   onLoss,
   onContact,
   onQuickContact,
+  onReopen,
   quickBusy,
   onApplyLatestSubmission,
   applyingSubmission,
@@ -1354,6 +1410,7 @@ function ProspectRow({
               {draft.prospect_message_sent_at && <span>Último envio: {formatDateTime(draft.prospect_message_sent_at)}</span>}
               {draft.prospect_converted_at && <span>Convertido: {formatDateTime(draft.prospect_converted_at)}</span>}
               {draft.prospect_lost_at && <span>Encerrado: {formatDateTime(draft.prospect_lost_at)}</span>}
+              {draft.prospect_reopened_at && draft.prospect_stage !== 'lost' && <span>Retomado: {formatDateTime(draft.prospect_reopened_at)}</span>}
             </div>
             <div className="mt-2 max-w-sm"><NextStepLine draft={draft} /></div>
             {draft.prospect_stage === 'lost' && (
@@ -1416,7 +1473,7 @@ function ProspectRow({
               <ProspectActionButtons
                 draft={draft} customer={customer} coach={coach} modality={modality}
                 onProposal={onProposal} onPayment={onPayment} onLoss={onLoss}
-                onContact={onContact} onQuickContact={onQuickContact} quickBusy={quickBusy}
+                onContact={onContact} onQuickContact={onQuickContact} onReopen={onReopen} quickBusy={quickBusy}
               />
             </div>
           </div>
@@ -1436,6 +1493,7 @@ function ProspectKanbanCard({
   onLoss,
   onContact,
   onQuickContact,
+  onReopen,
   quickBusy,
   onApplyLatestSubmission,
   applyingSubmission,
@@ -1517,7 +1575,7 @@ function ProspectKanbanCard({
             compact
             draft={draft} customer={customer} coach={coach} modality={modality}
             onProposal={onProposal} onPayment={onPayment} onLoss={onLoss}
-            onContact={onContact} onQuickContact={onQuickContact} quickBusy={quickBusy}
+            onContact={onContact} onQuickContact={onQuickContact} onReopen={onReopen} quickBusy={quickBusy}
           />
         </div>
       </CardContent>
@@ -1595,6 +1653,7 @@ export default function Prospects() {
   const [asaasOrders, setAsaasOrders] = useState(null);
   const [welcomeContractId, setWelcomeContractId] = useState(null);
   const [messageRules, setMessageRules] = useState(null);
+  const [reopen, setReopen] = useState(null);
   const today = todayLocalStr();
 
   const load = useCallback(async () => {
@@ -1732,7 +1791,7 @@ export default function Prospects() {
     modality: modalities[draft.plan_snapshot?.modality_id],
   });
   const finishModal = () => {
-    setProposal(null); setPayment(null); setLoss(null); setContact(null); setCreatingProspect(false); load();
+    setProposal(null); setPayment(null); setLoss(null); setContact(null); setReopen(null); setCreatingProspect(false); load();
   };
   // Pagamento registrado: o prospect vira aluno e a boas-vindas abre na hora.
   const finishPayment = contractId => {
@@ -1766,6 +1825,7 @@ export default function Prospects() {
     onLoss: (selected, _customer, presetReason) => setLoss({ ...modalData(selected), presetReason }),
     onContact: (selected, _customer, _coach, _modality, kind) => setContact({ ...modalData(selected), kind }),
     onQuickContact: registerQuickContact,
+    onReopen: selected => setReopen(modalData(selected)),
     quickBusy,
   };
   const checkColumnInAsaas = items => {
@@ -1916,6 +1976,9 @@ export default function Prospects() {
       </Dialog>
       <Dialog open={Boolean(loss)} onOpenChange={open => { if (!open) setLoss(null); }}>
         <DialogContent className="max-w-md">{loss && <LossModal data={loss} onClose={() => setLoss(null)} onDone={finishModal} />}</DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(reopen)} onOpenChange={open => { if (!open) setReopen(null); }}>
+        <DialogContent className="max-w-md">{reopen && <ReopenModal data={reopen} onClose={() => setReopen(null)} onDone={finishModal} />}</DialogContent>
       </Dialog>
       <Dialog open={Boolean(contact)} onOpenChange={open => { if (!open) setContact(null); }}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto overscroll-contain">

@@ -184,6 +184,21 @@ test('a monthly automatic renewal without link is still a valid open sale', () =
   assert.equal(state.total, 210);
 });
 
+test('renewals without link come first in "Aguardando pagamento" and are counted', () => {
+  const contracts = [
+    { id: 'w1', customer_id: 'p1', renewal_stage: 'waiting_payment', start_date: '2026-10-05',
+      payment_status: 'charge_sent', external_payment_link: 'https://pagamento.example.test/1' },
+    { id: 'w2', customer_id: 'p2', renewal_stage: 'waiting_payment', auto_renewal: true, start_date: '2026-10-20',
+      payment_status: 'awaiting_charge' },
+  ];
+  const board = buildRenewalBoard(contracts, { customers: {}, todayStr: '2026-10-09' });
+  const waiting = board.columns.find(column => column.stage === 'waiting_payment');
+  assert.deepEqual(waiting.items.map(card => card.contract.id), ['w2', 'w1']);
+  assert.equal(waiting.missingLinkCount, 1);
+  assert.ok(waiting.items[0].state.badges.some(badge => badge.text === 'Sem link'));
+  assert.ok(!waiting.items[1].state.badges.some(badge => badge.text === 'Sem link'));
+});
+
 test('an unpaid renewal whose term already started stays in "Aguardando pagamento" with a red alert', () => {
   const state = renewalCardState(
     {
