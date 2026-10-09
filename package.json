@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "test": "npm run test:unit && npm run test:edge",
     "test:unit": "node --test src/lib/*.test.js",
-    "test:edge": "npx --yes deno test --node-modules-dir=none --frozen --allow-env --deny-net supabase/functions/api-v1/ supabase/functions/prepare-renewals/ supabase/functions/asaas-store-webhook/ supabase/functions/generate-monthly-closing/",
+    "test:edge": "npx --yes deno test --node-modules-dir=none --frozen --allow-env --deny-net supabase/functions/api-v1/ supabase/functions/prepare-renewals/ supabase/functions/asaas-store-webhook/ supabase/functions/generate-monthly-closing/ supabase/functions/public-assessment-prospect/",
     "preview": "vite preview"
   },
   "dependencies": {
