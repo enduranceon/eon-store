@@ -78,5 +78,5 @@ select
 - Nao fazer deploy a partir de uma branch/local defasado.
 - Nao fazer alteracao destrutiva em dados sem backup/export e confirmacao explicita.
 - Para auditorias, comecar sempre por leitura e classificacao; evitar `update`, `delete`, `insert` ou migrations na primeira passada.
-- Antes de mexer em metricas de assessoria, lembrar que contrato, cobranca, pagamento e estorno sao conceitos diferentes.
+- Antes de mexer em metricas de assessoria, lembrar que contrato, cobranca, pagamento e estorno sao conceitos diferentes. As telas Evolucao (`/assessoria/indicadores`) e Entradas e saidas (`/assessoria/movimento`) usam a mesma classificacao (`classifyAssessmentContracts` em `src/lib/assessment-yearly-indicators.js`); Painel e Analytics ainda usam a do ciclo de vida do contrato.
 - Saida/churn so deve representar encerramento real do aluno na assessoria, nao troca de plano, ajuste financeiro, venda descartada ou correcao de cobranca.
