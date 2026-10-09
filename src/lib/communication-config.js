@@ -2,6 +2,7 @@ import { supabase } from '@/api/db';
 import { CommunicationRule } from '@/api/entities';
 import { saveCommunityLinkSetting } from '@/api/client';
 import { RENEWAL_ATTENTION_WINDOW_OFFSET } from '@/lib/assessment-renewal-window';
+import { DEFAULT_PROSPECT_RULES } from '@/lib/prospect-messages';
 
 export const DEFAULT_COMMUNITY_LINK = 'https://chat.whatsapp.com/Eow2KTzNHwr0Q5n5XrTow3';
 
@@ -269,6 +270,8 @@ Se quiser, deixa um feedback sobre a sua experiência: o que foi bom e o que pod
 
 E quando quiser voltar, é só chamar aqui.`,
   },
+  // Conversa da proposta no quadro de Prospects (jornada "Propostas").
+  ...DEFAULT_PROSPECT_RULES,
 ];
 
 function isMissingTable(error) {
@@ -348,6 +351,7 @@ const NEW_RULE_DEFAULTS = {
   onboarding:   { task_kind: 'onboarding_welcome', trigger_event: 'payment_confirmed' },
   renewal:      { task_kind: 'renewal_reminder',   trigger_event: 'contract_end_date' },
   reactivation: { task_kind: 'reactivation',       trigger_event: 'manual' },
+  proposal:     { task_kind: 'prospect_contact',   trigger_event: 'manual' },
 };
 
 function newRuleSlug(taskKind) {

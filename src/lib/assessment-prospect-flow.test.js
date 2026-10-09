@@ -5,12 +5,9 @@ import {
   formatDeadline,
   hoursSince,
   needsActionToday,
-  prospectClosingMessage,
-  prospectFirstContactMessage,
-  prospectFollowUpMessage,
   prospectNextStep,
-  prospectPaymentClosingMessage,
 } from './assessment-prospect-flow.js';
+import { buildProspectMessage } from './prospect-messages.js';
 
 // Horários ao meio-dia UTC: o dia é o mesmo em UTC e em São Paulo.
 const site = { status: 'draft', created_at: '2026-10-08T15:00:00Z', latest_submission: { id: 'sub-1' } };
@@ -83,15 +80,15 @@ test('datas e horas', () => {
 });
 
 test('textos usam o primeiro nome e o que a pessoa escolheu', () => {
-  const first = prospectFirstContactMessage({ fullName: 'Ana Maria Teste', modality: 'corrida', plan: 'Corrida - Mensal', coach: 'Coach Fictício' });
+  const first = buildProspectMessage('first_contact', { fullName: 'Ana Maria Teste', modality: 'corrida', plan: 'Corrida - Mensal', coach: 'Coach Fictício' });
   assert.match(first, /^Olá, Ana! Tudo bem\?/);
   assert.match(first, /interesse em treinar \*corrida\* com a gente, no plano \*Corrida - Mensal\*, com acompanhamento de \*Coach Fictício\*\./);
   assert.match(first, /Quer seguir com a contratação\?/);
-  assert.match(prospectFirstContactMessage({ fullName: 'Ana', modality: 'corrida', returning: true }), /Que bom ver você de volta! Recebemos seu interesse em voltar a treinar \*corrida\* com a gente\./);
-  assert.match(prospectFollowUpMessage({ fullName: 'Ana', coach: 'Coach Fictício' }), /primeiras semanas com \*Coach Fictício\*/);
-  assert.doesNotMatch(prospectFollowUpMessage({ fullName: 'Ana' }), /viu minha mensagem/);
-  assert.match(prospectClosingMessage({ fullName: 'Ana' }), /Vou arquivar sua proposta/);
-  const closing = prospectPaymentClosingMessage({ fullName: 'Ana', deadline: '2026-10-10', paymentLink: 'https://www.asaas.com/i/ficticio' });
+  assert.match(buildProspectMessage('first_contact_returning', { fullName: 'Ana', modality: 'corrida' }), /Que bom ver você de volta! Recebemos seu interesse em voltar a treinar \*corrida\* com a gente\./);
+  assert.match(buildProspectMessage('follow_up', { fullName: 'Ana', coach: 'Coach Fictício' }), /primeiras semanas com \*Coach Fictício\*/);
+  assert.doesNotMatch(buildProspectMessage('follow_up', { fullName: 'Ana' }), /viu minha mensagem/);
+  assert.match(buildProspectMessage('closing', { fullName: 'Ana' }), /Vou arquivar sua proposta/);
+  const closing = buildProspectMessage('payment_closing', { fullName: 'Ana', deadline: '2026-10-10', paymentLink: 'https://www.asaas.com/i/ficticio' });
   assert.match(closing, /link ativo até sábado, 10\/10/);
   assert.match(closing, /🔗 https:\/\/www\.asaas\.com\/i\/ficticio/);
   assert.match(closing, /Se você já fez o pagamento, pode desconsiderar/);
