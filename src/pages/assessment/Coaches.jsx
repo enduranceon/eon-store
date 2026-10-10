@@ -6,9 +6,11 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { AssessmentCoach, AssessmentContract, AssessmentModality } from '@/api/entities';
+import { AssessmentCoach, AssessmentCoachSitePlan, AssessmentContract, AssessmentModality, AssessmentPlan } from '@/api/entities';
 import { usePageData } from '@/hooks/usePageData';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
+import { diffSitePlans, sitePlanForm, sitePlanKey, sitePlanOptions } from '@/lib/coach-site-plans';
+import { formatCurrency } from '@/lib/utils';
 import { toast } from 'sonner';
 import ContextTabs from '@/components/layout/ContextTabs';
 
@@ -22,13 +24,16 @@ const ROLE_COLOR = {
 const emptyForm = {
   name: '', email: '', phone: '', role: 'junior', leader_id: null,
   co_leader_ids: [], active: true, public_visible: false, modality_ids: [],
+  site_plans: {},
 };
 
 async function loadCoachesPage() {
-  const [coaches, contracts, modalities] = await Promise.all([
+  const [coaches, contracts, modalities, plans, sitePlans] = await Promise.all([
     AssessmentCoach.list('name').catch(() => []),
     AssessmentContract.list('-created_at').catch(() => []),
     AssessmentModality.filter({ active: true }, 'name').catch(() => []),
+    AssessmentPlan.list('name').catch(() => []),
+    AssessmentCoachSitePlan.list().catch(() => []),
   ]);
   const counts = {};
   buildContractLifecycleRows(contracts)
@@ -36,18 +41,18 @@ async function loadCoachesPage() {
     .forEach(contract => {
       counts[contract.coach_id] = (counts[contract.coach_id] || 0) + 1;
     });
-  return { coaches, counts, modalities };
+  return { coaches, counts, modalities, plans, sitePlans };
 }
 
 export default function Coaches() {
   const {
-    data: { coaches, counts, modalities },
+    data: { coaches, counts, modalities, plans, sitePlans },
     refresh,
   } = usePageData({
     key: 'assessment-coaches:list',
     loader: loadCoachesPage,
-    initialData: { coaches: [], counts: {}, modalities: [] },
-    tags: ['assessment_coaches', 'assessment_contracts', 'assessment_modalities'],
+    initialData: { coaches: [], counts: {}, modalities: [], plans: [], sitePlans: [] },
+    tags: ['assessment_coaches', 'assessment_contracts', 'assessment_modalities', 'assessment_plans', 'assessment_coach_site_plans'],
     onError: error => console.error('Erro ao carregar coaches:', error),
   });
   const [search, setSearch] = useState('');
@@ -64,6 +69,7 @@ export default function Coaches() {
         co_leader_ids: c.co_leader_ids || [],
         modality_ids: c.modality_ids || [],
         public_visible: !!c.public_visible,
+        site_plans: sitePlanForm(sitePlans, c.id),
       });
     }
     else   { setEditing(null); setForm(emptyForm); }
@@ -89,8 +95,17 @@ export default function Coaches() {
         public_visible: !!form.active && !!form.public_visible,
         modality_ids: form.modality_ids || [],
       };
-      if (editing) await AssessmentCoach.update(editing.id, payload);
-      else await AssessmentCoach.create(payload);
+      const saved = editing
+        ? await AssessmentCoach.update(editing.id, payload)
+        : await AssessmentCoach.create(payload);
+      const coachId = editing?.id || saved?.id;
+      // Planos do site: só mexe quando o coach aparece no site.
+      if (coachId && payload.public_visible) {
+        const { creates, updates, deletes } = diffSitePlans(sitePlans, coachId, form.site_plans, payload.modality_ids);
+        for (const id of deletes) await AssessmentCoachSitePlan.delete(id);
+        for (const row of updates) await AssessmentCoachSitePlan.update(row.id, { plan_id: row.plan_id });
+        for (const row of creates) await AssessmentCoachSitePlan.create(row);
+      }
       toast.success('Salvo!');
       setModal(false);
       await refresh({ force: true });
@@ -117,6 +132,9 @@ export default function Coaches() {
   });
 
   const possibleLeaders = coaches.filter(c => c.id !== editing?.id && c.active);
+  const hasSitePlans = id => sitePlans.some(row => row.coach_id === id);
+  const setSitePlan = (key, planId) => setForm(f => ({ ...f, site_plans: { ...f.site_plans, [key]: planId } }));
+  const planLabel = plan => `${plan.name || 'Plano'} · ${formatCurrency(Number(plan.price_monthly))}/mês${Number(plan.period_months) > 1 ? ` (${formatCurrency(Number(plan.price_total))})` : ''}`;
   const modalityName = id => modalities.find(m => m.id === id)?.name;
   const toggleModality = id => setForm(f => ({
     ...f,
@@ -196,6 +214,9 @@ export default function Coaches() {
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.active && c.public_visible ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-500'}`}>
                         {c.active && c.public_visible ? 'Visível' : 'Oculto'}
                       </span>
+                      {c.active && c.public_visible && hasSitePlans(c.id) && (
+                        <p className="text-[11px] text-violet-700 mt-1">planos próprios</p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button onClick={() => open(c)} className="p-1.5 hover:bg-gray-100 rounded text-gray-500"><Pencil className="w-3.5 h-3.5" /></button>
@@ -209,7 +230,7 @@ export default function Coaches() {
       )}
 
       <Dialog open={modal} onOpenChange={setModal}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{editing ? 'Editar coach' : 'Novo coach'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label>Nome *</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
@@ -259,6 +280,43 @@ export default function Coaches() {
                 <span className="text-sm"><strong>Exibir no site</strong><br /><span className="text-xs text-muted-foreground">Aparece no formulário público somente nos planos das modalidades marcadas.</span></span>
               </label>
             </div>
+            {form.active && form.public_visible && form.modality_ids.length > 0 && (
+              <div className="space-y-3 rounded-lg border p-3">
+                <div>
+                  <p className="text-sm font-semibold">Planos que vende no site</p>
+                  <p className="text-xs text-muted-foreground">
+                    Escolha o plano de cada duração. Vale só para o site: na venda interna você pode usar qualquer plano.
+                    Sem nenhum plano escolhido na modalidade, o site mostra os planos gerais; escolhendo algum, mostra só os escolhidos.
+                  </p>
+                </div>
+                {form.modality_ids.map(modalityId => {
+                  const options = sitePlanOptions(plans, modalityId);
+                  // Com algum plano escolhido, duração vazia fica fora do site.
+                  const ownPlans = options.some(option => form.site_plans[sitePlanKey(modalityId, option.months)]);
+                  return (
+                    <div key={modalityId} className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 capitalize">{modalityName(modalityId) || 'Modalidade'}</p>
+                      {options.length === 0 && <p className="text-xs text-amber-600">Nenhum plano ativo nesta modalidade.</p>}
+                      {options.map(option => {
+                        const key = sitePlanKey(modalityId, option.months);
+                        return (
+                          <div key={key} className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-2">
+                            <Label className="text-sm">{option.label}</Label>
+                            <Select value={form.site_plans[key] || 'default'} onValueChange={v => setSitePlan(key, v === 'default' ? '' : v)}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="default">{ownPlans ? 'Não vende esta duração no site' : 'Planos gerais do site'}</SelectItem>
+                                {option.plans.map(plan => <SelectItem key={plan.id} value={plan.id}>{planLabel(plan)}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="flex gap-2 pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setModal(false)}>Cancelar</Button>
               <Button className="flex-1" onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button>

@@ -10,6 +10,7 @@ import {
   UUID_PATTERN,
   validateAndNormalizeProspect,
 } from "./validation.ts";
+import { attachSitePlans, planAllowedForCoach } from "./site-plans.ts";
 
 const ALLOWED_ORIGINS = new Set([
   "https://www.enduranceon.com.br",
@@ -369,6 +370,7 @@ Deno.serve(async (req: Request) => {
         { data: plans, error: planError },
         { data: modalities, error: modalityError },
         { data: coaches, error: coachError },
+        { data: sitePlans, error: sitePlanError },
       ] = await Promise.all([
         supabase.from("assessment_plans")
           .select(
@@ -380,12 +382,16 @@ Deno.serve(async (req: Request) => {
           .eq("active", true).order("name"),
         supabase.from("assessment_coaches").select("id,name,modality_ids")
           .eq("active", true).eq("public_visible", true).order("name"),
+        // Plano de cada coach no site (um por modalidade e duração).
+        supabase.from("assessment_coach_site_plans").select(
+          "coach_id,modality_id,period_months,plan:assessment_plans(id,name,period,period_months,price_monthly,price_total,enrollment_fee,max_installments,modality_id,active)",
+        ),
       ]);
-      if (planError || modalityError || coachError) {
+      if (planError || modalityError || coachError || sitePlanError) {
         log("error", "public_prospect_catalog_failed", {
           request_id: requestReference,
           database_code: planError?.code || modalityError?.code ||
-            coachError?.code || null,
+            coachError?.code || sitePlanError?.code || null,
         });
         return errorResponse(
           req,
@@ -395,7 +401,12 @@ Deno.serve(async (req: Request) => {
           requestReference,
         );
       }
-      return response(req, { ok: true, plans, modalities, coaches });
+      return response(req, {
+        ok: true,
+        plans,
+        modalities,
+        coaches: attachSitePlans(coaches || [], sitePlans || []),
+      });
     }
 
     if (req.method !== "POST") {
@@ -492,20 +503,22 @@ Deno.serve(async (req: Request) => {
       throw error;
     }
 
-    const [planResult, coachResult] = await Promise.all([
-      supabase.from("assessment_plans").select("id,modality_id")
-        .eq("id", payload.planId).eq("active", true)
-        .eq("available_online", true).maybeSingle(),
+    // Plano geral do site ou o plano escolhido para este coach no site.
+    const [planResult, coachResult, sitePlanResult] = await Promise.all([
+      supabase.from("assessment_plans").select("id,modality_id,available_online")
+        .eq("id", payload.planId).eq("active", true).maybeSingle(),
       supabase.from("assessment_coaches")
         .select("id,modality_ids")
         .eq("id", payload.coachId).eq("active", true)
         .eq("public_visible", true).maybeSingle(),
+      supabase.from("assessment_coach_site_plans").select("plan_id")
+        .eq("coach_id", payload.coachId),
     ]);
-    if (planResult.error || coachResult.error) {
+    if (planResult.error || coachResult.error || sitePlanResult.error) {
       log("error", "public_prospect_selection_check_failed", {
         request_id: requestReference,
         database_code: planResult.error?.code || coachResult.error?.code ||
-          null,
+          sitePlanResult.error?.code || null,
       });
       return errorResponse(
         req,
@@ -515,7 +528,14 @@ Deno.serve(async (req: Request) => {
         requestReference,
       );
     }
-    if (!planResult.data) {
+    const selection = planResult.data
+      ? planAllowedForCoach(
+        planResult.data,
+        coachResult.data,
+        (sitePlanResult.data || []).map((row) => row.plan_id),
+      )
+      : "plan";
+    if (selection === "plan") {
       return errorResponse(
         req,
         422,
@@ -525,13 +545,7 @@ Deno.serve(async (req: Request) => {
         [{ field: "plan_id", code: "INVALID_PLAN" }],
       );
     }
-    const coachModalities = Array.isArray(coachResult.data?.modality_ids)
-      ? coachResult.data.modality_ids
-      : [];
-    if (
-      !coachResult.data ||
-      !coachModalities.includes(planResult.data.modality_id)
-    ) {
+    if (selection === "coach") {
       return errorResponse(
         req,
         422,
