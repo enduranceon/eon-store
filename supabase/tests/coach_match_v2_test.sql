@@ -56,6 +56,11 @@ SELECT has_column(
   'v2 published pointer exists'
 );
 
+SELECT ok(
+  has_table_privilege('service_role', 'public.assessment_modalities', 'SELECT'),
+  'service role can resolve canonical modalities through invoker RPCs'
+);
+
 SELECT ok(NOT proc.prosecdef, proc.proname || ' uses invoker security')
 FROM pg_proc AS proc
 JOIN pg_namespace AS namespace ON namespace.oid = proc.pronamespace

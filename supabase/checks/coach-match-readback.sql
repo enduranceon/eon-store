@@ -37,6 +37,8 @@ WHERE EXISTS (
 AND EXISTS (
   SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '20261012191714'
 )
+AND has_table_privilege('service_role', 'public.assessment_coaches', 'SELECT')
+AND has_table_privilege('service_role', 'public.assessment_modalities', 'SELECT')
 AND (SELECT count(*) = 3 FROM match_tables WHERE oid IS NOT NULL)
 AND NOT EXISTS (
   SELECT 1 FROM match_tables

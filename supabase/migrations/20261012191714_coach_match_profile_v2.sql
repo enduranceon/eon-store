@@ -425,6 +425,11 @@ CREATE UNIQUE INDEX coach_match_one_pending_version_idx
   )
   WHERE status = 'pending';
 
+-- The v2 admin/form snapshots resolve the coach's canonical modality names.
+-- Keep the RPCs as SECURITY INVOKER and grant only the read privilege needed
+-- by the server-only service role; browser roles remain unchanged.
+GRANT SELECT ON TABLE public.assessment_modalities TO service_role;
+
 CREATE FUNCTION public.get_assessment_coach_match_admin_v2(p_coach_id uuid)
 RETURNS jsonb
 LANGUAGE plpgsql

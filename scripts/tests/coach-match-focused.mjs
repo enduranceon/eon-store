@@ -37,6 +37,9 @@ try {
       active boolean NOT NULL DEFAULT true
     );
     INSERT INTO public.assessment_modalities(name) VALUES ('corrida'), ('triathlon');
+    -- Match clean/current Supabase ACLs for this existing dependency. The v2
+    -- migration must explicitly restore the server-only read it introduces.
+    REVOKE ALL ON TABLE public.assessment_modalities FROM service_role;
     ${dummyTables.map(name => `CREATE TABLE public.${name}(id uuid PRIMARY KEY, fixture text);
       INSERT INTO public.${name} VALUES (gen_random_uuid(), 'Preservar esta linha fictícia');`).join('\n')}
     -- Small pgTAP-compatible assertions; SQL failures abort this focused run.
