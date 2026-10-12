@@ -19,11 +19,20 @@ verify_jwt = false
 [functions.public-assessment-prospect]
 verify_jwt = false
 
+[functions.coach-match-form]
+verify_jwt = false
+
+[functions.public-coach-match]
+verify_jwt = false
+
 [functions.public-store-checkout]
 verify_jwt = false
 
 # Admin/internal functions. Keep JWT verification enabled.
 [functions.api-v1]
+verify_jwt = true
+
+[functions.coach-match-admin]
 verify_jwt = true
 
 [functions.create-asaas-charge]

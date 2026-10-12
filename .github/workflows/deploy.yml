@@ -20,6 +20,12 @@ jobs:
   migrations:
     name: Validate Supabase migrations
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EON_CI_NETWORK: eon-match-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      EON_TEST_EPHEMERAL: '1'
+      DO_NOT_TRACK: '1'
+      DOCKER_HOST: unix:///var/run/docker.sock
     steps:
       - uses: actions/checkout@v4
 
@@ -27,16 +33,26 @@ jobs:
         with:
           version: 2.115.0
 
-      - name: Apply migrations to a clean local database
+      - name: Test isolation guard
+        run: python3 -m unittest discover -s scripts/tests -p 'test_ci_supabase*.py'
+
+      - name: Create isolated network before any migration replay
+        shell: bash
         run: |
-          supabase start
-          supabase db reset --local --no-seed
+          set -euo pipefail
+          # Historical migrations schedule production URLs. Containers must
+          # have no external route, including during the initial bootstrap.
+          docker network create --driver bridge --internal "$EON_CI_NETWORK"
+          docker network inspect "$EON_CI_NETWORK" | jq -e '
+            length == 1 and .[0].Internal == true and .[0].Driver == "bridge"
+            and .[0].EnableIPv6 == false and .[0].Name == env.EON_CI_NETWORK
+          ' >/dev/null
 
-      - name: Run database regression tests
-        run: supabase test db --local
-
-      - name: Verify concurrent communication actions
-        run: python3 scripts/tests/communication_case_concurrency.py
+      - name: Apply migrations and test isolated local database
+        # An internal Docker bridge has no published localhost ports. This
+        # wrapper supplies loopback-only connections to the verified internal
+        # containers; it does not give the containers an external route.
+        run: python3 scripts/tests/ci-supabase-loopback.py
         env:
           EON_TEST_EPHEMERAL: '1'
           PGHOST: 127.0.0.1
@@ -47,7 +63,14 @@ jobs:
 
       - name: Clean up local database
         if: always()
-        run: supabase stop --no-backup
+        run: supabase stop --no-backup --network-id "$EON_CI_NETWORK"
+
+      - name: Clean up disposable test network
+        if: always()
+        run: |
+          if docker network inspect "$EON_CI_NETWORK" >/dev/null 2>&1; then
+            docker network rm "$EON_CI_NETWORK"
+          fi
 
   build:
     name: Build with Netlify configuration
@@ -400,9 +423,25 @@ jobs:
             | length == 1
           ' >/dev/null
 
+      - name: Verify coach match migration and permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          readback="$(supabase db query --linked --output json --file supabase/checks/coach-match-readback.sql)"
+          printf '%s\n' "$readback"
+          printf '%s\n' "$readback" | jq -e '
+            [.. | objects | select(.status? == "coach_match_readback_ok")]
+            | length == 1
+          ' >/dev/null
+          test -s supabase/functions/coach-match-admin/index.ts
+          test -s supabase/functions/coach-match-form/index.ts
+          test -s supabase/functions/public-coach-match/index.ts
+
       - name: Deploy Edge Functions
         shell: bash
         run: |
+          # The existing all-functions release includes coach-match-admin,
+          # coach-match-form and public-coach-match; no separate release bypass.
           for attempt in 1 2 3; do
             if supabase functions deploy --project-ref "$SUPABASE_PROJECT_ID"; then
               exit 0
