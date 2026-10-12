@@ -4,22 +4,33 @@ import ContextTabs from '@/components/layout/ContextTabs';
 import { getCoachMatch, issueCoachMatchInvite, revokeCoachMatchInvite, reviewCoachMatch } from '@/api/coach-match';
 import { getCoachMatchView } from '@/lib/coach-match-view';
 
-const GOALS = { start: 'Começar com orientação', evolve: 'Evoluir', race: 'Preparar uma prova', routine: 'Criar ou retomar uma rotina' };
-const LEVELS = { beginner: 'Iniciante', regular: 'Já treina regularmente', experienced: 'Experiente' };
-const STYLES = { close: 'Mais conversa e orientação', balanced: 'Equilíbrio', autonomy: 'Mais autonomia' };
+const GOALS = { health: 'Saúde e qualidade de vida', start: 'Começar no esporte', performance: 'Evoluir o desempenho', return: 'Retomar os treinos', high_performance: 'Alta performance' };
+const LEVELS = { beginner: 'Iniciante', intermediate: 'Intermediário', advanced: 'Avançado' };
+const STYLES = { close: 'Acompanhamento mais próximo', balanced: 'Equilíbrio entre orientação e autonomia', autonomy: 'Mais autonomia, com revisões e ajustes' };
+const AGES = { up_to_30: 'Até 30 anos', age_31_50: 'De 31 a 50 anos', age_51_plus: '51 anos ou mais', no_preference: 'Sem preferência' };
+const GENDERS = { female: 'Mulheres', male: 'Homens', no_preference: 'Sem preferência' };
 const FORMATS = { florianopolis: 'Florianópolis', online: 'Online' };
+
+function prioritySummary(value, labels) {
+  if (!value?.primary) return '—';
+  const primary = labels[value.primary] || value.primary;
+  if (!value.secondary) return `Principal: ${primary}`;
+  return `Principal: ${primary} · Também: ${labels[value.secondary] || value.secondary}`;
+}
 
 function AnswerSummary({ submission, heading }) {
   if (!submission) return <p className="text-sm text-gray-500">Nenhuma resposta {heading.toLowerCase()}.</p>;
   const answers = submission.answers || {};
   return (
     <div className="space-y-3 text-sm">
-      <div><strong>Atendimento:</strong> {(answers.service_formats || []).map(key => FORMATS[key] || key).join(' · ')}</div>
-      <div><strong>Objetivos:</strong> {(answers.focus_goals || []).map(key => GOALS[key] || key).join(' · ')}</div>
-      <div><strong>Momento do aluno:</strong> {(answers.focus_levels || []).map(key => LEVELS[key] || key).join(' · ')}</div>
-      <div><strong>Troca:</strong> {STYLES[answers.communication_style] || '—'}</div>
-      <div><strong>Jeito de trabalhar:</strong> <span className="whitespace-pre-wrap text-gray-700">{answers.approach || '—'}</span></div>
-      {answers.experience && <div><strong>Experiência destacada:</strong> <span className="whitespace-pre-wrap text-gray-700">{answers.experience}</span></div>}
+      <dl className="divide-y rounded-lg border bg-gray-50/50">
+        <div className="p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Atendimento</dt><dd className="mt-1 font-medium text-gray-800">{(answers.service_formats || []).map(key => FORMATS[key] || key).join(' · ') || '—'}</dd></div>
+        <div className="p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Objetivo</dt><dd className="mt-1 text-gray-800">{prioritySummary(answers.focus_goals, GOALS)}</dd></div>
+        <div className="p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Momento do atleta</dt><dd className="mt-1 text-gray-800">{prioritySummary(answers.focus_levels, LEVELS)}</dd></div>
+        <div className="p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Acompanhamento</dt><dd className="mt-1 text-gray-800">{prioritySummary(answers.communication_style, STYLES)}</dd></div>
+        <div className="p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Faixa etária</dt><dd className="mt-1 text-gray-800">{prioritySummary(answers.age_groups, AGES)}</dd></div>
+        <div className="p-3"><dt className="text-xs font-semibold uppercase tracking-wide text-gray-500">Gênero do atleta</dt><dd className="mt-1 text-gray-800">{prioritySummary(answers.gender_preference, GENDERS)}</dd></div>
+      </dl>
       <p className="text-xs text-gray-500">Enviado em {new Date(submission.submitted_at).toLocaleString('pt-BR')}</p>
     </div>
   );
@@ -99,7 +110,7 @@ function CoachMatchDetails({ coachId }) {
 
   const review = (submissionId, decision) => run(async () => {
     await reviewCoachMatch(coachId, submissionId, decision);
-    setMessage(decision === 'approved' ? 'Respostas aprovadas para o match público.' : 'Esta versão não será publicada. A versão aprovada anteriormente continua disponível.');
+    setMessage(decision === 'approved' ? 'Respostas aprovadas para o match.' : 'Esta versão não será usada. A versão aprovada anteriormente continua disponível.');
   });
 
   const revoke = inviteId => run(async () => {
@@ -139,9 +150,9 @@ function CoachMatchDetails({ coachId }) {
             <section className="rounded-xl border bg-white p-5">
               <div className="mb-4 flex items-center justify-between gap-3"><h2 className="text-lg font-bold">Aguardando sua revisão</h2>{pending && <span className="shrink-0 whitespace-nowrap rounded-full bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700">Nova resposta</span>}</div>
               <AnswerSummary submission={pending} heading="Pendente" />
-              {pending && <div className="mt-5 flex flex-wrap gap-2 border-t pt-4"><button type="button" disabled={busy} onClick={() => review(pending.id, 'approved')} className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-bold text-gray-950 disabled:opacity-50">Aprovar para o site</button><button type="button" disabled={busy} onClick={() => review(pending.id, 'rejected')} className="rounded-lg border px-4 py-2 text-sm font-medium disabled:opacity-50">Não publicar esta versão</button></div>}
+              {pending && <div className="mt-5 flex flex-wrap gap-2 border-t pt-4"><button type="button" disabled={busy} onClick={() => review(pending.id, 'approved')} className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-bold text-gray-950 disabled:opacity-50">Aprovar para o match</button><button type="button" disabled={busy} onClick={() => review(pending.id, 'rejected')} className="rounded-lg border px-4 py-2 text-sm font-medium disabled:opacity-50">Não usar esta versão</button></div>}
             </section>
-            <section className="rounded-xl border bg-white p-5"><h2 className="mb-4 text-lg font-bold">Versão aprovada para o site</h2><AnswerSummary submission={published} heading="Aprovada" /><p className="mt-4 text-xs text-gray-500">Novos envios não substituem esta versão até sua aprovação. O site deve considerar também a modalidade, as ofertas disponíveis e a visibilidade do coach.</p></section>
+            <section className="rounded-xl border bg-white p-5"><h2 className="mb-4 text-lg font-bold">Versão aprovada para o match</h2><AnswerSummary submission={published} heading="Aprovada" /><p className="mt-4 text-xs text-gray-500">Novos envios não substituem esta versão até sua aprovação. O match considera também a modalidade, as ofertas disponíveis e a visibilidade do coach.</p></section>
           </div>
         </>
       )}

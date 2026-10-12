@@ -1,17 +1,17 @@
 import { handlePublicCoachMatch } from "./handler.ts";
-import { ANSWERS, assert, COACH_ID, equal, rpcMock } from "../coach-match-form/test-utils.ts";
+import { ANSWERS, assert, COACH_ID, equal, LEGACY_ANSWERS, rpcMock } from "../coach-match-form/test-utils.ts";
 
 Deno.test("public match exposes only allowlisted approved profile fields, never internal fields or token", async () => {
   const reviewedAt = "2026-10-12T12:00:00Z";
   const deps = rpcMock([
-    { coach_id: COACH_ID, answers: { ...ANSWERS, internal_note: "secret" }, reviewed_at: reviewedAt, token_hash: "secret", reviewed_by: "secret" },
-    { coach_id: COACH_ID, answers: { ...ANSWERS, version: 99 }, reviewed_at: reviewedAt },
-    { coach_id: "bad", answers: ANSWERS, reviewed_at: reviewedAt },
-    { coach_id: COACH_ID, answers: ANSWERS, reviewed_at: null },
+    { coach_id: COACH_ID, answers: LEGACY_ANSWERS, reviewed_at: reviewedAt, token_hash: "secret", reviewed_by: "secret" },
+    { coach_id: COACH_ID, answers: ANSWERS, reviewed_at: reviewedAt },
+    { coach_id: "bad", answers: LEGACY_ANSWERS, reviewed_at: reviewedAt },
+    { coach_id: COACH_ID, answers: LEGACY_ANSWERS, reviewed_at: null },
   ]);
   const response = await handlePublicCoachMatch(new Request("https://example.test"), deps);
   equal(response.status, 200);
-  equal(await response.json(), { data: [{ coach_id: COACH_ID, answers: ANSWERS, reviewed_at: reviewedAt }] });
+  equal(await response.json(), { data: [{ coach_id: COACH_ID, answers: LEGACY_ANSWERS, reviewed_at: reviewedAt }] });
   equal(deps.calls, [{ name: "list_public_coach_match_profiles" }]);
   equal(response.headers.get("cache-control"), "no-store");
 });

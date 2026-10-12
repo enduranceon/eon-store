@@ -25,16 +25,23 @@ test('todas as operações de admin usam exclusivamente coach-match-admin e sess
     '/functions/v1/coach-match-admin/coach-match/coach-1/revoke',
     '/functions/v1/coach-match-admin/coach-match/coach-1/review',
   ]);
+  assert.deepEqual(calls.map(call => new URL(call.url).search), [
+    '?profile_version=2',
+    '',
+    '',
+    '?profile_version=2',
+  ]);
   assert.deepEqual(calls.map(call => call.options.method), ['GET', 'POST', 'POST', 'POST']);
   assert.deepEqual(JSON.parse(calls[2].options.body), { invite_id: 'invite-1' });
   assert.deepEqual(JSON.parse(calls[3].options.body), { submission_id: 'submission-1', decision: 'approved' });
   assert.ok(calls.every(call => call.options.headers.Authorization === 'Bearer fake-admin-session'));
+  assert.ok(calls.every(call => call.options.headers['X-Coach-Match-Version'] === undefined));
 });
 
-test('formulário usa token somente no corpo sem anexar a sessão do administrador', async () => {
+test('cliente v2 usa indicador simples que a Edge v1 pode ignorar sem preflight novo', async () => {
   const { client, calls, sessionReads } = setup();
   await client.publicRequest('load', 'fake-coach-token');
-  await client.publicRequest('submit', 'fake-coach-token', { version: 1 });
+  await client.publicRequest('submit', 'fake-coach-token', { version: 2 });
   assert.equal(sessionReads(), 0);
   for (const call of calls) {
     assert.equal(call.url, 'https://isolated.example.test/functions/v1/coach-match-form');
@@ -43,7 +50,12 @@ test('formulário usa token somente no corpo sem anexar a sessão do administrad
     assert.equal(call.options.credentials, 'omit');
     assert.equal(call.options.referrerPolicy, 'no-referrer');
   }
-  assert.deepEqual(JSON.parse(calls[1].options.body), { action: 'submit', token: 'fake-coach-token', answers: { version: 1 } });
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    action: 'load', token: 'fake-coach-token', profile_version: 2,
+  });
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    action: 'submit', token: 'fake-coach-token', profile_version: 2, answers: { version: 2 },
+  });
 });
 
 test('sem sessão administrativa não faz request ou fallback público', async () => {

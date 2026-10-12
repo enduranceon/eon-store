@@ -32,6 +32,11 @@ try {
       modality_ids uuid[] DEFAULT '{}', updated_at timestamptz DEFAULT now(),
       CONSTRAINT assessment_coaches_public_requires_active CHECK (NOT public_visible OR active)
     );
+    CREATE TABLE public.assessment_modalities (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL UNIQUE,
+      active boolean NOT NULL DEFAULT true
+    );
+    INSERT INTO public.assessment_modalities(name) VALUES ('corrida'), ('triathlon');
     ${dummyTables.map(name => `CREATE TABLE public.${name}(id uuid PRIMARY KEY, fixture text);
       INSERT INTO public.${name} VALUES (gen_random_uuid(), 'Preservar esta linha fictícia');`).join('\n')}
     -- Small pgTAP-compatible assertions; SQL failures abort this focused run.
@@ -62,12 +67,25 @@ try {
           actual_state, actual_message, expected_state, expected_message;
       END IF; RETURN 'ok ' || message;
     END $$;
+    CREATE FUNCTION extensions.has_column(p_schema_name text, p_table_name text, p_column_name text, p_message text)
+    RETURNS text LANGUAGE plpgsql AS $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns c
+        WHERE c.table_schema=p_schema_name AND c.table_name=p_table_name AND c.column_name=p_column_name) THEN
+        RAISE EXCEPTION 'Assertion failed: %', p_message;
+      END IF; RETURN 'ok ' || p_message;
+    END $$;
   `);
   const migration = await readFile(resolve(root, 'supabase/migrations/20261011204104_coach_match_submissions.sql'), 'utf8');
   await db.exec(migration);
-  const tests = (await readFile(resolve(root, 'supabase/tests/coach_match_test.sql'), 'utf8'))
-    .replace('CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;', '');
-  const results = await db.exec(tests);
+  const migrationV2 = await readFile(resolve(root, 'supabase/migrations/20261012191714_coach_match_profile_v2.sql'), 'utf8');
+  await db.exec(migrationV2);
+  const testFiles = ['coach_match_test.sql', 'coach_match_v2_test.sql'];
+  const results = [];
+  for (const filename of testFiles) {
+    const tests = (await readFile(resolve(root, 'supabase/tests', filename), 'utf8'))
+      .replace('CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;', '');
+    results.push(...await db.exec(tests));
+  }
   let assertions = 0;
   for (const result of results) {
     for (const row of result.rows || []) {

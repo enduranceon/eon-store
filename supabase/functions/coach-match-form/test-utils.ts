@@ -5,6 +5,15 @@ export const ADMIN_ID = "22222222-2222-4222-8222-222222222222";
 export const RECORD_ID = "33333333-3333-4333-8333-333333333333";
 export const TOKEN = "a".repeat(43);
 export const ANSWERS = {
+  version: 2,
+  service_formats: ["florianopolis", "online"],
+  focus_goals: { primary: "performance", secondary: "health" },
+  focus_levels: { primary: "intermediate", secondary: "beginner" },
+  communication_style: { primary: "balanced", secondary: "close" },
+  age_groups: { primary: "age_31_50", secondary: "up_to_30" },
+  gender_preference: { primary: "no_preference", secondary: null },
+};
+export const LEGACY_ANSWERS = {
   version: 1,
   focus_goals: ["start", "routine"],
   focus_levels: ["beginner"],

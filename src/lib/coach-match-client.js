@@ -40,16 +40,18 @@ export function createCoachMatchClient({ supabaseUrl, publicKey, getSession, fet
   }
 
   const coachPath = coachId => `/coach-match/${encodeURIComponent(coachId)}`;
-  const admin = (coachId, action = '', body, signal) => request('coach-match-admin', `${coachPath(coachId)}${action}`, {
+  const admin = (coachId, action = '', body, signal, profileVersion) => request('coach-match-admin',
+    `${coachPath(coachId)}${action}${profileVersion === 2 ? '?profile_version=2' : ''}`, {
     authenticated: true, method: body === undefined ? 'GET' : 'POST', body, signal,
   });
   return {
-    get: (coachId, { signal } = {}) => admin(coachId, '', undefined, signal),
+    get: (coachId, { signal } = {}) => admin(coachId, '', undefined, signal, 2),
     issueInvite: coachId => admin(coachId, '/invite', {}),
     revokeInvite: (coachId, inviteId) => admin(coachId, '/revoke', { invite_id: inviteId }),
-    review: (coachId, submissionId, decision) => admin(coachId, '/review', { submission_id: submissionId, decision }),
+    review: (coachId, submissionId, decision) => admin(coachId, '/review',
+      { submission_id: submissionId, decision }, undefined, 2),
     publicRequest: (action, token, answers) => request('coach-match-form', '', {
-      method: 'POST', body: { action, token, ...(answers ? { answers } : {}) },
+      method: 'POST', body: { action, token, profile_version: 2, ...(answers ? { answers } : {}) },
     }),
   };
 }

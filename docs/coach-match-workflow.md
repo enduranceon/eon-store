@@ -1,9 +1,11 @@
 # Match com treinador
 
 O administrador abre **Assessoria → Coaches → Match com treinador**, gera um
-link individual e o envia manualmente ao coach. O coach responde sem ganhar
+link individual e o envia manualmente ao coach. O mesmo link continua válido
+após a adoção do formulário v2. O coach responde sem ganhar
 acesso à área administrativa ou aos dados financeiros. O administrador revisa
-as respostas e aprova a versão que o novo site poderá consumir.
+as respostas e aprova a versão que, futuramente, alimentará o match calculado no
+servidor.
 
 O formulário não é enviado por e-mail automaticamente. O link vale por 30 dias;
 gerar outro revoga o anterior. O token completo aparece somente ao gerar o link,
@@ -12,7 +14,7 @@ formulário. O banco guarda apenas seu hash. Tratar o link como confidencial.
 
 ## Revisão e publicação das respostas
 
-- Cada envio gera uma nova versão. Apenas a versão mais recente, ainda pendente,
+- Cada envio gera uma nova revisão. Apenas a revisão v2 mais recente, ainda pendente,
   pode ser aprovada ou rejeitada. Pendências anteriores são substituídas.
 - Um novo envio não tira do ar a última versão aprovada. Rejeitar uma atualização
   também preserva a versão aprovada anteriormente.
@@ -23,9 +25,41 @@ formulário. O banco guarda apenas seu hash. Tratar o link como confidencial.
   e exigem que o administrador confira a versão mais recente.
 - A validade do convite considera o relógio do servidor, o tempo decorrido desde
   a consulta e a revogação. O backend revalida o link em cada acesso/envio.
-- Só perfis de coaches ativos e visíveis entram no endpoint público. O site deve
-  cruzar o perfil aprovado com modalidades e ofertas do catálogo existente antes
-  de recomendar um coach; aprovação de respostas não cria planos nem ofertas.
+- Só perfis de coaches ativos e visíveis entram na entrada interna do futuro
+  cálculo. O match deve cruzar o perfil aprovado com modalidades e ofertas do
+  catálogo existente antes de recomendar um coach; aprovação de respostas não
+  cria planos nem ofertas.
+
+## Formulário v2 e lógica prevista
+
+O formulário v2 não contém texto livre. O coach informa em quais formatos atende
+(`Florianópolis`, `Online` ou ambos) e escolhe uma afinidade **Principal** e,
+opcionalmente, **Também me identifico** em cinco critérios:
+
+- objetivo do atleta;
+- momento técnico;
+- estilo de acompanhamento;
+- faixa etária;
+- gênero do atleta.
+
+Em faixa etária e gênero, `Sem preferência` só pode ser a escolha principal e
+desabilita a escolha secundária. Nos demais critérios, sempre há uma escolha
+principal. Principal e secundária nunca podem ser iguais. A modalidade não é
+perguntada: o formulário a mostra como contexto somente leitura, vindo do perfil
+canônico do coach na EON Store. Os formatos também são informação factual, não
+recebem pontuação nem ordem de preferência.
+
+Na futura pontuação do match, a afinidade principal vale 100% do peso do critério
+e a secundária, quando presente, 60%. A distribuição acordada é objetivo 35,
+momento técnico 25, acompanhamento 20, faixa etária 10 e gênero 10. Modalidade e
+formato de atendimento são filtros eliminatórios antes da pontuação. Esses pesos
+não são gravados na resposta do coach e ainda não constituem um endpoint público
+de recomendação.
+
+O rollout é reversível: v1 e v2 têm ponteiros independentes para a última revisão
+e a última aprovação. Uma resposta v2 não substitui nem apaga a versão v1. O
+índice de pendência permite uma pendência de cada versão por coach durante a
+transição.
 
 ## Isolamento técnico
 
@@ -35,7 +69,7 @@ O módulo usa funções separadas:
 | --- | --- | --- |
 | `coach-match-admin` | Sessão administrativa verificada no servidor | Consultar, gerar/revogar convite e revisar |
 | `coach-match-form` | Token individual válido | Carregar e enviar respostas |
-| `public-coach-match` | Leitura pública | Entregar apenas perfis aprovados |
+| `public-coach-match` | Leitura pública legada | Entregar somente perfis v1 aprovados durante a transição |
 
 As funções existentes `api-v1` e `public-assessment-prospect` permanecem sem
 alterações do módulo. Preços, catálogo, checkout, contratos e pagamentos não
@@ -54,11 +88,14 @@ revalidados dentro da transação. Isso impede que operações simultâneas apro
 uma resposta antiga ou aceitem um link já revogado. Não há atualização das
 tabelas financeiras nem bloqueio explícito de suas linhas.
 
-O formulário versão 1 registra objetivos e momentos do atleta (até dois de
-cada), formatos de atendimento, estilo de comunicação e dois textos curtos.
-Textos são renderizados como texto, nunca como HTML. Somente os campos previstos
-no contrato público são retornados; convites, tokens, IDs de revisores e
-histórico não são publicados.
+O contrato v1 e seus RPCs permanecem disponíveis apenas para rollback. O GET
+público legado continua validando exclusivamente v1. As respostas v2 incluem
+afinidades demográficas de idade e gênero e, por isso, **não são retornadas por
+esse GET**. `list_approved_coach_match_profiles_v2` é acessível somente ao papel
+de serviço e deve ser usada apenas por um futuro matcher executado no servidor.
+Esse futuro endpoint deve receber respostas do visitante por POST, calcular sem
+persisti-las e devolver apenas os coaches recomendados e as razões apropriadas,
+nunca o perfil bruto de preferências de outros coaches.
 
 ## Portão de segurança antes de publicar
 
@@ -91,7 +128,8 @@ fictícios, sem clientes reais, credenciais Asaas ou envio de mensagens.
 `scripts/coach-match-ui-smoke.mjs` testa formulário e painel em 1440×1000 e
 390×844, usando Chrome/Chromium existente e Playwright. Todas as chamadas de API
 são simuladas; qualquer origem fora do Vite local e do Supabase fictício local
-é bloqueada. O teste verifica envio, limite de escolhas, prefill, links
+é bloqueada. O teste verifica ausência de texto livre, escolha principal e
+secundária, exclusividade de `Sem preferência`, modalidades canônicas, prefill, links
 expirados, gerar/revogar convites, revisão, conflito e recuperação de erro.
 
 Inicie o Vite com substituições explícitas, nunca com a configuração de produção:

@@ -15,13 +15,19 @@ Deno.test("coach match admin gate runs before creating a privileged client", asy
   }
 });
 
-Deno.test("admin load returns separate latest and published versions from one RPC", async () => {
+Deno.test("admin load defaults legacy clients to v1 and selects v2 only by query", async () => {
   const data = { coach: { id: COACH_ID }, latest: { status: "pending" }, published: { status: "approved" }, invites: [] };
   const deps = rpcMock(data);
-  const response = await handleCoachMatchAdmin(new Request(URL), { ...deps, requireAdmin });
-  equal(response.status, 200);
-  equal(await response.json(), { data });
-  equal(deps.calls, [{ name: "get_assessment_coach_match_admin", args: { p_coach_id: COACH_ID } }]);
+  const legacyResponse = await handleCoachMatchAdmin(new Request(URL), { ...deps, requireAdmin });
+  const v2Response = await handleCoachMatchAdmin(new Request(`${URL}?profile_version=2`), { ...deps, requireAdmin });
+  equal(legacyResponse.status, 200);
+  equal(v2Response.status, 200);
+  equal(await legacyResponse.json(), { data });
+  equal(await v2Response.json(), { data });
+  equal(deps.calls, [
+    { name: "get_assessment_coach_match_admin", args: { p_coach_id: COACH_ID } },
+    { name: "get_assessment_coach_match_admin_v2", args: { p_coach_id: COACH_ID } },
+  ]);
 });
 
 Deno.test("admin invite returns token only to caller and passes admin identity and digest to atomic RPC", async () => {
@@ -40,13 +46,15 @@ Deno.test("admin invite returns token only to caller and passes admin identity a
   assert(Date.parse(data.expires_at) > Date.now() + 29 * 86_400_000);
 });
 
-Deno.test("admin revoke and review use only match RPCs with authenticated reviewer identity", async () => {
+Deno.test("admin keeps revoke common and dispatches review by explicit profile version", async () => {
   const deps = rpcMock({ status: "approved" });
   equal((await handleCoachMatchAdmin(post({ invite_id: RECORD_ID }, `${URL}/revoke`), { ...deps, requireAdmin })).status, 200);
   equal((await handleCoachMatchAdmin(post({ submission_id: RECORD_ID, decision: "approved", reviewed_by: "forged" }, `${URL}/review`), { ...deps, requireAdmin })).status, 200);
+  equal((await handleCoachMatchAdmin(post({ submission_id: RECORD_ID, decision: "approved", reviewed_by: "forged" }, `${URL}/review?profile_version=2`), { ...deps, requireAdmin })).status, 200);
   equal(deps.calls, [
     { name: "revoke_assessment_coach_match_invite", args: { p_coach_id: COACH_ID, p_invite_id: RECORD_ID } },
     { name: "review_assessment_coach_match_submission", args: { p_coach_id: COACH_ID, p_submission_id: RECORD_ID, p_decision: "approved", p_reviewed_by: ADMIN_ID } },
+    { name: "review_assessment_coach_match_submission_v2", args: { p_coach_id: COACH_ID, p_submission_id: RECORD_ID, p_decision: "approved", p_reviewed_by: ADMIN_ID } },
   ]);
 });
 
@@ -65,11 +73,13 @@ Deno.test("admin rejects invalid IDs, method, action, payload before RPC", async
   const requests: [Request, number][] = [
     [new Request(URL.replace(COACH_ID, "invalid")), 400],
     [new Request(`${URL}/invite`), 405],
+    [new Request(`${URL}?profile_version=1`), 400],
     [post({}, `${URL}/delete`), 404],
     [post(null, `${URL}/invite`), 400],
     [post({ invite_id: "invalid" }, `${URL}/revoke`), 400],
     [post({ submission_id: RECORD_ID, decision: "pending" }, `${URL}/review`), 400],
     [post({ submission_id: RECORD_ID, decision: ["approved"] }, `${URL}/review`), 400],
+    [post({ submission_id: RECORD_ID, decision: "approved" }, `${URL}/review?profile_version=3`), 400],
     [post({ huge: "x".repeat(9000) }, `${URL}/review`), 413],
   ];
   for (const [request, status] of requests) equal((await handleCoachMatchAdmin(request, { ...deps, requireAdmin })).status, status);
