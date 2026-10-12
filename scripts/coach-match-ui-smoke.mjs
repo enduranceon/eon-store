@@ -19,10 +19,12 @@ const browser = await chromium.launch({
 const token = 'A'.repeat(43);
 const coachId = '11111111-1111-4111-8111-111111111111';
 const answers = {
-  version: 1, focus_goals: ['start', 'routine'], focus_levels: ['beginner'],
-  service_formats: ['florianopolis', 'online'], communication_style: 'balanced',
-  approach: 'Escuto a rotina do aluno e ajusto o plano conforme sua evolução.',
-  experience: 'Experiência fictícia para o teste local.',
+  version: 2, service_formats: ['florianopolis', 'online'],
+  focus_goals: { primary: 'performance', secondary: 'health' },
+  focus_levels: { primary: 'intermediate', secondary: 'beginner' },
+  communication_style: { primary: 'balanced', secondary: 'close' },
+  age_groups: { primary: 'age_31_50', secondary: 'up_to_30' },
+  gender_preference: { primary: 'no_preference', secondary: null },
 };
 const submittedAt = new Date().toISOString();
 const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
@@ -61,27 +63,36 @@ async function makeContext(viewport, admin = false) {
     if (url.pathname === '/functions/v1/coach-match-form') {
       const body = route.request().postDataJSON();
       assert.equal(body.token, token);
+      assert.equal(body.profile_version, 2);
       if (loadFailure) return json(route, { error: 'Este link expirou ou foi revogado.' }, 410);
-      if (body.action === 'load') return json(route, { data: { coach: { name: 'Coach Teste' }, latest, expires_at: expiresAt } });
+      if (body.action === 'load') return json(route, { data: { coach: {
+        name: 'Coach Teste', modalities: [{ id: 'corrida', name: 'Corrida' }, { id: 'triathlon', name: 'Triathlon' }],
+      }, latest, expires_at: expiresAt } });
       assert.equal(body.action, 'submit');
-      assert.deepEqual(body.answers.focus_goals, ['start', 'evolve']);
+      assert.deepEqual(body.answers, answers);
       latest = { ...submission('pending'), answers: body.answers };
       return json(route, { data: { received: true, id: 'latest', submitted_at: submittedAt } });
     }
     const path = `/functions/v1/coach-match-admin/coach-match/${coachId}`;
     if (url.pathname === path) {
+      assert.equal(url.search, '?profile_version=2');
       if (snapshotFailure) return json(route, { error: 'Falha de consulta simulada' }, 500);
-      return json(route, { data: { coach: { id: coachId, name: 'Coach Teste', active: true }, latest, published, invites, server_time: new Date().toISOString() } });
+      return json(route, { data: { coach: { id: coachId, name: 'Coach Teste', active: true,
+        modalities: [{ id: 'corrida', name: 'Corrida' }, { id: 'triathlon', name: 'Triathlon' }] },
+      latest, published, invites, server_time: new Date().toISOString() } });
     }
     if (url.pathname === `${path}/invite`) {
+      assert.equal(url.search, '');
       invites = [{ id: 'invite-test', expires_at: expiresAt, revoked_at: null }];
       return json(route, { data: { id: 'invite-test', token, expires_at: expiresAt } });
     }
     if (url.pathname === `${path}/revoke`) {
+      assert.equal(url.search, '');
       invites = [];
       return json(route, { data: { revoked: true } });
     }
     if (url.pathname === `${path}/review`) {
+      assert.equal(url.search, '?profile_version=2');
       if (conflict) { latest = submission('pending', 'concurrent'); return json(route, { error: 'Esta resposta foi substituída. Atualize e confira a nova versão.' }, 409); }
       const body = route.request().postDataJSON();
       assert.equal(body.submission_id, latest.id);
@@ -113,24 +124,35 @@ async function publicFlow(viewport, name) {
   const page = await context.newPage();
   await page.goto(`${base.origin}/match-coach#token=${token}`);
   await page.getByRole('heading', { name: 'Olá, Coach.' }).waitFor();
+  await page.getByText('Modalidades do seu cadastro').waitFor();
+  await page.getByText('Corrida', { exact: true }).waitFor();
+  assert.equal(await page.locator('textarea').count(), 0, `${name}: v2 não deve ter campos de texto livre`);
   await shot(page, `${name}-form-empty`);
-  await page.getByLabel('Florianópolis, com a rotina presencial da EON').check();
-  await page.getByLabel('Começar com orientação', { exact: true }).check();
-  await page.getByLabel('Evoluir ritmo, distância ou técnica').check();
-  await page.getByLabel('Preparar uma prova-alvo').click();
-  await page.getByRole('alert').filter({ hasText: 'Escolha no máximo duas' }).waitFor();
-  assert.equal(await page.getByLabel('Preparar uma prova-alvo').isChecked(), false);
-  await page.getByLabel('Quem está começando').check();
-  await page.getByLabel('Um equilíbrio entre orientação e autonomia').check();
-  await page.getByLabel('Como você conduz o acompanhamento?').fill(answers.approach);
-  await page.getByRole('button', { name: 'Enviar para revisão' }).click();
+  await page.getByLabel('Florianópolis', { exact: true }).check();
+  await page.getByLabel('Online', { exact: true }).check();
+  await page.locator('#focus-goals-primary').selectOption('performance');
+  await page.locator('#focus-goals-secondary').selectOption('health');
+  await page.locator('#focus-levels-primary').selectOption('intermediate');
+  await page.locator('#focus-levels-secondary').selectOption('beginner');
+  await page.locator('#communication-style-primary').selectOption('balanced');
+  await page.locator('#communication-style-secondary').selectOption('close');
+  await page.locator('#age-groups-primary').selectOption('no_preference');
+  assert.equal(await page.locator('#age-groups-secondary').isDisabled(), true);
+  await page.locator('#age-groups-primary').selectOption('age_31_50');
+  await page.locator('#age-groups-secondary').selectOption('up_to_30');
+  await page.locator('#gender-preference-primary').selectOption('no_preference');
+  assert.equal(await page.locator('#gender-preference-secondary').isDisabled(), true);
+  await page.getByRole('button', { name: 'Enviar para revisão ↗' }).click();
   await page.getByRole('heading', { name: 'Obrigado, Coach.' }).waitFor();
   await shot(page, `${name}-form-success`);
   for (const status of ['pending', 'approved', 'rejected']) {
     latest = submission(status);
     await page.reload();
     await page.getByRole('heading', { name: 'Olá, Coach.' }).waitFor();
-    assert.equal(await page.getByLabel('Como você conduz o acompanhamento?').inputValue(), answers.approach);
+    assert.equal(await page.locator('#focus-goals-primary').inputValue(), answers.focus_goals.primary);
+    assert.equal(await page.locator('#focus-goals-secondary').inputValue(), answers.focus_goals.secondary);
+    assert.equal(await page.locator('#gender-preference-primary').inputValue(), 'no_preference');
+    assert.equal(await page.locator('#gender-preference-secondary').isDisabled(), true);
     await shot(page, `${name}-form-${status}`);
   }
   loadFailure = true;
@@ -138,7 +160,7 @@ async function publicFlow(viewport, name) {
   await page.getByRole('alert').filter({ hasText: 'expirou ou foi revogado' }).waitFor();
   await shot(page, `${name}-form-expired`);
   loadFailure = false;
-  checks.push(`${name}: formulário, limite de escolhas, envio, prefill pending/approved/rejected e link expirado`);
+  checks.push(`${name}: formulário v2 sem texto livre, prioridades, sem preferência, envio, prefill e link expirado`);
   await context.close();
 }
 async function adminFlow(viewport, name) {
@@ -157,26 +179,26 @@ async function adminFlow(viewport, name) {
   await page.getByRole('button', { name: 'Revogar', exact: true }).click();
   await page.getByText('Link revogado.', { exact: true }).waitFor();
   assert.equal(await page.getByLabel('Link individual do formulário').count(), 0);
-  await page.getByRole('button', { name: 'Não publicar esta versão' }).click();
+  await page.getByRole('button', { name: 'Não usar esta versão' }).click();
   await page.getByText('Nenhuma resposta pendente.').waitFor();
   assert.equal(published.id, 'previous-approved');
   latest = submission('pending', 'to-approve');
   await page.getByRole('button', { name: 'Atualizar respostas' }).click();
-  await page.getByRole('button', { name: 'Aprovar para o site' }).click();
+  await page.getByRole('button', { name: 'Aprovar para o match' }).click();
   await page.getByText('Nenhuma resposta pendente.').waitFor();
   assert.equal(published.id, 'to-approve');
   await shot(page, `${name}-admin-approved`);
   latest = submission('pending', 'stale');
   await page.getByRole('button', { name: 'Atualizar respostas' }).click();
   conflict = true;
-  await page.getByRole('button', { name: 'Aprovar para o site' }).click();
+  await page.getByRole('button', { name: 'Aprovar para o match' }).click();
   await page.getByRole('alert').filter({ hasText: 'substituída' }).waitFor();
   assert.equal(published.id, 'to-approve');
   conflict = false;
   snapshotFailure = true;
   await page.getByRole('button', { name: 'Atualizar respostas' }).click();
   await page.getByRole('alert').filter({ hasText: 'Falha de consulta simulada' }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Aprovar para o site' }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Aprovar para o match' }).count(), 0);
   await shot(page, `${name}-admin-error`);
   snapshotFailure = false;
   await page.getByRole('button', { name: 'Atualizar formulário' }).click();

@@ -11,13 +11,20 @@ WITH expected_tables(name) AS (
     ON relation.relnamespace = namespace.oid AND relation.relname = expected.name
 ), expected_rpcs(signature) AS (
   VALUES ('public.coach_match_answers_valid(jsonb)'),
+    ('public.coach_match_answers_valid_v1(jsonb)'),
+    ('public.coach_match_answers_valid_v2(jsonb)'),
     ('public.get_assessment_coach_match_admin(uuid)'),
+    ('public.get_assessment_coach_match_admin_v2(uuid)'),
     ('public.issue_assessment_coach_match_invite(uuid,text,timestamptz,uuid)'),
     ('public.revoke_assessment_coach_match_invite(uuid,uuid)'),
     ('public.load_assessment_coach_match_form(text)'),
+    ('public.load_assessment_coach_match_form_v2(text)'),
     ('public.submit_assessment_coach_match_answers(text,jsonb)'),
+    ('public.submit_assessment_coach_match_answers_v2(text,jsonb)'),
     ('public.review_assessment_coach_match_submission(uuid,uuid,text,uuid)'),
-    ('public.list_public_coach_match_profiles()')
+    ('public.review_assessment_coach_match_submission_v2(uuid,uuid,text,uuid)'),
+    ('public.list_public_coach_match_profiles()'),
+    ('public.list_approved_coach_match_profiles_v2()')
 ), match_rpcs AS (
   SELECT expected.signature, proc.oid, proc.prosecdef
   FROM expected_rpcs AS expected
@@ -27,6 +34,11 @@ SELECT 'coach_match_readback_ok' AS status
 WHERE EXISTS (
   SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '20261011204104'
 )
+AND EXISTS (
+  SELECT 1 FROM supabase_migrations.schema_migrations WHERE version = '20261012191714'
+)
+AND has_table_privilege('service_role', 'public.assessment_coaches', 'SELECT')
+AND has_table_privilege('service_role', 'public.assessment_modalities', 'SELECT')
 AND (SELECT count(*) = 3 FROM match_tables WHERE oid IS NOT NULL)
 AND NOT EXISTS (
   SELECT 1 FROM match_tables
@@ -38,7 +50,16 @@ AND NOT EXISTS (
     OR NOT has_table_privilege('service_role', oid, 'INSERT')
     OR NOT has_table_privilege('service_role', oid, 'UPDATE')
 )
-AND (SELECT count(*) = 8 FROM match_rpcs WHERE oid IS NOT NULL)
+AND (
+  SELECT count(*) = 2
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'assessment_coach_match_state'
+    AND column_name IN ('latest_v2_submission_id', 'published_v2_submission_id')
+)
+AND to_regclass('public.coach_match_one_pending_version_idx') IS NOT NULL
+AND to_regclass('public.coach_match_one_pending_idx') IS NULL
+AND (SELECT count(*) = 15 FROM match_rpcs WHERE oid IS NOT NULL)
 AND NOT EXISTS (
   SELECT 1 FROM match_rpcs
   WHERE oid IS NULL OR prosecdef

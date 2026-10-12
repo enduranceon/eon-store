@@ -125,9 +125,12 @@ try {
     SELECT inet_server_addr()::text AS address, inet_server_port() AS port,
       current_database() AS database, current_user AS username,
       EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations
-        WHERE version = '20261011204104') AS match_migration
+        WHERE version = '20261011204104') AS match_migration,
+      EXISTS (SELECT 1 FROM supabase_migrations.schema_migrations
+        WHERE version = '20261012191714') AS match_v2_migration
   `)).rows[0];
-  ensure(identity.database === 'postgres' && identity.username === 'postgres' && identity.match_migration === true,
+  ensure(identity.database === 'postgres' && identity.username === 'postgres' && identity.match_migration === true &&
+    identity.match_v2_migration === true,
     'database identity or recorded match migration does not match the local fixture target');
   // This exact native stack's localhost TCP gateway connects to Postgres over a
   // Unix socket, for which PostgreSQL deliberately reports both fields as null.
@@ -207,8 +210,12 @@ try {
   const admin = await newUser('admin');
   const ordinary = await newUser('ordinary');
   await db.query('INSERT INTO public.app_admins(user_id, created_by) VALUES ($1, NULL)', [admin.id]);
-  await db.query(`INSERT INTO public.assessment_coaches(id,name,email,role,active,public_visible)
-    VALUES($1,$2,$3,'pleno',true,true)`, [coachId, coachName, `match-coach-${runId}@example.test`]);
+  const modalityId = (await db.query(`SELECT id FROM public.assessment_modalities
+    WHERE active IS TRUE ORDER BY name,id LIMIT 1`)).rows[0]?.id;
+  ensure(UUID.test(modalityId), 'local fixture has no active canonical modality');
+  await db.query(`INSERT INTO public.assessment_coaches(id,name,email,role,active,public_visible,modality_ids)
+    VALUES($1,$2,$3,'pleno',true,true,ARRAY[$4::uuid])`,
+  [coachId, coachName, `match-coach-${runId}@example.test`, modalityId]);
   for (const [label, user, expected] of [['admin', admin, true], ['ordinary', ordinary, false]]) {
     const result = expect(await request('/rest/v1/rpc/is_app_admin', {
       method: 'POST', bearer: user.token, body: {},
@@ -218,19 +225,23 @@ try {
   pass('real local Auth login and administrator allowlist separation');
 
   const adminPath = `/functions/v1/coach-match-admin/coach-match/${coachId}`;
+  const adminV2Path = `${adminPath}?profile_version=2`;
   const formPath = '/functions/v1/coach-match-form';
   const publicPath = '/functions/v1/public-coach-match';
   const adminOptions = { bearer: admin.token };
   const answers = {
-    version: 1, focus_goals: ['start', 'evolve'], focus_levels: ['beginner', 'regular'],
-    service_formats: ['florianopolis', 'online'], communication_style: 'close',
-    approach: 'Acompanhamento ficticio respeitando cada rotina individual do atleta.',
-    experience: 'Perfil sintetico exclusivo para homologacao local por HTTP.',
+    version: 2, service_formats: ['florianopolis', 'online'],
+    focus_goals: { primary: 'performance', secondary: 'health' },
+    focus_levels: { primary: 'intermediate', secondary: 'beginner' },
+    communication_style: { primary: 'balanced', secondary: 'close' },
+    age_groups: { primary: 'age_31_50', secondary: 'up_to_30' },
+    gender_preference: { primary: 'no_preference', secondary: null },
   };
-  const revisedAnswers = { ...answers, communication_style: 'autonomy',
-    approach: 'Atualizacao ficticia com autonomia, revisada apenas na homologacao local.' };
+  const revisedAnswers = { ...answers,
+    communication_style: { primary: 'autonomy', secondary: 'balanced' } };
+  const formBody = (action, token, extra = {}) => ({ action, token, profile_version: 2, ...extra });
   async function adminSnapshot() {
-    const snapshot = await data(adminPath, adminOptions, 'admin snapshot');
+    const snapshot = await data(adminV2Path, adminOptions, 'admin snapshot');
     equal(snapshot.coach?.id, coachId, 'admin snapshot returned an unexpected coach');
     ensure(Array.isArray(snapshot.invites), 'admin snapshot missing invites');
     for (const invite of snapshot.invites) {
@@ -246,7 +257,6 @@ try {
     ensure(Array.isArray(body?.data), 'public profile catalog is not an array');
     for (const profile of body.data) {
       keys(profile, ['coach_id', 'answers', 'reviewed_at'], 'public profile');
-      keys(profile.answers, Object.keys(answers), 'public answers');
     }
     const matches = body.data.filter(row => row.coach_id === coachId);
     ensure(matches.length <= 1, 'public catalog has duplicate synthetic coach profiles');
@@ -255,9 +265,9 @@ try {
 
   stage = 'admin authorization';
   for (const [label, bearer] of [['anonymous', undefined], ['non-admin', ordinary.token]]) {
-    expect(await request(adminPath, { bearer }), [401, 403], `${label} admin read denial`);
+    expect(await request(adminV2Path, { bearer }), [401, 403], `${label} admin read denial`);
     expect(await request(`${adminPath}/invite`, { method: 'POST', bearer, body: {} }), [401, 403], `${label} invite denial`);
-    expect(await request(`${adminPath}/review`, { method: 'POST', bearer,
+    expect(await request(`${adminPath}/review?profile_version=2`, { method: 'POST', bearer,
       body: { submission_id: randomUUID(), decision: 'approved' } }), [401, 403], `${label} review denial`);
   }
   const empty = await adminSnapshot();
@@ -273,15 +283,27 @@ try {
   const stored = (await db.query(`SELECT token_hash,created_by FROM public.assessment_coach_match_invites
     WHERE id=$1 AND coach_id=$2`, [invite.id, coachId])).rows[0];
   ensure(stored?.token_hash === hashed && stored.created_by === admin.id, 'stored invitation digest or issuer mismatch');
-  const loaded = await data(formPath, { method: 'POST', body: { action: 'load', token: invite.token } }, 'load invitation');
+  const legacyLoaded = await data(formPath, {
+    method: 'POST', body: { action: 'load', token: invite.token },
+  }, 'load invitation through legacy default');
+  equal(legacyLoaded.latest, null, 'legacy default unexpectedly selected the v2 profile');
+  const loaded = await data(formPath, {
+    method: 'POST', body: formBody('load', invite.token),
+  }, 'load invitation');
   keys(loaded, ['coach', 'latest', 'expires_at'], 'public form load');
-  keys(loaded.coach, ['name'], 'public form coach');
+  keys(loaded.coach, ['name', 'modalities'], 'public form coach');
   equal(loaded.coach.name, coachName, 'public form coach name mismatch');
+  ensure(Array.isArray(loaded.coach.modalities) && loaded.coach.modalities.some(row => row.id === modalityId),
+    'public form is missing canonical coach modalities');
   equal(loaded.latest, null, 'fresh form unexpectedly contains prior answers');
-  const submitted = await data(formPath, { method: 'POST', body: { action: 'submit', token: invite.token, answers } }, 'submit first answers');
+  const submitted = await data(formPath, {
+    method: 'POST', body: formBody('submit', invite.token, { answers }),
+  }, 'submit first answers');
   ensure(submitted?.received === true && UUID.test(submitted.id) && Number.isFinite(Date.parse(submitted.submitted_at)),
     'first submission acknowledgement invalid');
-  expect(await request(formPath, { method: 'POST', body: { action: 'submit', token: invite.token, answers } }), 429,
+  expect(await request(formPath, {
+    method: 'POST', body: formBody('submit', invite.token, { answers }),
+  }), 429,
     'immediate resubmission rate limit');
   let snapshot = await adminSnapshot();
   ensure(snapshot.latest?.id === submitted.id && snapshot.latest.status === 'pending' && snapshot.published === null,
@@ -290,19 +312,22 @@ try {
   equal(await publicProfile(), null, 'pending answers leaked through public endpoint');
   pass('invitation hash, public form, pending submission and real 429 rate limit');
 
-  stage = 'approval and publication';
-  const approved = await data(`${adminPath}/review`, { ...adminOptions, method: 'POST',
+  stage = 'approval and private scoring profile';
+  const approved = await data(`${adminPath}/review?profile_version=2`, { ...adminOptions, method: 'POST',
     body: { submission_id: submitted.id, decision: 'approved' } }, 'approve first submission');
   ensure(approved?.id === submitted.id && approved.status === 'approved', 'approval acknowledgement mismatch');
   snapshot = await adminSnapshot();
   ensure(snapshot.latest?.status === 'approved' && snapshot.published?.id === submitted.id &&
     snapshot.published.reviewed_by === admin.id, 'published snapshot or reviewer mismatch');
-  const firstPublished = await publicProfile();
-  ensure(firstPublished !== null, 'approved profile missing from public endpoint');
-  equal(firstPublished.answers, answers, 'public approved answers mismatch');
-  const prefill = await data(formPath, { method: 'POST', body: { action: 'load', token: invite.token } }, 'load saved answers');
+  const rawApproved = (await db.query(`SELECT answers FROM public.list_approved_coach_match_profiles_v2()
+    WHERE coach_id=$1`, [coachId])).rows[0];
+  equal(rawApproved?.answers, answers, 'internal approved v2 answers mismatch');
+  equal(await publicProfile(), null, 'public GET exposed raw v2 demographic affinities');
+  const prefill = await data(formPath, {
+    method: 'POST', body: formBody('load', invite.token),
+  }, 'load saved answers');
   equal(prefill.latest?.answers, answers, 'public form does not prefill submitted answers');
-  pass('admin approval publishes only approved fields and form prefills saved answers');
+  pass('admin approval keeps v2 private for server-side scoring and form prefills saved answers');
 
   stage = 'direct browser table and RPC authorization';
   const deniedCodes = new Set(['42501', 'PGRST202', 'PGRST205']);
@@ -312,15 +337,23 @@ try {
   }
   const rpcInputs = {
     coach_match_answers_valid: { p_answers: answers },
+    coach_match_answers_valid_v1: { p_answers: answers },
+    coach_match_answers_valid_v2: { p_answers: answers },
     get_assessment_coach_match_admin: { p_coach_id: coachId },
+    get_assessment_coach_match_admin_v2: { p_coach_id: coachId },
     issue_assessment_coach_match_invite: { p_coach_id: coachId, p_token_hash: randomBytes(32).toString('hex'),
       p_expires_at: new Date(Date.now() + 86400000).toISOString(), p_created_by: admin.id },
     revoke_assessment_coach_match_invite: { p_coach_id: coachId, p_invite_id: invite.id },
     load_assessment_coach_match_form: { p_token_hash: hashed },
+    load_assessment_coach_match_form_v2: { p_token_hash: hashed },
     submit_assessment_coach_match_answers: { p_token_hash: hashed, p_answers: answers },
+    submit_assessment_coach_match_answers_v2: { p_token_hash: hashed, p_answers: answers },
     review_assessment_coach_match_submission: { p_coach_id: coachId, p_submission_id: submitted.id,
       p_decision: 'rejected', p_reviewed_by: admin.id },
+    review_assessment_coach_match_submission_v2: { p_coach_id: coachId, p_submission_id: submitted.id,
+      p_decision: 'rejected', p_reviewed_by: admin.id },
     list_public_coach_match_profiles: {},
+    list_approved_coach_match_profiles_v2: {},
   };
   const inserts = {
     assessment_coach_match_state: { coach_id: coachId },
@@ -347,8 +380,8 @@ try {
     (SELECT count(*)::int FROM public.assessment_coach_match_submissions WHERE coach_id=$1) AS submissions,
     (SELECT count(*)::int FROM public.assessment_coach_match_invites WHERE coach_id=$1) AS invites`, [coachId])).rows[0];
   equal(counts, { submissions: 1, invites: 1 }, 'denied direct requests changed fixture rows');
-  equal(await publicProfile(), firstPublished, 'denied direct requests changed publication');
-  pass('all three tables and eight RPCs deny direct anon/authenticated access, including admin');
+  equal(await publicProfile(), null, 'denied direct requests exposed a v2 public profile');
+  pass('all three tables and fifteen RPCs deny direct anon/authenticated access, including admin');
 
   stage = 'second submission after the real cooldown';
   const waitMs = Math.max(0, Date.parse(submitted.submitted_at) + 61500 - Date.now());
@@ -358,41 +391,48 @@ try {
     await delay(waitMs);
   }
   const second = await data(formPath, { method: 'POST', body: {
-    action: 'submit', token: invite.token, answers: revisedAnswers,
+    ...formBody('submit', invite.token, { answers: revisedAnswers }),
   } }, 'submit revised answers');
   ensure(second?.received === true && UUID.test(second.id) && second.id !== submitted.id, 'second submission acknowledgement invalid');
   snapshot = await adminSnapshot();
   ensure(snapshot.latest?.id === second.id && snapshot.latest.status === 'pending' && snapshot.published?.id === submitted.id,
     'new pending version displaced the approved version');
-  equal(await publicProfile(), firstPublished, 'pending update changed the public approved profile');
-  expect(await request(`${adminPath}/review`, { ...adminOptions, method: 'POST',
+  equal(await publicProfile(), null, 'pending update exposed a raw v2 public profile');
+  expect(await request(`${adminPath}/review?profile_version=2`, { ...adminOptions, method: 'POST',
     body: { submission_id: submitted.id, decision: 'approved' } }), 409, 'stale approval rejection');
-  const rejected = await data(`${adminPath}/review`, { ...adminOptions, method: 'POST',
+  const rejected = await data(`${adminPath}/review?profile_version=2`, { ...adminOptions, method: 'POST',
     body: { submission_id: second.id, decision: 'rejected' } }, 'reject revised answers');
   ensure(rejected?.id === second.id && rejected.status === 'rejected', 'rejection acknowledgement mismatch');
   snapshot = await adminSnapshot();
   ensure(snapshot.latest?.id === second.id && snapshot.latest.status === 'rejected' && snapshot.published?.id === submitted.id,
     'rejecting the update displaced the approved version');
-  equal(await publicProfile(), firstPublished, 'rejected update changed the public profile');
+  equal(await publicProfile(), null, 'rejected update exposed a raw v2 public profile');
   pass('resubmission and rejection preserve prior approval; stale approval returns 409');
 
   stage = 'invitation revocation';
   const revoked = await data(`${adminPath}/revoke`, { ...adminOptions, method: 'POST',
     body: { invite_id: invite.id } }, 'revoke invitation');
   equal(revoked?.revoked, true, 'revocation acknowledgement mismatch');
-  expect(await request(formPath, { method: 'POST', body: { action: 'load', token: invite.token } }), 410, 'revoked invitation load');
-  expect(await request(formPath, { method: 'POST', body: { action: 'submit', token: invite.token, answers } }), 410, 'revoked invitation submit');
-  equal(await publicProfile(), firstPublished, 'revocation changed the approved public profile');
+  expect(await request(formPath, {
+    method: 'POST', body: formBody('load', invite.token),
+  }), 410, 'revoked invitation load');
+  expect(await request(formPath, {
+    method: 'POST', body: formBody('submit', invite.token, { answers }),
+  }), 410, 'revoked invitation submit');
+  equal(await publicProfile(), null, 'revocation exposed a raw v2 public profile');
   snapshot = await adminSnapshot();
   ensure(snapshot.invites.some(row => row.id === invite.id && row.revoked_at), 'admin snapshot does not show revocation');
   pass('revocation invalidates both load and submit while preserving publication');
 
   stage = 'public visibility';
   await db.query('UPDATE public.assessment_coaches SET public_visible=false WHERE id=$1', [coachId]);
-  equal(await publicProfile(), null, 'hidden synthetic coach remains publicly listed');
+  equal((await db.query(`SELECT count(*)::int AS count FROM public.list_approved_coach_match_profiles_v2()
+    WHERE coach_id=$1`, [coachId])).rows[0].count, 0, 'hidden synthetic coach remains in internal matcher input');
   await db.query('UPDATE public.assessment_coaches SET public_visible=true WHERE id=$1', [coachId]);
-  equal(await publicProfile(), firstPublished, 'restoring synthetic visibility lost the approved profile');
-  pass('public catalog honors coach visibility');
+  equal((await db.query(`SELECT count(*)::int AS count FROM public.list_approved_coach_match_profiles_v2()
+    WHERE coach_id=$1`, [coachId])).rows[0].count, 1, 'restoring synthetic visibility lost the approved v2 profile');
+  equal(await publicProfile(), null, 'restoring visibility exposed raw v2 data on public GET');
+  pass('internal matcher input honors coach visibility without exposing raw v2 data');
 } catch (error) {
   failure = error instanceof SafeFailure ? error.message : `${stage}: unexpected ${error?.name || 'Error'} (details redacted)`;
   console.error(`FAIL ${failure}`);

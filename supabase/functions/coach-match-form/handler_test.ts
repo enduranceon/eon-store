@@ -1,13 +1,16 @@
 import { handleCoachMatchForm } from "./handler.ts";
 import { coachMatchTokenHash, COACH_MATCH_TOKEN, newCoachMatchToken } from "../_shared/coach-match-token.ts";
-import { ANSWERS, assert, equal, post, rpcMock, TOKEN } from "./test-utils.ts";
+import { ANSWERS, assert, equal, LEGACY_ANSWERS, post, RECORD_ID, rpcMock, TOKEN } from "./test-utils.ts";
 
 Deno.test("coach form rejects malformed, missing and forged requests before database access", async () => {
   const deps = rpcMock();
   for (const body of [null, [], {}, { action: "load", token: "invalid" }, { action: "approve", token: TOKEN },
     { action: ["load"], token: TOKEN },
-    { action: "submit", token: TOKEN, answers: { ...ANSWERS, version: 2 } },
-    { action: "submit", token: TOKEN, answers: { ...ANSWERS, focus_goals: ["start", "start"] } }]) {
+    { action: "load", token: TOKEN, profile_version: 1 },
+    { action: "submit", token: TOKEN, answers: ANSWERS },
+    { action: "submit", token: TOKEN, profile_version: 2, answers: LEGACY_ANSWERS },
+    { action: "submit", token: TOKEN, profile_version: 2, answers: { ...ANSWERS,
+      focus_goals: { primary: "performance", secondary: "performance" } } }]) {
     equal((await handleCoachMatchForm(post(body), deps)).status, 400);
   }
   equal((await handleCoachMatchForm(new Request("https://example.test", { method: "POST", body: "{" }), deps)).status, 400);
@@ -36,33 +39,50 @@ Deno.test("coach form measures streamed UTF-8 bytes even with absent or misleadi
   }
 });
 
-Deno.test("coach form load uses only digest and the atomic load RPC", async () => {
-  const data = { coach: { name: "Coach de teste" }, latest: null, expires_at: "2026-11-01T12:00:00Z" };
+Deno.test("coach form load defaults legacy clients to v1 and selects v2 only explicitly", async () => {
+  const data = { coach: { name: "Coach de teste", modalities: [{ id: RECORD_ID, name: "Corrida" }] },
+    latest: null, expires_at: "2026-11-01T12:00:00Z" };
   const deps = rpcMock(data);
-  const response = await handleCoachMatchForm(post({ action: "load", token: TOKEN }), deps);
-  equal(response.status, 200);
-  equal(await response.json(), { data });
-  equal(deps.calls, [{ name: "load_assessment_coach_match_form", args: { p_token_hash: await coachMatchTokenHash(TOKEN) } }]);
-  equal(response.headers.get("cache-control"), "no-store");
-  equal(response.headers.get("referrer-policy"), "no-referrer");
+  const legacyResponse = await handleCoachMatchForm(post({ action: "load", token: TOKEN }), deps);
+  const v2Response = await handleCoachMatchForm(post({ action: "load", token: TOKEN, profile_version: 2 }), deps);
+  equal(legacyResponse.status, 200);
+  equal(v2Response.status, 200);
+  equal(await legacyResponse.json(), { data });
+  equal(await v2Response.json(), { data });
+  equal(deps.calls, [
+    { name: "load_assessment_coach_match_form", args: { p_token_hash: await coachMatchTokenHash(TOKEN) } },
+    { name: "load_assessment_coach_match_form_v2", args: { p_token_hash: await coachMatchTokenHash(TOKEN) } },
+  ]);
+  equal(v2Response.headers.get("cache-control"), "no-store");
+  equal(v2Response.headers.get("referrer-policy"), "no-referrer");
 });
 
-Deno.test("coach form submit strips injected status/coach and sends only validated answers to atomic RPC", async () => {
+Deno.test("coach form submit defaults legacy clients to v1 and sends explicit v2 to its atomic RPC", async () => {
   const data = { received: true, id: "test", submitted_at: "2026-10-12T12:00:00Z" };
   const deps = rpcMock(data);
-  const response = await handleCoachMatchForm(post({
-    action: "submit", token: TOKEN, coach_id: "forged", status: "approved",
-    answers: { ...ANSWERS, approach: `  ${ANSWERS.approach}  `, status: "approved", internal_note: "private" },
+  const legacyResponse = await handleCoachMatchForm(post({
+    action: "submit", token: TOKEN, answers: LEGACY_ANSWERS,
   }), deps);
-  equal(response.status, 200);
-  equal(await response.json(), { data });
-  equal(deps.calls, [{ name: "submit_assessment_coach_match_answers", args: { p_token_hash: await coachMatchTokenHash(TOKEN), p_answers: ANSWERS } }]);
+  const v2Response = await handleCoachMatchForm(post({
+    action: "submit", token: TOKEN, coach_id: "forged", status: "approved",
+    profile_version: 2, answers: ANSWERS,
+  }), deps);
+  equal(legacyResponse.status, 200);
+  equal(v2Response.status, 200);
+  equal(await legacyResponse.json(), { data });
+  equal(await v2Response.json(), { data });
+  equal(deps.calls, [
+    { name: "submit_assessment_coach_match_answers", args: { p_token_hash: await coachMatchTokenHash(TOKEN), p_answers: LEGACY_ANSWERS } },
+    { name: "submit_assessment_coach_match_answers_v2", args: { p_token_hash: await coachMatchTokenHash(TOKEN), p_answers: ANSWERS } },
+  ]);
 });
 
 Deno.test("coach form maps expired/revoked, rate-limited and database errors without leaking details", async () => {
   for (const [code, status] of [["PT410", 410], ["PT429", 429], ["PT400", 400], ["PT404", 404], ["42501", 500]] as const) {
     const deps = rpcMock(null, { code, message: "secret database information" });
-    const response = await handleCoachMatchForm(post({ action: "submit", token: TOKEN, answers: ANSWERS }), deps);
+    const response = await handleCoachMatchForm(post({
+      action: "submit", token: TOKEN, profile_version: 2, answers: ANSWERS,
+    }), deps);
     equal(response.status, status);
     assert(!(await response.text()).includes("secret"));
     equal(deps.calls.length, 1);
