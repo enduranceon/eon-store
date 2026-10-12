@@ -49,11 +49,13 @@ const StockOrderNewAdmin = lazy(() => import('@/pages/StockOrderNewAdmin'));
 const PublicOrderTracking = lazy(() => import('@/pages/PublicOrderTracking'));
 const PublicPlanEnrollment = lazy(() => import('@/pages/public/PublicPlanEnrollment'));
 const PublicModalityPlans = lazy(() => import('@/pages/public/PublicModalityPlans'));
+const CoachMatchForm = lazy(() => import('@/pages/public/CoachMatchForm'));
 
 // Assessoria
 const AssConfiguracoes = lazy(() => import('@/pages/assessment/Configuracoes'));
 const AssPlanos = lazy(() => import('@/pages/assessment/Planos'));
 const AssCoaches = lazy(() => import('@/pages/assessment/Coaches'));
+const AssCoachMatch = lazy(() => import('@/pages/assessment/CoachMatch'));
 const AssStudents = lazy(() => import('@/pages/assessment/Students'));
 const AssStudentDetail = lazy(() => import('@/pages/assessment/StudentDetail'));
 const AssContracts = lazy(() => import('@/pages/assessment/Contracts'));
@@ -115,6 +117,7 @@ export default function App() {
           <Route path="/assinar/:planId" element={<PublicPlanEnrollment />} />
           <Route path="/inscricao/:slug" element={<PublicEventRegistration />} />
           <Route path="/planos/:modalityId" element={<PublicModalityPlans />} />
+          <Route path="/match-coach" element={<CoachMatchForm />} />
 
           {/* Admin */}
           <Route path="/login" element={<Login />} />
@@ -172,6 +175,7 @@ export default function App() {
           <Route path="/assessoria/regua"         element={<Navigate to="/comunicacao/configuracoes" replace />} />
           <Route path="/assessoria/configuracoes" element={<AdminLayout><AssConfiguracoes /></AdminLayout>} />
           <Route path="/assessoria/coaches"       element={<AdminLayout><AssCoaches /></AdminLayout>} />
+          <Route path="/assessoria/coaches/:coachId/match" element={<AdminLayout><AssCoachMatch /></AdminLayout>} />
           <Route path="/assessoria/alunos"        element={<LegacyPersonRedirect fromAssessment />} />
           <Route path="/assessoria/alunos/:id"    element={<LegacyPersonRedirect fromAssessment />} />
           <Route path="/assessoria/contratos"     element={<AdminLayout><AssContracts /></AdminLayout>} />

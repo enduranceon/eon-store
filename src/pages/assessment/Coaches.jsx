@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Plus, Pencil, Search, UserCheck, Phone, Mail } from 'lucide-react';
+import { Plus, Pencil, Search, UserCheck, Phone, Mail, ClipboardList } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -219,7 +220,8 @@ export default function Coaches() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => open(c)} className="p-1.5 hover:bg-gray-100 rounded text-gray-500"><Pencil className="w-3.5 h-3.5" /></button>
+                      <Link to={`/assessoria/coaches/${c.id}/match`} aria-label={`Formulário de match de ${c.name}`} title="Formulário de match" className="inline-flex p-1.5 hover:bg-gray-100 rounded text-gray-500"><ClipboardList className="w-3.5 h-3.5" /></Link>
+                      <button onClick={() => open(c)} aria-label={`Editar ${c.name}`} className="p-1.5 hover:bg-gray-100 rounded text-gray-500"><Pencil className="w-3.5 h-3.5" /></button>
                     </td>
                   </tr>
                 );
