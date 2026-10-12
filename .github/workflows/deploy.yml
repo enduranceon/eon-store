@@ -20,6 +20,7 @@ jobs:
   migrations:
     name: Validate Supabase migrations
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       EON_CI_NETWORK: eon-match-ci-${{ github.run_id }}-${{ github.run_attempt }}
       EON_TEST_EPHEMERAL: '1'
@@ -33,7 +34,7 @@ jobs:
           version: 2.115.0
 
       - name: Test isolation guard
-        run: python3 -m unittest discover -s scripts/tests -p 'test_ci_supabase_isolation.py'
+        run: python3 -m unittest discover -s scripts/tests -p 'test_ci_supabase*.py'
 
       - name: Create isolated network before any migration replay
         shell: bash
@@ -47,40 +48,11 @@ jobs:
             and .[0].EnableIPv6 == false and .[0].Name == env.EON_CI_NETWORK
           ' >/dev/null
 
-      - name: Apply migrations to a clean local database
-        shell: bash
-        run: |
-          set -euo pipefail
-          supabase start --network-id "$EON_CI_NETWORK"
-          python3 scripts/tests/ci-supabase-isolation.py
-          docker exec supabase_db_bsiljrrodgtmtdilnuxr \
-            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
-            -c 'SELECT cron.alter_job(jobid, active := false) FROM cron.job;'
-          supabase db reset --local --no-seed --network-id "$EON_CI_NETWORK"
-          python3 scripts/tests/ci-supabase-isolation.py
-          docker exec supabase_db_bsiljrrodgtmtdilnuxr \
-            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
-            -c 'SELECT cron.alter_job(jobid, active := false) FROM cron.job;'
-          active_jobs="$(docker exec supabase_db_bsiljrrodgtmtdilnuxr \
-            psql -X -U postgres -d postgres -tA -v ON_ERROR_STOP=1 \
-            -c 'SELECT count(*) FROM cron.job WHERE active;')"
-          test "$active_jobs" = '0'
-
-      - name: Run database regression tests
-        run: supabase test db --local --network-id "$EON_CI_NETWORK"
-
-      - name: Verify concurrent communication actions
-        run: python3 scripts/tests/communication_case_concurrency.py
-        env:
-          EON_TEST_EPHEMERAL: '1'
-          PGHOST: 127.0.0.1
-          PGPORT: '54322'
-          PGDATABASE: postgres
-          PGUSER: postgres
-          PGPASSWORD: postgres
-
-      - name: Verify concurrent coach match actions
-        run: python3 scripts/tests/coach-match-concurrency.py
+      - name: Apply migrations and test isolated local database
+        # An internal Docker bridge has no published localhost ports. This
+        # wrapper supplies loopback-only connections to the verified internal
+        # containers; it does not give the containers an external route.
+        run: python3 scripts/tests/ci-supabase-loopback.py
         env:
           EON_TEST_EPHEMERAL: '1'
           PGHOST: 127.0.0.1

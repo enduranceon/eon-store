@@ -41,8 +41,8 @@ def validate_environment(environment: Mapping[str, str]) -> str:
     return name
 
 
-def validate_isolation(name: str, networks: Any, containers: Any) -> int:
-    """Validate already-decoded Docker JSON without performing any I/O."""
+def validate_network(name: str, networks: Any) -> dict:
+    """Validate the network before containers exist, without performing I/O."""
     require(bool(NETWORK_PATTERN.fullmatch(name)), "Unexpected CI network name")
     require(isinstance(networks, list) and len(networks) == 1, "Expected exactly one Docker network")
     network = networks[0]
@@ -53,6 +53,12 @@ def validate_isolation(name: str, networks: Any, containers: Any) -> int:
     require(network.get("EnableIPv6") is False, "IPv6 must be disabled for the isolated CI network")
     network_id = network.get("Id")
     require(isinstance(network_id, str) and bool(DOCKER_ID_PATTERN.fullmatch(network_id)), "Malformed Docker network ID")
+    return network
+
+
+def validate_isolation(name: str, networks: Any, containers: Any) -> int:
+    """Validate already-decoded Docker JSON without performing any I/O."""
+    network_id = validate_network(name, networks)["Id"]
     require(isinstance(containers, list) and bool(containers), "No Supabase containers were inspected")
     names: set[str] = set()
     identifiers: set[str] = set()

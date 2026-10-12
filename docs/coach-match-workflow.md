@@ -246,3 +246,34 @@ Essa proteção só pertence ao job de testes, não aos jobs de release. Seu par
 é coberto por testes sintéticos; a execução Docker completa será conferida no
 CI da PR. O teste HTTP local e os resultados de homologação acima continuam
 independentes dessa validação adicional.
+
+### Conexão local da CLI na rede interna
+
+Na primeira execução da PR #112, o build passou, mas o bootstrap da CLI Docker
+2.115.0 falhou ao conectar a `127.0.0.1:54322`. A rede interna não disponibiliza
+o mapeamento de portas esperado pela CLI. Não foi removido o `--internal` nem
+adicionada uma segunda rede com acesso externo para contornar a falha.
+
+O job usa `ci-supabase-loopback.py` para executar o roteiro fixo
+`ci-supabase-validation.sh`. Ele fornece somente as duas conexões locais
+necessárias à CLI: `127.0.0.1:54322` para o PostgreSQL descartável e
+`127.0.0.1:54321` para seu gateway. Os destinos são os IPs privados dos
+containers esperados, verificados na rede exclusiva da execução. Não aceita
+destinos, portas ou comandos arbitrários. Não encaminha chamadas para o
+Supabase hospedado.
+
+Os listeners só são criados depois de os containers existirem e estarem
+conectados à rede interna; isso preserva a checagem de portas da CLI antes do
+bootstrap. O destino é revalidado nas conexões, inclusive após o reset. Uma
+falha de verificação interrompe o roteiro. Ao terminar, o wrapper fecha as
+conexões e o workflow continua responsável por destruir o stack descartável e
+sua rede, inclusive em falhas. Os jobs de release e produção não são alterados.
+
+Referências da implementação:
+- [Docker: acesso do host a uma bridge interna](https://docs.docker.com/engine/network/port-publishing/#gateway-modes).
+- [Supabase CLI 2.115.0: bootstrap do banco](https://github.com/supabase/cli/blob/v2.115.0/apps/cli/src/legacy/shared/db-bootstrap/start-database.ts).
+- [Supabase CLI 2.115.0: checagens de saúde](https://github.com/supabase/cli/blob/v2.115.0/apps/cli/src/legacy/shared/db-bootstrap/health-check.ts).
+
+Essa correção continua sendo validação de CI, não liberação para produção.
+O ambiente hospedado, os dados financeiros e as migrações históricas
+permanecem fora do escopo de escrita desta etapa.
