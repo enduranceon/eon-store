@@ -15,6 +15,7 @@ const TONES = {
   amber: 'bg-amber-100 text-amber-800',
   blue: 'bg-blue-100 text-blue-700',
   violet: 'bg-violet-100 text-violet-700',
+  green: 'bg-green-100 text-green-700',
   gray: 'bg-gray-100 text-gray-600',
 };
 
@@ -49,6 +50,7 @@ function OrderBoardCard({ item, onOpen, onStep }) {
           <span className="text-xs font-bold text-gray-800 shrink-0">{formatCurrency(order.total)}</span>
         </div>
         <div className="flex flex-wrap gap-1">
+          {signals.isNew && <Tag tone="green">Novo</Tag>}
           <Tag tone={order.type === 'stock' ? 'blue' : 'violet'}>{order.campaignName || order.typeLabel}</Tag>
           {order.delivery_method === 'shipping' && <Tag>Frete</Tag>}
           {order.delivery_method === 'pickup' && <Tag>Retirada</Tag>}
