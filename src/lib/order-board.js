@@ -81,6 +81,8 @@ export function orderCardSignals(order, today) {
     daysInStage: Math.max(0, daysBetween(since, today) ?? 0),
     overdueDays: 0,
     unpaid: false,
+    // Pedido de hoje ou de ontem.
+    isNew: (daysBetween(localDate(order.created_date), today) ?? 99) <= 1,
   };
   if (['awaiting_charge', 'charge_sent'].includes(column)) {
     const late = daysBetween(localDate(order.due_date), today);
@@ -110,10 +112,14 @@ export function buildOrderBoard(orders, { today, showCancelled = false, delivere
     }
     buckets.get(column).push({ order, signals: orderCardSignals(order, today) });
   }
-  // Mais parado primeiro; entregues e cancelados, mais recentes primeiro.
+  // Pedido mais novo no topo; em Entregue, a entrega mais recente.
+  const time = value => Date.parse(value || '') || 0;
   for (const [id, items] of buckets) {
-    items.sort((a, b) => (['delivered', 'cancelled'].includes(id) ? -1 : 1) * (b.signals.daysInStage - a.signals.daysInStage)
-      || String(a.order.order_number || '').localeCompare(String(b.order.order_number || '')));
+    items.sort((a, b) => (id === 'delivered'
+      ? String(deliveredOn(b.order) || '').localeCompare(String(deliveredOn(a.order) || ''))
+      : 0)
+      || time(b.order.created_date) - time(a.order.created_date)
+      || String(b.order.order_number || '').localeCompare(String(a.order.order_number || '')));
   }
   const columns = ORDER_BOARD_COLUMNS
     .filter(column => showCancelled || column.id !== 'cancelled')

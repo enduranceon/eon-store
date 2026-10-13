@@ -54,12 +54,15 @@ test('days and flags are counted in São Paulo dates', () => {
   assert.equal(orderCardSignals(order({ payment_status: 'charge_sent', due_date: '2026-10-13' }), '2026-10-13').overdueDays, 0);
   assert.equal(orderCardSignals(order({ payment_status: 'charge_sent', delivery_status: 'separated' }), '2026-10-13').unpaid, true);
   assert.equal(orderCardSignals(order({ payment_status: 'paid', delivery_status: 'separated' }), '2026-10-13').unpaid, false);
+  // 01:00 UTC de 12/10 ainda é 11/10 em São Paulo: dois dias, não é mais novo.
+  assert.equal(orderCardSignals(order({ created_date: '2026-10-12T01:00:00Z' }), '2026-10-13').isNew, false);
+  assert.equal(orderCardSignals(order({ created_date: '2026-10-12T15:00:00Z' }), '2026-10-13').isNew, true);
 });
 
 test('the board hides old deliveries and cancelled orders unless asked', () => {
   const orders = [
-    order({ order_number: 'A', payment_status: 'paid', delivery_status: 'awaiting_delivery', status_changed_at: '2026-10-12T15:00:00Z' }),
-    order({ order_number: 'B', payment_status: 'paid', delivery_status: 'awaiting_delivery', status_changed_at: '2026-10-02T15:00:00Z' }),
+    order({ order_number: 'A', payment_status: 'paid', delivery_status: 'awaiting_delivery', created_date: '2026-06-01T15:00:00Z' }),
+    order({ order_number: 'B', payment_status: 'paid', delivery_status: 'awaiting_delivery', created_date: '2026-10-12T15:00:00Z' }),
     order({ order_number: 'C', payment_status: 'paid', delivery_status: 'delivered', delivery_date: '2026-10-11', total: 50 }),
     order({ order_number: 'D', payment_status: 'paid', delivery_status: 'delivered', delivery_date: '2026-08-01' }),
     order({ order_number: 'E', payment_status: 'cancelled', delivery_status: 'cancelled' }),
@@ -69,8 +72,9 @@ test('the board hides old deliveries and cancelled orders unless asked', () => {
   assert.equal(byId.cancelled, undefined);
   assert.equal(board.cancelled, 1);
   assert.equal(board.olderDelivered, 1);
-  // O mais parado vem primeiro.
+  // O pedido mais novo vem primeiro, com o selo de novo.
   assert.deepEqual(byId.to_separate.items.map(item => item.order.order_number), ['B', 'A']);
+  assert.deepEqual(byId.to_separate.items.map(item => item.signals.isNew), [true, false]);
   assert.equal(byId.to_separate.total, 200);
   assert.deepEqual(byId.delivered.items.map(item => item.order.order_number), ['C']);
   const withCancelled = buildOrderBoard(orders, { today: '2026-10-13', showCancelled: true });
