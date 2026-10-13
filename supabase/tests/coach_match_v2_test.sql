@@ -11,7 +11,7 @@ INSERT INTO public.assessment_coaches (
   id, name, email, role, active, public_visible, modality_ids
 ) VALUES (
   '97100000-0000-4000-a000-000000000011',
-  'Coach match v2 fictício',
+  'Coach Match V2 Fictício',
   'match-v2-coach@example.test',
   'pleno', true, true,
   ARRAY(SELECT id FROM public.assessment_modalities WHERE active IS TRUE ORDER BY name LIMIT 2)
@@ -102,7 +102,7 @@ INSERT INTO match_v2_results VALUES (
 );
 SELECT is(
   public.load_assessment_coach_match_form_v2(repeat('7',64))#>>'{coach,name}',
-  'Coach match v2 fictício', 'existing invitation loads the v2 form'
+  'Coach Match V2 Fictício', 'existing invitation loads the v2 form'
 );
 SELECT is(
   jsonb_array_length(public.load_assessment_coach_match_form_v2(repeat('7',64))#>'{coach,modalities}'),

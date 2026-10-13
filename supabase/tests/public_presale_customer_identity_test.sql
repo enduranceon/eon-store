@@ -33,14 +33,14 @@ INSERT INTO public.presale_customers (
 ) VALUES
   (
     '00000000-0000-4000-a000-000000000201',
-    'Cliente protegido por telefone',
+    'Cliente Protegido Por Telefone',
     '11999990001',
     'telefone@original.test',
     '2026-01-02 03:04:05+00'
   ),
   (
     '00000000-0000-4000-a000-000000000202',
-    'Cliente protegido por email',
+    'Cliente Protegido Por Email',
     '11999990002',
     'email@original.test',
     '2026-02-03 04:05:06+00'
@@ -162,7 +162,7 @@ SELECT is(
 SELECT is(
   (SELECT full_name FROM public.presale_customers
    WHERE id = '00000000-0000-4000-a000-000000000201'),
-  'Cliente protegido por telefone',
+  'Cliente Protegido Por Telefone',
   'phone match cannot overwrite the canonical name'
 );
 
@@ -183,7 +183,7 @@ SELECT ok(
 SELECT is(
   (SELECT full_name FROM public.presale_customers
    WHERE id = '00000000-0000-4000-a000-000000000202'),
-  'Cliente protegido por email',
+  'Cliente Protegido Por Email',
   'email match cannot overwrite the canonical name'
 );
 
