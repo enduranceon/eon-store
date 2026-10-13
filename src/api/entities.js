@@ -30,6 +30,7 @@ export const CommunicationRule         = createAdminRecordEntity('communication-
 // Módulo Assessoria
 export const AssessmentModality          = createAdminRecordEntity('modalities', 'assessment_modalities');
 export const AssessmentPlan              = createAdminRecordEntity('plans', 'assessment_plans');
+export const AssessmentPlanFamily        = createAdminRecordEntity('plan-families', 'assessment_plan_families');
 export const AssessmentPlanTransition    = createAdminRecordEntity('plan-transitions', 'assessment_plan_transitions');
 export const AssessmentCoach             = createAdminRecordEntity('coaches', 'assessment_coaches');
 export const AssessmentCoachSitePlan     = createAdminRecordEntity('coach-site-plans', 'assessment_coach_site_plans');

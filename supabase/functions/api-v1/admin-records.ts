@@ -334,6 +334,7 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       name: s(200, { nullable: true }),
       revenue_center_id: u({ nullable: true }),
       available_online: b(),
+      family_id: u({ nullable: true }),
     },
     defaultSort: "name",
     sortFields: [
@@ -345,6 +346,21 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       "created_at",
       "updated_at",
     ],
+    updatedColumn: "updated_at",
+    allowCreate: true,
+  },
+  // Grupo de durações do mesmo plano e o link do plano para WhatsApp. O
+  // segredo do link nasce no banco e não muda pela tela.
+  "plan-families": {
+    table: "assessment_plan_families",
+    fields: {
+      modality_id: u({ required: true, createOnly: true }),
+      name: s(120, { required: true }),
+      active: b(),
+      link_enabled: b(),
+    },
+    defaultSort: "name",
+    sortFields: ["id", "name", "modality_id", "active", "created_at", "updated_at"],
     updatedColumn: "updated_at",
     allowCreate: true,
   },

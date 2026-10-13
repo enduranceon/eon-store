@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Plus, Pencil, Check, BadgeDollarSign, Clock, Palette, Link2, Globe2 } from 'lucide-react';
+import { Plus, Pencil, Check, BadgeDollarSign, Clock, Palette, Link2, Globe2, Layers } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { AssessmentModality, AssessmentPlan, RevenueCenter } from '@/api/entities';
+import { AssessmentCoach, AssessmentModality, AssessmentPlan, AssessmentPlanFamily, RevenueCenter } from '@/api/entities';
+import { FamilyCreateModal, FamilyEditModal, PlanLinkModal } from '@/components/assessment/PlanFamilyDialogs';
+import { groupPlansByFamily } from '@/lib/plan-families';
 import { formatCurrency } from '@/lib/utils';
 import { defaultRevenueCenterId } from '@/lib/revenue-centers';
 import { usePageData } from '@/hooks/usePageData';
@@ -31,7 +33,7 @@ function autoPlanName(plan, modalities) {
 }
 
 async function loadPlansPage() {
-  const [modalities, plans, centers] = await Promise.all([
+  const [modalities, plans, centers, families, coaches] = await Promise.all([
     AssessmentModality.list('name').catch(error => {
       console.error('modalities:', error);
       return [];
@@ -44,8 +46,16 @@ async function loadPlansPage() {
       console.error('centers:', error);
       return [];
     }),
+    AssessmentPlanFamily.list('name').catch(error => {
+      console.error('plan families:', error);
+      return [];
+    }),
+    AssessmentCoach.list('name').catch(error => {
+      console.error('coaches:', error);
+      return [];
+    }),
   ]);
-  return { modalities, plans, centers };
+  return { modalities, plans, centers, families, coaches };
 }
 
 // ─── Card visual de plano ─────────────────────────────────────────────────────
@@ -133,35 +143,22 @@ function PlanCard({ plan, modality, center, modalities, onEdit, onToggle, onTogg
         >
           <Pencil className="w-3 h-3" /> Editar
         </button>
-        <button
-          onClick={() => {
-            if (!canSellOnline) return toast.error('Ative a venda online para copiar este link');
-            const url = `${window.location.origin}/assinar/${plan.id}`;
-            navigator.clipboard.writeText(url).then(() => toast.success('Link copiado!')).catch(() => {
-              prompt('Copie o link:', url);
-            });
-          }}
-          disabled={!canSellOnline}
-          className="flex-1 flex items-center justify-center gap-1.5 text-xs text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-lg py-1.5 transition-colors border border-transparent hover:border-green-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-500"
-        >
-          <Link2 className="w-3 h-3" /> Copiar link
-        </button>
       </div>
     </div>
   );
 }
 
 // ─── Modal criar/editar plano ─────────────────────────────────────────────────
-function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }) {
+function PlanModal({ open, onOpenChange, editing, modalities, centers, families, onSaved }) {
   const blank = {
-    name: '', modality_id: '', period_months: 1, price_monthly: '',
+    name: '', modality_id: '', family_id: '', period_months: 1, price_monthly: '',
     price_total: '', max_installments: 1, enrollment_fee: 0,
     revenue_center_id: defaultRevenueCenterId(centers, 'assessoria'),
     active: true, available_online: false,
   };
   const [form, setForm] = useState(() => {
     if (editing?.id) return { ...editing, period_months: getPlanMonths(editing) };
-    if (editing?.modality_id) return { ...blank, modality_id: editing.modality_id };
+    if (editing?.modality_id) return { ...blank, modality_id: editing.modality_id, family_id: editing.family_id || '' };
     return blank;
   });
 
@@ -216,6 +213,7 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
       revenue_center_id: form.revenue_center_id || null,
       active:            !!form.active,
       available_online:  !!form.active && !!form.available_online,
+      family_id:         form.family_id || null,
     };
     if (!payload.modality_id)                                   return toast.error('Selecione a modalidade');
     if (payload.price_monthly <= 0 || payload.price_total <= 0) return toast.error('Preencha mensalidade e total');
@@ -248,7 +246,7 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
             <Label>Modalidade *</Label>
             <div className="flex flex-wrap gap-2 mt-2">
               {modalities.filter(m => m.active !== false).map(m => (
-                <button key={m.id} type="button" onClick={() => f('modality_id', m.id)}
+                <button key={m.id} type="button" onClick={() => setForm(prev => ({ ...prev, modality_id: m.id, family_id: prev.modality_id === m.id ? prev.family_id : '' }))}
                   className={`px-3 py-1.5 rounded-lg border-2 text-sm font-medium capitalize transition-all ${
                     form.modality_id === m.id
                       ? 'border-blue-500 bg-blue-50 text-blue-700'
@@ -263,6 +261,21 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
               )}
             </div>
           </div>
+
+          {/* Grupo: as durações do mesmo plano ficam juntas e dividem o link */}
+          {form.modality_id && families.some(family => family.modality_id === form.modality_id) && (
+            <div>
+              <Label>Grupo do plano</Label>
+              <select className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={form.family_id || ''} onChange={e => f('family_id', e.target.value)}>
+                <option value="">Sem grupo</option>
+                {families.filter(family => family.modality_id === form.modality_id).map(family => (
+                  <option key={family.id} value={family.id}>{family.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">Mensal, trimestral e semestral do mesmo plano ficam no mesmo grupo.</p>
+            </div>
+          )}
 
           {/* Nome */}
           <div>
@@ -425,22 +438,26 @@ function PlanModal({ open, onOpenChange, editing, modalities, centers, onSaved }
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function Planos() {
   const {
-    data: { modalities, plans, centers },
+    data: { modalities, plans, centers, families, coaches },
     loading,
     refresh,
   } = usePageData({
-    key: 'assessment-plans:list',
+    key: 'assessment-plans:list:v2',
     loader: loadPlansPage,
-    initialData: { modalities: [], plans: [], centers: [] },
-    tags: ['assessment_modalities', 'assessment_plans', 'revenue_centers'],
+    initialData: { modalities: [], plans: [], centers: [], families: [], coaches: [] },
+    tags: ['assessment_modalities', 'assessment_plans', 'revenue_centers', 'assessment_plan_families', 'assessment_coaches'],
     onError: error => toast.error('Erro ao carregar dados: ' + (error.message || 'desconhecido')),
   });
   const [showInactive, setShowInactive] = useState(false);
   const [modal, setModal]           = useState(false);
   const [editing, setEditing]       = useState(null);
+  const [creatingFamily, setCreatingFamily] = useState(null);
+  const [editingFamily, setEditingFamily] = useState(null);
+  const [linkFamily, setLinkFamily] = useState(null);
 
-  const openCreate = (preModalityId) => {
-    setEditing(preModalityId ? { modality_id: preModalityId } : null);
+  // Duração avulsa ou dentro de um grupo (modalidade e grupo já escolhidos).
+  const openCreate = (preModalityId, familyId = null) => {
+    setEditing(preModalityId ? { modality_id: preModalityId, family_id: familyId } : null);
     setModal(true);
   };
   const openEdit = (plan) => { setEditing(plan); setModal(true); };
@@ -466,22 +483,26 @@ export default function Planos() {
     catch (e) { toast.error(e.message); }
   };
 
-  const plansByModality = modalities
+  const grouped = groupPlansByFamily(plans, families, { showInactive });
+  const sections = modalities
     .filter(m => m.active !== false)
-    .map(m => ({
-      modality: m,
-      plans: plans.filter(p => p.modality_id === m.id && (showInactive || p.active)),
-    }));
+    .map(m => ({ modality: m, ...(grouped.get(m.id) || { families: [], loose: [] }) }));
 
   const totalActive   = plans.filter(p => p.active).length;
   const totalInactive = plans.filter(p => !p.active).length;
   const totalOnline   = plans.filter(p => p.active && p.available_online).length;
+  const planCard = p => (
+    <PlanCard key={p.id} plan={p} modality={modalities.find(m => m.id === p.modality_id)}
+      center={centers.find(c => c.id === p.revenue_center_id)}
+      modalities={modalities}
+      onEdit={openEdit} onToggle={toggle} onToggleOnline={toggleOnline} />
+  );
 
   if (loading) return <div className="p-8 text-center text-muted-foreground">Carregando...</div>;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Planos</h2>
           <p className="text-sm text-muted-foreground">
@@ -499,15 +520,15 @@ export default function Planos() {
               {showInactive ? 'Ocultar inativos' : 'Mostrar inativos'}
             </button>
           )}
-          <Button onClick={() => openCreate(null)}>
+          <Button onClick={() => setCreatingFamily({ modality_id: '' })}>
             <Plus className="w-4 h-4 mr-1.5" /> Novo plano
           </Button>
         </div>
       </div>
 
-      {plansByModality.map(({ modality, plans: mPlans }) => (
-        <div key={modality.id}>
-          <div className="flex items-center justify-between mb-3">
+      {sections.map(({ modality, families: modalityFamilies, loose }) => (
+        <div key={modality.id} className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground capitalize">
               {modality.name}
             </h3>
@@ -521,38 +542,75 @@ export default function Planos() {
                 }}
                 className="text-xs text-green-600 hover:underline flex items-center gap-1"
               >
-                <Link2 className="w-3 h-3" /> Link de planos
+                <Link2 className="w-3 h-3" /> Link de planos online
               </button>
-              <button onClick={() => openCreate(modality.id)}
+              <button onClick={() => setCreatingFamily({ modality_id: modality.id })}
                 className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-                <Plus className="w-3 h-3" /> Adicionar plano
+                <Plus className="w-3 h-3" /> Novo plano
               </button>
             </div>
           </div>
 
-          {mPlans.length === 0 ? (
+          {modalityFamilies.map(({ family, plans: familyPlans }) => (
+            <section key={family.id} aria-label={family.name}
+              className={`rounded-2xl border bg-slate-50/70 p-3 sm:p-4 ${family.active ? 'border-slate-200' : 'border-dashed border-slate-200 opacity-70'}`}>
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 text-base font-bold text-gray-900">
+                    <Layers className="w-4 h-4 text-blue-600" /> {family.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {familyPlans.filter(plan => plan.active).length} duraç{familyPlans.filter(plan => plan.active).length === 1 ? 'ão ativa' : 'ões ativas'}
+                    {!family.active && ' · grupo desativado'}
+                    {family.active && !family.link_enabled && ' · link desligado'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setLinkFamily(family)}
+                    disabled={!family.active || !family.link_enabled}>
+                    <Link2 className="w-4 h-4 mr-1.5" /> Link para WhatsApp
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => openCreate(modality.id, family.id)}>
+                    <Plus className="w-4 h-4 mr-1.5" /> Duração
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setEditingFamily(family)} aria-label={`Editar o grupo ${family.name}`}>
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              {familyPlans.length === 0 ? (
+                <p className="rounded-xl border border-dashed bg-white py-6 text-center text-sm text-muted-foreground">Nenhuma duração ativa neste plano.</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {familyPlans.map(planCard)}
+                </div>
+              )}
+            </section>
+          ))}
+
+          {loose.length > 0 && (
+            <div className="space-y-2">
+              {modalityFamilies.length > 0 && (
+                <p className="text-xs font-semibold text-muted-foreground">Planos sem grupo</p>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {loose.map(planCard)}
+              </div>
+            </div>
+          )}
+
+          {modalityFamilies.length === 0 && loose.length === 0 && (
             <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
               <p className="text-sm text-muted-foreground">Nenhum plano ativo nessa modalidade.</p>
-              <button onClick={() => openCreate(modality.id)} className="mt-2 text-sm text-blue-600 hover:underline">
+              <button onClick={() => setCreatingFamily({ modality_id: modality.id })} className="mt-2 text-sm text-blue-600 hover:underline">
                 + Criar primeiro plano
               </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-              {mPlans
-                .sort((a, b) => getPlanMonths(a) - getPlanMonths(b))
-                .map(p => (
-                  <PlanCard key={p.id} plan={p} modality={modality}
-                    center={centers.find(c => c.id === p.revenue_center_id)}
-                    modalities={modalities}
-                    onEdit={openEdit} onToggle={toggle} onToggleOnline={toggleOnline} />
-                ))}
             </div>
           )}
         </div>
       ))}
 
-      {plansByModality.length === 0 && (
+      {sections.length === 0 && (
         <Card>
           <CardContent className="py-16 text-center">
             <Clock className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
@@ -565,13 +623,37 @@ export default function Planos() {
       )}
 
       <PlanModal
-        key={`${modal ? 'open' : 'closed'}:${editing?.id || editing?.modality_id || 'new'}`}
+        key={`${modal ? 'open' : 'closed'}:${editing?.id || editing?.family_id || editing?.modality_id || 'new'}`}
         open={modal}
         onOpenChange={setModal}
         editing={editing}
         modalities={modalities}
         centers={centers}
+        families={families}
         onSaved={() => refresh({ force: true })}
+      />
+      <FamilyCreateModal
+        key={`family:${creatingFamily ? creatingFamily.modality_id || 'any' : 'closed'}`}
+        open={Boolean(creatingFamily)}
+        onOpenChange={open => { if (!open) setCreatingFamily(null); }}
+        initialModalityId={creatingFamily?.modality_id || ''}
+        modalities={modalities}
+        centers={centers}
+        onSaved={() => refresh({ force: true })}
+      />
+      <FamilyEditModal
+        key={`family-edit:${editingFamily?.id || 'closed'}`}
+        family={editingFamily}
+        onOpenChange={open => { if (!open) setEditingFamily(null); }}
+        onSaved={() => refresh({ force: true })}
+      />
+      <PlanLinkModal
+        key={`family-link:${linkFamily?.id || 'closed'}`}
+        family={linkFamily}
+        coaches={coaches}
+        hasEnrollmentFee={Boolean(linkFamily) && plans.some(plan =>
+          plan.family_id === linkFamily.id && plan.active && Number(plan.enrollment_fee) > 0)}
+        onOpenChange={open => { if (!open) setLinkFamily(null); }}
       />
     </div>
   );

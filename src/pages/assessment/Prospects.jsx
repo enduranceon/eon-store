@@ -1463,7 +1463,7 @@ function ProspectRow({
                 </span>
               )}
               <span className="text-[11px] text-muted-foreground">
-                {latestSubmission ? 'Último formulário' : 'Recebido'} em {formatDateTime(prospectLatestActivityAt(draft))}
+                {latestSubmission ? (latestSubmission.source === 'plan_link' ? 'Formulário do link do plano' : 'Último formulário') : 'Recebido'} em {formatDateTime(prospectLatestActivityAt(draft))}
               </span>
             </div>
             <p className="text-base font-semibold text-gray-900 mt-1">{contactCustomer?.full_name || '—'}</p>
@@ -1768,7 +1768,7 @@ export default function Prospects() {
       const submissionsResult = contractIds.length
         ? await supabase
           .from('assessment_prospect_submissions')
-          .select('id, request_id, contract_id, plan_id, coach_id, submitted_full_name, submitted_whatsapp, submitted_email, submitted_cpf, submitted_address_zip, submitted_address_street, submitted_address_number, submitted_address_complement, submitted_address_neighborhood, submitted_address_city, submitted_address_state, region, submitted_at, landing_page')
+          .select('id, request_id, contract_id, plan_id, coach_id, source, submitted_full_name, submitted_whatsapp, submitted_email, submitted_cpf, submitted_address_zip, submitted_address_street, submitted_address_number, submitted_address_complement, submitted_address_neighborhood, submitted_address_city, submitted_address_state, region, submitted_at, landing_page')
           .in('contract_id', contractIds)
           .order('submitted_at', { ascending: false })
         : { data: [], error: null };
