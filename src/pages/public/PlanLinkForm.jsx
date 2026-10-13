@@ -5,7 +5,7 @@ import { loadPlanLink, submitPlanLink } from '@/api/plan-link';
 import { PhoneInput } from '@/components/PhoneInput';
 import { formatCep, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import { durationLabel } from '@/lib/plan-families';
-import { emptyPlanLinkForm, installmentText, preparePlanLinkSubmission } from '@/lib/plan-link-form';
+import { PLAN_LINK_REGIONS, emptyPlanLinkForm, installmentText, preparePlanLinkSubmission, regionFromLink } from '@/lib/plan-link-form';
 import { cn, formatCurrency, maskCpf } from '@/lib/utils';
 
 const FIELD = 'mt-1 block w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200';
@@ -25,7 +25,9 @@ function Field({ id, label, children, className }) {
 export default function PlanLinkForm() {
   const { token } = useParams();
   const { search } = useLocation();
-  const coachFromLink = new URLSearchParams(search).get('coach') || '';
+  const query = new URLSearchParams(search);
+  const coachFromLink = query.get('coach') || '';
+  const regionFromUrl = regionFromLink(query.get('regiao'));
   const [link, setLink] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -46,13 +48,14 @@ export default function PlanLinkForm() {
         setForm(current => ({
           ...current,
           coach_id: data.coach?.id || '',
+          region: regionFromUrl || current.region,
           plan_id: data.options?.length === 1 ? data.options[0].plan_id : '',
         }));
       })
       .catch(err => { if (alive) setLoadError(err.message); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [token, coachFromLink]);
+  }, [token, coachFromLink, regionFromUrl]);
 
   const set = (field, value) => setForm(current => ({ ...current, [field]: value }));
   const firstName = useMemo(() => String(form.full_name || '').trim().split(' ')[0], [form.full_name]);
@@ -128,6 +131,7 @@ export default function PlanLinkForm() {
                 <span className="text-xs font-bold uppercase tracking-[.15em] text-orange-600 capitalize">{link.family?.modality}</span>
                 <h1 className="mt-2 text-3xl font-black tracking-tight">{link.family?.name}</h1>
                 {link.coach && <p className="mt-2 text-slate-600">Com o treinador <b>{link.coach.name}</b>.</p>}
+                {regionFromUrl && <p className="mt-1 text-slate-600">Treino: <b>{PLAN_LINK_REGIONS[regionFromUrl]}</b>.</p>}
               </div>
 
               <fieldset>
@@ -179,13 +183,14 @@ export default function PlanLinkForm() {
                   <input id="plan-link-cpf" inputMode="numeric" className={FIELD}
                     value={form.cpf} onChange={event => set('cpf', maskCpf(event.target.value))} />
                 </Field>
-                <Field id="plan-link-region" label="Onde vai treinar">
-                  <select id="plan-link-region" className={FIELD} value={form.region} onChange={event => set('region', event.target.value)}>
-                    <option value="">Prefiro não dizer</option>
-                    <option value="florianopolis">Florianópolis</option>
-                    <option value="online">Online</option>
-                  </select>
-                </Field>
+                {!regionFromUrl && (
+                  <Field id="plan-link-region" label="Onde vai treinar">
+                    <select id="plan-link-region" className={FIELD} value={form.region} onChange={event => set('region', event.target.value)}>
+                      <option value="">Prefiro não dizer</option>
+                      {Object.entries(PLAN_LINK_REGIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </Field>
+                )}
               </div>
 
               <fieldset className="grid gap-4 sm:grid-cols-6">

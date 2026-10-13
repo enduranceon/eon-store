@@ -21,10 +21,13 @@ Cada grupo tem dois links secretos: com matrícula (`link_token`) e sem
 matrícula (`link_token_no_fee`). O segredo do link sem matrícula é outro, então
 ninguém tira a taxa mexendo no endereço.
 
-- Planos > "Link para WhatsApp": escolhe o coach (opcional) e marca "Sem taxa de
-  matrícula" se quiser; copia o link ou a mensagem com o link.
-- Endereço: `https://eon-store.netlify.app/plano/<segredo>` e, com coach,
-  `?coach=<id do coach>`.
+- Planos > "Link para WhatsApp": escolhe o coach e onde a pessoa vai treinar
+  (os dois opcionais) e marca "Sem taxa de matrícula" se quiser; copia o link
+  ou a mensagem com o link.
+- Endereço: `https://eon-store.netlify.app/plano/<segredo>`, com
+  `?coach=<id do coach>` e/ou `regiao=florianopolis|online`. O que vem no link
+  já chega escolhido e a página não pergunta de novo; região fora dessas duas é
+  ignorada (a pessoa escolhe).
 - A pessoa escolhe a duração, preenche nome, WhatsApp, e-mail, CPF e endereço e
   confirma. Vira prospect "Novo" no quadro (envio com `source = 'plan_link'`;
   o card mostra "Formulário do link do plano"). No link sem matrícula, o

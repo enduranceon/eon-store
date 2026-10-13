@@ -2,6 +2,14 @@
 import { normalizePhone } from './phone.js';
 import { validateCpf } from './utils.js';
 
+export const PLAN_LINK_REGIONS = { florianopolis: 'Florianópolis', online: 'Online' };
+
+// Região que veio no link (?regiao=); qualquer outro valor é ignorado.
+export function regionFromLink(value) {
+  const region = String(value || '').trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PLAN_LINK_REGIONS, region) ? region : '';
+}
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const digits = value => String(value || '').replace(/\D/g, '');
 
