@@ -6,6 +6,8 @@ import {
   AlertTriangle,
   ClipboardList,
   Clock3,
+  Columns3,
+  List,
   PackageCheck,
   PackagePlus,
   Search,
@@ -19,6 +21,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PreSaleCampaign, PreSaleCustomer, PreSaleOrder, StockOrder } from '@/api/entities';
 import { fulfillmentStatus } from '@/lib/order-fulfillment';
+import { buildOrderBoard, localDate } from '@/lib/order-board';
+import OrderBoard from '@/components/orders/OrderBoard';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
@@ -226,6 +230,7 @@ export default function OrderCenter() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     data: { orders, campaigns },
+    refresh,
   } = usePageData({
     key: 'orders:center:v3',
     loader: loadOrderCenter,
@@ -240,6 +245,9 @@ export default function OrderCenter() {
   const deliveryFilter = validFilter(searchParams.get('entrega'), DELIVERY_FILTER_VALUES);
   const deliveryMethodFilter = validFilter(searchParams.get('forma'), DELIVERY_METHOD_FILTER_VALUES);
   const campaignFilter = searchParams.get('campanha') || 'all';
+  // Quadro é a visão padrão; a lista continua com os filtros de pagamento e entrega.
+  const view = searchParams.get('ver') === 'lista' ? 'list' : 'board';
+  const showCancelled = searchParams.get('cancelados') === '1';
 
   const updateFilters = changes => {
     setSearchParams(current => {
@@ -274,12 +282,19 @@ export default function OrderCenter() {
 
       return matchesSearch
         && (typeFilter === 'all' || order.type === typeFilter)
-        && matchesPayment(order, paymentFilter)
-        && (deliveryFilter === 'all' || order.deliveryBucket === deliveryFilter)
+        && (view === 'board' || matchesPayment(order, paymentFilter))
+        && (view === 'board' || deliveryFilter === 'all' || order.deliveryBucket === deliveryFilter)
         && matchesDeliveryMethod(order, deliveryMethodFilter)
         && matchesCampaign;
     });
-  }, [campaignFilter, deliveryFilter, deliveryMethodFilter, orders, paymentFilter, search, typeFilter]);
+  }, [campaignFilter, deliveryFilter, deliveryMethodFilter, orders, paymentFilter, search, typeFilter, view]);
+
+  const board = useMemo(
+    () => buildOrderBoard(filtered, { today: localDate(new Date().toISOString()), showCancelled }),
+    [filtered, showCancelled],
+  );
+  const hasFilters = Boolean(search) || typeFilter !== 'all' || deliveryMethodFilter !== 'all' || campaignFilter !== 'all'
+    || (view === 'list' && (paymentFilter !== 'all' || deliveryFilter !== 'all'));
 
   const openPaymentOrders = orders.filter(order =>
     !['paid', 'cancelled', 'refunded'].includes(order.payment_status)
@@ -300,9 +315,21 @@ export default function OrderCenter() {
           <h2 className="text-xl font-bold text-gray-900">Pedidos</h2>
           <p className="text-sm text-muted-foreground">Loja e pré-venda na mesma fila, com a origem visível em cada pedido.</p>
         </div>
-        <Button onClick={() => navigate('/estoque/pedidos/novo')}>
-          <PackagePlus className="w-4 h-4" /> Nova venda
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-lg border bg-white p-0.5" role="group" aria-label="Visualização">
+            <Button size="sm" variant={view === 'board' ? 'default' : 'ghost'} className="h-8" aria-pressed={view === 'board'}
+              onClick={() => updateFilters({ ver: 'all' })}>
+              <Columns3 className="w-4 h-4" /> Quadro
+            </Button>
+            <Button size="sm" variant={view === 'list' ? 'default' : 'ghost'} className="h-8" aria-pressed={view === 'list'}
+              onClick={() => updateFilters({ ver: 'lista' })}>
+              <List className="w-4 h-4" /> Lista
+            </Button>
+          </div>
+          <Button onClick={() => navigate('/estoque/pedidos/novo')}>
+            <PackagePlus className="w-4 h-4" /> Nova venda
+          </Button>
+        </div>
       </div>
 
       <div className="grid divide-y rounded-lg border bg-white sm:grid-cols-3 sm:divide-x sm:divide-y-0">
@@ -323,7 +350,11 @@ export default function OrderCenter() {
       <Card className="border-blue-100 bg-blue-50/40">
         <CardContent className="p-4 text-sm text-blue-950">
           <p className="font-semibold">Pagamento e entrega são acompanhados separadamente.</p>
-          <p className="mt-1 text-blue-900/80">A lista só organiza e filtra; qualquer alteração é feita dentro do pedido, sem misturar uma cobrança cancelada com a etapa física da entrega.</p>
+          <p className="mt-1 text-blue-900/80">
+            {view === 'board'
+              ? 'No quadro, cada pedido fica na coluna do próximo passo. Os botões só avançam a entrega; cobrança, pagamento e interrupção continuam dentro do pedido.'
+              : 'A lista só organiza e filtra; qualquer alteração é feita dentro do pedido, sem misturar uma cobrança cancelada com a etapa física da entrega.'}
+          </p>
         </CardContent>
       </Card>
 
@@ -354,32 +385,45 @@ export default function OrderCenter() {
             </SelectContent>
           </Select>
         )}
-        <Select value={paymentFilter} onValueChange={value => updateFilters({ pagamento: value })}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Pagamento" /></SelectTrigger>
-          <SelectContent>
-            {PAYMENT_FILTERS.map(filter => <SelectItem key={filter.value} value={filter.value}>{filter.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select value={deliveryFilter} onValueChange={value => updateFilters({ entrega: value })}>
-          <SelectTrigger className="w-52"><SelectValue placeholder="Entrega" /></SelectTrigger>
-          <SelectContent>
-            {DELIVERY_FILTERS.map(filter => <SelectItem key={filter.value} value={filter.value}>{filter.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        {view === 'list' && (
+          <>
+            <Select value={paymentFilter} onValueChange={value => updateFilters({ pagamento: value })}>
+              <SelectTrigger className="w-48"><SelectValue placeholder="Pagamento" /></SelectTrigger>
+              <SelectContent>
+                {PAYMENT_FILTERS.map(filter => <SelectItem key={filter.value} value={filter.value}>{filter.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={deliveryFilter} onValueChange={value => updateFilters({ entrega: value })}>
+              <SelectTrigger className="w-52"><SelectValue placeholder="Entrega" /></SelectTrigger>
+              <SelectContent>
+                {DELIVERY_FILTERS.map(filter => <SelectItem key={filter.value} value={filter.value}>{filter.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </>
+        )}
         <Select value={deliveryMethodFilter} onValueChange={value => updateFilters({ forma: value })}>
           <SelectTrigger className="w-52"><SelectValue placeholder="Forma de entrega" /></SelectTrigger>
           <SelectContent>
             {DELIVERY_METHOD_FILTERS.map(filter => <SelectItem key={filter.value} value={filter.value}>{filter.label}</SelectItem>)}
           </SelectContent>
         </Select>
+        {view === 'board' && (
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" className="h-4 w-4" checked={showCancelled}
+              onChange={event => updateFilters({ cancelados: event.target.checked ? '1' : 'all' })} />
+            Mostrar cancelados{board.cancelled > 0 ? ` (${board.cancelled})` : ''}
+          </label>
+        )}
       </div>
 
-      {filtered.length === 0 ? (
+      {view === 'board' ? (
+        <OrderBoard board={board} hasFilters={hasFilters} onOpen={openOrder} onChanged={() => refresh({ force: true }).catch(() => {})} />
+      ) : filtered.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center py-16 text-center">
             <ClipboardList className="mb-3 h-10 w-10 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">Nenhum pedido encontrado para esses filtros</p>
-            {(search || typeFilter !== 'all' || paymentFilter !== 'all' || deliveryFilter !== 'all' || deliveryMethodFilter !== 'all' || campaignFilter !== 'all') && (
+            {hasFilters && (
               <Button className="mt-4" variant="outline" onClick={() => { setSearch(''); updateFilters({ origem: 'all', pagamento: 'all', entrega: 'all', forma: 'all', campanha: 'all' }); }}>
                 Limpar filtros
               </Button>
@@ -387,7 +431,7 @@ export default function OrderCenter() {
           </CardContent>
         </Card>
       ) : (
-        <div className="overflow-x-auto rounded-lg border bg-white">
+        <div className="relative overflow-x-auto rounded-lg border bg-white">
           <table className="w-full text-sm">
             <thead className="border-b bg-gray-50">
               <tr>
