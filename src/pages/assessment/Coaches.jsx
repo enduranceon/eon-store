@@ -24,8 +24,8 @@ const ROLE_COLOR = {
 
 const emptyForm = {
   name: '', email: '', phone: '', role: 'junior', leader_id: null,
-  co_leader_ids: [], active: true, public_visible: false, modality_ids: [],
-  site_plans: {},
+  co_leader_ids: [], active: true, public_visible: false, accepting_new_students: true,
+  modality_ids: [], site_plans: {},
 };
 
 async function loadCoachesPage() {
@@ -70,6 +70,7 @@ export default function Coaches() {
         co_leader_ids: c.co_leader_ids || [],
         modality_ids: c.modality_ids || [],
         public_visible: !!c.public_visible,
+        accepting_new_students: c.accepting_new_students !== false,
         site_plans: sitePlanForm(sitePlans, c.id),
       });
     }
@@ -94,6 +95,7 @@ export default function Coaches() {
         co_leader_ids: form.co_leader_ids || [],
         active: !!form.active,
         public_visible: !!form.active && !!form.public_visible,
+        accepting_new_students: form.accepting_new_students !== false,
         modality_ids: form.modality_ids || [],
       };
       const saved = editing
@@ -187,7 +189,7 @@ export default function Coaches() {
                 return (
                   <tr key={c.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
-                      <p className="font-semibold">{c.name}</p>
+                      <Link to={`/assessoria/coaches/${c.id}`} className="font-semibold hover:text-blue-700 hover:underline">{c.name}</Link>
                       <p className="text-xs text-muted-foreground flex items-center gap-2">
                         <Mail className="w-3 h-3" /> {c.email}
                         {c.phone && <><span>·</span><Phone className="w-3 h-3" /> {c.phone}</>}
@@ -217,6 +219,9 @@ export default function Coaches() {
                       </span>
                       {c.active && c.public_visible && hasSitePlans(c.id) && (
                         <p className="text-[11px] text-violet-700 mt-1">planos próprios</p>
+                      )}
+                      {c.active && c.accepting_new_students === false && (
+                        <p className="text-[11px] text-amber-700 mt-1">lista de espera</p>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -280,6 +285,10 @@ export default function Coaches() {
               <label className="flex items-start gap-2">
                 <input type="checkbox" checked={form.public_visible} disabled={!form.active} onChange={e => setForm(f => ({ ...f, public_visible: e.target.checked }))} className="w-4 h-4 mt-0.5 accent-violet-600 disabled:opacity-50" />
                 <span className="text-sm"><strong>Exibir no site</strong><br /><span className="text-xs text-muted-foreground">Aparece no formulário público somente nos planos das modalidades marcadas.</span></span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input type="checkbox" checked={form.accepting_new_students !== false} disabled={!form.active} onChange={e => setForm(f => ({ ...f, accepting_new_students: e.target.checked }))} className="w-4 h-4 mt-0.5 accent-emerald-600 disabled:opacity-50" />
+                <span className="text-sm"><strong>Recebe novos alunos</strong><br /><span className="text-xs text-muted-foreground">Desmarque quando o coach estiver cheio ou sem novos alunos agora: o site troca o cadastro pela lista de espera. A venda interna continua liberada.</span></span>
               </label>
             </div>
             {form.active && form.public_visible && form.modality_ids.length > 0 && (

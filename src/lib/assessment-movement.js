@@ -211,3 +211,18 @@ export function buildAssessmentMovement(contracts = [], plans = [], options = {}
     byModality: breakdown(classified, { from, to, matches, keyOf: entry => entry.modalityId }),
   };
 }
+
+// Mês a mês, dos últimos `months` meses até `asOf` (o mês atual vai até hoje),
+// com as mesmas regras e um filtro opcional por coach. Classifica uma vez só.
+export function buildMonthlyMovement(contracts = [], plans = [], options = {}) {
+  const asOf = dateOnly(options.asOf || new Date());
+  const months = Math.max(1, Number(options.months) || 12);
+  const classified = classifyAssessmentContracts(contracts, plans, asOf);
+  const matches = contract => !options.coachId || contract.coach_id === options.coachId;
+  return Array.from({ length: months }, (_, index) => {
+    const from = monthFirst(asOf, index - months + 1);
+    const to = [monthLast(from), asOf].sort()[0];
+    const lists = movementLists(classified, { from, to, matches });
+    return { month: from.slice(0, 7), from, to, label: periodLabel(from, to), lists, ...summarize(lists) };
+  });
+}

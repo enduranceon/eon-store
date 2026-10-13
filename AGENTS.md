@@ -32,6 +32,8 @@ Quando houver outros projetos Supabase visiveis, usar `bsiljrrodgtmtdilnuxr` par
 ## Site (enduranceon-site)
 
 - O site le planos e coaches de `public-assessment-prospect` (Store). Cada coach pode ter um plano por modalidade e duracao so para o site (Coaches > "Planos que vende no site"; tabela `assessment_coach_site_plans`); a venda interna usa qualquer plano. Contrato da API: `docs/site-planos-por-coach.md`.
+- Lista de espera por coach: Equipe > "Recebe novos alunos" desmarcado deixa o coach em lista de espera no site (o cadastro do site recusa com `COACH_WAITLIST`; a venda interna continua liberada). O site envia a pessoa para `public-coach-waitlist`; a fila fica em Assessoria > Lista de espera (tabela `assessment_coach_waitlist`). Contrato da API: `docs/lista-de-espera-coach.md`.
+- Formulario de match dos coaches (`coach-match-admin`, `coach-match-form`, `public-coach-match`): `docs/coach-match-workflow.md`.
 
 ## Comunicacao com alunos
 
@@ -82,5 +84,5 @@ select
 - Nao fazer deploy a partir de uma branch/local defasado.
 - Nao fazer alteracao destrutiva em dados sem backup/export e confirmacao explicita.
 - Para auditorias, comecar sempre por leitura e classificacao; evitar `update`, `delete`, `insert` ou migrations na primeira passada.
-- Antes de mexer em metricas de assessoria, lembrar que contrato, cobranca, pagamento e estorno sao conceitos diferentes. As telas Evolucao (`/assessoria/indicadores`) e Entradas e saidas (`/assessoria/movimento`) usam a mesma classificacao (`classifyAssessmentContracts` em `src/lib/assessment-yearly-indicators.js`); Painel e Analytics ainda usam a do ciclo de vida do contrato.
+- Antes de mexer em metricas de assessoria, lembrar que contrato, cobranca, pagamento e estorno sao conceitos diferentes. As telas Evolucao (`/assessoria/indicadores`) e Entradas e saidas (`/assessoria/movimento`) usam a mesma classificacao (`classifyAssessmentContracts` em `src/lib/assessment-yearly-indicators.js`); O perfil do coach (`/assessoria/coaches/:id`, `src/lib/coach-profile.js`) tambem. Painel e Analytics ainda usam a do ciclo de vida do contrato.
 - Saida/churn so deve representar encerramento real do aluno na assessoria, nao troca de plano, ajuste financeiro, venda descartada ou correcao de cobranca.

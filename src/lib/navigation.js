@@ -10,6 +10,7 @@ export const NAV_AREAS = [
       { id: 'contracts', label: 'Contratos', to: '/assessoria/contratos', icon: 'contracts', badge: 'assessoria' },
       { id: 'leaves', label: 'Licenças', to: '/assessoria/licencas', icon: 'leaves' },
       { id: 'prospects', label: 'Prospects', to: '/assessoria/prospects', icon: 'prospects', badge: 'prospects' },
+      { id: 'waitlist', label: 'Lista de espera', to: '/assessoria/lista-de-espera', icon: 'waitlist' },
       { id: 'audit', label: 'Auditoria', to: '/assessoria/auditoria', icon: 'audit' },
       { id: 'plans', label: 'Planos', to: '/assessoria/planos', icon: 'plans' },
       { id: 'tecnofit_archive', label: 'Ex-alunos Tecnofit', to: '/assessoria/ex-alunos-tecnofit', icon: 'archive' },

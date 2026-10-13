@@ -34,7 +34,7 @@ import { supabase } from '@/api/db';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { formatCustomerAddress } from '@/lib/br-address';
 import { formatCurrency, formatDate, formatDateTime, maskCpf, todayLocalStr, toLocalDateStr } from '@/lib/utils';
-import { phoneDigitsForWhatsApp } from '@/lib/phone';
+import { formatPhoneInput, phoneDigitsForWhatsApp } from '@/lib/phone';
 import { prepareManualProspect, PROSPECT_GENDERS } from '@/lib/assessment-prospect-form';
 import {
   coachServesModality,
@@ -1232,16 +1232,20 @@ function ReopenModal({ data, onClose, onDone }) {
   );
 }
 
-function CreateProspectModal({ onClose, onDone }) {
+// `initial` preenche nome, contato, coach e observações (por exemplo, a partir
+// da lista de espera); `onDone` recebe o contrato do prospect criado.
+export function CreateProspectModal({ onClose, onDone, initial = null }) {
   const [plans, setPlans] = useState([]);
   const [coaches, setCoaches] = useState([]);
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [optionsError, setOptionsError] = useState(false);
   const [optionsAttempt, setOptionsAttempt] = useState(0);
-  const [form, setForm] = useState({
-    full_name: '', whatsapp: '', email: '', cpf: '', gender: '', birth_date: '',
-    plan_id: '', coach_id: '', installments: 1, notes: '',
-  });
+  const [form, setForm] = useState(() => ({
+    full_name: initial?.full_name || '',
+    whatsapp: initial?.whatsapp ? formatPhoneInput(initial.whatsapp) : '',
+    email: initial?.email || '', cpf: '', gender: '', birth_date: '',
+    plan_id: '', coach_id: initial?.coach_id || '', installments: 1, notes: initial?.notes || '',
+  }));
   const [saving, setSaving] = useState(false);
 
   const operation = useRef(null);
@@ -1292,9 +1296,9 @@ function CreateProspectModal({ onClose, onDone }) {
     savingRef.current = true;
     setSaving(true);
     try {
-      await createManualAssessmentProspect(payload, { idempotencyKey: operation.current.key });
+      const result = await createManualAssessmentProspect(payload, { idempotencyKey: operation.current.key });
       toast.success('Prospect criado! Ele já aparece na coluna "Novos".');
-      onDone();
+      onDone(result?.contract || null);
     } catch (error) {
       toast.error(error.message || 'Não foi possível criar o prospect');
     } finally {

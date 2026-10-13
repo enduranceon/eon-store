@@ -163,6 +163,31 @@ Deno.test("coach site plans pick one plan per modality and duration", async () =
   assert(body.error === "O plano escolhido é de outra duração", "database message was lost");
 });
 
+Deno.test("coach waitlist keeps the site origin out of the admin form", () => {
+  const payload = normalizeAdminRecordPayload("coach-waitlist", {
+    coach_id: TARGET_ID,
+    full_name: "  Pessoa Fictícia  ",
+    whatsapp: "+5548999990401",
+    email: "",
+    region: "online",
+  }, "create");
+  assert(payload.full_name === "Pessoa Fictícia", "name was not trimmed");
+  assert(payload.email === null, "empty e-mail was not cleared");
+  const update = normalizeAdminRecordPayload("coach-waitlist", {
+    status: "converted",
+    prospect_contract_id: DUPLICATE_ID,
+  }, "update");
+  assert(update.status === "converted", "status was not kept");
+  for (const field of [{ source: "site" }, { request_id: TARGET_ID }, { status: "lost" }, { region: "lua" }]) {
+    expectError(() => normalizeAdminRecordPayload("coach-waitlist", field, "update"), "invalid_field");
+  }
+  expectError(() =>
+    normalizeAdminRecordPayload("coach-waitlist", { coach_id: TARGET_ID, whatsapp: "+5548999990401" }, "create"),
+    "missing_field");
+  const coach = normalizeAdminRecordPayload("coaches", { accepting_new_students: false }, "update");
+  assert(coach.accepting_new_students === false, "coach availability was not kept");
+});
+
 Deno.test("legacy presale updates reject identity fields before the database", async () => {
   const protectedFields: Record<string, unknown>[] = [
     { customer_id: TARGET_ID },
