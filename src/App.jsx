@@ -77,6 +77,8 @@ const FinancialReconciliation = lazy(() => import('@/pages/FinancialReconciliati
 const AssPainel = lazy(() => import('@/pages/assessment/Painel'));
 const AssIndicators = lazy(() => import('@/pages/assessment/Indicators'));
 const AssMovement = lazy(() => import('@/pages/assessment/Movement'));
+const AssCoachProfile = lazy(() => import('@/pages/assessment/CoachProfile'));
+const AssCoachWaitlist = lazy(() => import('@/pages/assessment/CoachWaitlist'));
 const AssCentralFinanceira = lazy(() => import('@/pages/assessment/CentralFinanceira'));
 
 function LegacyOrderListRedirect({ origin }) {
@@ -175,6 +177,7 @@ export default function App() {
           <Route path="/assessoria/regua"         element={<Navigate to="/comunicacao/configuracoes" replace />} />
           <Route path="/assessoria/configuracoes" element={<AdminLayout><AssConfiguracoes /></AdminLayout>} />
           <Route path="/assessoria/coaches"       element={<AdminLayout><AssCoaches /></AdminLayout>} />
+          <Route path="/assessoria/coaches/:coachId" element={<AdminLayout><AssCoachProfile /></AdminLayout>} />
           <Route path="/assessoria/coaches/:coachId/match" element={<AdminLayout><AssCoachMatch /></AdminLayout>} />
           <Route path="/assessoria/alunos"        element={<LegacyPersonRedirect fromAssessment />} />
           <Route path="/assessoria/alunos/:id"    element={<LegacyPersonRedirect fromAssessment />} />
@@ -183,6 +186,7 @@ export default function App() {
           <Route path="/assessoria/contratos/:id" element={<AdminLayout><AssContractDetail /></AdminLayout>} />
           <Route path="/assessoria/renovacoes"    element={<AdminLayout><AssRenewals /></AdminLayout>} />
           <Route path="/assessoria/prospects"    element={<AdminLayout><AssProspects /></AdminLayout>} />
+          <Route path="/assessoria/lista-de-espera" element={<AdminLayout><AssCoachWaitlist /></AdminLayout>} />
           <Route path="/assessoria/auditoria"    element={<AdminLayout><AssContractAudit /></AdminLayout>} />
           <Route path="/assessoria/licencas"    element={<AdminLayout><AssLeaves /></AdminLayout>} />
           <Route path="/assessoria/ex-alunos-tecnofit" element={<AdminLayout><AssTecnofitArchive /></AdminLayout>} />

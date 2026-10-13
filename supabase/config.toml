@@ -25,6 +25,9 @@ verify_jwt = false
 [functions.public-coach-match]
 verify_jwt = false
 
+[functions.public-coach-waitlist]
+verify_jwt = false
+
 [functions.public-store-checkout]
 verify_jwt = false
 

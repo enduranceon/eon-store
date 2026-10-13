@@ -356,6 +356,7 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       phone: s(32, { nullable: true }),
       active: b(),
       public_visible: b(),
+      accepting_new_students: b(),
       modality_ids: ua(),
       role: s(32, { required: true, values: ["junior", "pleno", "senior"] }),
       leader_id: u({ nullable: true }),
@@ -387,6 +388,30 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
     },
     defaultSort: "coach_id",
     sortFields: ["id", "coach_id", "modality_id", "period_months", "created_at", "updated_at"],
+    updatedColumn: "updated_at",
+    allowCreate: true,
+    allowDelete: true,
+  },
+  // Lista de espera de cada coach. O envio do site entra pela função pública;
+  // aqui a equipe cadastra à mão, muda a situação e liga ao prospect criado.
+  "coach-waitlist": {
+    table: "assessment_coach_waitlist",
+    fields: {
+      coach_id: u({ required: true }),
+      modality_id: u({ nullable: true }),
+      full_name: s(160, { required: true }),
+      whatsapp: s(16, { required: true }),
+      email: s(180, { nullable: true }),
+      region: s(20, { nullable: true, values: ["florianopolis", "online"] }),
+      notes: s(1_000, { nullable: true, preserveWhitespace: true }),
+      status: s(20, {
+        values: ["waiting", "contacted", "asking_coach", "converted", "closed"],
+      }),
+      closed_reason: s(500, { nullable: true }),
+      prospect_contract_id: u({ nullable: true }),
+    },
+    defaultSort: "created_at",
+    sortFields: ["id", "coach_id", "status", "created_at", "updated_at"],
     updatedColumn: "updated_at",
     allowCreate: true,
     allowDelete: true,

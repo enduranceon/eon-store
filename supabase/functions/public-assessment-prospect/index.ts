@@ -380,7 +380,8 @@ Deno.serve(async (req: Request) => {
           .order("price_monthly"),
         supabase.from("assessment_modalities").select("id,name")
           .eq("active", true).order("name"),
-        supabase.from("assessment_coaches").select("id,name,modality_ids")
+        supabase.from("assessment_coaches")
+          .select("id,name,modality_ids,accepting_new_students")
           .eq("active", true).eq("public_visible", true).order("name"),
         // Plano de cada coach no site (um por modalidade e duração).
         supabase.from("assessment_coach_site_plans").select(
@@ -508,7 +509,7 @@ Deno.serve(async (req: Request) => {
       supabase.from("assessment_plans").select("id,modality_id,available_online")
         .eq("id", payload.planId).eq("active", true).maybeSingle(),
       supabase.from("assessment_coaches")
-        .select("id,modality_ids")
+        .select("id,modality_ids,accepting_new_students")
         .eq("id", payload.coachId).eq("active", true)
         .eq("public_visible", true).maybeSingle(),
       supabase.from("assessment_coach_site_plans").select("plan_id")
@@ -553,6 +554,17 @@ Deno.serve(async (req: Request) => {
         "O treinador selecionado não está disponível para este plano.",
         requestReference,
         [{ field: "coach_id", code: "INVALID_COACH" }],
+      );
+    }
+    // Coach cheio: o site mostra a lista de espera no lugar do cadastro.
+    if (coachResult.data?.accepting_new_students === false) {
+      return errorResponse(
+        req,
+        422,
+        "INVALID_SELECTION",
+        "Este treinador não está recebendo novos alunos agora. Entre na lista de espera.",
+        requestReference,
+        [{ field: "coach_id", code: "COACH_WAITLIST" }],
       );
     }
 

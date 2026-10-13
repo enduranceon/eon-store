@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Activity, AlertCircle, Archive, Award, BarChart3, CalendarDays, ChevronDown, ChevronRight,
-  DollarSign, FileText, HandCoins, HeartPulse, Inbox, Layers, ListChecks,
+  DollarSign, FileText, HandCoins, HeartPulse, Hourglass, Inbox, Layers, ListChecks,
   LogOut, Megaphone, MessageCircle, Package, Palette, Pause, RefreshCcw,
   Settings, ShoppingCart, Star, Tag, Ticket, TrendingUp, Truck, Undo2,
   UserCheck, UserPlus, Users, Wallet, X, Zap,
@@ -25,7 +25,7 @@ const ICONS = {
   payouts: DollarSign, closings: DollarSign, overview: BarChart3,
   analytics: TrendingUp, reports: BarChart3, coaches: Award, trainers: UserCheck,
   categories: Tag, suppliers: Truck, coupons: Ticket, revenue: Palette,
-  payment: DollarSign, health: HeartPulse, archive: Archive,
+  payment: DollarSign, health: HeartPulse, archive: Archive, waitlist: Hourglass,
 };
 
 const EXPANSION_KEY = 'eon-sidebar-expanded-area';

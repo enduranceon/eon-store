@@ -58,3 +58,6 @@ O `POST` do mesmo endereço aceita o plano se ele for da modalidade do coach e,
 ou for um plano geral do site (`available_online`), ou estiver em
 `site_plans` desse coach. Plano escolhido para outro coach é recusado
 (`INVALID_PLAN`).
+
+Coach cheio (`accepting_new_students: false`) não aceita cadastro pelo site; o
+site mostra a lista de espera. Veja `docs/lista-de-espera-coach.md`.
