@@ -46,9 +46,14 @@ export function groupPlansByFamily(plans = [], families = [], { showInactive = f
   return byModality;
 }
 
-export function planLinkUrl(origin, token, coachId = '') {
+// Coach e região escolhidos antes de copiar vão no endereço e já chegam preenchidos.
+export function planLinkUrl(origin, token, { coach = '', region = '' } = {}) {
   const base = `${String(origin).replace(/\/$/, '')}/plano/${token}`;
-  return coachId ? `${base}?coach=${coachId}` : base;
+  const query = new URLSearchParams();
+  if (coach) query.set('coach', coach);
+  if (region) query.set('regiao', region);
+  const text = query.toString();
+  return text ? `${base}?${text}` : base;
 }
 
 export function emptyFamilyForm(modalityId = '', revenueCenterId = '') {

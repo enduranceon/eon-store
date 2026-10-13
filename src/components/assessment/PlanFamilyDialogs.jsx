@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { defaultRevenueCenterId } from '@/lib/revenue-centers';
 import { DEFAULT_DURATIONS, durationLabel, emptyFamilyForm, planLinkUrl, prepareFamilyPlans } from '@/lib/plan-families';
+import { PLAN_LINK_REGIONS } from '@/lib/plan-link-form';
 import { cn, formatCurrency } from '@/lib/utils';
 
 function copyText(text, message) {
@@ -193,13 +194,14 @@ export function FamilyEditModal({ family, onOpenChange, onSaved }) {
 // Link para mandar no WhatsApp, com ou sem coach escolhido.
 export function PlanLinkModal({ family, coaches, hasEnrollmentFee = false, onOpenChange }) {
   const [coachId, setCoachId] = useState('');
+  const [region, setRegion] = useState('');
   const [withoutFee, setWithoutFee] = useState(false);
   if (!family) return null;
   const choices = coaches.filter(coach => coach.active && (coach.modality_ids || []).includes(family.modality_id));
   const coach = choices.find(item => item.id === coachId);
   // O link sem matrícula tem outro segredo: a taxa não sai mexendo no endereço.
   const token = withoutFee && family.link_token_no_fee ? family.link_token_no_fee : family.link_token;
-  const url = planLinkUrl(window.location.origin, token, coachId);
+  const url = planLinkUrl(window.location.origin, token, { coach: coachId, region });
   const message = `Oi! Para começar no plano ${family.name}${coach ? ` com ${coach.name}` : ''}, é só escolher a duração e preencher seus dados aqui: ${url}`;
   return (
     <Dialog open={Boolean(family)} onOpenChange={onOpenChange}>
@@ -217,6 +219,14 @@ export function PlanLinkModal({ family, coaches, hasEnrollmentFee = false, onOpe
               value={coachId} onChange={event => setCoachId(event.target.value)}>
               <option value="">Sem coach: a pessoa escolhe</option>
               {choices.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="plan-link-region-choice">Onde vai treinar</Label>
+            <select id="plan-link-region-choice" className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={region} onChange={event => setRegion(event.target.value)}>
+              <option value="">A pessoa escolhe</option>
+              {Object.entries(PLAN_LINK_REGIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </div>
           {hasEnrollmentFee && (

@@ -6,7 +6,7 @@ import {
   planLinkUrl,
   prepareFamilyPlans,
 } from './plan-families.js';
-import { emptyPlanLinkForm, installmentText, preparePlanLinkSubmission } from './plan-link-form.js';
+import { emptyPlanLinkForm, installmentText, preparePlanLinkSubmission, regionFromLink } from './plan-link-form.js';
 
 const families = [
   { id: 'f1', modality_id: 'run', name: 'Corrida - Essencial', active: true },
@@ -35,7 +35,17 @@ test('plans are shown inside their group, in order of duration', () => {
 
 test('the WhatsApp link can carry the coach', () => {
   assert.equal(planLinkUrl('https://eon-store.netlify.app/', 'abc123abc123abc123ab'), 'https://eon-store.netlify.app/plano/abc123abc123abc123ab');
-  assert.equal(planLinkUrl('https://x.test', 'tok', 'coach-1'), 'https://x.test/plano/tok?coach=coach-1');
+  assert.equal(planLinkUrl('https://x.test', 'tok', { coach: 'coach-1' }), 'https://x.test/plano/tok?coach=coach-1');
+  assert.equal(planLinkUrl('https://x.test', 'tok', { region: 'online' }), 'https://x.test/plano/tok?regiao=online');
+  assert.equal(planLinkUrl('https://x.test', 'tok', { coach: 'coach-1', region: 'florianopolis' }), 'https://x.test/plano/tok?coach=coach-1&regiao=florianopolis');
+});
+
+test('only a known region from the link is used', () => {
+  assert.equal(regionFromLink('online'), 'online');
+  assert.equal(regionFromLink(' Florianopolis '), 'florianopolis');
+  assert.equal(regionFromLink('constructor'), '');
+  assert.equal(regionFromLink('sao-paulo'), '');
+  assert.equal(regionFromLink(null), '');
 });
 
 test('a new plan creates every duration at once', () => {
