@@ -50,6 +50,7 @@ const PublicOrderTracking = lazy(() => import('@/pages/PublicOrderTracking'));
 const PublicPlanEnrollment = lazy(() => import('@/pages/public/PublicPlanEnrollment'));
 const PublicModalityPlans = lazy(() => import('@/pages/public/PublicModalityPlans'));
 const CoachMatchForm = lazy(() => import('@/pages/public/CoachMatchForm'));
+const PlanLinkForm = lazy(() => import('@/pages/public/PlanLinkForm'));
 
 // Assessoria
 const AssConfiguracoes = lazy(() => import('@/pages/assessment/Configuracoes'));
@@ -120,6 +121,7 @@ export default function App() {
           <Route path="/inscricao/:slug" element={<PublicEventRegistration />} />
           <Route path="/planos/:modalityId" element={<PublicModalityPlans />} />
           <Route path="/match-coach" element={<CoachMatchForm />} />
+          <Route path="/plano/:token" element={<PlanLinkForm />} />
 
           {/* Admin */}
           <Route path="/login" element={<Login />} />

@@ -33,6 +33,7 @@ Quando houver outros projetos Supabase visiveis, usar `bsiljrrodgtmtdilnuxr` par
 
 - O site le planos e coaches de `public-assessment-prospect` (Store). Cada coach pode ter um plano por modalidade e duracao so para o site (Coaches > "Planos que vende no site"; tabela `assessment_coach_site_plans`); a venda interna usa qualquer plano. Contrato da API: `docs/site-planos-por-coach.md`.
 - Lista de espera por coach: Equipe > "Recebe novos alunos" desmarcado deixa o coach em lista de espera no site (o cadastro do site recusa com `COACH_WAITLIST`; a venda interna continua liberada). O site envia a pessoa para `public-coach-waitlist`; a fila fica em Assessoria > Lista de espera (tabela `assessment_coach_waitlist`). Contrato da API: `docs/lista-de-espera-coach.md`.
+- Planos agrupados (`assessment_plan_families`; cada duracao segue em `assessment_plans` com `family_id`) e link do plano para WhatsApp (`/plano/:segredo`, opcional `?coach=`; funcao `public-plan-link`; prospect com `source = 'plan_link'`; link com e sem matricula, cada um com seu segredo): `docs/link-do-plano.md`.
 - Formulario de match dos coaches (`coach-match-admin`, `coach-match-form`, `public-coach-match`): `docs/coach-match-workflow.md`.
 
 ## Comunicacao com alunos

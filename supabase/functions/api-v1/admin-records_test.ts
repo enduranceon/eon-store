@@ -188,6 +188,21 @@ Deno.test("coach waitlist keeps the site origin out of the admin form", () => {
   assert(coach.accepting_new_students === false, "coach availability was not kept");
 });
 
+Deno.test("plan groups keep the secret link and the modality out of the admin form", () => {
+  const payload = normalizeAdminRecordPayload("plan-families", {
+    modality_id: TARGET_ID,
+    name: "  Corrida - Essencial ",
+    link_enabled: true,
+  }, "create");
+  assert(payload.name === "Corrida - Essencial", "name was not trimmed");
+  const update = normalizeAdminRecordPayload("plan-families", { active: false, link_enabled: false }, "update");
+  assert(update.link_enabled === false, "link switch was lost");
+  expectError(() => normalizeAdminRecordPayload("plan-families", { link_token: "abc" }, "update"), "invalid_field");
+  expectError(() => normalizeAdminRecordPayload("plan-families", { modality_id: TARGET_ID }, "update"), "invalid_field");
+  const plan = normalizeAdminRecordPayload("plans", { family_id: DUPLICATE_ID }, "update");
+  assert(plan.family_id === DUPLICATE_ID, "plan group was not kept");
+});
+
 Deno.test("legacy presale updates reject identity fields before the database", async () => {
   const protectedFields: Record<string, unknown>[] = [
     { customer_id: TARGET_ID },
