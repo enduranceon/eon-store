@@ -8,7 +8,7 @@ SELECT no_plan();
 INSERT INTO auth.users (id, email) VALUES
   ('97000000-0000-4000-a000-000000000001', 'match-admin@example.test');
 INSERT INTO public.assessment_coaches (id, name, email, role, active, public_visible) VALUES
-  ('97000000-0000-4000-a000-000000000011', 'Match coach fictício', 'match-coach@example.test', 'pleno', true, true),
+  ('97000000-0000-4000-a000-000000000011', 'Match Coach Fictício', 'match-coach@example.test', 'pleno', true, true),
   ('97000000-0000-4000-a000-000000000012', 'Outro match fictício', 'match-other@example.test', 'pleno', true, true),
   ('97000000-0000-4000-a000-000000000013', 'Match inativo fictício', 'match-inactive@example.test', 'pleno', false, false),
   ('97000000-0000-4000-a000-000000000014', 'Match limite fictício', 'match-rate@example.test', 'pleno', true, true);
@@ -104,7 +104,7 @@ SELECT throws_ok($$SELECT public.issue_assessment_coach_match_invite('97000000-0
 SELECT throws_ok($$SELECT public.issue_assessment_coach_match_invite('97000000-0000-4000-a000-000000000011', repeat('a',64), now()+interval '32 days', '97000000-0000-4000-a000-000000000001')$$, 'PT400', NULL, 'link lifetime is bounded');
 SELECT throws_ok($$SELECT public.issue_assessment_coach_match_invite('97000000-0000-4000-a000-000000000011', repeat('a',64), now()+interval '1 day', NULL)$$, 'PT400', NULL, 'link requires admin attribution');
 INSERT INTO match_results VALUES ('invite_a', public.issue_assessment_coach_match_invite('97000000-0000-4000-a000-000000000011', repeat('a',64), now()+interval '1 day', '97000000-0000-4000-a000-000000000001'));
-SELECT is(public.load_assessment_coach_match_form(repeat('a',64))#>>'{coach,name}', 'Match coach fictício', 'valid token loads only its coach');
+SELECT is(public.load_assessment_coach_match_form(repeat('a',64))#>>'{coach,name}', 'Match Coach Fictício', 'valid token loads only its coach');
 SELECT throws_ok($$SELECT public.load_assessment_coach_match_form(repeat('f',64))$$, 'PT410', NULL, 'unknown token is unavailable');
 INSERT INTO match_results VALUES ('invite_other', public.issue_assessment_coach_match_invite('97000000-0000-4000-a000-000000000012', repeat('b',64), now()+interval '1 day', '97000000-0000-4000-a000-000000000001'));
 SELECT throws_ok($$SELECT public.issue_assessment_coach_match_invite('97000000-0000-4000-a000-000000000011', repeat('b',64), now()+interval '1 day', '97000000-0000-4000-a000-000000000001')$$, '23505', NULL, 'duplicate hash fails after entering replacement transaction');
