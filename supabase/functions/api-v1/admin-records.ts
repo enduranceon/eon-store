@@ -46,6 +46,21 @@ const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Dígitos verificadores do CNPJ (só números, 14 dígitos).
+function validCnpj(cnpj: string): boolean {
+  if (!/^\d{14}$/.test(cnpj) || /^(\d)\1+$/.test(cnpj)) return false;
+  const digit = (length: number) => {
+    const weights = length === 12
+      ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+      : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const sum = weights.reduce((total, weight, index) =>
+      total + Number(cnpj[index]) * weight, 0);
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+  return digit(12) === Number(cnpj[12]) && digit(13) === Number(cnpj[13]);
+}
+
 const s = (maxLength = 500, options: Partial<FieldSpec> = {}): FieldSpec => ({
   kind: "string",
   maxLength,
@@ -181,6 +196,8 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       email: s(254, { nullable: true }),
       internal_notes: s(20_000, { nullable: true, preserveWhitespace: true }),
       cpf: s(20, { nullable: true }),
+      // Opcional, para quem paga pela empresa; o CPF segue sendo a identidade.
+      cnpj: s(20, { nullable: true }),
       active: b(),
       gender: s(32, { nullable: true }),
       birth_date: d({ nullable: true }),
@@ -718,6 +735,13 @@ function normalizeField(
         throw new AdminRecordInputError("CPF inválido", "invalid_field");
       }
       return cpf;
+    }
+    if (field === "cnpj") {
+      const cnpj = normalized.replace(/\D/g, "");
+      if (!validCnpj(cnpj)) {
+        throw new AdminRecordInputError("CNPJ inválido", "invalid_field");
+      }
+      return cnpj;
     }
     if (field === "code") return normalized.toUpperCase();
     if (field === "slug" && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(normalized)) {

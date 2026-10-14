@@ -115,6 +115,7 @@ type FetchCall = { url: URL; method: string };
 const ASAAS_CUSTOMERS: Record<string, string> = {
   "/v3/customers/cus_cliente_ficticio": "12345678901",
   "/v3/customers/cus_outra_pessoa": "11122233344",
+  "/v3/customers/cus_empresa_ficticia": "11222333000181",
 };
 
 function asaasCustomer(url: URL): Response | null {
@@ -422,10 +423,44 @@ Deno.test("checks open charges in Asaas with read-only calls", async () => {
     );
     assert(
       queries.some((query) =>
-        query.table === "presale_customers" && query.columns === "id, cpf"
+        query.table === "presale_customers" &&
+        query.columns === "id, cpf, cnpj"
       ),
-      "reads the customers' CPF to compare",
+      "reads the customers' CPF and CNPJ to compare",
     );
+  });
+});
+
+Deno.test("an invoice paid by the person's registered company is recognized", async () => {
+  const respond = (url: URL) => {
+    if (url.pathname === "/v3/payments/pay_pixpago0000000001") {
+      return json(asaasPayment({ customer: "cus_empresa_ficticia" }));
+    }
+    return asaasCustomer(url) ??
+      json({ errors: [{ description: "rota inesperada" }] }, 500);
+  };
+  const person = TABLE_ROWS.presale_customers[0];
+  const check = async () => {
+    const { client } = fakeDatabase();
+    const response = await handleAsaasPaymentCheckRequest(
+      checkRequest([{ type: "contract", id: CONTRACT_PAID }]),
+      "/asaas/payment-check",
+      client,
+    );
+    const text = await response!.text();
+    assert(!text.includes("11222333000181"), "the CNPJ never leaves the server");
+    return JSON.parse(text).data.results[0].customer_check;
+  };
+  await withAsaas(respond, async () => {
+    assert(await check() === "mismatch", "without a CNPJ it is another person");
+    person.cnpj = "11.222.333/0001-81";
+    try {
+      assert(await check() === "match_cnpj", "CNPJ registered for the person");
+      person.cnpj = "99888777000165";
+      assert(await check() === "mismatch", "another company is still blocked");
+    } finally {
+      delete person.cnpj;
+    }
   });
 });
 

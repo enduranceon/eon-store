@@ -269,6 +269,23 @@ function rpcClient(
   } as unknown as SupabaseClient;
 }
 
+Deno.test("a customer may keep a company CNPJ besides the CPF", () => {
+  const payload = normalizeAdminRecordPayload("customers", {
+    cpf: "529.982.247-25",
+    cnpj: "11.222.333/0001-81",
+  }, "update");
+  assert(payload.cpf === "52998224725", "CPF was not kept as digits");
+  assert(payload.cnpj === "11222333000181", "CNPJ was not kept as digits");
+  assert(
+    normalizeAdminRecordPayload("customers", { cnpj: "" }, "update").cnpj === null,
+    "an empty CNPJ was not cleared",
+  );
+  expectError(() =>
+    normalizeAdminRecordPayload("customers", { cnpj: "11.222.333/0001-82" }, "update"), "invalid_field");
+  expectError(() =>
+    normalizeAdminRecordPayload("customers", { cnpj: "11111111111111" }, "update"), "invalid_field");
+});
+
 Deno.test("customer merge reaches only the transactional server RPC", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const response = await handleAdminOperationRequest(

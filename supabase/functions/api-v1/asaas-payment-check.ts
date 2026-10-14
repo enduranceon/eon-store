@@ -63,7 +63,18 @@ export type AsaasCheckResult =
 
 // CPF do cliente da fatura no Asaas x CPF do cliente da venda. Só o
 // resultado sai da rota; os CPFs ficam no servidor.
-export type CustomerCheck = "match" | "mismatch" | "unknown" | "skipped";
+// match: CPF da pessoa; match_cnpj: CNPJ cadastrado da pessoa (pagou pela empresa).
+export type CustomerCheck =
+  | "match"
+  | "match_cnpj"
+  | "mismatch"
+  | "unknown"
+  | "skipped";
+
+interface CustomerDocuments {
+  cpf: string;
+  cnpj: string;
+}
 
 export const MAX_CHECK_ORDERS = 100;
 const PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
@@ -205,10 +216,10 @@ async function loadOrders(
   return rows;
 }
 
-async function loadCustomerCpfs(
+async function loadCustomerDocuments(
   supabase: SupabaseClient,
   rows: Map<string, Record<string, unknown>>,
-): Promise<Map<string, string>> {
+): Promise<Map<string, CustomerDocuments>> {
   const ids = [
     ...new Set(
       [...rows.values()].map((row) => row.customer_id).filter((id) =>
@@ -216,27 +227,28 @@ async function loadCustomerCpfs(
       ) as string[],
     ),
   ];
-  const cpfs = new Map<string, string>();
-  if (ids.length === 0) return cpfs;
+  const documents = new Map<string, CustomerDocuments>();
+  if (ids.length === 0) return documents;
   const { data, error } = await supabase
     .from("presale_customers")
-    .select("id, cpf")
+    .select("id, cpf, cnpj")
     .in("id", ids);
   if (error) throw error;
   for (const customer of (data ?? []) as Record<string, unknown>[]) {
     const cpf = digits(customer.cpf);
-    if (cpf) cpfs.set(String(customer.id), cpf);
+    const cnpj = digits(customer.cnpj);
+    if (cpf || cnpj) documents.set(String(customer.id), { cpf, cnpj });
   }
-  return cpfs;
+  return documents;
 }
 
 // Uma consulta por cliente do Asaas, mesmo que ele tenha várias cobranças.
 async function compareCustomer(
   asaasCustomerId: unknown,
-  localCpf: string | undefined,
+  local: CustomerDocuments | undefined,
   cache: Map<string, Promise<string>>,
 ): Promise<CustomerCheck> {
-  if (!localCpf || typeof asaasCustomerId !== "string" || !asaasCustomerId) {
+  if (!local || typeof asaasCustomerId !== "string" || !asaasCustomerId) {
     return "unknown";
   }
   if (!cache.has(asaasCustomerId)) {
@@ -247,15 +259,17 @@ async function compareCustomer(
       ),
     );
   }
-  const asaasCpf = await cache.get(asaasCustomerId)!;
-  if (!asaasCpf) return "unknown";
-  return asaasCpf === localCpf ? "match" : "mismatch";
+  const asaasDocument = await cache.get(asaasCustomerId)!;
+  if (!asaasDocument) return "unknown";
+  if (local.cpf && asaasDocument === local.cpf) return "match";
+  if (local.cnpj && asaasDocument === local.cnpj) return "match_cnpj";
+  return "mismatch";
 }
 
 async function checkOrder(
   order: OrderRef,
   row: Record<string, unknown> | undefined,
-  localCpf: string | undefined,
+  localDocuments: CustomerDocuments | undefined,
   customerCache: Map<string, Promise<string>>,
 ): Promise<AsaasCheckResult> {
   if (!row) return { ...order, result: "not_found" };
@@ -287,7 +301,11 @@ async function checkOrder(
       PAID_STATUSES.has(fact.status)
     );
     const customerCheck = paid
-      ? await compareCustomer(lookup.payment.customer, localCpf, customerCache)
+      ? await compareCustomer(
+        lookup.payment.customer,
+        localDocuments,
+        customerCache,
+      )
       : "skipped";
 
     return {
@@ -367,10 +385,10 @@ export async function handleAsaasPaymentCheckRequest(
   }
 
   let rows: Map<string, Record<string, unknown>>;
-  let cpfs: Map<string, string>;
+  let documents: Map<string, CustomerDocuments>;
   try {
     rows = await loadOrders(supabase, orders);
-    cpfs = await loadCustomerCpfs(supabase, rows);
+    documents = await loadCustomerDocuments(supabase, rows);
   } catch (error) {
     console.error(
       "api-v1 asaas payment check: load orders",
@@ -395,7 +413,7 @@ export async function handleAsaasPaymentCheckRequest(
       return checkOrder(
         order,
         row,
-        cpfs.get(String(row?.customer_id ?? "")),
+        documents.get(String(row?.customer_id ?? "")),
         customerCache,
       );
     });

@@ -196,10 +196,13 @@ O painel registra cada parcela com o valor e a data de crédito do Asaas; a
 última absorve os centavos para a soma bater com o total da venda. Sem data ou
 valor em alguma parcela, o registro usa a projeção do método de pagamento.
 
-Em cobranças pagas, a rota também compara o CPF do cliente da fatura no Asaas
-com o CPF do cliente da venda e devolve só `customer_check` (`match`,
-`mismatch`, `unknown`; `skipped` nas que não foram pagas). Os CPFs não saem do
-servidor. O painel só deixa registrar com `match`.
+Em cobranças pagas, a rota também compara o documento do cliente da fatura no
+Asaas com o CPF do cliente da venda e com o CNPJ opcional da ficha dele
+(`presale_customers.cnpj`, para quem paga pela empresa) e devolve só
+`customer_check` (`match` = CPF, `match_cnpj` = CNPJ cadastrado, `mismatch`,
+`unknown`; `skipped` nas que não foram pagas). Os documentos não saem do
+servidor. O painel só deixa registrar com `match` ou `match_cnpj`, e avisa na
+confirmação quando foi pago com o CNPJ.
 
 Antes de gravar, o painel chama a rota de novo só para as vendas escolhidas e
 registra apenas as que continuam iguais (forma, data, total e parcelas) ao que

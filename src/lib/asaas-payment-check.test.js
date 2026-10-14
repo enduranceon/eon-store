@@ -173,10 +173,16 @@ test('anything that is not a clean full payment goes to review', () => {
   assert.match(missingMethod.reason, /Cartão 5x/);
 });
 
-test('the invoice must belong to the same CPF as the sale', () => {
+test('the invoice must belong to the CPF of the sale or the CNPJ in the person record', () => {
   const other = classifyAsaasCheck(order(), checked(fact(), null, 'mismatch'), methods, TODAY);
   assert.equal(other.kind, 'review');
-  assert.match(other.reason, /outra pessoa \(CPF diferente\)/);
+  assert.match(other.reason, /outra pessoa \(CPF\/CNPJ diferente\)/);
+  const byCpf = classifyAsaasCheck(order(), checked(fact(), null, 'match'), methods, TODAY);
+  assert.equal(byCpf.kind, 'ready');
+  assert.equal(byCpf.paidByCompany, false);
+  const byCompany = classifyAsaasCheck(order(), checked(fact(), null, 'match_cnpj'), methods, TODAY);
+  assert.equal(byCompany.kind, 'ready', 'paid with the registered CNPJ');
+  assert.equal(byCompany.paidByCompany, true);
   const unknown = classifyAsaasCheck(order(), checked(fact(), null, 'unknown'), methods, TODAY);
   assert.equal(unknown.kind, 'review');
   assert.match(unknown.reason, /Não deu para conferir o CPF/);
@@ -198,6 +204,15 @@ test('second check before saving keeps only what did not change in Asaas', () =>
   assert.deepEqual(changed.map(entry => entry.item.order.id), ['refunded', 'new-date']);
   assert.match(changed[0].reason, /Estornada no Asaas/);
   assert.match(changed[1].reason, /mudaram no Asaas/);
+});
+
+test('the second check notices when the payer document changed', () => {
+  const orders = [order({ id: 'cpf' })];
+  const first = summarizeAsaasCheck(orders, [{ ...checked(fact()), id: 'cpf' }], methods, TODAY);
+  const later = summarizeAsaasCheck(orders, [{ ...checked(fact(), null, 'match_cnpj'), id: 'cpf' }], methods, TODAY);
+  const { confirmed, changed } = reconfirmAsaasItems(first.ready, later);
+  assert.equal(confirmed.length, 0);
+  assert.equal(changed.length, 1);
 });
 
 test('a sale already closed in the system is skipped', () => {
