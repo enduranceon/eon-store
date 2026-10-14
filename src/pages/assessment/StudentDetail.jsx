@@ -48,7 +48,7 @@ import {
 import { normalizePhone, supabase } from '@/api/db';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import { usePageData } from '@/hooks/usePageData';
-import { formatCurrency, formatDate, formatDateTime, todayLocalStr, utcToLocalDateStr } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateTime, maskCnpj, todayLocalStr, utcToLocalDateStr, validateCnpj } from '@/lib/utils';
 import { formatCep, formatCustomerAddress, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import {
   buildContractLifecycleRows,
@@ -112,6 +112,7 @@ const EMPTY_REGISTRATION_FORM = {
   whatsapp: '',
   email: '',
   cpf: '',
+  cnpj: '',
   birth_date: '',
   address_zip: '',
   address_street: '',
@@ -130,6 +131,7 @@ function buildRegistrationForm(customer) {
     whatsapp: customer?.whatsapp || '',
     email: customer?.email || '',
     cpf: customer?.cpf || '',
+    cnpj: customer?.cnpj ? maskCnpj(customer.cnpj) : '',
     birth_date: customer?.birth_date || '',
     address_zip: customer?.address_zip ? formatCep(customer.address_zip) : '',
     address_street: customer?.address_street || '',
@@ -618,11 +620,14 @@ export default function StudentDetail() {
     if (!registrationForm.full_name?.trim()) return toast.error('Nome obrigatório');
 
     const cleanCpf = registrationForm.cpf?.replace(/\D/g, '') || null;
+    const cleanCnpj = registrationForm.cnpj?.replace(/\D/g, '') || null;
+    if (cleanCnpj && !validateCnpj(cleanCnpj)) return toast.error('CNPJ inválido');
     const payload = {
       full_name: registrationForm.full_name.trim(),
       whatsapp: registrationForm.whatsapp ? normalizePhone(registrationForm.whatsapp) : null,
       email: registrationForm.email?.trim().toLowerCase() || null,
       cpf: cleanCpf,
+      cnpj: cleanCnpj,
       birth_date: registrationForm.birth_date || null,
       address_zip: normalizeCep(registrationForm.address_zip) || null,
       address_street: registrationForm.address_street?.trim() || null,
@@ -836,6 +841,7 @@ export default function StudentDetail() {
                 {customer.whatsapp && <span className="inline-flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> {customer.whatsapp}</span>}
                 {customer.email && <span className="inline-flex items-center gap-1"><Mail className="w-3.5 h-3.5" /> {customer.email}</span>}
                 {customer.cpf && <span className="inline-flex items-center gap-1"><IdCard className="w-3.5 h-3.5" /> {customer.cpf}</span>}
+                {customer.cnpj && <span className="inline-flex items-center gap-1" title="CNPJ para cobrança"><IdCard className="w-3.5 h-3.5" /> {maskCnpj(customer.cnpj)}</span>}
               </div>
               {(currentPlan || currentCoach) && (
                 <p className="mt-2 text-sm text-gray-700">
@@ -1420,6 +1426,11 @@ export default function StudentDetail() {
                       <Label>Nascimento</Label>
                       <Input type="date" value={registrationForm.birth_date || ''} onChange={event => setRegistrationField('birth_date', event.target.value)} className="mt-1" />
                     </div>
+                    <div>
+                      <Label>CNPJ (opcional)</Label>
+                      <Input value={registrationForm.cnpj || ''} onChange={event => setRegistrationField('cnpj', maskCnpj(event.target.value))} className="mt-1" placeholder="00.000.000/0000-00" inputMode="numeric" />
+                      <p className="text-xs text-muted-foreground mt-1">Para quem paga pela empresa. A conferência do Asaas aceita a fatura no CPF ou neste CNPJ.</p>
+                    </div>
                   </div>
 
                   <div className="border-t pt-4 space-y-4">
@@ -1506,6 +1517,12 @@ export default function StudentDetail() {
                     <p className="text-xs text-muted-foreground flex items-center gap-1"><IdCard className="w-3 h-3" /> CPF</p>
                     <p className="font-semibold">{customer.cpf || '—'}</p>
                   </div>
+                  {customer.cnpj && (
+                    <div>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1"><IdCard className="w-3 h-3" /> CNPJ (cobrança)</p>
+                      <p className="font-semibold">{maskCnpj(customer.cnpj)}</p>
+                    </div>
+                  )}
                   <div>
                     <p className="text-xs text-muted-foreground">Cliente desde</p>
                     <p className="font-semibold">{customerSince ? formatDate(customerSince) : '—'}</p>

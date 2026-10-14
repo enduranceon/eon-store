@@ -124,11 +124,12 @@ export function classifyAsaasCheck(order, check, methods, today) {
   }
   if (paidCount < facts.length) return review(`${paidCount} de ${facts.length} parcelas pagas no Asaas.`);
 
-  // A fatura precisa ser do mesmo CPF da venda: pega link colado na venda errada.
+  // A fatura precisa ser do CPF da pessoa ou do CNPJ cadastrado na ficha dela:
+  // pega link colado na venda errada.
   if (check.customer_check === 'mismatch') {
-    return review('A fatura no Asaas é de outra pessoa (CPF diferente). Confira o link salvo nesta venda.');
+    return review('A fatura no Asaas é de outra pessoa (CPF/CNPJ diferente). Confira o link salvo nesta venda ou cadastre o CNPJ na ficha da pessoa.');
   }
-  if (check.customer_check !== 'match') {
+  if (!['match', 'match_cnpj'].includes(check.customer_check)) {
     return review('Não deu para conferir o CPF do cliente no Asaas. Confira e registre pelo "Receber".');
   }
 
@@ -166,6 +167,7 @@ export function classifyAsaasCheck(order, check, methods, today) {
     installments: facts.length,
     billingType,
     schedule: asaasCreditSchedule(facts, total),
+    paidByCompany: check.customer_check === 'match_cnpj',
   };
 }
 
@@ -183,6 +185,7 @@ function sameRegistration(shown, now) {
   return Boolean(shown && now && now.kind === 'ready'
     && shown.method?.id === now.method?.id
     && shown.paymentDate === now.paymentDate
+    && Boolean(shown.paidByCompany) === Boolean(now.paidByCompany)
     && cents(shown.total) === cents(now.total)
     && JSON.stringify(shown.schedule || null) === JSON.stringify(now.schedule || null));
 }

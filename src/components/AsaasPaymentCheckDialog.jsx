@@ -192,6 +192,7 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
                     <span className="block text-xs text-slate-600">
                       {item.method.name} · pago em {formatDate(item.paymentDate)} · total {formatCurrency(item.total)}
                     </span>
+                    {item.paidByCompany && <span className="block text-xs font-medium text-amber-800">Pago com o CNPJ cadastrado na ficha da pessoa.</span>}
                     {item.schedule ? (
                       <ol className="grid gap-x-4 gap-y-0.5 text-xs text-slate-600 sm:grid-cols-2">
                         {item.schedule.map(row => (
@@ -265,6 +266,7 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
                             {item.method.name} · pago em {formatDate(item.paymentDate)} · {formatCurrency(item.total)}
                           </span>
                           <span className="block text-xs text-slate-500">{scheduleLabel(item.schedule)}</span>
+                          {item.paidByCompany && <span className="block text-xs text-amber-800">Pago com o CNPJ cadastrado na ficha da pessoa.</span>}
                           {item.order.is_prospect && !result?.ok && (
                             <span className="block text-xs text-violet-700">Ao registrar, o prospect vira aluno.</span>
                           )}
