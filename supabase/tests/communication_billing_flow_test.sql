@@ -152,7 +152,7 @@ SELECT is((SELECT jsonb_build_object('dias_atraso',ctx->'dias_atraso','referente
         jsonb_build_object('product_name','Camiseta fictícia','quantity',1),
         jsonb_build_object('product_name','Boné fictício','quantity',1)))) ctx),
   jsonb_build_object('dias_atraso','','referente','do seu pedido'),
-  'an order with several items is just "your order" and a charge due today has no overdue days');
+  'an order is just "your order" and a charge due today has no overdue days');
 SELECT is(eon_private.communication_template_context(jsonb_build_object('source_type','presale',
     'reference','PED-TESTE','items',jsonb_build_array(
       jsonb_build_object('product_name','Camiseta fictícia','quantity',1),
@@ -163,11 +163,11 @@ SELECT is((SELECT jsonb_build_object('referente',ctx->'referente','itens_bloco',
     FROM eon_private.communication_template_context(jsonb_build_object('source_type','stock',
       'reference','EST-TESTE','items',jsonb_build_array(
         jsonb_build_object('product_name','Boné fictício','quantity',2)))) ctx),
-  jsonb_build_object('referente','do seu pedido (Boné fictício x2)','itens_bloco',''),
-  'a single item is named once, in the reference, without the order number');
+  jsonb_build_object('referente','do seu pedido','itens_bloco','Itens:' || E'\n' || '- Boné fictício x2' || E'\n\n'),
+  'a single item is listed once, in the items block, and the order number is not shown');
 SELECT is(eon_private.communication_template_context(jsonb_build_object('source_type','event',
     'reference','INS-TESTE','items',jsonb_build_array(jsonb_build_object('name','Prova fictícia 10 km'))))->>'referente',
-  'da sua inscrição (Prova fictícia 10 km)','an event registration names the race without the number');
+  'da sua inscrição','an event registration is referred to without the number');
 
 -- 6. Prospects are billed on the Prospects board, not in the Central.
 INSERT INTO auth.users (id, email) VALUES ('83000000-0000-4000-a000-000000000001', 'cobranca-admin@example.test');

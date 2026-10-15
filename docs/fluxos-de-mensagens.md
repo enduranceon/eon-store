@@ -201,13 +201,12 @@ flowchart TD
   das outras mensagens (migração `20261008230000_billing_texts_pre_due.sql`).
 - A mensagem de atraso é uma só e diz há quantos dias a cobrança venceu
   (`{dias_atraso}`) e a que se refere (`{referente}`: "referente ao seu plano
-  Corrida - Trimestral (ASS-…)", "do seu pedido (item)" ou "da sua
-  inscrição (prova)"). Como a contagem é pelo calendário, um dia sem envio não
-  desarruma a fila: no dia seguinte a mensagem já sai com o número certo.
-- Pedidos e inscrições não mostram o número interno (EST-/PED-/INS-) na
-  mensagem: com um item só, o `{referente}` já diz o item e a lista
-  (`{itens_bloco}`) fica vazia; com mais de um item, o `{referente}` é só "do
-  seu pedido" e a lista aparece uma vez (migração
+  Corrida - Trimestral (ASS-…)", "do seu pedido" ou "da sua inscrição"). Como
+  a contagem é pelo calendário, um dia sem envio não desarruma a fila: no dia
+  seguinte a mensagem já sai com o número certo.
+- Pedidos e inscrições não mostram o número interno (EST-/PED-/INS-) nem o
+  item no `{referente}`: os itens aparecem uma vez, na lista `{itens_bloco}`
+  da primeira cobrança (migração
   `20261015120000_billing_message_order_reference.sql`, desde 15/10/2026).
 - Resposta registrada pausa a régua: "Vai pagar" com data volta nesse dia;
   "Informou que já pagou" vai para a conferência de pagamento; "Contestou" e

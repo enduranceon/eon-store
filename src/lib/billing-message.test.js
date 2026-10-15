@@ -16,28 +16,12 @@ test('referência da cobrança por tipo de venda', () => {
     'referente ao seu plano Corrida - Trimestral (ASS-TESTE)',
   );
   assert.equal(chargeReference({ sourceType: 'contract', orderNumber: 'ASS-TESTE' }), 'referente ao seu contrato ASS-TESTE');
-  const two = [{ label: 'Camiseta fictícia', quantity: 1 }, { label: 'Boné fictício', quantity: 1 }];
-  assert.equal(chargeReference({ sourceType: 'presale', orderNumber: 'PED-TESTE', items: two }), 'do seu pedido');
-  assert.equal(
-    chargeReference({ sourceType: 'stock', orderNumber: 'EST-TESTE', items: [{ label: 'Boné fictício', quantity: 1 }] }),
-    'do seu pedido (Boné fictício)',
-    'sem o número interno',
-  );
-  assert.equal(
-    chargeReference({ sourceType: 'stock', items: [{ label: 'Boné fictício', quantity: 2 }] }),
-    'do seu pedido (Boné fictício x2)',
-  );
-  assert.equal(
-    chargeReference({ sourceType: 'event', orderNumber: 'INS-TESTE', items: [{ label: 'Prova fictícia 10 km', quantity: 1 }] }),
-    'da sua inscrição (Prova fictícia 10 km)',
-  );
-  assert.equal(chargeReference({ sourceType: 'stock' }), 'do seu pedido');
+  assert.equal(chargeReference({ sourceType: 'stock', orderNumber: 'EST-TESTE' }), 'do seu pedido', 'sem o número interno');
+  assert.equal(chargeReference({ sourceType: 'presale', orderNumber: 'PED-TESTE' }), 'do seu pedido');
+  assert.equal(chargeReference({ sourceType: 'event', orderNumber: 'INS-TESTE' }), 'da sua inscrição');
 });
 
-test('a lista de itens só aparece com mais de um item', () => {
-  const one = [{ label: 'Boné fictício', quantity: 1 }];
-  const two = [...one, { label: 'Camiseta fictícia', quantity: 1 }];
-  assert.equal(itemsBlock(one, '- Boné fictício x1'), '');
-  assert.equal(itemsBlock(two, '- Boné fictício x1\n- Camiseta fictícia x1'), 'Itens:\n- Boné fictício x1\n- Camiseta fictícia x1\n\n');
-  assert.equal(itemsBlock([], ''), '');
+test('a lista de itens aparece sempre que há itens', () => {
+  assert.equal(itemsBlock('- Boné fictício x1'), 'Itens:\n- Boné fictício x1\n\n');
+  assert.equal(itemsBlock(''), '');
 });

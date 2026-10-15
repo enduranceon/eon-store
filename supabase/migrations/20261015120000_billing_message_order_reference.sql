@@ -3,10 +3,9 @@ SET LOCAL lock_timeout = '5s';
 
 -- Mensagens de cobrança de pedidos e inscrições mais humanas (pedido do
 -- usuário em 15/10/2026): {referente} deixa de mostrar o número interno
--- (EST-/PED-/INS-) e, num pedido de um item só, já diz o item, então
--- {itens_bloco} só lista quando há mais de um item (antes o item aparecia
--- duas vezes). Contrato continua igual. Mesma regra em
--- src/lib/billing-message.js.
+-- (EST-/PED-/INS-) e o item, que já aparece na lista ({itens_bloco}, sem
+-- mudança). Fica "do seu pedido" / "da sua inscrição". Contrato continua
+-- igual. Mesma regra em src/lib/billing-message.js.
 
 CREATE OR REPLACE FUNCTION eon_private.communication_template_context(p_context jsonb)
  RETURNS jsonb
@@ -26,7 +25,6 @@ DECLARE
   v_item jsonb;
   v_items text := '';
   v_first_item text;
-  v_single_item text;
   v_item_name text;
   v_item_count integer:=0;
   v_quantity integer;
@@ -60,9 +58,6 @@ BEGIN
       v_first_item:=COALESCE(v_first_item,v_item_name);
       v_quantity:=CASE WHEN COALESCE(v_item->>'quantity','') ~ '^[0-9]{1,4}$'
         THEN GREATEST(1,(v_item->>'quantity')::integer) ELSE 1 END;
-      IF v_item_count=1 THEN
-        v_single_item:=v_item_name || CASE WHEN v_quantity>1 THEN ' x' || v_quantity ELSE '' END;
-      END IF;
       v_items:=v_items || CASE WHEN v_items='' THEN '' ELSE E'\n' END ||
         '- ' || v_item_name || ' x' || v_quantity;
     END LOOP;
@@ -71,17 +66,15 @@ BEGIN
   v_overdue := v_today - v_due;
   v_first_item := CASE WHEN v_item_count>1 THEN v_first_item||' +'||(v_item_count-1)
     ELSE v_first_item END;
-  -- Pedido ou inscrição com um item só: o item diz o que é. Com mais de um, a
-  -- lista vai em {itens_bloco}. O número interno (EST-/PED-/INS-) não aparece.
-  IF v_item_count<>1 THEN v_single_item:=NULL; END IF;
   v_about := CASE p_context->>'source_type'
     WHEN 'contract' THEN CASE
       WHEN NULLIF(p_context->>'plan_name','') IS NOT NULL
         THEN 'referente ao seu plano ' || (p_context->>'plan_name')
           || COALESCE(' (' || v_ref || ')', '')
       ELSE 'referente ao seu contrato' || COALESCE(' ' || v_ref, '') END
-    WHEN 'event' THEN 'da sua inscrição' || COALESCE(' (' || v_single_item || ')', '')
-    ELSE 'do seu pedido' || COALESCE(' (' || v_single_item || ')', '') END;
+    -- Pedido e inscrição: sem o número interno e sem o item, que vai na lista.
+    WHEN 'event' THEN 'da sua inscrição'
+    ELSE 'do seu pedido' END;
   RETURN jsonb_build_object(
     'nome', split_part(v_name,' ',1),
     'nome_completo', v_name,
@@ -105,8 +98,8 @@ BEGIN
       WHEN v_overdue = 1 THEN '1 dia' ELSE v_overdue || ' dias' END,
     'referente', v_about,
     'itens', v_items,
-    'itens_bloco', CASE WHEN v_item_count>1
-      THEN 'Itens:' || E'\n' || v_items || E'\n\n' ELSE '' END,
+    'itens_bloco', CASE WHEN v_items='' THEN ''
+      ELSE 'Itens:' || E'\n' || v_items || E'\n\n' END,
     'plano', COALESCE(NULLIF(p_context->>'plan_name', ''), 'seu plano'),
     'data_fim', CASE WHEN v_end IS NULL THEN '' ELSE to_char(v_end, 'DD/MM/YYYY') END,
     'fim_plano', CASE WHEN v_plan_end IS NULL THEN '' ELSE to_char(v_plan_end, 'DD/MM') END,

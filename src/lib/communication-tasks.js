@@ -729,7 +729,7 @@ function renderCommunicationTemplate(template, task, options = {}) {
     '{dias_atraso}': overdueDaysText(overdueDays),
     '{referente}': chargeReference(task),
     '{itens}': itemsText,
-    '{itens_bloco}': itemsBlock(items, itemsText),
+    '{itens_bloco}': itemsBlock(itemsText),
     '{vencimento}': due,
     '{vencimento_texto}': due ? `, com vencimento em *${due}*` : '',
     '{vencimento_atraso}': due ? ` em *${due}*` : '',
@@ -813,7 +813,7 @@ export function buildTaskMessage(task, options = {}) {
     const due = dueDate ? formatDate(dueDate) : '';
     let msg = `Olá, ${name}! Tudo bem?\n\n`;
     msg += `Segue a cobrança ${chargeReference(task)}, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
-    msg += itemsBlock(task.items, itemsText);
+    msg += itemsBlock(itemsText);
     if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
     if (paymentLink) msg += `Link de pagamento:\n${paymentLink}\n\n`;
     msg += 'Se o pagamento já foi realizado, pode desconsiderar esta mensagem. Qualquer dúvida, estou por aqui.';
