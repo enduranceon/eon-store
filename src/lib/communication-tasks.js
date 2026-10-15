@@ -2,7 +2,7 @@ import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { DEFAULT_COMMUNICATION_RULES, RENEWAL_INTENT_TEMPLATE } from '@/lib/communication-config';
 import { buildAssessmentContractMessage } from '@/lib/assessment-contract-message';
-import { chargeReference, overdueDaysText } from '@/lib/billing-message';
+import { chargeReference, itemsBlock, overdueDaysText } from '@/lib/billing-message';
 import { getContractTotalValue } from '@/lib/assessment-contract-lifecycle';
 import { suggestedAssessmentChargeDueDate } from '@/lib/assessment-renewal-billing';
 import {
@@ -727,9 +727,9 @@ function renderCommunicationTemplate(template, task, options = {}) {
     '{valor}': formatCurrency(task.totalValue || 0),
     '{item}': item,
     '{dias_atraso}': overdueDaysText(overdueDays),
-    '{referente}': chargeReference(task, item),
+    '{referente}': chargeReference(task),
     '{itens}': itemsText,
-    '{itens_bloco}': itemsText ? `Itens:\n${itemsText}\n\n` : '',
+    '{itens_bloco}': itemsBlock(items, itemsText),
     '{vencimento}': due,
     '{vencimento_texto}': due ? `, com vencimento em *${due}*` : '',
     '{vencimento_atraso}': due ? ` em *${due}*` : '',
@@ -810,15 +810,10 @@ export function buildTaskMessage(task, options = {}) {
   }
 
   if (task.kind === TASK_KIND.CHARGE_SEND) {
-    const saleType = task.sourceType === 'contract'
-      ? 'contrato'
-      : task.sourceType === 'event'
-      ? 'inscrição'
-      : 'pedido';
     const due = dueDate ? formatDate(dueDate) : '';
     let msg = `Olá, ${name}! Tudo bem?\n\n`;
-    msg += `Segue a cobrança do seu ${saleType} *${task.orderNumber}*, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
-    if (itemsText) msg += `Itens:\n${itemsText}\n\n`;
+    msg += `Segue a cobrança ${chargeReference(task)}, no valor de *${formatCurrency(task.totalValue)}*${due ? `, com vencimento em *${due}*` : ''}.\n\n`;
+    msg += itemsBlock(task.items, itemsText);
     if (pixCopy) msg += `PIX Copia e Cola:\n\`${pixCopy}\`\n\n`;
     if (paymentLink) msg += `Link de pagamento:\n${paymentLink}\n\n`;
     msg += 'Se o pagamento já foi realizado, pode desconsiderar esta mensagem. Qualquer dúvida, estou por aqui.';

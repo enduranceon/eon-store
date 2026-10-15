@@ -71,8 +71,9 @@ SELECT ok(pg_temp.suggest(2)->>'message' LIKE '%https://example.test/pay/b2%',
   'the overdue reminder carries the payment link');
 SELECT ok(pg_temp.suggest(2)->>'message' LIKE '%vencida há *4 dias*%',
   'the overdue reminder says how many days it is overdue');
-SELECT ok(pg_temp.suggest(2)->>'message' LIKE '%referente ao seu pedido EST-BILL-2%',
-  'the overdue reminder says what the charge is for');
+SELECT ok(pg_temp.suggest(2)->>'message' LIKE '%*R$ 150,00* do seu pedido está vencida%'
+    AND pg_temp.suggest(2)->>'message' NOT LIKE '%EST-BILL%',
+  'the overdue reminder says what the charge is for without the internal number');
 SELECT is(pg_temp.suggest(7)->>'action_code','overdue_daily',
   'D+6 after a D+3 send asks for today''s reminder');
 SELECT is(pg_temp.suggest(7)->>'blocked_reason',NULL,
@@ -150,11 +151,23 @@ SELECT is((SELECT jsonb_build_object('dias_atraso',ctx->'dias_atraso','referente
       'reference','PED-TESTE','due_date',current_date,'items',jsonb_build_array(
         jsonb_build_object('product_name','Camiseta fictícia','quantity',1),
         jsonb_build_object('product_name','Boné fictício','quantity',1)))) ctx),
-  jsonb_build_object('dias_atraso','','referente','referente ao seu pedido PED-TESTE (Camiseta fictícia +1)'),
-  'an order names its items and a charge due today has no overdue days');
+  jsonb_build_object('dias_atraso','','referente','do seu pedido'),
+  'an order with several items is just "your order" and a charge due today has no overdue days');
+SELECT is(eon_private.communication_template_context(jsonb_build_object('source_type','presale',
+    'reference','PED-TESTE','items',jsonb_build_array(
+      jsonb_build_object('product_name','Camiseta fictícia','quantity',1),
+      jsonb_build_object('product_name','Boné fictício','quantity',1))))->>'itens_bloco',
+  'Itens:' || E'\n' || '- Camiseta fictícia x1' || E'\n' || '- Boné fictício x1' || E'\n\n',
+  'several items are listed once, in the items block');
+SELECT is((SELECT jsonb_build_object('referente',ctx->'referente','itens_bloco',ctx->'itens_bloco')
+    FROM eon_private.communication_template_context(jsonb_build_object('source_type','stock',
+      'reference','EST-TESTE','items',jsonb_build_array(
+        jsonb_build_object('product_name','Boné fictício','quantity',2)))) ctx),
+  jsonb_build_object('referente','do seu pedido (Boné fictício x2)','itens_bloco',''),
+  'a single item is named once, in the reference, without the order number');
 SELECT is(eon_private.communication_template_context(jsonb_build_object('source_type','event',
     'reference','INS-TESTE','items',jsonb_build_array(jsonb_build_object('name','Prova fictícia 10 km'))))->>'referente',
-  'referente à sua inscrição INS-TESTE (Prova fictícia 10 km)','an event registration names the race');
+  'da sua inscrição (Prova fictícia 10 km)','an event registration names the race without the number');
 
 -- 6. Prospects are billed on the Prospects board, not in the Central.
 INSERT INTO auth.users (id, email) VALUES ('83000000-0000-4000-a000-000000000001', 'cobranca-admin@example.test');
