@@ -6,14 +6,19 @@ export function overdueDaysText(days) {
   return `${days} dia${days === 1 ? '' : 's'}`;
 }
 
-// "referente ao seu plano Corrida - Trimestral (ASS-000123)".
-export function chargeReference({ sourceType, orderNumber, planLabel } = {}, item = '') {
+// Contrato: "referente ao seu plano Corrida - Trimestral (ASS-000123)".
+// Pedido e inscrição: só "do seu pedido" / "da sua inscrição", sem o número
+// interno; os itens vão na lista ({itens_bloco}).
+export function chargeReference({ sourceType, orderNumber, planLabel } = {}) {
   const number = orderNumber || '';
   if (sourceType === 'contract') {
     return planLabel
       ? `referente ao seu plano ${planLabel}${number ? ` (${number})` : ''}`
       : `referente ao seu contrato${number ? ` ${number}` : ''}`;
   }
-  const label = sourceType === 'event' ? 'referente à sua inscrição' : 'referente ao seu pedido';
-  return `${label}${number ? ` ${number}` : ''}${item ? ` (${item})` : ''}`;
+  return sourceType === 'event' ? 'da sua inscrição' : 'do seu pedido';
+}
+
+export function itemsBlock(itemsText) {
+  return itemsText ? `Itens:\n${itemsText}\n\n` : '';
 }
