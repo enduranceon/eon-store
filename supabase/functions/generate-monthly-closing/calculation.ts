@@ -547,3 +547,41 @@ export function groupByContract(rows: Row[]) {
   }
   return byContract;
 }
+
+// Comissões de produto (product_commissions) que entram no fechamento: os
+// lançamentos ainda sem fechamento com competência até o mês fechado. Cada
+// lançamento vira um item; o ajuste (estorno, troca de coach, item cancelado)
+// entra com o próprio sinal e o motivo.
+const COMMISSION_MONEY = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
+export function commissionRuleLabel(row: Row) {
+  const value = Number(row.commission_value);
+  return row.commission_type === "percent"
+    ? `${String(value).replace(".", ",")}%`
+    : `${COMMISSION_MONEY.format(value)}/un.`;
+}
+
+export function commissionsForClosing(rows: Row[], competence: string) {
+  return rows.filter((row) => !row.closing_id && String(row.competence).slice(0, 10) <= competence);
+}
+
+export function productCommissionItems(rows: Row[], closingId: string) {
+  return rows.map((row) => ({
+    closing_id: closingId,
+    coach_id: row.coach_id,
+    source_type: "product_commission",
+    contract_id: null,
+    description: [
+      row.product_name,
+      `${row.quantity} un.`,
+      commissionRuleLabel(row),
+      row.order_number,
+      row.customer_name,
+    ].filter(Boolean).join(" · "),
+    amount: roundCents(Number(row.amount)),
+    base_value: row.base_value === null || row.base_value === undefined ? null : Number(row.base_value),
+    adjustment_reason: row.kind === "adjustment" ? row.reason : null,
+    reference_competence: String(row.competence).slice(0, 10),
+    product_commission_id: row.id,
+  }));
+}

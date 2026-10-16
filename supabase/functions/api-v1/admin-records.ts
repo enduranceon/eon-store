@@ -240,6 +240,10 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       status: s(32, { values: ["active", "inactive"] }),
       variations: j("array"),
       extras: j("array"),
+      // Comissão do coach de quem compra: % do valor pago pelo item ou R$ por
+      // unidade. Os dois campos andam juntos (nulos = sem comissão).
+      commission_type: s(16, { nullable: true, values: ["percent", "fixed"] }),
+      commission_value: n({ min: 0, nullable: true }),
     },
     defaultSort: "-created_date",
     sortFields: [
@@ -935,6 +939,26 @@ export function normalizeAdminRecordPayload(
       "Horário final anterior ao horário inicial",
       "invalid_time_range",
     );
+  }
+  if (
+    resourceKey === "products" &&
+    ("commission_type" in output || "commission_value" in output)
+  ) {
+    const type = output.commission_type;
+    const amount = output.commission_value;
+    const valid = ("commission_type" in output && "commission_value" in output) &&
+      (
+        (type === null && amount === null) ||
+        (type === "percent" && typeof amount === "number" && amount > 0 &&
+          amount <= 100) ||
+        (type === "fixed" && typeof amount === "number" && amount > 0)
+      );
+    if (!valid) {
+      throw new AdminRecordInputError(
+        "Comissão inválida: escolha % (até 100) ou valor por unidade maior que zero",
+        "invalid_commission",
+      );
+    }
   }
   if (
     resourceKey === "plans" && output.available_online === true &&

@@ -12,7 +12,7 @@ import { expenseCategoryLabel, manualEntryKind } from '@/lib/payout-expenses';
 import { buildCoachPanorama, sortByStudentName } from '@/lib/coach-statement-panorama';
 import { toast } from 'sonner';
 
-const SOURCE_LABEL = { direct_leadership: 'Liderança', co_leadership: 'Co-liderança', manual_adjustment: 'Ajuste' };
+const SOURCE_LABEL = { direct_leadership: 'Liderança', co_leadership: 'Co-liderança', manual_adjustment: 'Ajuste', product_commission: 'Comissão de produto' };
 
 const safeFilePart = (value) => String(value || '')
   .normalize('NFKD')
@@ -120,7 +120,8 @@ export default function CoachStatement() {
     };
 
     const enriched = items.map(enrich);
-    const isCarried = (it) => it.reference_competence && it.reference_competence !== competence && it.source_type !== 'manual_adjustment';
+    const isCarried = (it) => it.reference_competence && it.reference_competence !== competence
+      && !['manual_adjustment', 'product_commission'].includes(it.source_type);
     // Listas em ordem alfabética pelo nome do aluno (tela e PDF).
     const alunos = sortByStudentName(enriched.filter((i) => i.source_type === 'athlete_repasse' && !isCarried(i)));
     const liderancas = sortByStudentName(enriched.filter((i) => ['direct_leadership', 'co_leadership'].includes(i.source_type) && !isCarried(i)));
@@ -141,6 +142,17 @@ export default function CoachStatement() {
           amount: Number(i.amount),
         };
       });
+    // Comissões de produtos: venda paga de aluno do coach (ou ajuste dela).
+    const comissoes = items
+      .filter((i) => i.source_type === 'product_commission')
+      .map((i) => ({
+        id: i.id,
+        descricao: (i.description || '').trim(),
+        reason: (i.adjustment_reason || '').trim(),
+        refLabel: i.reference_competence && i.reference_competence !== competence
+          ? formatCompetence(i.reference_competence, { short: true }) : null,
+        amount: Number(i.amount),
+      }));
     const extras = ajustes.filter((a) => a.kind !== 'gasto');
     const gastos = ajustes.filter((a) => a.kind === 'gasto');
     const pends = sortByStudentName(pendings.map((p) => {
@@ -198,6 +210,7 @@ export default function CoachStatement() {
       { label: `Alunos (${alunos.length})`, valor: soma(alunos) },
       { label: `Liderança e co-liderança (${liderancas.length})`, valor: soma(liderancas) },
       { label: `Resgatado de meses anteriores (${resgatados.length})`, valor: soma(resgatados) },
+      { label: `Comissões de produtos (${comissoes.length})`, valor: soma(comissoes) },
       { label: `Repasse extra e descontos (${extras.length})`, valor: soma(extras) },
       { label: `Gastos e reembolsos (${gastos.length})`, valor: soma(gastos) },
     ].filter((linha) => linha.valor !== 0 || linha.label.startsWith('Alunos'));
@@ -211,7 +224,7 @@ export default function CoachStatement() {
       generatedAt: formatDate(closing.generated_at?.split('T')[0]),
       statusLabel: closing.status === 'paid' ? 'Pago' : closing.status === 'approved' ? 'Aprovado' : 'Em revisão',
       porModalidade,
-      alunos, liderancas, resgatados, ajustes, extras, gastos, pendings: pends, total,
+      alunos, liderancas, resgatados, comissoes, ajustes, extras, gastos, pendings: pends, total,
     };
   }, [data, coachId]);
 

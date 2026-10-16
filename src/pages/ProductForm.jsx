@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Wand2, ChevronDown, ChevronUp, Hash } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Wand2, ChevronDown, ChevronUp, Hash, HandCoins } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,7 @@ import { normalizeStockVariations, stockProductQuantity, stockVariationLabel, st
 import { PreSaleProduct, PreSaleCampaign, PreSaleSupplier, PreSaleCategory, Product, StockProduct } from '@/api/entities';
 import { formatCurrency, cn } from '@/lib/utils';
 import { normalizeCampaignSelection } from '@/lib/campaignLinks';
+import { COMMISSION_TYPES, commissionFormFromProduct, commissionPayload, commissionPerUnit } from '@/lib/product-commission';
 import { toast } from 'sonner';
 
 // ─── Opções pré-definidas ───────────────────────────────────────────────────
@@ -126,6 +127,8 @@ export default function ProductForm({ mode = 'presale' }) {
   const sourceProductId = searchParams.get('produto') || searchParams.get('product_id');
   const stockTabRequested = searchParams.get('aba') === 'estoque';
   const [form, setForm] = useState(EMPTY);
+  // Comissão do coach: só no produto-base (catálogo), fora do form da pré-venda.
+  const [commission, setCommission] = useState({ type: 'none', value: '' });
   const [campaigns, setCampaigns] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -167,6 +170,7 @@ export default function ProductForm({ mode = 'presale' }) {
           images,
           campaign_ids: isPresale ? normalizeCampaignSelection(p) : [],
         });
+        if (!isPresale) setCommission(commissionFormFromProduct(p));
         setHasUnsavedChanges(false);
       }).catch(e => {
         toast.error('Erro ao carregar produto: ' + e.message);
@@ -304,6 +308,8 @@ export default function ProductForm({ mode = 'presale' }) {
   const handleSave = async () => {
     if (!form.name.trim()) return toast.error('Nome é obrigatório');
     if (!form.sale_price) return toast.error('Preço de venda é obrigatório');
+    const commissionFields = isPresale ? {} : commissionPayload(commission);
+    if (commissionFields.error) return toast.error(commissionFields.error);
     setSaving(true);
     try {
       let variations = (form.variations || []).map(v => ({
@@ -326,6 +332,7 @@ export default function ProductForm({ mode = 'presale' }) {
         supplier: form.supplier, supplier_id: form.supplier_id || null,
         notes: form.notes, status: form.status,
         variations, extras,
+        ...commissionFields,
       };
       if (!isPresale) {
         let savedProduct;
@@ -682,6 +689,73 @@ export default function ProductForm({ mode = 'presale' }) {
           )}
         </CardContent>
       </Card>
+
+      {!isPresale && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><HandCoins className="w-4 h-4" /> Comissão do coach</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Quem compra e tem coach (contrato ativo) gera comissão para ele quando o pedido é pago. Entra no repasse.
+              Sem coach, a venda fica com a assessoria.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Tipo de comissão">
+              {COMMISSION_TYPES.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={commission.type === option.id}
+                  onClick={() => {
+                    setHasUnsavedChanges(true);
+                    setCommission(current => ({ type: option.id, value: option.id === current.type ? current.value : '' }));
+                  }}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors',
+                    commission.type === option.id
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400 hover:text-blue-600',
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {commission.type !== 'none' && (
+              <div className="max-w-xs">
+                <Label htmlFor="product-commission-value">
+                  {commission.type === 'percent' ? 'Porcentagem (%)' : 'Valor por unidade (R$)'}
+                </Label>
+                <Input
+                  id="product-commission-value"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max={commission.type === 'percent' ? 100 : undefined}
+                  placeholder={commission.type === 'percent' ? 'Ex: 10' : '0,00'}
+                  value={commission.value}
+                  onChange={e => {
+                    setHasUnsavedChanges(true);
+                    setCommission(current => ({ ...current, value: e.target.value }));
+                  }}
+                  className="mt-1"
+                />
+              </div>
+            )}
+            {commission.type !== 'none' && Number(commission.value) > 0 && (
+              <p className="text-sm text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                {commission.type === 'percent'
+                  ? <>Vendido a {formatCurrency(salePrice)} sem desconto, o coach recebe <strong>{formatCurrency(commissionPerUnit({ commission_type: 'percent', commission_value: Number(commission.value) }, salePrice))}</strong> por unidade. Com desconto, a % vale sobre o valor pago.</>
+                  : <>O coach recebe <strong>{formatCurrency(Number(commission.value))}</strong> por unidade vendida, com ou sem desconto.</>}
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Mudar a regra vale para os próximos pedidos pagos. Pedidos já pagos mantêm a regra da época.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Variações */}
       <Card>

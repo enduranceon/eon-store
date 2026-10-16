@@ -276,6 +276,49 @@ Deno.test("fulfillment forwards its interruption reason to the protected RPC", a
   );
 });
 
+Deno.test("order coach goes to the protected RPC and accepts removing the coach", async () => {
+  const orderId = crypto.randomUUID();
+  const actorId = crypto.randomUUID();
+  const coachId = crypto.randomUUID();
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const supabase = {
+    rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return Promise.resolve({ data: { id: orderId }, error: null });
+    },
+  };
+  const patch = (type: string, body: unknown) =>
+    handleOrdersRequest(
+      new Request(`https://example.test/orders/${type}/${orderId}/coach`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      `/orders/${type}/${orderId}/coach`,
+      supabase as never,
+      actorId,
+    );
+
+  const set = await patch("stock", { coach_id: coachId });
+  assert(set?.status === 200, "coach change was rejected");
+  assert(calls[0].name === "update_order_coach", "wrong coach RPC");
+  assert(
+    calls[0].args.p_order_type === "stock" && calls[0].args.p_coach_id === coachId &&
+      calls[0].args.p_actor_id === actorId,
+    "coach change arguments were not forwarded",
+  );
+
+  const removed = await patch("presale", { coach_id: null });
+  assert(removed?.status === 200, "removing the coach was rejected");
+  assert(calls[1].args.p_order_type === "presale" && calls[1].args.p_coach_id === null, "coach was not removed");
+
+  for (const body of [{}, { coach_id: "coach" }, { coach_id: coachId, extra: true }]) {
+    const rejected = await patch("stock", body);
+    assert(rejected?.status === 400, `invalid coach body was accepted: ${JSON.stringify(body)}`);
+  }
+  assert(calls.length === 2, "an invalid body reached the database");
+});
+
 Deno.test("Asaas refund is marker-idempotent and validates remaining value", async () => {
   const originalFetch = globalThis.fetch;
   const originalBase = Deno.env.get("ASAAS_BASE_URL");

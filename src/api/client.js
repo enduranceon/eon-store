@@ -298,6 +298,19 @@ export async function confirmEventRegistrationCustomer(registrationId, options =
   return response.data;
 }
 
+// Coach do pedido (comissão de produto). null tira o coach.
+export async function updateOrderCoach(orderType, orderId, coachId, options = {}) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/coach`, {
+    ...options,
+    method: 'PATCH',
+    body: { coach_id: coachId || null },
+  });
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('product_commissions');
+  invalidatePageCacheByTag('sales_status_events');
+  return response.data;
+}
+
 export async function linkStockOrderCustomer(orderId, customerId, options = {}) {
   const response = await apiRequest(`/orders/stock/${orderId}/customer`, {
     ...options,

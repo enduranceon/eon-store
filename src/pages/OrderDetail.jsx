@@ -1,5 +1,6 @@
 import ManualInstallmentsEditor from '@/components/ManualInstallmentsEditor';
 import { studentProfilePath } from '@/lib/customer-profile';
+import OrderCoachCommission from '@/components/orders/OrderCoachCommission';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock, Search, Loader2 } from 'lucide-react';
@@ -88,6 +89,7 @@ function SALE_EVENT_META(ev) {
     order_cancelled:      { label: 'Pedido cancelado',       dot: 'bg-red-600' },
     refunded:             { label: 'Pagamento estornado',    dot: 'bg-purple-500' },
     fulfillment_status_changed: { label: 'Etapa de entrega atualizada', dot: 'bg-amber-500' },
+    coach_changed:        { label: 'Coach do pedido alterado', dot: 'bg-indigo-500' },
   };
   const byStatus = {
     awaiting_charge: { label: 'Aguardando cobrança', dot: 'bg-gray-400' },
@@ -925,6 +927,8 @@ export default function OrderDetail() {
           </CardContent>
         </Card>
       </div>
+
+      <OrderCoachCommission orderType="presale" order={order} onChanged={load} />
 
       {/* Itens do pedido */}
       <Card>

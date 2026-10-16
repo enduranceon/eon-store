@@ -538,6 +538,40 @@ export async function handleOrdersRequest(
     return jsonResponse({ data });
   }
 
+  // Coach do pedido (comissão de produto). null tira o coach: a venda fica com
+  // a assessoria. Pedido já pago muda a comissão por novos lançamentos.
+  const coachMatch = path.match(
+    /^\/orders\/(presale|stock)\/([^/]+)\/coach$/,
+  );
+  if (req.method === "PATCH" && coachMatch) {
+    const [, orderType, orderId] = coachMatch;
+    if (!UUID_PATTERN.test(orderId)) {
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
+    }
+    const body = await parseObject(req);
+    if (
+      !body || Object.keys(body).length !== 1 || !("coach_id" in body) ||
+      (body.coach_id !== null &&
+        (typeof body.coach_id !== "string" || !UUID_PATTERN.test(body.coach_id)))
+    ) {
+      return jsonResponse({
+        error: "Coach inválido",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc("update_order_coach", {
+      p_order_type: orderType,
+      p_order_id: orderId,
+      p_coach_id: body.coach_id,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "update order coach");
+    return jsonResponse({ data });
+  }
+
   const customerMatch = path.match(
     /^\/orders\/(presale|stock)\/([^/]+)\/customer$/,
   );

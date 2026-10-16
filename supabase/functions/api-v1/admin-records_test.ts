@@ -286,6 +286,38 @@ Deno.test("a customer may keep a company CNPJ besides the CPF", () => {
     normalizeAdminRecordPayload("customers", { cnpj: "11111111111111" }, "update"), "invalid_field");
 });
 
+Deno.test("a product commission is a percentage or a value per unit, both fields together", () => {
+  const percent = normalizeAdminRecordPayload("products", {
+    commission_type: "percent",
+    commission_value: 10,
+  }, "update");
+  assert(percent.commission_type === "percent" && percent.commission_value === 10, "percent rule was not kept");
+  const fixed = normalizeAdminRecordPayload("products", {
+    commission_type: "fixed",
+    commission_value: 15.5,
+  }, "update");
+  assert(fixed.commission_type === "fixed" && fixed.commission_value === 15.5, "fixed rule was not kept");
+  const none = normalizeAdminRecordPayload("products", {
+    commission_type: null,
+    commission_value: null,
+  }, "update");
+  assert(none.commission_type === null && none.commission_value === null, "the rule was not cleared");
+  expectError(() =>
+    normalizeAdminRecordPayload("products", { commission_type: "percent", commission_value: 120 }, "update"),
+    "invalid_commission");
+  expectError(() =>
+    normalizeAdminRecordPayload("products", { commission_type: "fixed", commission_value: 0 }, "update"),
+    "invalid_commission");
+  expectError(() =>
+    normalizeAdminRecordPayload("products", { commission_type: "fixed" }, "update"), "invalid_commission");
+  expectError(() =>
+    normalizeAdminRecordPayload("products", { commission_type: null, commission_value: 5 }, "update"),
+    "invalid_commission");
+  expectError(() =>
+    normalizeAdminRecordPayload("products", { commission_type: "bonus", commission_value: 5 }, "update"),
+    "invalid_field");
+});
+
 Deno.test("customer merge reaches only the transactional server RPC", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const response = await handleAdminOperationRequest(
