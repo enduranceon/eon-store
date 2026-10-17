@@ -211,6 +211,33 @@ export default function StatementPreview({ view: v }) {
         </div>
       ))}
 
+      {(v.comissoes || []).length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <span style={{ width: 3, height: 13, borderRadius: 2, background: '#0891b2', display: 'inline-block' }} />
+            <strong style={{ fontSize: 13, color: '#0f172a' }}>Comissões de produtos ({v.comissoes.length})</strong>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <tbody>
+              {v.comissoes.map((c) => (
+                <tr key={c.id} style={{ borderBottom: '1px solid #eef2f7' }}>
+                  <td style={{ padding: '6px 0' }}>
+                    {c.descricao}
+                    {c.refLabel && (
+                      <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700, color: '#0e7490',
+                                     background: '#cffafe', padding: '1px 5px', borderRadius: 6 }}>ref. {c.refLabel}</span>
+                    )}
+                    {c.reason && <div style={{ fontSize: 11, color: '#94a3b8' }}>Ajuste: {c.reason}</div>}
+                  </td>
+                  <td style={{ padding: '6px 0', fontWeight: 700, textAlign: 'right', width: 90,
+                               color: c.amount < 0 ? '#b91c1c' : '#0f172a' }}>{formatCurrency(c.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {[
         { titulo: `Repasse extra e descontos (${(v.extras || []).length})`, cor: '#059669', lista: v.extras || [] },
         { titulo: `Gastos e reembolsos (${(v.gastos || []).length})`, cor: '#d97706', lista: v.gastos || [] },

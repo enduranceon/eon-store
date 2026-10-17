@@ -4,6 +4,7 @@ import {
   buildGroupedItems,
   type ClosingContext,
   coachIdByDay,
+  commissionsForClosing,
   competenceBounds,
   competenceHasEnded,
   competenceOpensOn,
@@ -11,6 +12,7 @@ import {
   mergePendingCollisions,
   monthNotEndedMessage,
   planSourceByDay,
+  productCommissionItems,
   roundCents,
 } from "./calculation.ts";
 
@@ -642,4 +644,37 @@ Deno.test("a competence only closes from the first day of the next month", () =>
     "Dezembro de 2026 ainda não terminou. O fechamento fica disponível a partir de 01/01/2027.",
     "message crosses the year",
   );
+});
+
+Deno.test("product commissions enter the closing up to its month, with their own sign", () => {
+  const rows = [
+    {
+      id: "c1", coach_id: "coach-a", order_number: "LOJ-TESTE-1", customer_name: "Pessoa Fictícia",
+      product_name: "Gel teste", quantity: 2, commission_type: "percent", commission_value: 10,
+      base_value: 180, amount: 18, kind: "commission", reason: "Pedido pago", competence: "2026-09-01", closing_id: null,
+    },
+    {
+      id: "c2", coach_id: "coach-a", order_number: "LOJ-TESTE-1", customer_name: "Pessoa Fictícia",
+      product_name: "Gel teste", quantity: 2, commission_type: "percent", commission_value: 10,
+      base_value: 0, amount: -18, kind: "adjustment", reason: "Pedido estornado", competence: "2026-10-01", closing_id: null,
+    },
+    {
+      id: "c3", coach_id: "coach-b", order_number: "PRE-TESTE-2", customer_name: null,
+      product_name: "Meia teste", quantity: 3, commission_type: "fixed", commission_value: 12.5,
+      base_value: 90, amount: 37.5, kind: "commission", reason: "Pedido pago", competence: "2026-08-01", closing_id: null,
+    },
+    {
+      id: "c4", coach_id: "coach-b", order_number: "PRE-TESTE-3", customer_name: null,
+      product_name: "Meia teste", quantity: 1, commission_type: "fixed", commission_value: 12.5,
+      base_value: 30, amount: 12.5, kind: "commission", reason: "Pedido pago", competence: "2026-08-01", closing_id: "old",
+    },
+  ];
+  const selected = commissionsForClosing(rows, "2026-09-01");
+  assert(selected.map((row) => row.id).join() === "c1,c3", "wrong commissions selected for September");
+  const items = productCommissionItems(selected, "closing-1");
+  assert(items[0].source_type === "product_commission" && items[0].product_commission_id === "c1", "item does not point to its entry");
+  assert(items[0].description === "Gel teste · 2 un. · 10% · LOJ-TESTE-1 · Pessoa Fictícia", `unexpected description: ${items[0].description}`);
+  assert(items[1].description.includes("12,50/un.") && items[1].reference_competence === "2026-08-01", "fixed rule or month missing");
+  const adjustment = productCommissionItems(commissionsForClosing(rows, "2026-10-01").filter((row) => row.id === "c2"), "closing-2")[0];
+  assert(adjustment.amount === -18 && adjustment.adjustment_reason === "Pedido estornado", "the adjustment lost its sign or reason");
 });

@@ -5,6 +5,7 @@ import {
   buildClosingGroups,
   buildGroupedItems,
   type ClosingContext,
+  commissionsForClosing,
   competenceBounds,
   competenceHasEnded,
   effectiveEndExclusive,
@@ -12,6 +13,7 @@ import {
   mergePendingCollisions,
   monthNotEndedMessage,
   parseDateUTC,
+  productCommissionItems,
 } from "./calculation.ts";
 
 // Gera o fechamento de repasse de uma competência.
@@ -24,6 +26,10 @@ import {
 //                                          fechamento atual, mas carimbadas com reference = mês original.
 //
 // Body: { competence: "YYYY-MM-01", regenerate?: boolean }. Aprovado/pago nunca recalcula.
+//
+// Comissões de produto (product_commissions) ainda sem fechamento e com
+// competência até o mês entram como itens product_commission; o lançamento
+// guarda o fechamento que o levou e volta a ficar em aberto num recálculo.
 //
 // O valor de cada dia segue o plano e o treinador que valiam naquele dia
 // (históricos de plano e de treinador do contrato); ver calculation.ts.
@@ -217,6 +223,10 @@ Deno.serve(async (req: Request) => {
       // Remove as pendências que ESTE fechamento havia detectado (serão redetectadas do zero).
       await supabase.from("payout_pending_repasse")
         .delete().eq("detected_in_closing_id", existing.id).eq("status", "open");
+      // Comissões de produto que ESTE fechamento levava voltam a ficar em aberto.
+      const { error: commissionResetError } = await supabase.from("product_commissions")
+        .update({ closing_id: null }).eq("closing_id", existing.id);
+      if (commissionResetError) throw commissionResetError;
       await supabase.from("payout_monthly_closings")
         .update({ generated_at: new Date().toISOString() }).eq("id", existing.id);
       closing = existing;
@@ -273,7 +283,26 @@ Deno.serve(async (req: Request) => {
       resolvedIds.push(pend.id);
     }
 
-    const items = [...currentItems, ...carriedItems];
+    // Comissões de produto em aberto até a competência. Marca o lançamento
+    // antes de gravar o item: assim outro fechamento nunca leva o mesmo
+    // lançamento, e uma falha aqui se resolve com "Recalcular".
+    const openCommissions = commissionsForClosing(
+      await fetchAllRows(supabase, "product_commissions", "*",
+        (query) => query.is("closing_id", null).lte("competence", competence)),
+      competence,
+    );
+    const takenCommissions: any[] = [];
+    for (let start = 0; start < openCommissions.length; start += 200) {
+      const ids = openCommissions.slice(start, start + 200).map((row: any) => row.id);
+      const { data: taken, error: takeError } = await supabase.from("product_commissions")
+        .update({ closing_id: closing.id }).in("id", ids).is("closing_id", null).select("id");
+      if (takeError) throw takeError;
+      const takenIds = new Set((taken || []).map((row: any) => row.id));
+      takenCommissions.push(...openCommissions.filter((row: any) => takenIds.has(row.id)));
+    }
+    const commissionItems = productCommissionItems(takenCommissions, closing.id);
+
+    const items = [...currentItems, ...carriedItems, ...commissionItems];
 
     // Persiste
     if (items.length > 0) {
@@ -300,6 +329,7 @@ Deno.serve(async (req: Request) => {
       items_count: items.length,
       items_current: currentItems.length,
       items_carried_in: carriedItems.length,
+      items_product_commissions: commissionItems.length,
       pendings_count: pendingRows.length,
       total_amount: total,
       tier_snapshot: tierSnapshot,

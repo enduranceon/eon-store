@@ -22,6 +22,7 @@ import { isOpenWaitlistEntry } from '@/lib/coach-waitlist';
 import { studentProfilePath } from '@/lib/customer-profile';
 import { fetchAllPages } from '@/lib/fetch-all-pages';
 import { cn, formatCompetence, formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
+import { commissionAmountText, summarizeOrderCommissions } from '@/lib/product-commission';
 
 const ROLE_LABEL = { junior: 'Junior', pleno: 'Pleno', senior: 'Senior' };
 const TABS = ['geral', 'alunos', 'movimento', 'recebimentos', 'funil', 'espera', 'site'];
@@ -33,7 +34,7 @@ const SITUATION_TONES = {
 };
 const INITIAL_DATA = {
   coach: null, contracts: [], plans: [], modalities: [], customers: [], closings: [],
-  statementItems: [], pendingRepasse: [], sitePlans: [], waitlist: [],
+  statementItems: [], pendingRepasse: [], sitePlans: [], waitlist: [], productCommissions: [],
 };
 
 async function readAll(buildQuery) {
@@ -43,7 +44,7 @@ async function readAll(buildQuery) {
 }
 
 async function loadCoachProfile(coachId) {
-  const [coach, contracts, plans, modalities, customers, closings, statementItems, pendingRepasse, sitePlans, waitlist] = await Promise.all([
+  const [coach, contracts, plans, modalities, customers, closings, statementItems, pendingRepasse, sitePlans, waitlist, productCommissions] = await Promise.all([
     AssessmentCoach.get(coachId),
     loadAssessmentMetricContracts(supabase),
     loadAssessmentMetricPlans(supabase),
@@ -54,9 +55,12 @@ async function loadCoachProfile(coachId) {
     readAll(() => supabase.from('payout_pending_repasse').select('id,amount').eq('coach_id', coachId).eq('status', 'open').order('id')),
     AssessmentCoachSitePlan.list(),
     AssessmentCoachWaitlist.list('created_at'),
+    readAll(() => supabase.from('product_commissions')
+      .select('id,order_type,order_id,order_number,customer_name,product_name,quantity,commission_type,commission_value,amount,kind,reason,competence,closing_id,created_at')
+      .eq('coach_id', coachId).order('id')),
   ]);
   return {
-    coach, contracts, plans, modalities, customers, closings, statementItems, pendingRepasse,
+    coach, contracts, plans, modalities, customers, closings, statementItems, pendingRepasse, productCommissions,
     sitePlans: sitePlans.filter(row => row.coach_id === coachId),
     waitlist: waitlist.filter(row => row.coach_id === coachId),
   };
@@ -119,7 +123,7 @@ export default function CoachProfile() {
     key: `assessment-coach-profile:${coachId}:v1`,
     loader: () => loadCoachProfile(coachId),
     initialData: INITIAL_DATA,
-    tags: ['assessment_contracts', 'assessment_plans', 'assessment_coaches', 'presale_customers', 'payout_monthly_closings', 'assessment_coach_site_plans', 'assessment_coach_waitlist'],
+    tags: ['assessment_contracts', 'assessment_plans', 'assessment_coaches', 'presale_customers', 'payout_monthly_closings', 'assessment_coach_site_plans', 'assessment_coach_waitlist', 'product_commissions'],
     onError: error => {
       console.error('Erro ao carregar o perfil do coach:', error);
       toast.error('Erro ao carregar o perfil do coach');
@@ -134,6 +138,17 @@ export default function CoachProfile() {
       modality: id => modalities.get(id) || 'Sem modalidade',
     };
   }, [data.customers, data.modalities]);
+
+  // Comissões de produtos do coach, mais recentes primeiro.
+  const commissions = useMemo(() => {
+    const { list } = summarizeOrderCommissions(data.productCommissions || [], data.coach ? { [data.coach.id]: data.coach } : {});
+    const sum = rows => rows.reduce((total, row) => total + row.amount, 0);
+    return {
+      list: [...list].reverse(),
+      open: sum(list.filter(row => !row.closing_id)),
+      included: sum(list.filter(row => row.closing_id)),
+    };
+  }, [data.productCommissions, data.coach]);
 
   const profile = useMemo(() => (data.coach ? buildCoachProfile({
     coachId,
@@ -359,6 +374,43 @@ export default function CoachProfile() {
               ))}
             </Table>
           )}
+
+          <section className="space-y-2">
+            <h3 className="font-semibold text-gray-900">Comissões de produtos</h3>
+            {commissions.list.length === 0 ? (
+              <Empty>Nenhuma comissão de produto. Ela aparece quando um aluno deste coach paga um produto com comissão.</Empty>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {formatCurrency(commissions.open)} aguardando o próximo fechamento · {formatCurrency(commissions.included)} já levados ao repasse.
+                </p>
+                <Table head={[['Ref.'], ['Venda'], ['Produto'], ['Valor', 'right'], ['Situação']]}>
+                  {commissions.list.slice(0, 30).map(entry => (
+                    <tr key={entry.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2.5 tabular-nums">{entry.competenceLabel}</td>
+                      <td className="px-3 py-2.5">
+                        <Link
+                          to={entry.order_type === 'stock' ? `/estoque/pedidos/${entry.order_id}` : `/pedidos/${entry.order_id}`}
+                          className="font-mono text-xs text-blue-700 hover:underline"
+                        >
+                          {entry.order_number || 'Pedido'}
+                        </Link>
+                        {entry.customer_name && <span className="block text-xs text-muted-foreground">{entry.customer_name}</span>}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {entry.product_name} · {entry.quantity} un. · {entry.ruleLabel}
+                        {entry.kind === 'adjustment' && <span className="block text-xs text-muted-foreground">Ajuste: {entry.reason}</span>}
+                      </td>
+                      <td className={cn('px-3 py-2.5 text-right font-semibold tabular-nums', entry.amount < 0 && 'text-red-600')}>
+                        {commissionAmountText(entry.amount)}
+                      </td>
+                      <td className="px-3 py-2.5">{entry.statusLabel}</td>
+                    </tr>
+                  ))}
+                </Table>
+              </>
+            )}
+          </section>
         </TabsContent>
 
         <TabsContent value="funil" className="mt-4 space-y-5">

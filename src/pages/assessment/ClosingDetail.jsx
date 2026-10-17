@@ -31,6 +31,7 @@ import { toast } from 'sonner';
 const SOURCE = {
   athlete_repasse:    { label: 'Repasse atleta',    cls: 'bg-blue-100 text-blue-700' },
   direct_leadership:  { label: 'Liderança',         cls: 'bg-purple-100 text-purple-700' },
+  product_commission: { label: 'Comissão produto',  cls: 'bg-cyan-100 text-cyan-800' },
   co_leadership:      { label: 'Co-liderança',      cls: 'bg-indigo-100 text-indigo-700' },
 };
 
@@ -415,6 +416,9 @@ export default function ClosingDetail() {
                                 <p className={`text-sm ${explainsItself ? 'break-words' : 'truncate'}`}>
                                   {explainsItself ? it.adjustment_reason : it.description}
                                 </p>
+                                {it.source_type === 'product_commission' && it.adjustment_reason && (
+                                  <p className="text-[11px] text-muted-foreground">Ajuste: {it.adjustment_reason}</p>
+                                )}
                                 {it.valid_days != null && (
                                   <p className="text-[11px] text-muted-foreground">
                                     {it.valid_days}/{it.month_days} dias

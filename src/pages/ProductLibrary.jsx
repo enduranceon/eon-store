@@ -9,6 +9,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Product, StockProduct } from '@/api/entities';
 import { formatCurrency, cn } from '@/lib/utils';
+import { commissionRuleLabel } from '@/lib/product-commission';
 import { formatProductNumber } from '@/lib/sku';
 import { usePageData } from '@/hooks/usePageData';
 import { toast } from 'sonner';
@@ -279,6 +280,11 @@ export default function ProductLibrary() {
                         <span className="text-[11px] text-muted-foreground font-mono">
                           {row.productNumber ? formatProductNumber(row.productNumber) : 'sem código'}
                         </span>
+                        {row.product?.commission_type && (
+                          <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                            Comissão {commissionRuleLabel(row.product, { short: true })}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </td>

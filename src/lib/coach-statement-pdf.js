@@ -326,6 +326,19 @@ export function downloadCoachStatementPdf(view, fileName, title = fileName) {
     foot: ['', '', 'Subtotal', money((view.resgatados || []).reduce((sum, item) => sum + Number(item.amount), 0))],
   });
 
+  y = drawRowsSection(doc, {
+    title: `Comissoes de produtos (${view.comissoes?.length || 0})`,
+    y,
+    color: [8, 145, 178],
+    head: ['Venda', 'Referencia', 'Valor'],
+    body: (view.comissoes || []).map((item) => [
+      [safe(item.descricao), item.reason ? `Ajuste: ${safe(item.reason)}` : ''].filter(Boolean).join(' - '),
+      item.refLabel ? `ref. ${item.refLabel}` : '',
+      money(item.amount),
+    ]),
+    foot: ['', 'Subtotal', money((view.comissoes || []).reduce((sum, item) => sum + Number(item.amount), 0))],
+  });
+
   // Lançamentos manuais: repasse extra e desconto, depois gasto e reembolso.
   const manualSections = [
     { title: 'Repasse extra e descontos', color: [5, 150, 105], head: ['Tipo', 'Explicacao', 'Valor'], list: view.extras || [] },

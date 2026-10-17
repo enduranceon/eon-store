@@ -131,6 +131,15 @@ deve cancelar/reabrir a cobrança e gerar outra com o valor correto. Mudanças
 concorrentes no pedido após um estorno externo levam a operação para
 `reconciliation_required`.
 
+### `PATCH /orders/:type/:id/coach`
+
+Troca o coach do pedido (`:type` = `presale` ou `stock`) para a comissão de
+produto. Corpo: `{ "coach_id": "<uuid>" }` ou `{ "coach_id": null }` (sem coach:
+a venda fica com a assessoria). Chama `update_order_coach`, que registra a troca
+no histórico do pedido. Em pedido já pago, a comissão muda por novos
+lançamentos (ajuste negativo para o coach anterior e comissão para o novo).
+Regras em `docs/comissao-de-produto.md`.
+
 ### Pagamentos manuais
 
 `GET /payments/methods` lista apenas os métodos ativos e os campos necessários

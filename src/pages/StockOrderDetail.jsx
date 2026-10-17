@@ -36,6 +36,7 @@ import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
 import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
 import DiscountInput from '@/components/DiscountInput';
 import StockOrderItemEditorDialog from '@/components/StockOrderItemEditorDialog';
+import OrderCoachCommission from '@/components/orders/OrderCoachCommission';
 import { normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { toast } from 'sonner';
 import {
@@ -712,6 +713,8 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
           </div>
         </CardContent>
       </Card>
+
+      <OrderCoachCommission orderType="stock" order={order} onChanged={load} />
 
       {/* Itens */}
       <Card>
