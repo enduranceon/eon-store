@@ -272,6 +272,9 @@ flowchart TD
   A automática é só para o plano mensal (assinatura no Asaas; confirmado em
   09/10/2026). Na coluna, quem está sem link vem primeiro, com o selo "Sem
   link", o contador no cabeçalho e o botão "Adicionar link".
+- Contrato em licença sem data de volta não entra (desde 17/10/2026): o fim
+  real só existe quando a licença é encerrada e os dias parados são somados.
+  Aí a renovação entra 10 dias antes do novo fim.
 - Pebinha: "seu plano {plano} vence em {fim_plano}" (ou "venceu em"), com as 5
   opções de resposta.
 - Sem resposta: lembrete 2 dias depois do Pebinha (se ainda faltar mais de 2
