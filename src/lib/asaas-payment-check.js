@@ -72,8 +72,9 @@ export function asaasCheckCandidates(orders) {
 export function methodForAsaasPayment(methods, billingType, installmentCount = 1) {
   const code = billingType === 'PIX' ? 'pix'
     : billingType === 'BOLETO' ? 'boleto'
-      : billingType === 'CREDIT_CARD' ? (installmentCount > 1 ? `card_${installmentCount}x` : 'credit_card')
-        : null;
+      : billingType === 'DEBIT_CARD' ? 'debit_card'
+        : billingType === 'CREDIT_CARD' ? (installmentCount > 1 ? `card_${installmentCount}x` : 'credit_card')
+          : null;
   if (!code) return null;
   return (methods || []).find(method => method.internal_code === code) || null;
 }
