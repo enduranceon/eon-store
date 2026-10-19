@@ -38,6 +38,7 @@ export const PAYMENT_METHOD_LABELS = {
   boleto_asaas:   'Boleto (via Asaas)',
   card_asaas_3x:  'Cartão Asaas 3x',
   card_asaas_12x: 'Cartão Asaas 12x',
+  debit_card:     'Cartão de débito',
   // Preferências de checkout que faltavam no map original
   pix_boleto:     'PIX ou Boleto',
   card_2x:        'Cartão 2x',

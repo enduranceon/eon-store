@@ -201,6 +201,10 @@ da integração automática, e só consulta links de fatura
 Para cada venda devolve status, forma, valor e datas da cobrança e, num
 parcelamento, de cada parcela, incluindo a data de crédito (`creditDate` ou a
 previsão `estimatedCreditDate`). Dados do cliente no Asaas não saem da rota.
+A forma vem do `billingType` do Asaas e vira a mesma forma do "Receber" pelo
+código interno: PIX → `pix`, boleto → `boleto`, débito → `debit_card` (desde
+2026-10-19) e crédito → `credit_card` ou `card_<N>x`. Forma sem código ativo
+fica em "Precisam de conferência".
 O painel registra cada parcela com o valor e a data de crédito do Asaas; a
 última absorve os centavos para a soma bater com o total da venda. Sem data ou
 valor em alguma parcela, o registro usa a projeção do método de pagamento.

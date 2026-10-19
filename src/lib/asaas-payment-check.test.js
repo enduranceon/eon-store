@@ -16,6 +16,7 @@ const methods = [
   { id: 'm-card1', internal_code: 'credit_card', name: 'Cartão crédito 1x', installments: 1 },
   { id: 'm-card3', internal_code: 'card_3x', name: 'Cartão crédito 3x', installments: 3 },
   { id: 'm-pix-manual', internal_code: 'pix_manual', name: 'PIX manual', installments: 1 },
+  { id: 'm-debit', internal_code: 'debit_card', name: 'Cartão de Débito', installments: 1 },
 ];
 const TODAY = '2026-10-06';
 const LINK = 'https://www.asaas.com/i/abc123def456ghi7';
@@ -78,7 +79,8 @@ test('Asaas payment types map to the same payment methods as "Receber"', () => {
   assert.equal(methodForAsaasPayment(methods, 'CREDIT_CARD', 1).id, 'm-card1');
   assert.equal(methodForAsaasPayment(methods, 'CREDIT_CARD', 3).id, 'm-card3');
   assert.equal(methodForAsaasPayment(methods, 'CREDIT_CARD', 5), null);
-  assert.equal(methodForAsaasPayment(methods, 'DEBIT_CARD'), null);
+  assert.equal(methodForAsaasPayment(methods, 'DEBIT_CARD').id, 'm-debit');
+  assert.equal(methodForAsaasPayment(methods.filter(method => method.id !== 'm-debit'), 'DEBIT_CARD'), null);
   assert.equal(methodForAsaasPayment(methods, 'UNDEFINED'), null);
 });
 
@@ -137,6 +139,18 @@ test('a card installment group not yet approved stays open', () => {
   assert.equal(item.label, 'Aguardando pagamento');
 });
 
+test('a debit card paid in Asaas is ready like PIX, and waits for review without the method', () => {
+  const item = classifyAsaasCheck(order(), checked(fact({ billing_type: 'DEBIT_CARD' })), methods, TODAY);
+  assert.equal(item.kind, 'ready');
+  assert.equal(item.method.id, 'm-debit');
+  assert.equal(item.billingType, 'DEBIT_CARD');
+  const withoutDebit = classifyAsaasCheck(
+    order(), checked(fact({ billing_type: 'DEBIT_CARD' })), methods.filter(method => method.id !== 'm-debit'), TODAY,
+  );
+  assert.equal(withoutDebit.kind, 'review');
+  assert.match(withoutDebit.reason, /cartão de débito/);
+});
+
 test('open charges keep their Asaas situation', () => {
   const pending = classifyAsaasCheck(order(), checked(fact({ status: 'PENDING' })), methods, TODAY);
   assert.equal(pending.kind, 'open');
@@ -152,7 +166,6 @@ test('anything that is not a clean full payment goes to review', () => {
     [checked(fact({ status: 'REFUNDED' })), /Estornada no Asaas/],
     [checked(fact({ status: 'RECEIVED_IN_CASH' })), /recebida em dinheiro/],
     [checked(fact({ status: 'DELETED' })), /removida no Asaas/],
-    [checked(fact({ billing_type: 'DEBIT_CARD' })), /cartão de débito/],
     [checked(fact({ billing_type: 'BOLETO', value: 300 }), [fact({ billing_type: 'BOLETO', value: 300 }), fact({ billing_type: 'BOLETO', value: 300 })]), /Boleto parcelado/],
     [checked(fact({ client_payment_date: null, confirmed_date: null, payment_date: null })), /não informou a data/],
     [checked(fact({ client_payment_date: '2026-10-07' })), /no futuro/],

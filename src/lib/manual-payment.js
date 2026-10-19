@@ -24,6 +24,7 @@ const PAYMENT_METHOD_LABELS = {
   cash:          'Dinheiro',
   card_machine:  'Máquina de cartão',
   bank_transfer: 'Transferência bancária',
+  debit_card:    'Cartão de débito',
   // Asaas (internal_code)
   pix_asaas:     'PIX (via Asaas)',
   boleto_asaas:  'Boleto (via Asaas)',
