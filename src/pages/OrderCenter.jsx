@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { PreSaleCampaign, PreSaleCustomer, PreSaleOrder, StockOrder } from '@/api/entities';
 import { fulfillmentStatus } from '@/lib/order-fulfillment';
 import { buildOrderBoard, localDate } from '@/lib/order-board';
+import { isShippingCharge, shippingChargesByParent } from '@/lib/order-shipping';
 import OrderBoard from '@/components/orders/OrderBoard';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { usePageData } from '@/hooks/usePageData';
@@ -61,6 +62,10 @@ const DELIVERY_VISUAL = {
       color: 'bg-amber-100 text-amber-800 ring-amber-200',
       icon: PackageCheck,
     },
+    shipped: {
+      color: 'bg-sky-100 text-sky-800 ring-sky-200',
+      icon: Truck,
+    },
     delivered: {
       color: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
       icon: CheckCircle2,
@@ -87,6 +92,10 @@ const DELIVERY_VISUAL = {
       color: 'bg-amber-100 text-amber-800 ring-amber-200',
       icon: PackageCheck,
     },
+    shipped: {
+      color: 'bg-sky-100 text-sky-800 ring-sky-200',
+      icon: Truck,
+    },
     delivered: {
       color: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
       icon: CheckCircle2,
@@ -105,8 +114,10 @@ const DELIVERY_FILTERS = [
   { value: 'procurement', label: 'Com fornecedor' },
   { value: 'available', label: 'Produto disponível' },
   { value: 'ready', label: 'Separado para entrega' },
+  { value: 'shipped', label: 'Enviado' },
   { value: 'delivered', label: 'Entregue' },
   { value: 'stopped', label: 'Entrega interrompida' },
+  { value: 'shipping_charge', label: 'Cobrança de frete' },
 ];
 
 // Forma de entrega escolhida no checkout, diferente da etapa de entrega:
@@ -141,6 +152,7 @@ function deliveryBucket(status) {
   if (status === 'supplier_ordered') return 'procurement';
   if (status === 'received') return 'available';
   if (status === 'separated') return 'ready';
+  if (status === 'shipped') return 'shipped';
   if (status === 'delivered') return 'delivered';
   if (status === 'cancelled') return 'stopped';
   return 'unknown';
@@ -150,13 +162,23 @@ function firstText(...values) {
   return values.find(value => typeof value === 'string' && value.trim())?.trim() || '';
 }
 
-function normalizeOrder(order, type, customersById, campaignsById) {
+// A cobrança do frete não tem entrega: ela é só o pagamento do frete de outro
+// pedido, que mostra a situação dela no próprio card.
+const SHIPPING_CHARGE_DELIVERY = {
+  label: 'Cobrança de frete',
+  hint: 'Pagamento do frete de um pedido já enviado; não tem etapa de entrega.',
+  color: 'bg-sky-50 text-sky-800 ring-sky-200',
+  icon: Truck,
+};
+
+function normalizeOrder(order, type, customersById, campaignsById, chargesByParent) {
   const customer = order.customer_id ? customersById[order.customer_id] : null;
+  const shippingCharge = type === 'stock' && isShippingCharge(order);
   const deliveryVisual = DELIVERY_VISUAL[type][order.delivery_status] || {
     color: 'bg-gray-100 text-gray-700 ring-gray-200',
     icon: Clock3,
   };
-  const delivery = {
+  const delivery = shippingCharge ? SHIPPING_CHARGE_DELIVERY : {
     ...fulfillmentStatus(type, order.delivery_status),
     ...deliveryVisual,
   };
@@ -183,7 +205,9 @@ function normalizeOrder(order, type, customersById, campaignsById) {
     createdAt: order.created_date,
     total: Number(order.total_value || 0),
     delivery,
-    deliveryBucket: deliveryBucket(order.delivery_status),
+    deliveryBucket: shippingCharge ? 'shipping_charge' : deliveryBucket(order.delivery_status),
+    isShippingCharge: shippingCharge,
+    shippingCharge: chargesByParent.get(`${type}:${order.id}`) || null,
   };
 }
 
@@ -215,12 +239,13 @@ async function loadOrderCenter() {
   ]);
   const customersById = Object.fromEntries(customers.map(customer => [customer.id, customer]));
   const campaignsById = Object.fromEntries(campaigns.map(campaign => [campaign.id, campaign]));
+  const chargesByParent = shippingChargesByParent(stockOrders);
 
   return {
     campaigns,
     orders: [
-      ...stockOrders.map(order => normalizeOrder(order, 'stock', customersById, campaignsById)),
-      ...presaleOrders.map(order => normalizeOrder(order, 'presale', customersById, campaignsById)),
+      ...stockOrders.map(order => normalizeOrder(order, 'stock', customersById, campaignsById, chargesByParent)),
+      ...presaleOrders.map(order => normalizeOrder(order, 'presale', customersById, campaignsById, chargesByParent)),
     ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
   };
 }
@@ -232,7 +257,7 @@ export default function OrderCenter() {
     data: { orders, campaigns },
     refresh,
   } = usePageData({
-    key: 'orders:center:v3',
+    key: 'orders:center:v4',
     loader: loadOrderCenter,
     initialData: { orders: [], campaigns: [] },
     tags: ['stock_orders', 'presale_orders', 'presale_customers', 'presale_campaigns'],
@@ -299,8 +324,10 @@ export default function OrderCenter() {
   const openPaymentOrders = orders.filter(order =>
     !['paid', 'cancelled', 'refunded'].includes(order.payment_status)
   ).length;
-  const stockOrders = orders.filter(order => order.type === 'stock').length;
-  const presaleOrders = orders.length - stockOrders;
+  // A cobrança do frete conta no pagamento em aberto, não como outro pedido.
+  const realOrders = orders.filter(order => !order.isShippingCharge);
+  const stockOrders = realOrders.filter(order => order.type === 'stock').length;
+  const presaleOrders = realOrders.length - stockOrders;
   const filteredTotal = filtered.reduce((total, order) => total + order.total, 0);
   const openOrder = order => {
     navigate(order.type === 'stock'
@@ -335,7 +362,7 @@ export default function OrderCenter() {
       <div className="grid divide-y rounded-lg border bg-white sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <div className="px-4 py-3">
           <p className="text-xs font-medium text-muted-foreground">Todos os pedidos</p>
-          <p className="mt-1 text-2xl font-semibold text-gray-900">{orders.length}</p>
+          <p className="mt-1 text-2xl font-semibold text-gray-900">{realOrders.length}</p>
         </div>
         <div className="px-4 py-3">
           <p className="text-xs font-medium text-muted-foreground">Pagamento em aberto</p>
@@ -453,6 +480,7 @@ export default function OrderCenter() {
                       <p className="font-mono font-semibold text-blue-700">{order.order_number || 'Sem número'}</p>
                       <div className="mt-1 flex flex-wrap gap-1.5">
                         <Badge variant={order.type === 'stock' ? 'info' : 'purple'}>{order.typeLabel}</Badge>
+                        {order.isShippingCharge && <Badge variant="secondary">Frete</Badge>}
                         {order.campaignName && <Badge variant="secondary">{order.campaignName}</Badge>}
                       </div>
                     </td>

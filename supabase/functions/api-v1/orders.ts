@@ -449,6 +449,50 @@ export async function handleOrdersRequest(
     return jsonResponse({ data });
   }
 
+  // Enviado: registra o envio (rastreio e quanto foi pago) e, se houver valor a
+  // cobrar, cria a cobrança do frete ligada ao pedido. Chamar de novo só corrige
+  // rastreio e custo; a cobrança já criada não é duplicada.
+  const shipMatch = path.match(
+    /^\/orders\/(presale|stock)\/([^/]+)\/ship$/,
+  );
+  if (req.method === "POST" && shipMatch) {
+    const [, orderType, orderId] = shipMatch;
+    if (!UUID_PATTERN.test(orderId)) {
+      return jsonResponse({
+        error: "Identificador de pedido inválido",
+        code: "invalid_order_id",
+      }, 400);
+    }
+    const body = await parseObject(req);
+    const shipFields = new Set(["tracking_code", "shipping_cost", "shipping_price"]);
+    const isMoney = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0 &&
+      value <= 100000;
+    if (
+      !body ||
+      Object.keys(body).some((field) => !shipFields.has(field)) ||
+      (body.tracking_code !== null && body.tracking_code !== undefined &&
+        (typeof body.tracking_code !== "string" || body.tracking_code.length > 80)) ||
+      !isMoney(body.shipping_cost) ||
+      !isMoney(body.shipping_price)
+    ) {
+      return jsonResponse({
+        error: "Dados do envio inválidos",
+        code: "invalid_request",
+      }, 400);
+    }
+    const { data, error } = await supabase.rpc("mark_order_shipped", {
+      p_order_type: orderType,
+      p_order_id: orderId,
+      p_tracking_code: body.tracking_code ?? null,
+      p_shipping_cost: body.shipping_cost,
+      p_shipping_price: body.shipping_price,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "mark order shipped");
+    return jsonResponse({ data });
+  }
+
   const messageMatch = path.match(
     /^\/orders\/(presale|stock|event)\/([^/]+)\/payment-message$/,
   );

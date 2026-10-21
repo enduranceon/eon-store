@@ -28,8 +28,14 @@ export const ORDER_FULFILLMENT = Object.freeze({
       },
       separated: {
         label: 'Separado para entrega',
-        hint: 'Produto separado, pronto para entregar.',
+        hint: 'Produto separado, pronto para entregar ou enviar.',
         badge: 'warning',
+        next: ['shipped', 'delivered', 'cancelled'],
+      },
+      shipped: {
+        label: 'Enviado',
+        hint: 'Saiu pelo correio ou transportadora; falta chegar ao cliente.',
+        badge: 'info',
         next: ['delivered', 'cancelled'],
       },
       delivered: {
@@ -59,8 +65,14 @@ export const ORDER_FULFILLMENT = Object.freeze({
       },
       separated: {
         label: 'Separado para entrega',
-        hint: 'Produto separado, pronto para entregar.',
+        hint: 'Produto separado, pronto para entregar ou enviar.',
         badge: 'warning',
+        next: ['shipped', 'delivered', 'cancelled'],
+      },
+      shipped: {
+        label: 'Enviado',
+        hint: 'Saiu pelo correio ou transportadora; falta chegar ao cliente.',
+        badge: 'info',
         next: ['delivered', 'cancelled'],
       },
       delivered: {
@@ -93,10 +105,13 @@ export function fulfillmentStatus(orderType, status) {
   };
 }
 
+// Enviado não aparece na troca de etapa: ele pede rastreio e quanto foi pago,
+// e por isso tem o próprio botão (Marcar como enviado). Continua visível quando
+// já é a etapa atual.
 export function fulfillmentStatusOptions(orderType, currentStatus) {
   const definition = fulfillmentDefinition(orderType);
   const current = currentStatus || definition.initialStatus;
-  const next = definition.statuses[current]?.next || [];
+  const next = (definition.statuses[current]?.next || []).filter(status => status !== 'shipped');
 
   return [...new Set([
     ...(currentStatus ? [currentStatus] : []),
@@ -104,10 +119,11 @@ export function fulfillmentStatusOptions(orderType, currentStatus) {
   ])];
 }
 
-export function fulfillmentFlowText(orderType) {
+// Enviado só entra no fluxo de pedido com frete.
+export function fulfillmentFlowText(orderType, deliveryMethod = null) {
   const definition = fulfillmentDefinition(orderType);
   return Object.entries(definition.statuses)
-    .filter(([status]) => status !== 'cancelled')
+    .filter(([status]) => status !== 'cancelled' && (status !== 'shipped' || deliveryMethod === 'shipping'))
     .map(([, meta]) => meta.label)
     .join(' → ');
 }

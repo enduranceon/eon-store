@@ -4,9 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import ShipOrderDialog from '@/components/orders/ShipOrderDialog';
 import { updateOrderFulfillment } from '@/api/client';
 import { fulfillmentStatus } from '@/lib/order-fulfillment';
 import { nextFulfillmentStep } from '@/lib/order-board';
+import { shippingChargeTag } from '@/lib/order-shipping';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -34,6 +36,7 @@ function OrderBoardCard({ item, onOpen, onStep }) {
   const step = nextFulfillmentStep(order);
   const StepIcon = step?.status === 'delivered' ? CheckCircle2 : step?.status === 'separated' ? PackageCheck : Truck;
   const waitingPayment = ['awaiting_charge', 'charge_sent'].includes(signals.column);
+  const freight = shippingChargeTag(order.shippingCharge);
   return (
     <div className={`rounded-xl border bg-white shadow-sm transition-shadow hover:shadow-md ${signals.overdueDays > 0 ? 'border-l-4 border-l-red-500' : ''}`}>
       <button
@@ -57,11 +60,14 @@ function OrderBoardCard({ item, onOpen, onStep }) {
           {signals.column === 'supplier' && <Tag tone="blue">{fulfillmentStatus('presale', order.delivery_status || 'awaiting_supplier').label}</Tag>}
           {signals.overdueDays > 0 && <Tag tone="red">Vencida há {signals.overdueDays} {signals.overdueDays === 1 ? 'dia' : 'dias'}</Tag>}
           {signals.unpaid && <Tag tone="amber">Falta pagamento</Tag>}
+          {freight && <Tag tone={freight.tone}>{freight.label}</Tag>}
         </div>
         <p className="text-[11px] text-muted-foreground">
           {signals.column === 'delivered' && order.delivery_date
             ? `Entregue em ${formatDate(order.delivery_date)}`
-            : stageText(signals.daysInStage)}
+            : signals.column === 'shipped' && order.shipped_at
+              ? `Enviado em ${formatDate(order.shipped_at)}${order.tracking_code ? ` · ${order.tracking_code}` : ''}`
+              : stageText(signals.daysInStage)}
           {waitingPayment && order.due_date && !signals.overdueDays && ` · vence ${formatDate(order.due_date)}`}
         </p>
         {!order.customer_id && (
@@ -99,10 +105,16 @@ function OrderBoardCard({ item, onOpen, onStep }) {
 // desenha e se confirma a próxima etapa de entrega.
 export default function OrderBoard({ board, hasFilters, onOpen, onChanged }) {
   const [pending, setPending] = useState(null);
+  const [shipping, setShipping] = useState(null);
   const [deliveryDate, setDeliveryDate] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Enviado pede rastreio e o valor do frete: abre a janela do envio.
   const askStep = (order, step) => {
+    if (step.needsShipment) {
+      setShipping(order);
+      return;
+    }
     setDeliveryDate(todayLocalStr());
     setPending({ order, step });
   };
@@ -170,6 +182,14 @@ export default function OrderBoard({ board, hasFilters, onOpen, onChanged }) {
           ))}
         </div>
       </div>
+
+      <ShipOrderDialog
+        open={Boolean(shipping)}
+        onOpenChange={open => { if (!open) setShipping(null); }}
+        orderType={shipping?.type}
+        order={shipping}
+        onShipped={() => onChanged?.()}
+      />
 
       <ConfirmDialog
         open={Boolean(pending)}

@@ -19,6 +19,7 @@ test('referência da cobrança por tipo de venda', () => {
   assert.equal(chargeReference({ sourceType: 'stock', orderNumber: 'EST-TESTE' }), 'do seu pedido', 'sem o número interno');
   assert.equal(chargeReference({ sourceType: 'presale', orderNumber: 'PED-TESTE' }), 'do seu pedido');
   assert.equal(chargeReference({ sourceType: 'event', orderNumber: 'INS-TESTE' }), 'da sua inscrição');
+  assert.equal(chargeReference({ sourceType: 'stock', orderNumber: 'EST-TESTE', shippingCharge: true }), 'do frete do seu pedido');
 });
 
 test('a lista de itens aparece sempre que há itens', () => {

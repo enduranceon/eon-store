@@ -319,6 +319,67 @@ Deno.test("order coach goes to the protected RPC and accepts removing the coach"
   assert(calls.length === 2, "an invalid body reached the database");
 });
 
+Deno.test("shipping an order goes to the protected RPC with tracking, cost and price", async () => {
+  const orderId = crypto.randomUUID();
+  const actorId = crypto.randomUUID();
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const supabase = {
+    rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      if (args.p_order_type === "presale") {
+        return Promise.resolve({
+          data: null,
+          error: { code: "P0001", message: "Marque o pedido como separado antes de enviar" },
+        });
+      }
+      return Promise.resolve({ data: { order: { id: orderId }, shipping_charge: null }, error: null });
+    },
+  };
+  const post = (type: string, body: unknown) =>
+    handleOrdersRequest(
+      new Request(`https://example.test/orders/${type}/${orderId}/ship`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      `/orders/${type}/${orderId}/ship`,
+      supabase as never,
+      actorId,
+    );
+
+  const shipped = await post("stock", { tracking_code: "AB123BR", shipping_cost: 30.5, shipping_price: 34 });
+  assert(shipped?.status === 200, "shipping was rejected");
+  assert(calls[0].name === "mark_order_shipped", "wrong shipping RPC");
+  assert(
+    calls[0].args.p_tracking_code === "AB123BR" && calls[0].args.p_shipping_cost === 30.5 &&
+      calls[0].args.p_shipping_price === 34 && calls[0].args.p_actor_id === actorId,
+    "shipping arguments were not forwarded",
+  );
+
+  const withoutTracking = await post("stock", { shipping_cost: 12, shipping_price: 0 });
+  assert(withoutTracking?.status === 200, "shipping without tracking was rejected");
+  assert(calls[1].args.p_tracking_code === null, "missing tracking was not sent as null");
+
+  const notSeparated = await post("presale", { shipping_cost: 10, shipping_price: 12 });
+  assert(notSeparated?.status === 409, "a refused shipment did not answer conflict");
+
+  for (
+    const body of [
+      {},
+      { shipping_cost: 10 },
+      { shipping_cost: -1, shipping_price: 10 },
+      { shipping_cost: "10", shipping_price: 10 },
+      { shipping_cost: 10, shipping_price: 200000 },
+      { shipping_cost: 10, shipping_price: 12, tracking_code: "x".repeat(81) },
+      { shipping_cost: 10, shipping_price: 12, extra: true },
+    ]
+  ) {
+    const rejected = await post("stock", body);
+    assert(rejected?.status === 400, `invalid shipping body was accepted: ${JSON.stringify(body)}`);
+  }
+  assert(calls.length === 3, "an invalid body reached the database");
+});
+
 Deno.test("Asaas refund is marker-idempotent and validates remaining value", async () => {
   const originalFetch = globalThis.fetch;
   const originalBase = Deno.env.get("ASAAS_BASE_URL");

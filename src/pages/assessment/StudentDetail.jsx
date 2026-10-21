@@ -100,6 +100,7 @@ const DELIVERY_STATUS = {
   received: { label: 'Produto recebido', cls: 'bg-sky-100 text-sky-700' },
   awaiting_delivery: { label: 'Ag. entrega', cls: 'bg-gray-100 text-gray-700' },
   separated: { label: 'Separado', cls: 'bg-amber-100 text-amber-700' },
+  shipped: { label: 'Enviado', cls: 'bg-sky-100 text-sky-700' },
   delivered: { label: 'Entregue', cls: 'bg-green-100 text-green-700' },
   cancelled: { label: 'Cancelado', cls: 'bg-red-100 text-red-700' },
 };
