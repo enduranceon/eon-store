@@ -12,6 +12,18 @@ export class RenewalRequestValidationError extends Error {
   }
 }
 
+// { "subscription_check": true } só roda a conferência de assinaturas no Asaas
+// dos planos mensais sem renovação automática (nenhuma renovação é processada).
+export function isSubscriptionCheckRequest(body: unknown): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const input = body as Record<string, unknown>;
+  if (input.subscription_check === undefined) return false;
+  if (input.subscription_check !== true || Object.keys(input).length !== 1) {
+    throw new RenewalRequestValidationError("subscription_check deve vir sozinho e igual a true");
+  }
+  return true;
+}
+
 function normalizeDays(value: unknown, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;

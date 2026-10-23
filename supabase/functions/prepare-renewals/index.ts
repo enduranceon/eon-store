@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { requireAdmin } from "../_shared/requireAdmin.ts";
 import {
+  isSubscriptionCheckRequest,
   normalizeRenewalRequest,
   RenewalRequestValidationError,
 } from "./policy.ts";
@@ -9,6 +10,7 @@ import {
   asaasLookupConfigured,
   syncSubscriptionInvoiceLinks,
 } from "../_shared/asaas-subscription-link.ts";
+import { checkAutoRenewalSubscriptions } from "../_shared/asaas-subscription-check.ts";
 
 // Processa a continuidade interna dos contratos.
 // Renovações manuais viram rascunho 10 dias antes e entram no quadro em
@@ -17,6 +19,10 @@ import {
 // sem link, busca a fatura do mês na assinatura do Asaas (só consulta; ver
 // _shared/asaas-subscription-link.ts). Uma falha nessa busca não desfaz as
 // renovações.
+//
+// { "subscription_check": true } faz só a conferência de assinaturas no Asaas
+// dos planos mensais com a automática desligada (a mesma do botão do quadro,
+// só consulta) e devolve a lista; nenhuma renovação é processada.
 //
 // Body (opcional):
 //   { horizon_days: 10 }  // janela em dias antes do end_date (default 10)
@@ -87,6 +93,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
+    if (isSubscriptionCheckRequest(body)) {
+      if (!asaasLookupConfigured()) {
+        return jsonResponse({ error: "asaas_not_configured" }, 503);
+      }
+      return jsonResponse({ subscription_check: await checkAutoRenewalSubscriptions(supabase) });
+    }
     const normalized = normalizeRenewalRequest(body);
     const { data, error } = await supabase.rpc(
       "process_internal_assessment_renewals",
