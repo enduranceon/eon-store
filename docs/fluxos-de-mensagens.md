@@ -208,6 +208,9 @@ flowchart TD
   item no `{referente}`: os itens aparecem uma vez, na lista `{itens_bloco}`
   da primeira cobrança (migração
   `20261015120000_billing_message_order_reference.sql`, desde 15/10/2026).
+- A cobrança do frete (pedido da loja só com o item Frete, criado no envio)
+  usa "do frete do seu pedido" no `{referente}` (desde 21/10/2026; regras em
+  `docs/frete.md`).
 - Resposta registrada pausa a régua: "Vai pagar" com data volta nesse dia;
   "Informou que já pagou" vai para a conferência de pagamento; "Contestou" e
   "Precisa de atendimento" vão para revisão.

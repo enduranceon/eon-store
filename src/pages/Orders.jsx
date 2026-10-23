@@ -27,6 +27,7 @@ const DELIVERY_STATUS = {
   supplier_ordered:  { label: 'Pedido ao fornecedor',  color: 'bg-blue-100 text-blue-700' },
   received:          { label: 'Disponível para separar', color: 'bg-sky-100 text-sky-700' },
   separated:         { label: 'Separado para entrega', color: 'bg-amber-100 text-amber-700' },
+  shipped:           { label: 'Enviado',               color: 'bg-sky-100 text-sky-700' },
   delivered:         { label: 'Entregue',              color: 'bg-green-100 text-green-700' },
   cancelled:         { label: 'Entrega interrompida',  color: 'bg-red-100 text-red-700' },
 };

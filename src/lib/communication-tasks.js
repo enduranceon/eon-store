@@ -236,9 +236,10 @@ function normalizeStock(order) {
   return {
     sourceType: 'stock',
     tableName: 'stock_orders',
-    sourceLabel: 'Pedido estoque',
+    sourceLabel: order.shipping_parent_id ? 'Frete' : 'Pedido estoque',
     sourceId: order.id,
     orderNumber: order.order_number,
+    shippingCharge: Boolean(order.shipping_parent_id),
     customerName: order.customer_name,
     customerWhatsapp: order.customer_whatsapp,
     totalValue: Number(order.total_value) || 0,

@@ -35,14 +35,38 @@ test('each order lands in the column of the next thing to do', () => {
 test('the card only offers the next delivery step, never a payment', () => {
   assert.equal(nextFulfillmentStep(order({ payment_status: 'charge_sent', delivery_status: 'awaiting_delivery' })), null);
   assert.deepEqual(nextFulfillmentStep(order({ payment_status: 'paid', delivery_status: 'awaiting_delivery' })),
-    { status: 'separated', short: 'Separado', label: 'Marcar como separado', needsDate: false });
+    { status: 'separated', short: 'Separado', label: 'Marcar como separado', needsDate: false, needsShipment: false });
   assert.deepEqual(nextFulfillmentStep(order({ payment_status: 'paid', delivery_status: 'separated' })),
-    { status: 'delivered', short: 'Entregue', label: 'Marcar como entregue', needsDate: true });
+    { status: 'delivered', short: 'Entregue', label: 'Marcar como entregue', needsDate: true, needsShipment: false });
   assert.equal(nextFulfillmentStep(order({ type: 'presale', payment_status: 'paid', delivery_status: null })).status, 'supplier_ordered');
   assert.equal(nextFulfillmentStep(order({ type: 'presale', payment_status: 'paid', delivery_status: 'supplier_ordered' })).status, 'received');
   assert.equal(nextFulfillmentStep(order({ type: 'presale', payment_status: 'paid', delivery_status: 'received' })).status, 'separated');
   assert.equal(nextFulfillmentStep(order({ payment_status: 'paid', delivery_status: 'delivered' })), null);
   assert.equal(nextFulfillmentStep(order({ payment_status: 'cancelled', delivery_status: 'cancelled' })), null);
+});
+
+test('an order with shipping is shipped before it is delivered', () => {
+  const separated = order({ payment_status: 'paid', delivery_status: 'separated', delivery_method: 'shipping' });
+  assert.equal(orderBoardColumn(separated), 'ready');
+  assert.deepEqual(nextFulfillmentStep(separated),
+    { status: 'shipped', short: 'Enviado', label: 'Marcar como enviado', needsDate: false, needsShipment: true });
+  // Retirada continua indo direto para Entregue.
+  assert.equal(nextFulfillmentStep(order({ payment_status: 'paid', delivery_status: 'separated', delivery_method: 'pickup' })).status, 'delivered');
+  const shipped = order({ type: 'presale', payment_status: 'paid', delivery_status: 'shipped', delivery_method: 'shipping' });
+  assert.equal(orderBoardColumn(shipped), 'shipped');
+  assert.equal(nextFulfillmentStep(shipped).status, 'delivered');
+  assert.equal(nextFulfillmentStep(shipped).needsDate, true);
+  assert.equal(orderCardSignals(order({ payment_status: 'charge_sent', delivery_status: 'shipped' }), '2026-10-13').unpaid, true);
+});
+
+test('the shipping charge stays out of the board', () => {
+  const board = buildOrderBoard([
+    order({ order_number: 'P', payment_status: 'paid', delivery_status: 'shipped', delivery_method: 'shipping' }),
+    order({ order_number: 'F', payment_status: 'awaiting_charge', delivery_status: null, shipping_parent_type: 'stock', shipping_parent_id: 'P' }),
+  ], { today: '2026-10-13' });
+  const byId = Object.fromEntries(board.columns.map(column => [column.id, column]));
+  assert.deepEqual(byId.shipped.items.map(item => item.order.order_number), ['P']);
+  assert.equal(byId.awaiting_charge.items.length, 0);
 });
 
 test('days and flags are counted in São Paulo dates', () => {

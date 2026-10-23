@@ -1,6 +1,7 @@
 import ManualInstallmentsEditor from '@/components/ManualInstallmentsEditor';
 import { studentProfilePath } from '@/lib/customer-profile';
 import OrderCoachCommission from '@/components/orders/OrderCoachCommission';
+import OrderShipping from '@/components/orders/OrderShipping';
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { ArrowLeft, User, Phone, Mail, Package, Calendar, FileText, MessageCircle, Copy, Check, ExternalLink, Zap, QrCode, Link2, X, RotateCcw, AlertTriangle, Tag, HandCoins, ChevronRight, Pencil, Plus, Minus, Info, Clock, Search, Loader2 } from 'lucide-react';
@@ -711,7 +712,7 @@ export default function OrderDetail() {
 
   const openCancelItem = (index) => {
     setCancelItemIndex(index);
-    setCancelItemDelivered(order.delivery_status === 'delivered');
+    setCancelItemDelivered(['delivered', 'shipped'].includes(order.delivery_status));
     setCancelItemReason('');
     setCancelItemModal(true);
   };
@@ -927,6 +928,8 @@ export default function OrderDetail() {
           </CardContent>
         </Card>
       </div>
+
+      <OrderShipping orderType="presale" order={order} onChanged={load} />
 
       <OrderCoachCommission orderType="presale" order={order} onChanged={load} />
 
@@ -1995,7 +1998,10 @@ export default function OrderDetail() {
                 </SelectContent>
               </Select>
               <p className="mt-1 text-[11px] text-muted-foreground">{fulfillmentDefinition('presale').flowHint} Mostra a etapa atual e os próximos passos; pagamento é separado.</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">Fluxo: {fulfillmentFlowText('presale')}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">Fluxo: {fulfillmentFlowText('presale', order.delivery_method)}</p>
+              {order.delivery_method === 'shipping' && order.delivery_status === 'separated' && (
+                <p className="mt-1 text-[11px] text-sky-800">Para Enviado, use “Marcar como enviado” em Envio e frete.</p>
+              )}
             </div>
             <div>
               <Label>Data de Entrega</Label>

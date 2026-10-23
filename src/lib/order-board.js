@@ -1,7 +1,11 @@
 // Quadro de pedidos (loja e pré-venda) em esteira: cobrança → fornecedor →
-// separação → entrega. A coluna sai do pagamento e da etapa de entrega do
-// pedido; nada aqui grava. Mudar de etapa usa a mesma regra da tela do pedido
-// (update_order_fulfillment: só para frente, data na entrega).
+// separação → envio → entrega. A coluna sai do pagamento e da etapa de entrega
+// do pedido; nada aqui grava. Mudar de etapa usa a mesma regra da tela do pedido
+// (update_order_fulfillment: só para frente, data na entrega; Enviado passa por
+// mark_order_shipped, com rastreio e frete). A cobrança do frete não entra no
+// quadro: aparece como selo no card do pedido de origem.
+
+import { isShippingCharge } from './order-shipping.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const SAO_PAULO_DATE = new Intl.DateTimeFormat('en-CA', {
@@ -15,7 +19,8 @@ export const ORDER_BOARD_COLUMNS = Object.freeze([
   { id: 'charge_sent', title: 'Cobrança enviada', hint: 'Esperando o pagamento.', dot: 'bg-amber-500', badge: 'bg-amber-100 text-amber-800' },
   { id: 'supplier', title: 'Com fornecedor', hint: 'Pré-venda paga em produção ou compra.', dot: 'bg-blue-500', badge: 'bg-blue-100 text-blue-700' },
   { id: 'to_separate', title: 'A separar', hint: 'Pago e com o produto disponível.', dot: 'bg-violet-500', badge: 'bg-violet-100 text-violet-700' },
-  { id: 'ready', title: 'Pronto para entregar', hint: 'Separado, falta entregar ou retirar.', dot: 'bg-orange-500', badge: 'bg-orange-100 text-orange-800' },
+  { id: 'ready', title: 'Pronto para entregar', hint: 'Separado, falta entregar, retirar ou enviar.', dot: 'bg-orange-500', badge: 'bg-orange-100 text-orange-800' },
+  { id: 'shipped', title: 'Enviado', hint: 'Saiu pelo correio; falta chegar.', dot: 'bg-sky-500', badge: 'bg-sky-100 text-sky-800' },
   { id: 'delivered', title: 'Entregue', hint: `Últimos ${DELIVERED_WINDOW_DAYS} dias.`, dot: 'bg-green-500', badge: 'bg-green-100 text-green-700' },
   { id: 'cancelled', title: 'Cancelados', hint: 'Cobrança cancelada, reembolsada ou entrega interrompida.', dot: 'bg-red-400', badge: 'bg-red-100 text-red-700' },
 ]);
@@ -43,6 +48,7 @@ export function orderBoardColumn(order) {
   if (order.delivery_status === 'cancelled' || ['cancelled', 'refunded'].includes(order.payment_status)) return 'cancelled';
   // Separado ou entregue vale mais que o pagamento: o card mostra se ainda falta pagar.
   if (order.delivery_status === 'delivered') return 'delivered';
+  if (order.delivery_status === 'shipped') return 'shipped';
   if (order.delivery_status === 'separated') return 'ready';
   if (order.payment_status !== 'paid') return UNCHARGED.has(order.payment_status) ? 'awaiting_charge' : 'charge_sent';
   const stage = deliveryStage(order);
@@ -56,20 +62,29 @@ const NEXT_STEP = {
     supplier_ordered: { status: 'received', short: 'Chegou', label: 'Marcar que chegou do fornecedor' },
     received: { status: 'separated', short: 'Separado', label: 'Marcar como separado' },
     separated: { status: 'delivered', short: 'Entregue', label: 'Marcar como entregue' },
+    shipped: { status: 'delivered', short: 'Entregue', label: 'Marcar como entregue' },
   },
   stock: {
     awaiting_delivery: { status: 'separated', short: 'Separado', label: 'Marcar como separado' },
     separated: { status: 'delivered', short: 'Entregue', label: 'Marcar como entregue' },
+    shipped: { status: 'delivered', short: 'Entregue', label: 'Marcar como entregue' },
   },
 };
 
+const SHIP_STEP = { status: 'shipped', short: 'Enviado', label: 'Marcar como enviado' };
+
 // Próxima etapa de entrega que o card pode dar. Nas colunas de cobrança não há
-// atalho: o pagamento é registrado dentro do pedido.
+// atalho: o pagamento é registrado dentro do pedido. Pedido com frete separado
+// vai para Enviado, que pede rastreio e o valor do frete.
 export function nextFulfillmentStep(order) {
   const column = orderBoardColumn(order);
-  if (!['supplier', 'to_separate', 'ready'].includes(column)) return null;
-  const step = NEXT_STEP[order.type]?.[deliveryStage(order)];
-  return step ? { ...step, needsDate: step.status === 'delivered' } : null;
+  if (!['supplier', 'to_separate', 'ready', 'shipped'].includes(column)) return null;
+  const stage = deliveryStage(order);
+  if (stage === 'separated' && order.delivery_method === 'shipping') {
+    return { ...SHIP_STEP, needsDate: false, needsShipment: true };
+  }
+  const step = NEXT_STEP[order.type]?.[stage];
+  return step ? { ...step, needsDate: step.status === 'delivered', needsShipment: false } : null;
 }
 
 // Selos e números do card, calculados em datas de São Paulo.
@@ -88,7 +103,7 @@ export function orderCardSignals(order, today) {
     const late = daysBetween(localDate(order.due_date), today);
     if (order.payment_status === 'overdue' || (late !== null && late > 0)) signals.overdueDays = Math.max(1, late ?? 1);
   }
-  if (['ready', 'delivered'].includes(column) && order.payment_status !== 'paid') signals.unpaid = true;
+  if (['ready', 'shipped', 'delivered'].includes(column) && order.payment_status !== 'paid') signals.unpaid = true;
   return signals;
 }
 
@@ -102,6 +117,7 @@ export function buildOrderBoard(orders, { today, showCancelled = false, delivere
   const buckets = new Map(ORDER_BOARD_COLUMNS.map(column => [column.id, []]));
   let olderDelivered = 0;
   for (const order of orders) {
+    if (isShippingCharge(order)) continue;
     const column = orderBoardColumn(order);
     if (column === 'delivered') {
       const age = daysBetween(deliveredOn(order), today);

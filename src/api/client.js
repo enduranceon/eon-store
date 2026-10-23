@@ -299,6 +299,28 @@ export async function confirmEventRegistrationCustomer(registrationId, options =
 }
 
 // Coach do pedido (comissão de produto). null tira o coach.
+export async function markOrderShipped(
+  orderType,
+  orderId,
+  { trackingCode = null, shippingCost, shippingPrice },
+  options = {},
+) {
+  const response = await apiRequest(`/orders/${orderType}/${orderId}/ship`, {
+    ...options,
+    method: 'POST',
+    body: {
+      tracking_code: trackingCode || null,
+      shipping_cost: shippingCost,
+      shipping_price: shippingPrice,
+    },
+  });
+  invalidatePageCacheByTag(orderType === 'stock' ? 'stock_orders' : 'presale_orders');
+  invalidatePageCacheByTag('stock_orders');
+  invalidatePageCacheByTag('sales_status_events');
+  invalidatePageCacheByTag('financial_movements');
+  return response.data;
+}
+
 export async function updateOrderCoach(orderType, orderId, coachId, options = {}) {
   const response = await apiRequest(`/orders/${orderType}/${orderId}/coach`, {
     ...options,

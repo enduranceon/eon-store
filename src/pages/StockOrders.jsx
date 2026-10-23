@@ -25,6 +25,7 @@ const PAYMENT_STATUS = {
 const DELIVERY_STATUS = {
   awaiting_delivery: { label: 'Ag. entrega',        color: 'bg-gray-100 text-gray-700' },
   separated:         { label: 'Separado',            color: 'bg-amber-100 text-amber-700' },
+  shipped:           { label: 'Enviado',             color: 'bg-sky-100 text-sky-700' },
   delivered:         { label: 'Entregue',            color: 'bg-green-100 text-green-700' },
   cancelled:         { label: 'Cancelado',           color: 'bg-red-100 text-red-700' },
 };

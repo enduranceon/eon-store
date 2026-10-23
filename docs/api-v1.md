@@ -140,6 +140,26 @@ no histórico do pedido. Em pedido já pago, a comissão muda por novos
 lançamentos (ajuste negativo para o coach anterior e comissão para o novo).
 Regras em `docs/comissao-de-produto.md`.
 
+### `POST /orders/:type/:id/ship`
+
+Marca como Enviado um pedido com frete (`:type` = `presale` ou `stock`) que já
+está separado. Corpo:
+
+```json
+{
+  "tracking_code": "AB123456789BR",
+  "shipping_cost": 30.5,
+  "shipping_price": 34
+}
+```
+
+`shipping_cost` é quanto foi pago no envio (despesa da loja no Financeiro) e
+`shipping_price` é quanto será cobrado da pessoa. Com `shipping_price` maior que
+zero, `mark_order_shipped` cria a cobrança do frete: um pedido da loja só com o
+item "Frete", ligado ao pedido de origem (`shipping_parent_type/id`) e aguardando
+cobrança. Chamar de novo corrige rastreio e custo sem criar outra cobrança.
+Regras em `docs/frete.md`.
+
 ### Pagamentos manuais
 
 `GET /payments/methods` lista apenas os métodos ativos e os campos necessários

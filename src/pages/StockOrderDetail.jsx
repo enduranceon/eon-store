@@ -37,6 +37,8 @@ import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
 import DiscountInput from '@/components/DiscountInput';
 import StockOrderItemEditorDialog from '@/components/StockOrderItemEditorDialog';
 import OrderCoachCommission from '@/components/orders/OrderCoachCommission';
+import OrderShipping from '@/components/orders/OrderShipping';
+import { isShippingCharge } from '@/lib/order-shipping';
 import { normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { toast } from 'sonner';
 import {
@@ -566,6 +568,8 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
 
   const ps = PAYMENT_STATUS[order.payment_status] || { label: order.payment_status, badge: 'secondary' };
   const ds = fulfillmentStatus('stock', order.delivery_status);
+  // Cobrança do frete: pedido só com o item Frete, sem entrega nem estoque.
+  const shippingCharge = isShippingCharge(order);
   const items = order.items || [];
   const customerQuery = customerSearch.trim().toLowerCase();
   const matchingCustomers = customers.filter(customer => !customerQuery || [
@@ -577,10 +581,12 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
   const paymentOrChargeStarted = !['pending', 'awaiting_charge'].includes(order.payment_status)
     || Boolean(order.manual_payment)
     || Boolean(order.asaas_charge_id || order.asaas_payment_link || order.asaas_pix_copy || order.external_payment_link || order.payment_message_sent_at);
-  const fulfillmentStarted = ['separated', 'delivered', 'cancelled'].includes(order.delivery_status);
+  const fulfillmentStarted = ['separated', 'shipped', 'delivered', 'cancelled'].includes(order.delivery_status);
   const hasUntrackedStockReservation = activeItems.some(item => item.stock_reserved !== true);
-  const canAdjustItems = activeItems.length > 0 && !paymentOrChargeStarted && !fulfillmentStarted && !hasUntrackedStockReservation;
-  const itemAdjustmentHint = hasUntrackedStockReservation
+  const canAdjustItems = !shippingCharge && activeItems.length > 0 && !paymentOrChargeStarted && !fulfillmentStarted && !hasUntrackedStockReservation;
+  const itemAdjustmentHint = shippingCharge
+    ? 'O valor do frete vem do envio do pedido de origem. Para mudar o valor, use o desconto abaixo ou cancele esta cobrança e cobre de novo pelo pedido.'
+    : hasUntrackedStockReservation
     ? 'Este pedido antigo não tem a reserva por item necessária para ajuste automático; confira o estoque antes de alterar ou cancelar.'
     : paymentOrChargeStarted
       ? 'Já existe cobrança ou pagamento neste pedido. Para remover, use “Remover item”; para incluir, faça uma nova venda para o cliente.'
@@ -590,7 +596,7 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
 
   const openCancelItem = (index) => {
     setCancelItemIndex(index);
-    setCancelItemDelivered(order.delivery_status === 'delivered');
+    setCancelItemDelivered(['delivered', 'shipped'].includes(order.delivery_status));
     setCancelItemReason('');
     setCancelItemModal(true);
   };
@@ -635,7 +641,7 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Badge variant={ps.badge}>{ps.label}</Badge>
-          <Badge variant={ds.badge}>{ds.label}</Badge>
+          {shippingCharge ? <Badge variant="info">Frete</Badge> : <Badge variant={ds.badge}>{ds.label}</Badge>}
           {order.customer_whatsapp && (
             <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white gap-1.5" onClick={openWhatsApp}>
               <MessageCircle className="w-4 h-4" /> Cobrar via WhatsApp
@@ -714,7 +720,9 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
         </CardContent>
       </Card>
 
-      <OrderCoachCommission orderType="stock" order={order} onChanged={load} />
+      <OrderShipping orderType="stock" order={order} onChanged={() => { onChanged?.(); load(); }} />
+
+      {!shippingCharge && <OrderCoachCommission orderType="stock" order={order} onChanged={load} />}
 
       {/* Itens */}
       <Card>
@@ -745,7 +753,7 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
                       <td className="py-2 text-right">{formatCurrency(item.sale_price)}</td>
                       <td className="py-2 text-right font-semibold">{formatCurrency((item.sale_price || 0) * item.quantity)}</td>
                       <td className="py-2 text-right">
-                        {!item.cancelled && !canAdjustItems && !hasUntrackedStockReservation && !['cancelled', 'refunded'].includes(order.payment_status) && (
+                        {!shippingCharge && !item.cancelled && !canAdjustItems && !hasUntrackedStockReservation && !['cancelled', 'refunded'].includes(order.payment_status) && (
                           <button onClick={() => openCancelItem(i)} className="text-xs text-red-500 hover:text-red-700 hover:underline whitespace-nowrap">
                             Remover item
                           </button>
@@ -765,9 +773,11 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
                   <Plus className="w-3.5 h-3.5 mr-1" /> Nova venda
                 </Button>
               )}
-              <Button size="sm" variant="outline" onClick={() => setAdjustItemsModal(true)} disabled={!canAdjustItems}>
-                <Package className="w-3.5 h-3.5 mr-1" /> Ajustar itens
-              </Button>
+              {!shippingCharge && (
+                <Button size="sm" variant="outline" onClick={() => setAdjustItemsModal(true)} disabled={!canAdjustItems}>
+                  <Package className="w-3.5 h-3.5 mr-1" /> Ajustar itens
+                </Button>
+              )}
             </div>
           </div>
           {order.coupon_code && (
@@ -1335,8 +1345,9 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
 
       {/* Entrega + observações */}
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-base">Entrega e observações</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="text-base">{shippingCharge ? 'Observações' : 'Entrega e observações'}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
+          {!shippingCharge && (
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Etapa do pedido</Label>
@@ -1350,13 +1361,17 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
                 </SelectContent>
               </Select>
               <p className="mt-1 text-[11px] text-muted-foreground">{fulfillmentDefinition('stock').flowHint} Mostra a etapa atual e os próximos passos; pagamento é separado.</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">Fluxo: {fulfillmentFlowText('stock')}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">Fluxo: {fulfillmentFlowText('stock', order.delivery_method)}</p>
+              {order.delivery_method === 'shipping' && order.delivery_status === 'separated' && (
+                <p className="mt-1 text-[11px] text-sky-800">Para Enviado, use “Marcar como enviado” em Envio e frete.</p>
+              )}
             </div>
             <div>
               <Label>Data de Entrega</Label>
               <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="mt-1" />
             </div>
           </div>
+          )}
           {deliveryStatus === 'cancelled' && order.delivery_status !== 'cancelled' && (
             <div>
               <Label>Motivo da interrupção da entrega</Label>

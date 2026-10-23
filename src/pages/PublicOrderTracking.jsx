@@ -19,7 +19,7 @@ const PAYMENT_METHOD_LABEL = {
 function getStage(order) {
   if (['cancelled', 'refunded'].includes(order.payment_status)) return -1;
   if (order.delivery_status === 'delivered') return 3;
-  if (['separated', 'received', 'supplier_ordered'].includes(order.delivery_status) && order.payment_status === 'paid') return 2;
+  if (['separated', 'shipped', 'received', 'supplier_ordered'].includes(order.delivery_status) && order.payment_status === 'paid') return 2;
   if (order.payment_status === 'paid') return 2;
   return 0; // aguardando pagamento
 }
@@ -106,6 +106,7 @@ export default function PublicOrderTracking() {
   const stage = getStage(order);
   const isCancelled = stage === -1;
   const isPaid = order.payment_status === 'paid';
+  const isShipped = order.delivery_status === 'shipped';
   const hasPaymentInfo = order.asaas_pix_copy || order.asaas_payment_link || order.asaas_pix_qrcode || order.external_payment_link;
   const subtotal = (order.total_value || 0) + (order.discount_value || 0);
 
@@ -200,7 +201,7 @@ export default function PublicOrderTracking() {
             <CheckCircle2 className="w-6 h-6 text-green-600 shrink-0" />
             <div>
               <p className="font-bold text-green-800">Pagamento confirmado!</p>
-              <p className="text-sm text-green-700 mt-0.5">Estamos preparando seu pedido.</p>
+              <p className="text-sm text-green-700 mt-0.5">{isShipped ? 'Seu pedido já foi enviado.' : 'Estamos preparando seu pedido.'}</p>
             </div>
           </div>
         )}
@@ -235,14 +236,14 @@ export default function PublicOrderTracking() {
               />
               <TimelineStep
                 icon={Package}
-                label="Em preparação"
-                state={stage >= 3 ? 'done' : stage === 2 ? 'current' : 'pending'}
+                label={isShipped ? 'Enviado' : 'Em preparação'}
+                state={stage >= 3 || isShipped ? 'done' : stage === 2 ? 'current' : 'pending'}
               />
               <TimelineStep
                 icon={Truck}
                 label="Entregue"
                 sub={order.delivery_date ? new Date(order.delivery_date + 'T00:00:00').toLocaleDateString('pt-BR') : null}
-                state={stage === 3 ? 'done' : 'pending'}
+                state={stage === 3 ? 'done' : isShipped && stage === 2 ? 'current' : 'pending'}
               />
             </div>
           </div>
