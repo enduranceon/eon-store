@@ -286,6 +286,54 @@ export async function getAsaasInstallmentPayments(
   return listData(payload, "installment");
 }
 
+// Faturas de uma assinatura (só leitura), em páginas de 100.
+const SUBSCRIPTION_PAGE_SIZE = 100;
+const SUBSCRIPTION_MAX_PAGES = 5;
+
+export async function getAsaasSubscriptionPayments(
+  subscriptionId: string,
+): Promise<AsaasPayload[]> {
+  const payments: AsaasPayload[] = [];
+  for (let page = 0; page < SUBSCRIPTION_MAX_PAGES; page += 1) {
+    const params = new URLSearchParams({
+      limit: String(SUBSCRIPTION_PAGE_SIZE),
+      offset: String(page * SUBSCRIPTION_PAGE_SIZE),
+    });
+    const response = await asaasFetch(
+      `/subscriptions/${encodeURIComponent(subscriptionId)}/payments?${params}`,
+      {},
+      "asaas_subscription_lookup_unavailable",
+    );
+    const payload = await responsePayload(response);
+    if (response.status === 404) return [];
+    if (!response.ok) {
+      throw new AsaasApiError(
+        errorMessage(payload, "Não foi possível consultar a assinatura no Asaas"),
+        response.status >= 500 ? 502 : 409,
+        "asaas_subscription_lookup_failed",
+      );
+    }
+    if (!Array.isArray(payload.data)) {
+      throw new AsaasApiError(
+        "O Asaas retornou uma lista de faturas inválida",
+        502,
+        "asaas_subscription_lookup_invalid",
+      );
+    }
+    for (const item of payload.data) {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        payments.push(item as AsaasPayload);
+      }
+    }
+    if (payload.hasMore !== true) return payments;
+  }
+  throw new AsaasApiError(
+    "A assinatura tem faturas demais para consultar",
+    502,
+    "asaas_subscription_lookup_incomplete",
+  );
+}
+
 export async function createAsaasPayment(
   payment: AsaasPaymentInput,
 ): Promise<AsaasPayload> {

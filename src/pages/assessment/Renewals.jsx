@@ -10,7 +10,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { activateAssessmentContractRenewal, transitionAssessmentRenewalStage } from '@/api/client';
+import {
+  activateAssessmentContractRenewal,
+  fetchSubscriptionInvoiceLinks,
+  transitionAssessmentRenewalStage,
+} from '@/api/client';
 import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr, toLocalDateStr } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -53,6 +57,7 @@ const RENEWAL_FIELDS = [
   'manual_payment', 'refund_status', 'refund_amount', 'refund_date', 'refund_notes',
   'parent_contract_id', 'auto_renewal', 'asaas_charge_id', 'asaas_payment_link', 'asaas_pix_copy',
   'asaas_pix_qrcode', 'external_payment_link', 'external_invoice_number', 'payment_message_sent_at',
+  'asaas_subscription_id', 'subscription_link_status', 'subscription_link_note', 'subscription_link_checked_at',
   'created_at', 'updated_at', 'renewal_stage', 'renewal_entered_at', 'renewal_stage_updated_at',
   'renewal_response_code', 'renewal_response_at', 'renewal_follow_up_at', 'renewal_last_contact_at',
   'renewal_resolved_at', 'renewal_contact_step', 'renewal_contact_step_at',
@@ -340,6 +345,8 @@ export default function Renewals() {
       setChangeCard(card);
     } else if (key === 'charge') {
       openExternalCharge(contract);
+    } else if (key === 'subscription_link') {
+      void findSubscriptionLink(contract);
     } else if (key === 'charge_message') {
       setMessageTask(buildContractChargeTask(contract, lookupsFor(contract)));
     } else if (key === 'payment') {
@@ -350,6 +357,24 @@ export default function Renewals() {
       openResolution(card, 'customer_declined');
     } else if (key === 'discard') {
       openResolution(card, 'created_in_error');
+    }
+  };
+
+  // Mensal automática: busca a fatura do mês na assinatura do Asaas (só consulta).
+  const findSubscriptionLink = async (contract) => {
+    setBusyId(contract.id);
+    try {
+      const result = await fetchSubscriptionInvoiceLinks([contract.id]);
+      const item = result?.results?.find(entry => entry.contract_id === contract.id);
+      if (item?.status === 'attached') toast.success(`Link da fatura de ${contract.contract_number} buscado no Asaas.`);
+      else if (item?.status === 'value_mismatch') toast.warning(`Link gravado, mas o valor no Asaas é diferente. ${item.note || ''}`);
+      else if (item?.note) toast.info(item.note);
+      else toast.info('Nada para buscar nesta renovação.');
+      load();
+    } catch (error) {
+      toast.error(error.message || 'Não foi possível buscar o link no Asaas');
+    } finally {
+      setBusyId(null);
     }
   };
 

@@ -1516,6 +1516,19 @@ const RENEWAL_STAGE_BODY_KEYS = {
   farewell_sent: ['message'],
 };
 
+// Mensal automática: busca no Asaas (só consulta) a fatura do mês da assinatura
+// e grava o link na renovação.
+export async function fetchSubscriptionInvoiceLinks(contractIds, options = {}) {
+  const response = await apiRequest('/renewals/subscription-link', {
+    ...options,
+    method: 'POST',
+    body: { contract_ids: contractIds },
+  });
+  invalidatePageCacheByTag('assessment_contracts');
+  invalidatePageCacheByTag('assessment_contract_event');
+  return response.data;
+}
+
 export async function transitionAssessmentRenewalStage(
   contractId,
   {

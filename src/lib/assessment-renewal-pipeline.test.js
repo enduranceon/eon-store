@@ -12,6 +12,7 @@ import {
   isVisibleOnBoard,
   planPeriodMonths,
   renewalCardState,
+  subscriptionLinkAlert,
   renewalChangeHref,
   renewalDueLabel,
   renewalContactPlan,
@@ -180,8 +181,27 @@ test('a monthly automatic renewal without link is still a valid open sale', () =
   assert.equal(state.missingLink, true);
   assert.equal(state.needsAttention, false);
   assert.ok(state.badges.some(badge => badge.text === 'Automática'));
-  assert.ok(state.alerts.some(alert => alert.text === 'Link da cobrança ainda não informado.'));
+  assert.ok(state.alerts.some(alert => alert.text === 'O sistema busca o link da fatura na assinatura do Asaas todo dia.'));
   assert.equal(state.total, 210);
+});
+
+test('the card says what the Asaas subscription lookup found', () => {
+  const base = {
+    id: 'c5', renewal_stage: 'waiting_payment', auto_renewal: true, start_date: '2026-11-05',
+    payment_status: 'awaiting_charge', plan_snapshot: { price_total: 300 },
+  };
+  const waiting = renewalCardState({ ...base, subscription_link_status: 'waiting_invoice' }, { todayStr: '2026-11-01' });
+  assert.ok(waiting.alerts.some(alert => alert.text.startsWith('A fatura deste mês ainda não apareceu')));
+  const mismatch = renewalCardState({ ...base, subscription_link_status: 'customer_mismatch', subscription_link_note: 'Outro CPF.' }, { todayStr: '2026-11-01' });
+  assert.ok(mismatch.alerts.some(alert => alert.text === 'Outro CPF.' && alert.tone === 'red'));
+  const linked = renewalCardState({
+    ...base, payment_status: 'charge_sent', external_payment_link: 'https://www.asaas.com/i/abc123def',
+    subscription_link_status: 'value_mismatch', subscription_link_note: 'No Asaas R$ 280,00; no contrato R$ 300,00.',
+  }, { todayStr: '2026-11-01' });
+  assert.equal(linked.missingLink, false);
+  assert.ok(linked.badges.some(badge => badge.text === 'valor diferente no Asaas'));
+  assert.ok(linked.alerts.some(alert => alert.text.includes('R$ 280,00')));
+  assert.equal(subscriptionLinkAlert({ auto_renewal: true }).text, 'O sistema busca o link da fatura na assinatura do Asaas todo dia.');
 });
 
 test('renewals without link come first in "Aguardando pagamento" and are counted', () => {

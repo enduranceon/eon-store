@@ -205,6 +205,20 @@ manual confirmado. A remoção das parcelas, a volta para `awaiting_charge` (ou
 `pending` em contrato) e os eventos de auditoria são atômicos e idempotentes.
 Pagamentos Asaas são rejeitados por essa rota.
 
+### Link da fatura da assinatura (mensal automática)
+
+`POST /renewals/subscription-link` com `{ "contract_ids": ["uuid"] }` (até 50)
+busca no Asaas, só lendo, a fatura do mês da assinatura de cada renovação
+mensal automática ainda sem link e grava o link pela
+`apply_assessment_subscription_lookup`. A assinatura vem do link da fatura de
+um contrato anterior (`GET /payments/pay_<código>` → `subscription`); as
+faturas vêm de `GET /subscriptions/<id>/payments`. A resposta traz `checked`,
+`attached` e, por contrato, `status` (`attached`, `value_mismatch`,
+`waiting_invoice`, `no_subscription`, `customer_mismatch`, `asaas_error` ou
+`skipped`) e a observação. Sem chave de produção do Asaas responde 503. O
+processamento diário `prepare-renewals` faz a mesma busca para todas as
+renovações mensais automáticas sem link.
+
 ### Conferência de cobranças no Asaas
 
 `POST /asaas/payment-check` consulta no Asaas, só lendo, as cobranças externas
