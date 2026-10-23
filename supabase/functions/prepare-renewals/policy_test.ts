@@ -1,6 +1,7 @@
 import {
   DEFAULT_AUTO_RENEWAL_HORIZON_DAYS,
   DEFAULT_RENEWAL_HORIZON_DAYS,
+  isSubscriptionCheckRequest,
   normalizeRenewalRequest,
   RenewalRequestValidationError,
 } from "./policy.ts";
@@ -50,4 +51,20 @@ Deno.test("forced renewal IDs are deduplicated and validated", () => {
     rejected = error instanceof RenewalRequestValidationError;
   }
   assert(rejected, "invalid ID was accepted");
+});
+
+Deno.test("only an exact subscription_check request skips the renewal scan", () => {
+  assert(isSubscriptionCheckRequest({ subscription_check: true }), "the check request was not recognized");
+  assert(!isSubscriptionCheckRequest({}), "an empty body became a check");
+  assert(!isSubscriptionCheckRequest(null), "a missing body became a check");
+  assert(!isSubscriptionCheckRequest({ horizon_days: 10 }), "a normal scan became a check");
+  for (const body of [{ subscription_check: false }, { subscription_check: "true" }, { subscription_check: true, horizon_days: 10 }]) {
+    let rejected = false;
+    try {
+      isSubscriptionCheckRequest(body);
+    } catch (error) {
+      rejected = error instanceof RenewalRequestValidationError;
+    }
+    assert(rejected, `an ambiguous request was accepted: ${JSON.stringify(body)}`);
+  }
 });

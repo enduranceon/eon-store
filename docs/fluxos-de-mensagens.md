@@ -300,7 +300,10 @@ flowchart TD
   dias antes do fim) e busca a fatura nessa assinatura. Quem tem mais de uma
   assinatura ativa com valores diferentes do contrato fica em "Conferir no
   Asaas" e é ligado pela ficha do contrato. Migração
-  `20261023140000_subscription_check_auto_renewal.sql`.
+  `20261023140000_subscription_check_auto_renewal.sql`. A mesma conferência
+  pode ser pedida ao servidor, sem a tela, por `prepare-renewals` com
+  `{ "subscription_check": true }` (pelo agendador ou por um administrador):
+  devolve a lista e não processa renovações nem grava nada.
 - Renovação que vira automática depois de nascer (automática ligada na própria
   renovação, com o contrato anterior manual) começa sozinha no início da
   vigência, pelo processamento diário e pelas transições das telas (desde
