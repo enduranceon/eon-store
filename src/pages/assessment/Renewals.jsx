@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, CheckCheck, Check, Clock, Info, Loader2, RefreshCcw, RotateCcw,
+  AlertTriangle, BadgeCheck, CheckCheck, Check, Clock, Info, Loader2, RefreshCcw, RotateCcw,
   Search, Wallet,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -44,6 +44,7 @@ import RenewalResponseDialog from '@/components/renewals/RenewalResponseDialog';
 import RenewalFollowUpDialog from '@/components/renewals/RenewalFollowUpDialog';
 import RenewalPaymentDialog from '@/components/renewals/RenewalPaymentDialog';
 import RenewalFarewellDialog from '@/components/renewals/RenewalFarewellDialog';
+import SubscriptionCheckDialog from '@/components/renewals/SubscriptionCheckDialog';
 
 // ─────────────────────────────────────────────────────────────────
 // Quadro de Renovações. A etapa é gravada e movida pelo servidor; esta tela só
@@ -152,6 +153,7 @@ export default function Renewals() {
   });
   const [charging, setCharging] = useState(false);
   const [scanModal, setScanModal] = useState(false);
+  const [subscriptionCheckOpen, setSubscriptionCheckOpen] = useState(false);
   const [scanForm, setScanForm] = useState({ horizon_days: RENEWAL_ATTENTION_WINDOW_DAYS });
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState(null);
@@ -538,10 +540,16 @@ export default function Renewals() {
             Cada renovação fica no quadro até a decisão e o pagamento; nenhuma pendência some por data.
           </p>
         </div>
-        <Button onClick={() => setScanModal(true)} variant="outline">
-          <RotateCcw className="w-4 h-4 mr-1.5" />
-          Verificar agora
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setSubscriptionCheckOpen(true)} variant="outline">
+            <BadgeCheck className="w-4 h-4 mr-1.5" />
+            Conferir assinaturas no Asaas
+          </Button>
+          <Button onClick={() => setScanModal(true)} variant="outline">
+            <RotateCcw className="w-4 h-4 mr-1.5" />
+            Verificar agora
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -851,6 +859,12 @@ export default function Renewals() {
           )}
         </DialogContent>
       </Dialog>
+
+      <SubscriptionCheckDialog
+        open={subscriptionCheckOpen}
+        onClose={() => setSubscriptionCheckOpen(false)}
+        onChanged={load}
+      />
 
       <Dialog open={scanModal} onOpenChange={open => { if (!open && !scanning) { setScanModal(false); setScanResult(null); } }}>
         <DialogContent className="max-w-md">

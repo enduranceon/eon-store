@@ -292,6 +292,21 @@ flowchart TD
   automática. O resultado da última busca fica em `subscription_link_status`
   (fatura ainda não gerada, sem assinatura, CPF diferente, Asaas fora do ar) e
   aparece no card. Migração `20261023120000_subscription_invoice_link.sql`.
+- "Conferir assinaturas no Asaas" (botão no topo do quadro, desde 23/10/2026):
+  lista os planos mensais com a renovação automática desligada e procura no
+  Asaas, só consultando e pelo CPF/CNPJ, quem tem assinatura mensal ativa. Para
+  quem tem, "Ligar automática" consulta de novo e liga a automática no contrato
+  atual, guardando a assinatura; a próxima renovação já nasce automática (5
+  dias antes do fim) e busca a fatura nessa assinatura. Quem tem mais de uma
+  assinatura ativa com valores diferentes do contrato fica em "Conferir no
+  Asaas" e é ligado pela ficha do contrato. Migração
+  `20261023140000_subscription_check_auto_renewal.sql`.
+- Renovação que vira automática depois de nascer (automática ligada na própria
+  renovação, com o contrato anterior manual) começa sozinha no início da
+  vigência, pelo processamento diário e pelas transições das telas (desde
+  23/10/2026; antes ficava "agendada"). Só não começa a renovação automática
+  cujo contrato anterior teve a automática desligada depois de ela nascer (a
+  pessoa desistiu): `eon_private.assessment_auto_renewal_opted_out`.
 - Contrato em licença sem data de volta não entra (desde 17/10/2026): o fim
   real só existe quando a licença é encerrada e os dias parados são somados.
   Aí a renovação entra 10 dias antes do novo fim.

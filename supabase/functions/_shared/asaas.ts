@@ -334,6 +334,27 @@ export async function getAsaasSubscriptionPayments(
   );
 }
 
+// Assinaturas de um cliente do Asaas (só leitura).
+export async function getAsaasCustomerSubscriptions(
+  customerId: string,
+): Promise<AsaasPayload[]> {
+  const params = new URLSearchParams({ customer: customerId, limit: "100" });
+  const response = await asaasFetch(
+    `/subscriptions?${params}`,
+    {},
+    "asaas_subscription_search_unavailable",
+  );
+  const payload = await responsePayload(response);
+  if (!response.ok) {
+    throw new AsaasApiError(
+      errorMessage(payload, "Não foi possível consultar as assinaturas no Asaas"),
+      response.status >= 500 ? 502 : 409,
+      "asaas_subscription_search_failed",
+    );
+  }
+  return listData(payload, "subscription");
+}
+
 export async function createAsaasPayment(
   payment: AsaasPaymentInput,
 ): Promise<AsaasPayload> {
