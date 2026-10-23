@@ -205,6 +205,42 @@ manual confirmado. A remoção das parcelas, a volta para `awaiting_charge` (ou
 `pending` em contrato) e os eventos de auditoria são atômicos e idempotentes.
 Pagamentos Asaas são rejeitados por essa rota.
 
+### Link da fatura da assinatura (mensal automática)
+
+`POST /renewals/subscription-link` com `{ "contract_ids": ["uuid"] }` (até 50)
+busca no Asaas, só lendo, a fatura do mês da assinatura de cada renovação
+mensal automática ainda sem link e grava o link pela
+`apply_assessment_subscription_lookup`. A assinatura vem do link da fatura de
+um contrato anterior (`GET /payments/pay_<código>` → `subscription`); as
+faturas vêm de `GET /subscriptions/<id>/payments`. A resposta traz `checked`,
+`attached` e, por contrato, `status` (`attached`, `value_mismatch`,
+`waiting_invoice`, `no_subscription`, `customer_mismatch`, `asaas_error` ou
+`skipped`) e a observação. Sem chave de produção do Asaas responde 503. O
+processamento diário `prepare-renewals` faz a mesma busca para todas as
+renovações mensais automáticas sem link.
+
+`POST /renewals/subscription-check` (corpo vazio ou `{}`) é o botão "Conferir
+assinaturas no Asaas" do quadro de Renovações. Lista, pela
+`list_assessment_auto_renewal_candidates`, os planos mensais atuais (sem
+renovação em aberto, terminados há no máximo 30 dias) com a renovação
+automática desligada e procura no Asaas, só lendo, os clientes com o CPF ou o
+CNPJ da pessoa (`GET /customers?cpfCnpj=`) e as assinaturas deles
+(`GET /subscriptions?customer=`). Vale só assinatura `ACTIVE`, `MONTHLY` e não
+apagada; com mais de uma, fica a que tem o valor do contrato. A resposta traz
+`checked`, `found` e, por contrato, `status` (`subscription`, `multiple`,
+`no_subscription`, `no_customer`, `no_document` ou `asaas_error`), os dados do
+contrato e a assinatura (`id`, `value`, `next_due_date`, `billing_type`).
+
+`POST /renewals/subscription-check/enable` com
+`{ "contract_id": "uuid", "subscription_id": "sub_..." }` consulta o Asaas de
+novo e, se a assinatura ainda for a única ativa da pessoa para aquele contrato,
+liga a renovação automática e guarda a assinatura em
+`assessment_contracts.asaas_subscription_id` pela
+`enable_assessment_auto_renewal_from_subscription` (evento
+`auto_renewal_changed` com `source = asaas_subscription_check`). Responde 409
+com `subscription_changed` ou `not_eligible` quando a conferência mudou. As
+duas rotas respondem 503 sem chave de produção do Asaas.
+
 ### Conferência de cobranças no Asaas
 
 `POST /asaas/payment-check` consulta no Asaas, só lendo, as cobranças externas

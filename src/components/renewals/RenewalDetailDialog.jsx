@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Ban, CalendarClock, CheckCircle2, Clock, CreditCard, ExternalLink, History,
-  Link2, Loader2, MessageCircle, PenLine, Send, UserRound, Wallet, XCircle,
+  Link2, Loader2, MessageCircle, PenLine, RefreshCw, Send, UserRound, Wallet, XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -86,10 +86,17 @@ function actionsFor(contract, state) {
   }
   if (stage === RENEWAL_STAGE.WAITING_PAYMENT) {
     return [
+      // Mensal automática: o Asaas avisa a pessoa, então não há "Enviar cobrança";
+      // o link vem da assinatura (todo dia ou pelo botão).
       ...(state.missingLink
-        ? [{ key: 'charge', label: contract.auto_renewal ? 'Adicionar link da cobrança' : 'Registrar cobrança', Icon: Link2, primary: true }]
+        ? [
+          ...(contract.auto_renewal
+            ? [{ key: 'subscription_link', label: 'Buscar link no Asaas', Icon: RefreshCw, primary: true }]
+            : []),
+          { key: 'charge', label: contract.auto_renewal ? 'Colar link da cobrança' : 'Registrar cobrança', Icon: Link2, primary: !contract.auto_renewal },
+        ]
         : [
-          { key: 'charge_message', label: 'Enviar cobrança', Icon: Send },
+          ...(contract.auto_renewal ? [] : [{ key: 'charge_message', label: 'Enviar cobrança', Icon: Send }]),
           { key: 'charge', label: 'Atualizar link da cobrança', Icon: Link2 },
         ]),
       { key: 'payment', label: 'Registrar pagamento', Icon: Wallet, primary: !state.missingLink },
@@ -205,6 +212,14 @@ export default function RenewalDetailDialog({ card, coach, modality, onClose, on
                   Abrir link <ExternalLink className="w-3 h-3" />
                 </a>
               ) : contract.asaas_pix_copy ? 'PIX copia e cola gerado' : 'Sem link cadastrado'}
+              {contract.auto_renewal && contract.subscription_link_checked_at && (
+                <span className="block text-[11px] text-muted-foreground">
+                  {contract.subscription_link_status === 'attached' || contract.subscription_link_status === 'value_mismatch'
+                    ? 'Buscado na assinatura do Asaas'
+                    : 'Última busca na assinatura do Asaas'}
+                  {' '}em {formatDateTime(contract.subscription_link_checked_at)}
+                </span>
+              )}
             </InfoRow>
             {contract.renewal_response_code && (
               <InfoRow label="Resposta">

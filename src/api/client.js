@@ -1516,6 +1516,42 @@ const RENEWAL_STAGE_BODY_KEYS = {
   farewell_sent: ['message'],
 };
 
+// Mensal automática: busca no Asaas (só consulta) a fatura do mês da assinatura
+// e grava o link na renovação.
+export async function fetchSubscriptionInvoiceLinks(contractIds, options = {}) {
+  const response = await apiRequest('/renewals/subscription-link', {
+    ...options,
+    method: 'POST',
+    body: { contract_ids: contractIds },
+  });
+  invalidatePageCacheByTag('assessment_contracts');
+  invalidatePageCacheByTag('assessment_contract_event');
+  return response.data;
+}
+
+// Planos mensais com a renovação automática desligada e quem tem assinatura
+// mensal ativa no Asaas (só consulta).
+export async function checkAsaasSubscriptions(options = {}) {
+  const response = await apiRequest('/renewals/subscription-check', {
+    ...options,
+    method: 'POST',
+    body: {},
+  });
+  return response.data;
+}
+
+// Liga a renovação automática com a assinatura conferida (o servidor consulta
+// o Asaas de novo antes de gravar).
+export async function enableAutoRenewalFromSubscription(contractId, subscriptionId, options = {}) {
+  const response = await apiRequest('/renewals/subscription-check/enable', {
+    ...options,
+    method: 'POST',
+    body: { contract_id: contractId, subscription_id: subscriptionId },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function transitionAssessmentRenewalStage(
   contractId,
   {

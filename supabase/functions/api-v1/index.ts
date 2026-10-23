@@ -28,6 +28,8 @@ import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
 import { handleRenewalRequest } from "./renewals.ts";
 import { handleRenewalStageRequest } from "./renewal-stage.ts";
+import { handleSubscriptionLinkRequest } from "./subscription-link.ts";
+import { handleSubscriptionCheckRequest } from "./subscription-check.ts";
 import { handleCommunicationModelRequest } from "./communication-models.ts";
 import { handleCommunicationCaseRequest } from "./communication-cases.ts";
 import { handleCommunicationHistoryRequest } from "./communication-history.ts";
@@ -281,6 +283,22 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (renewalResponse) return renewalResponse;
+
+  const subscriptionLinkResponse = await handleSubscriptionLinkRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (subscriptionLinkResponse) return subscriptionLinkResponse;
+
+  const subscriptionCheckResponse = await handleSubscriptionCheckRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (subscriptionCheckResponse) return subscriptionCheckResponse;
 
   const renewalStageResponse = await handleRenewalStageRequest(
     req,

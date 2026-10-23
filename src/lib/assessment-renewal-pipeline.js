@@ -303,6 +303,22 @@ export function renewalSaleTotal(contract) {
   );
 }
 
+// Mensal automática sem link: o que a última busca na assinatura do Asaas achou.
+const SUBSCRIPTION_LINK_ALERTS = {
+  waiting_invoice: 'A fatura deste mês ainda não apareceu na assinatura do Asaas. O sistema tenta de novo amanhã.',
+  no_subscription: 'A fatura anterior não é de uma assinatura do Asaas. Cole o link deste mês uma vez; os próximos vêm sozinhos.',
+  customer_mismatch: 'O CPF/CNPJ da assinatura no Asaas não é o da pessoa. Confira antes de colar o link.',
+  asaas_error: 'Não foi possível consultar o Asaas agora. O sistema tenta de novo amanhã.',
+};
+
+export function subscriptionLinkAlert(contract) {
+  const status = contract?.subscription_link_status;
+  const text = SUBSCRIPTION_LINK_ALERTS[status]
+    ? contract.subscription_link_note || SUBSCRIPTION_LINK_ALERTS[status]
+    : 'O sistema busca o link da fatura na assinatura do Asaas todo dia.';
+  return { tone: status === 'customer_mismatch' ? 'red' : 'amber', text };
+}
+
 export function hasRenewalChargeLink(contract) {
   return Boolean(
     contract?.asaas_payment_link
@@ -382,11 +398,14 @@ export function renewalCardState(contract, { parent = null, issues = [], todaySt
   if (stage === RENEWAL_STAGE.WAITING_PAYMENT) {
     if (missingLink) {
       badges.push({ tone: 'amber', text: 'Sem link' });
+      alerts.push(contract.auto_renewal
+        ? subscriptionLinkAlert(contract)
+        : { tone: 'amber', text: 'Cobrança ainda não registrada.' });
+    } else if (contract.auto_renewal && contract.subscription_link_status === 'value_mismatch') {
+      badges.push({ tone: 'amber', text: 'valor diferente no Asaas' });
       alerts.push({
         tone: 'amber',
-        text: contract.auto_renewal
-          ? 'Link da cobrança ainda não informado.'
-          : 'Cobrança ainda não registrada.',
+        text: `Link buscado na assinatura do Asaas, mas o valor é diferente. ${contract.subscription_link_note || ''}`.trim(),
       });
     }
     const startedDays = -daysUntil(contract.start_date, todayStr);

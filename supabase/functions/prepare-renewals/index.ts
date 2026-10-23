@@ -5,11 +5,18 @@ import {
   normalizeRenewalRequest,
   RenewalRequestValidationError,
 } from "./policy.ts";
+import {
+  asaasLookupConfigured,
+  syncSubscriptionInvoiceLinks,
+} from "../_shared/asaas-subscription-link.ts";
 
-// Processa a continuidade interna dos contratos sem acessar o Asaas.
+// Processa a continuidade interna dos contratos.
 // Renovações manuais viram rascunho 10 dias antes e entram no quadro em
 // "Enviar mensagem"; as mensais automáticas são agendadas 5 dias antes e entram
-// direto em "Aguardando pagamento".
+// direto em "Aguardando pagamento". Depois, para as mensais automáticas ainda
+// sem link, busca a fatura do mês na assinatura do Asaas (só consulta; ver
+// _shared/asaas-subscription-link.ts). Uma falha nessa busca não desfaz as
+// renovações.
 //
 // Body (opcional):
 //   { horizon_days: 10 }  // janela em dias antes do end_date (default 10)
@@ -90,7 +97,20 @@ Deno.serve(async (req: Request) => {
       },
     );
     if (error) throw error;
-    return jsonResponse(data ?? {
+    let subscriptionLinks: unknown = { skipped: "asaas_not_configured" };
+    if (asaasLookupConfigured()) {
+      try {
+        // Todas as mensais automáticas sem link, inclusive as que acabaram de nascer.
+        subscriptionLinks = await syncSubscriptionInvoiceLinks(supabase);
+      } catch (linkError) {
+        const message = linkError instanceof Error ? linkError.message : String(linkError);
+        console.error("prepare-renewals subscription links:", message);
+        subscriptionLinks = { error: "subscription_link_failed" };
+      }
+    }
+    if (data) return jsonResponse({ ...data, subscription_links: subscriptionLinks });
+    return jsonResponse({
+      subscription_links: subscriptionLinks,
       ok: true,
       processed: 0,
       contracts_created: 0,
