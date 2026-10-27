@@ -57,11 +57,12 @@ import { applyAssessmentContractTransitions } from '@/lib/assessment-contract-tr
 import { isOpenPlanChangeCharge, planChangeUnusedValue } from '@/lib/assessment-plan-change';
 import { refundMethodLabel } from '@/lib/contract-refund';
 import { coachChangeWindow } from '@/lib/assessment-coach-history';
-import { allowsAutoRenewal, AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE, awaitsRenewalChange } from '@/lib/assessment-renewal-pipeline';
+import { allowsAutoRenewal, AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE, awaitsRenewalChange, planPeriodMonths } from '@/lib/assessment-renewal-pipeline';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DiscountInput from '@/components/DiscountInput';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
+import ProrataCard from '@/components/assessment/ProrataCard';
 import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
 import PlanChangesCard from '@/components/assessment/PlanChangesCard';
 
@@ -1495,6 +1496,14 @@ export default function ContractDetail() {
           await load();
           return undefined;
         }}
+      />
+
+      <ProrataCard
+        contract={contract}
+        monthly={planPeriodMonths({ period_months: planVal('period_months'), period: planVal('period') }) === 1}
+        hasRenewal={Boolean(contract.renewal_generated)}
+        onChanged={load}
+        onNeedsCharge={openExternalSaleModal}
       />
 
       {/* Status do pagamento (read-only + detalhamento) — aparece quando PAID ou REFUNDED */}

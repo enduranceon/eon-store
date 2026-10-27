@@ -22,8 +22,10 @@ export function getContractMonthlyValue(contract, plansById = {}) {
   const planMonthly = nonnegativeNumber(plan.price_monthly);
 
   // Preserve a legacy snapshot's sold price instead of repricing it from today's catalog.
+  // A pro rata first period recurs at the full monthly price.
   const serviceTotal = months
-    ? nonnegativeNumber(snapshot.price_total)
+    ? nonnegativeNumber(snapshot.prorata?.full_price_total)
+      ?? nonnegativeNumber(snapshot.price_total)
       ?? (snapshotMonthly == null ? null : snapshotMonthly * months)
       ?? nonnegativeNumber(plan.price_total)
       ?? (planMonthly ?? 0) * months

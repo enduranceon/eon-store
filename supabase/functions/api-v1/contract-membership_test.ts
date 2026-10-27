@@ -448,3 +448,43 @@ Deno.test("Database conflicts become HTTP 409", async () => {
   assert(response?.status === 409, "database conflict did not become 409");
   assert(payload.code === "invalid_transition", "wrong conflict code");
 });
+
+Deno.test("Pro rata accepts a cycle day from 1 to 28 or null and forwards it", async () => {
+  const path = `/orders/contract/${CONTRACT_ID}/prorata`;
+  for (const bad of [
+    { cycle_day: 0, expected_updated_at: UPDATED_AT },
+    { cycle_day: 29, expected_updated_at: UPDATED_AT },
+    { cycle_day: 7.5, expected_updated_at: UPDATED_AT },
+    { cycle_day: "7", expected_updated_at: UPDATED_AT },
+    { expected_updated_at: UPDATED_AT },
+    { cycle_day: 7, expected_updated_at: UPDATED_AT, price: 1 },
+  ]) {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const response = await handleContractMembershipRequest(request("prorata", bad), path, client(calls), ACTOR_ID);
+    assert(response?.status === 400, `invalid pro rata accepted: ${JSON.stringify(bad)}`);
+    assert(calls.length === 0, "an invalid pro rata reached the database");
+  }
+
+  for (const cycleDay of [7, null]) {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const response = await handleContractMembershipRequest(
+      request("prorata", { cycle_day: cycleDay, expected_updated_at: UPDATED_AT }),
+      path,
+      client(calls),
+      ACTOR_ID,
+    );
+    assert(response?.status === 200, "a valid pro rata failed");
+    assert(calls[0]?.name === "apply_assessment_contract_prorata", "wrong RPC");
+    assert(calls[0].args.p_cycle_day === cycleDay, "the cycle day was not forwarded");
+    assert(calls[0].args.p_contract_id === CONTRACT_ID && calls[0].args.p_actor_id === ACTOR_ID, "contract or actor missing");
+    assert(calls[0].args.p_expected_updated_at === UPDATED_AT, "the version was not forwarded");
+  }
+
+  const wrongMethod = await handleContractMembershipRequest(
+    request("prorata", { cycle_day: 7, expected_updated_at: UPDATED_AT }, "PATCH"),
+    path,
+    client([]),
+    ACTOR_ID,
+  );
+  assert(wrongMethod?.status === 405, "PATCH was accepted");
+});

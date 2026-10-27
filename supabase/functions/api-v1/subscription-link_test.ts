@@ -1,6 +1,7 @@
 import { handleSubscriptionLinkRequest } from "./subscription-link.ts";
 import {
   expectedContractValue,
+  expectedInvoiceDue,
   paymentMethodFor,
   pickSubscriptionInvoice,
   type SubscriptionLinkDeps,
@@ -253,4 +254,17 @@ Deno.test("the button route validates, needs Asaas configured and returns the re
     "actor-1",
   );
   assert(other === null, "another path was handled");
+});
+
+Deno.test("after a pro rata month the invoice is expected on the cycle day", () => {
+  const renewal = { start_date: "2026-11-07" };
+  assert(
+    expectedInvoiceDue(renewal, [{ due_date: "2026-10-28", plan_snapshot: { prorata: { cycle_day: 7 } } }]) === "2026-11-07",
+    "the pro rata parent moved the expected due date",
+  );
+  assert(
+    expectedInvoiceDue(renewal, [{ due_date: "2026-10-05", plan_snapshot: {} }]) === "2026-11-05",
+    "a regular parent stopped using its due date + 1 month",
+  );
+  assert(expectedInvoiceDue(renewal, []) === "2026-11-07", "without a previous invoice the start date is used");
 });
