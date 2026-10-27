@@ -633,6 +633,7 @@ export function buildContractChargeTask(contract, { customer, coach, modality, p
     periodMonths: snapshot.period_months || null,
     modalityName: modality?.name || snapshot.modality_name || '',
     coachName: coach?.name || '',
+    prorata: contract.plan_snapshot?.prorata || null,
     messageVariant: 'assessment_contract_confirmation',
   };
 }
@@ -780,6 +781,7 @@ export function buildTaskMessage(task, options = {}) {
           period_months: task.periodMonths,
           price_total: task.totalValue,
           modality_name: task.modalityName,
+          prorata: task.prorata || undefined,
         },
       },
       customer: { full_name: task.customerName },

@@ -1131,8 +1131,8 @@ export default function ContractDetail() {
         invoiceNumber,
         source: 'contract_detail',
       });
-      // Cobrança ainda não enviada: já abre a mensagem para copiar e enviar.
-      const opensMessage = opensChargeMessageAfterRegister(contract);
+      // Cobrança ainda não enviada (ou com link novo): já abre a mensagem para copiar e enviar.
+      const opensMessage = opensChargeMessageAfterRegister({ ...contract, ...result.updates });
       toast.success(`${hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa registrada!'}${
         opensMessage ? ' Copie a mensagem e envie para o aluno.' : ''}`);
       setExternalSaleModal(false);
