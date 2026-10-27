@@ -22,6 +22,11 @@ ter o ciclo sempre no mesmo dia, o dia da assinatura no Asaas.
   a edição da cobrança para registrar o link novo com o valor proporcional.
   O link antigo é cancelado no Asaas por quem opera; o sistema não altera nada
   lá.
+- **Mensagem do link novo:** trocar o link volta a mensagem para "não enviada"
+  e a tela já abre a mensagem de adesão para copiar. Ela diz o proporcional
+  ("10 dias (R$ 210,00 ÷ 30 × 10)") e o mensal cheio a partir do dia do ciclo.
+  Na Central, a cobrança diz "(ASS-…, proporcional de 28/10 a 06/11)" no
+  `{referente}` (migração `20261027150000_charge_link_change_message.sql`).
 - **Mudar o dia ou desfazer:** dá para fazer enquanto o contrato não tem
   pagamento nem renovação criada. Desfazer volta ao mês cheio a partir do
   início.

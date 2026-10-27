@@ -211,6 +211,14 @@ flowchart TD
 - A cobrança do frete (pedido da loja só com o item Frete, criado no envio)
   usa "do frete do seu pedido" no `{referente}` (desde 21/10/2026; regras em
   `docs/frete.md`).
+- Contrato com pro rata: o `{referente}` diz o período proporcional,
+  "(ASS-…, proporcional de 28/10 a 06/11)" (desde 27/10/2026; regras em
+  `docs/pro-rata.md`).
+- Link novo na cobrança externa do contrato (Editar cobrança, com outro link)
+  volta a mensagem para "não enviada": a cobrança com link é oferecida de novo,
+  e não a de vencida (desde 27/10/2026). Envio registrado na Central antes da
+  troca continua contando (a Central aceita um envio por dia em cada caso);
+  para mandar o link novo, use a mensagem que a ficha do contrato abre.
 - Resposta registrada pausa a régua: "Vai pagar" com data volta nesse dia;
   "Informou que já pagou" vai para a conferência de pagamento; "Contestou" e
   "Precisa de atendimento" vão para revisão.

@@ -2,6 +2,8 @@
 // dia do ciclo (1 a 28) e custa o mensal ÷ 30 × dias. Mesma conta do servidor
 // (apply_assessment_contract_prorata); aqui só para a prévia na tela.
 
+import { formatCurrency, formatDate as formatDisplayDate } from './utils.js';
+
 export const PRORATA_DAY_BASE = 30;
 export const PRORATA_CYCLE_DAYS = Array.from({ length: 28 }, (_, index) => index + 1);
 
@@ -54,6 +56,20 @@ export function prorataPreview(contract, cycleDay) {
     full,
     value: Math.round((full / PRORATA_DAY_BASE) * days * 100) / 100,
   };
+}
+
+// Linhas do pro rata na mensagem de adesão confirmada.
+export function prorataMessageLines(contract) {
+  const prorata = contractProrata(contract);
+  const days = Number(prorata?.days);
+  const full = money(prorata?.full_price_total);
+  if (!prorata || !Number.isInteger(days) || days <= 0 || full == null) return [];
+  const lines = [`🧮 Proporcional: *${days} dias* (${formatCurrency(full)} ÷ ${PRORATA_DAY_BASE} × ${days})`];
+  const next = prorata.end_date || contract?.end_date;
+  if (next && prorata.cycle_day) {
+    lines.push(`🔁 A partir de ${formatDisplayDate(next)}: *${formatCurrency(full)} por mês*, sempre no dia ${prorata.cycle_day}`);
+  }
+  return lines;
 }
 
 const OPEN_PAYMENT = new Set(['pending', 'awaiting_charge', 'charge_sent', 'overdue']);

@@ -6,8 +6,10 @@ import {
   contractProrata,
   prorataCycleEnd,
   prorataFullPrice,
+  prorataMessageLines,
   prorataPreview,
 } from './assessment-prorata.js';
+import { formatCurrency } from './utils.js';
 
 const contract = (overrides = {}) => ({
   start_date: '2026-10-28',
@@ -51,4 +53,19 @@ test('the pro rata only changes on unpaid monthly contracts without renewal', ()
   assert.equal(canChangeProrata(contract({ manual_payment: true }), { monthly: true }), false);
   assert.equal(canChangeProrata(contract({ status: 'finished' }), { monthly: true }), false);
   assert.equal(canChangeProrata(contract(), { monthly: true, hasRenewal: true }), false);
+});
+
+test('the confirmation message explains the pro rata and the full month after it', () => {
+  const lines = prorataMessageLines(contract({
+    end_date: '2026-11-07',
+    plan_snapshot: {
+      price_total: 70,
+      prorata: { cycle_day: 7, days: 10, full_price_total: 210, start_date: '2026-10-28', end_date: '2026-11-07' },
+    },
+  }));
+  assert.deepEqual(lines, [
+    `🧮 Proporcional: *10 dias* (${formatCurrency(210)} ÷ 30 × 10)`,
+    `🔁 A partir de 07/11/2026: *${formatCurrency(210)} por mês*, sempre no dia 7`,
+  ]);
+  assert.deepEqual(prorataMessageLines(contract()), [], 'no pro rata, no extra lines');
 });

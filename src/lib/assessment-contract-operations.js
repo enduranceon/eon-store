@@ -59,6 +59,7 @@ export async function registerExternalAssessmentContractCharge({
     external_invoice_number: updatedContract.external_invoice_number,
     payment_status: updatedContract.payment_status,
     status: updatedContract.status,
+    payment_message_sent_at: updatedContract.payment_message_sent_at ?? null,
     updated_at: updatedContract.updated_at,
   };
 

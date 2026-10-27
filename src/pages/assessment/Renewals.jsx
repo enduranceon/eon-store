@@ -448,9 +448,9 @@ export default function Renewals() {
         source: 'renewals_page',
       });
       setExternalChargeModal(null);
-      // Cobrança ainda não enviada: já abre a mensagem de renovação confirmada,
-      // com o link e o vencimento salvos.
-      if (opensChargeMessageAfterRegister(contract)) {
+      // Cobrança ainda não enviada (ou com link novo): já abre a mensagem de
+      // renovação confirmada, com o link e o vencimento salvos.
+      if (opensChargeMessageAfterRegister({ ...contract, ...result.updates })) {
         toast.success('Cobrança registrada. Copie a mensagem e envie para o atleta.');
         setMessageTask(buildContractChargeTask({ ...contract, ...result.updates }, lookupsFor(contract)));
       } else {

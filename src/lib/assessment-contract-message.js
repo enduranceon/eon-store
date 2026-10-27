@@ -1,5 +1,6 @@
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { getContractTotalValue, isRenewalContract } from '@/lib/assessment-contract-lifecycle';
+import { prorataMessageLines } from '@/lib/assessment-prorata';
 
 const PERIOD_LABELS = {
   mensal: 'Mensal',
@@ -80,6 +81,7 @@ export function buildAssessmentContractMessage({
   if (instValue) message += ` em *${installments}x de ${formatCurrency(instValue)}*`;
   message += '\n';
   if (enrollment > 0) message += `📌 Matrícula: ${formatCurrency(enrollment)} _(cobrada na 1ª mensalidade)_\n`;
+  for (const line of prorataMessageLines(contract)) message += `${line}\n`;
   if (paymentDueDate) message += `📆 Vencimento: *${formatDate(paymentDueDate)}*\n`;
   message += '\n';
   if (pix) message += `📲 PIX Copia e Cola:\n\`${pix}\`\n\n`;
