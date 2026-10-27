@@ -205,6 +205,17 @@ manual confirmado. A remoção das parcelas, a volta para `awaiting_charge` (ou
 `pending` em contrato) e os eventos de auditoria são atômicos e idempotentes.
 Pagamentos Asaas são rejeitados por essa rota.
 
+### Pro rata do plano mensal
+
+`POST /orders/contract/:id/prorata` com
+`{ "cycle_day": 1..28 | null, "expected_updated_at": "..." }` aplica ou
+desfaz o pro rata pela `apply_assessment_contract_prorata`. O primeiro
+período termina no dia do ciclo e custa o mensal ÷ 30 × dias. Vale só para
+plano mensal ainda sem pagamento, sem renovação criada, sem mudança de plano e
+sem licença; fora disso responde 409. A resposta traz o contrato e
+`had_charge`, que avisa que o link já enviado é do valor anterior. Detalhes em
+`docs/pro-rata.md`.
+
 ### Link da fatura da assinatura (mensal automática)
 
 `POST /renewals/subscription-link` com `{ "contract_ids": ["uuid"] }` (até 50)

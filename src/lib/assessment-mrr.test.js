@@ -282,3 +282,11 @@ test('unknown customer IDs do not create phantom students in the ticket denomina
   assert.equal(result.activeStudents, 1);
   assert.equal(result.ticketMedio, 300);
 });
+
+test('a pro rata first period counts at the full monthly price', () => {
+  const contract = {
+    plan_snapshot: { period_months: 1, price_total: 70, prorata: { cycle_day: 7, days: 10, full_price_total: 210 } },
+    manual_discount: 0,
+  };
+  assert.equal(getContractMonthlyValue(contract), 210);
+});

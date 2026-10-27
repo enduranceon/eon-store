@@ -130,6 +130,20 @@ export function expectedContractValue(contract: Record<string, unknown>): number
   return Math.max(0, Math.round(total * 100) / 100);
 }
 
+// Vencimento esperado da fatura do mês: a fatura anterior + 1 mês. Depois de
+// um pro rata, a assinatura começa no dia do ciclo, que é o início da
+// renovação; sem fatura anterior, também vale o início.
+export function expectedInvoiceDue(
+  contract: Record<string, unknown>,
+  ancestors: Record<string, unknown>[],
+): string {
+  const previous = ancestors[0];
+  const previousSnapshot = (previous?.plan_snapshot ?? {}) as Record<string, unknown>;
+  const previousDue = dateOnly(previous?.due_date);
+  if (!previousDue || previousSnapshot.prorata) return dateOnly(contract.start_date)!;
+  return addOneMonth(previousDue);
+}
+
 export function paymentMethodFor(
   payment: AsaasPayload,
   fallback: unknown,
@@ -277,10 +291,7 @@ async function lookupContract(
     };
   }
 
-  const previousDue = dateOnly(ancestors[0]?.due_date);
-  const expectedDue = previousDue
-    ? addOneMonth(previousDue)
-    : dateOnly(contract.start_date)!;
+  const expectedDue = expectedInvoiceDue(contract, ancestors);
   const payments = await deps.getSubscriptionPayments(subscriptionId);
   const used = await usedInvoiceCodes(supabase, contract.customer_id);
   const payment = pickSubscriptionInvoice(payments, expectedDue, used);

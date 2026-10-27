@@ -5,7 +5,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
 const ACTION_PATH =
-  /^\/orders\/contract\/([^/]+)\/(renewal|renewal-activation|auto-renewal|non-renewal|enrollment-confirmation|enrollment-refusal|prospect-proposal|prospect-message-sent|prospect-contact|prospect-lost|prospect-reopen)$/;
+  /^\/orders\/contract\/([^/]+)\/(renewal|renewal-activation|auto-renewal|prorata|non-renewal|enrollment-confirmation|enrollment-refusal|prospect-proposal|prospect-message-sent|prospect-contact|prospect-lost|prospect-reopen)$/;
 const PROSPECT_LOSS_REASONS = new Set([
   "price",
   "no_response",
@@ -160,6 +160,21 @@ export async function handleContractMembershipRequest(
     }
     rpc = "set_assessment_contract_auto_renewal";
     args = { p_auto_renewal: body.auto_renewal };
+  } else if (action === "prorata") {
+    // Pro rata do plano mensal: dia do ciclo de 1 a 28, ou null para desfazer.
+    const cycleDay = body.cycle_day;
+    if (
+      !exactKeys(body, ["cycle_day", "expected_updated_at"]) ||
+      !(cycleDay === null ||
+        (Number.isInteger(cycleDay) && (cycleDay as number) >= 1 && (cycleDay as number) <= 28))
+    ) {
+      return jsonResponse({
+        error: "Dia do ciclo inválido",
+        code: "invalid_request",
+      }, 400);
+    }
+    rpc = "apply_assessment_contract_prorata";
+    args = { p_cycle_day: cycleDay };
   } else if (action === "non-renewal") {
     if (!exactKeys(body, ["expected_updated_at"])) {
       return jsonResponse({

@@ -1529,6 +1529,17 @@ export async function fetchSubscriptionInvoiceLinks(contractIds, options = {}) {
   return response.data;
 }
 
+// Pro rata do plano mensal: dia do ciclo de 1 a 28, ou null para desfazer.
+export async function applyAssessmentContractProrata(contractId, cycleDay, expectedUpdatedAt, options = {}) {
+  const response = await apiRequest(`/orders/contract/${contractId}/prorata`, {
+    ...options,
+    method: 'POST',
+    body: { cycle_day: cycleDay, expected_updated_at: expectedUpdatedAt },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 // Planos mensais com a renovação automática desligada e quem tem assinatura
 // mensal ativa no Asaas (só consulta).
 export async function checkAsaasSubscriptions(options = {}) {
