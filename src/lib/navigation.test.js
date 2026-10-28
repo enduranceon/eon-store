@@ -21,6 +21,7 @@ test('the nine areas retain one selected item for existing list and detail route
     ['/assessoria/coaches', 'settings', 'team'],
     ['/assessoria/coaches/123', 'settings', 'team'],
     ['/assessoria/lista-de-espera', 'assessment', 'waitlist'],
+    ['/assessoria/contatos-do-site', 'assessment', 'contact_requests'],
     ['/financeiro', 'finance', 'charges'],
     ['/financeiro/conciliacao', 'finance', 'reconciliation'],
     ['/comunicacao', 'communication', 'contact_queue'],
@@ -38,7 +39,7 @@ test('the nine areas retain one selected item for existing list and detail route
 
 test('navigation items have unique identifiers and destinations', () => {
   const items = NAV_AREAS.flatMap(area => area.items || [area]);
-  assert.equal(items.length, 36);
+  assert.equal(items.length, 37);
   assert.equal(new Set(items.map(item => item.id)).size, items.length);
   assert.equal(new Set(items.map(item => item.to)).size, items.length);
 });

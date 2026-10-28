@@ -28,6 +28,9 @@ verify_jwt = false
 [functions.public-coach-waitlist]
 verify_jwt = false
 
+[functions.public-contact-request]
+verify_jwt = false
+
 [functions.public-plan-link]
 verify_jwt = false
 

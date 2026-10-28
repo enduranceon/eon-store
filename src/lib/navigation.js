@@ -11,6 +11,7 @@ export const NAV_AREAS = [
       { id: 'leaves', label: 'Licenças', to: '/assessoria/licencas', icon: 'leaves' },
       { id: 'prospects', label: 'Prospects', to: '/assessoria/prospects', icon: 'prospects', badge: 'prospects' },
       { id: 'waitlist', label: 'Lista de espera', to: '/assessoria/lista-de-espera', icon: 'waitlist' },
+      { id: 'contact_requests', label: 'Contatos do site', to: '/assessoria/contatos-do-site', icon: 'contact_requests' },
       { id: 'audit', label: 'Auditoria', to: '/assessoria/auditoria', icon: 'audit' },
       { id: 'plans', label: 'Planos', to: '/assessoria/planos', icon: 'plans' },
       { id: 'tecnofit_archive', label: 'Ex-alunos Tecnofit', to: '/assessoria/ex-alunos-tecnofit', icon: 'archive' },
