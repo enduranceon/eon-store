@@ -35,6 +35,7 @@ export const AssessmentPlanTransition    = createAdminRecordEntity('plan-transit
 export const AssessmentCoach             = createAdminRecordEntity('coaches', 'assessment_coaches');
 export const AssessmentCoachSitePlan     = createAdminRecordEntity('coach-site-plans', 'assessment_coach_site_plans');
 export const AssessmentCoachWaitlist     = createAdminRecordEntity('coach-waitlist', 'assessment_coach_waitlist');
+export const AssessmentContactRequest    = createAdminRecordEntity('contact-requests', 'assessment_contact_requests');
 export const AssessmentContract          = db.entities.AssessmentContract;
 export const AssessmentContractCoachHist = db.entities.AssessmentContractCoachHist;
 export const AssessmentContractPlanHistory = db.entities.AssessmentContractPlanHistory;

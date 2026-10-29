@@ -188,6 +188,30 @@ Deno.test("coach waitlist keeps the site origin out of the admin form", () => {
   assert(coach.accepting_new_students === false, "coach availability was not kept");
 });
 
+Deno.test("contact requests only let the team change the status, never the site message", () => {
+  const update = normalizeAdminRecordPayload("contact-requests", {
+    status: "converted",
+    closed_reason: "",
+    prospect_contract_id: DUPLICATE_ID,
+  }, "update");
+  assert(update.status === "converted", "status was not kept");
+  assert(update.closed_reason === null, "empty reason was not cleared");
+  assert(update.prospect_contract_id === DUPLICATE_ID, "prospect link was lost");
+  for (const field of [
+    { message: "Outro texto" },
+    { subject: "Outro assunto" },
+    { whatsapp: "+5548999990601" },
+    { source: "site" },
+    { request_id: TARGET_ID },
+    { status: "lost" },
+  ]) {
+    expectError(() => normalizeAdminRecordPayload("contact-requests", field, "update"), "invalid_field");
+  }
+  expectError(() =>
+    normalizeAdminRecordPayload("contact-requests", { full_name: "Pessoa Fictícia", whatsapp: "+5548999990601" }, "create"),
+    "method_not_allowed");
+});
+
 Deno.test("plan groups keep the secret link and the modality out of the admin form", () => {
   const payload = normalizeAdminRecordPayload("plan-families", {
     modality_id: TARGET_ID,

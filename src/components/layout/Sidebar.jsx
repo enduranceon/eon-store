@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   Activity, AlertCircle, Archive, Award, BarChart3, CalendarDays, ChevronDown, ChevronRight,
   DollarSign, FileText, HandCoins, HeartPulse, Hourglass, Inbox, Layers, ListChecks,
-  LogOut, Megaphone, MessageCircle, Package, Palette, Pause, RefreshCcw,
+  LogOut, Megaphone, MessageCircle, MessageSquare, Package, Palette, Pause, RefreshCcw,
   Settings, ShoppingCart, Star, Tag, Ticket, TrendingUp, Truck, Undo2,
   UserCheck, UserPlus, Users, Wallet, X, Zap,
 } from 'lucide-react';
@@ -26,6 +26,7 @@ const ICONS = {
   analytics: TrendingUp, reports: BarChart3, coaches: Award, trainers: UserCheck,
   categories: Tag, suppliers: Truck, coupons: Ticket, revenue: Palette,
   payment: DollarSign, health: HeartPulse, archive: Archive, waitlist: Hourglass,
+  contact_requests: MessageSquare,
 };
 
 const EXPANSION_KEY = 'eon-sidebar-expanded-area';

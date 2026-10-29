@@ -80,6 +80,7 @@ const AssIndicators = lazy(() => import('@/pages/assessment/Indicators'));
 const AssMovement = lazy(() => import('@/pages/assessment/Movement'));
 const AssCoachProfile = lazy(() => import('@/pages/assessment/CoachProfile'));
 const AssCoachWaitlist = lazy(() => import('@/pages/assessment/CoachWaitlist'));
+const AssContactRequests = lazy(() => import('@/pages/assessment/ContactRequests'));
 const AssCentralFinanceira = lazy(() => import('@/pages/assessment/CentralFinanceira'));
 
 function LegacyOrderListRedirect({ origin }) {
@@ -189,6 +190,7 @@ export default function App() {
           <Route path="/assessoria/renovacoes"    element={<AdminLayout><AssRenewals /></AdminLayout>} />
           <Route path="/assessoria/prospects"    element={<AdminLayout><AssProspects /></AdminLayout>} />
           <Route path="/assessoria/lista-de-espera" element={<AdminLayout><AssCoachWaitlist /></AdminLayout>} />
+          <Route path="/assessoria/contatos-do-site" element={<AdminLayout><AssContactRequests /></AdminLayout>} />
           <Route path="/assessoria/auditoria"    element={<AdminLayout><AssContractAudit /></AdminLayout>} />
           <Route path="/assessoria/licencas"    element={<AdminLayout><AssLeaves /></AdminLayout>} />
           <Route path="/assessoria/ex-alunos-tecnofit" element={<AdminLayout><AssTecnofitArchive /></AdminLayout>} />

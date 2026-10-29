@@ -453,6 +453,20 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
     allowCreate: true,
     allowDelete: true,
   },
+  // Mensagens do formulário de contato do site. Só o site cria; aqui a equipe
+  // muda a situação, liga ao prospect criado ou remove. O texto recebido não muda.
+  "contact-requests": {
+    table: "assessment_contact_requests",
+    fields: {
+      status: s(20, { values: ["new", "contacted", "converted", "closed"] }),
+      closed_reason: s(500, { nullable: true }),
+      prospect_contract_id: u({ nullable: true }),
+    },
+    defaultSort: "created_at",
+    sortFields: ["id", "status", "created_at", "updated_at"],
+    updatedColumn: "updated_at",
+    allowDelete: true,
+  },
   "payout-rates": {
     table: "payout_role_modality_rates",
     fields: { role: s(32), modality_id: u(), rate: n({ min: 0 }) },
