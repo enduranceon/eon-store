@@ -62,6 +62,7 @@ import {
   prospectContactCustomer,
   prospectLatestActivityAt,
   prospectSubmittedAddress,
+  prospectSubmittedProfile,
   prospectSubmissionIdentityDifferences,
   sortProspectsByLatestSubmission,
 } from '@/lib/assessment-prospect-submission';
@@ -588,6 +589,7 @@ function SubmittedContactNotice({ draft, customer, compact = false }) {
   const differences = prospectSubmissionIdentityDifferences(customer, submission);
   const contactCustomer = prospectContactCustomer(customer, submission);
   const submittedAddress = prospectSubmittedAddress(submission);
+  const submittedProfile = prospectSubmittedProfile(submission);
   const hasDifference = differences.length > 0;
   const tone = hasDifference
     ? 'border-amber-200 bg-amber-50 text-amber-950'
@@ -608,6 +610,9 @@ function SubmittedContactNotice({ draft, customer, compact = false }) {
             <p className="truncate"><span className="font-medium">Nome:</span> {contactCustomer?.full_name || '—'}</p>
             <p className="truncate"><span className="font-medium">WhatsApp:</span> {contactCustomer?.whatsapp || '—'}</p>
             <p className="break-all"><span className="font-medium">E-mail:</span> {contactCustomer?.email || '—'}</p>
+            {!compact && submittedProfile && (
+              <p><span className="font-medium">Perfil enviado:</span> {submittedProfile}</p>
+            )}
             {!compact && submittedAddress && (
               <p><span className="font-medium">Endereço enviado:</span> {submittedAddress}</p>
             )}
@@ -1768,7 +1773,7 @@ export default function Prospects() {
       const submissionsResult = contractIds.length
         ? await supabase
           .from('assessment_prospect_submissions')
-          .select('id, request_id, contract_id, plan_id, coach_id, source, submitted_full_name, submitted_whatsapp, submitted_email, submitted_cpf, submitted_address_zip, submitted_address_street, submitted_address_number, submitted_address_complement, submitted_address_neighborhood, submitted_address_city, submitted_address_state, region, submitted_at, landing_page')
+          .select('id, request_id, contract_id, plan_id, coach_id, source, submitted_full_name, submitted_whatsapp, submitted_email, submitted_cpf, submitted_address_zip, submitted_address_street, submitted_address_number, submitted_address_complement, submitted_address_neighborhood, submitted_address_city, submitted_address_state, submitted_birth_date, submitted_gender, region, submitted_at, landing_page')
           .in('contract_id', contractIds)
           .order('submitted_at', { ascending: false })
         : { data: [], error: null };

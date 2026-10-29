@@ -7,7 +7,7 @@ SELECT no_plan();
 SELECT ok(
   has_function_privilege(
     'service_role',
-    'public.submit_public_assessment_prospect(uuid,text,text,text,text,uuid,uuid,text,text,text,text,text,text,text,text,timestamptz,text,jsonb,text,text,text)',
+    'public.submit_public_assessment_prospect(uuid,text,text,text,text,uuid,uuid,text,text,text,text,text,text,text,text,timestamptz,text,jsonb,text,text,text,date,text)',
     'EXECUTE'
   ),
   'the Edge Function service role can submit a public prospect'
@@ -22,12 +22,12 @@ SELECT ok(
 SELECT ok(
   NOT has_function_privilege(
     'anon',
-    'public.submit_public_assessment_prospect(uuid,text,text,text,text,uuid,uuid,text,text,text,text,text,text,text,text,timestamptz,text,jsonb,text,text,text)',
+    'public.submit_public_assessment_prospect(uuid,text,text,text,text,uuid,uuid,text,text,text,text,text,text,text,text,timestamptz,text,jsonb,text,text,text,date,text)',
     'EXECUTE'
   )
   AND NOT has_function_privilege(
     'authenticated',
-    'public.submit_public_assessment_prospect(uuid,text,text,text,text,uuid,uuid,text,text,text,text,text,text,text,text,timestamptz,text,jsonb,text,text,text)',
+    'public.submit_public_assessment_prospect(uuid,text,text,text,text,uuid,uuid,text,text,text,text,text,text,text,text,timestamptz,text,jsonb,text,text,text,date,text)',
     'EXECUTE'
   ),
   'browser roles cannot bypass the Edge Function'
@@ -38,7 +38,7 @@ SELECT ok(
 )
 FROM pg_catalog.pg_proc
 WHERE oid = to_regprocedure(
-  'public.submit_public_assessment_prospect(uuid,text,text,text,text,uuid,uuid,text,text,text,text,text,text,text,text,timestamptz,text,jsonb,text,text,text)'
+  'public.submit_public_assessment_prospect(uuid,text,text,text,text,uuid,uuid,text,text,text,text,text,text,text,text,timestamptz,text,jsonb,text,text,text,date,text)'
 );
 
 INSERT INTO public.assessment_modalities (id, name)
@@ -85,7 +85,9 @@ CREATE FUNCTION pg_temp.submit_public_prospect(
   p_address_complement text DEFAULT NULL,
   p_address_neighborhood text DEFAULT 'Bairro Fictício',
   p_address_city text DEFAULT 'Florianópolis',
-  p_address_state text DEFAULT 'SC'
+  p_address_state text DEFAULT 'SC',
+  p_birth_date date DEFAULT NULL,
+  p_gender text DEFAULT NULL
 )
 RETURNS jsonb
 LANGUAGE sql
@@ -111,7 +113,9 @@ AS $$
     '{}'::jsonb,
     'ip-hash-public-prospect-test-' || p_request_id::text,
     'phone-hash-public-prospect-test-' || p_phone,
-    'pgTAP public prospect test'
+    'pgTAP public prospect test',
+    p_birth_date,
+    p_gender
   );
 $$;
 
@@ -300,6 +304,158 @@ SELECT is(
   (SELECT count(*) FROM public.asaas_payments),
   (SELECT payment_count FROM public_prospect_financial_baseline),
   'public prospect intake never creates a charge'
+);
+
+-- Nascimento e gênero: opcionais no servidor, validados quando enviados --------
+
+INSERT INTO public_prospect_results (scenario, result)
+VALUES (
+  'with_profile',
+  pg_temp.submit_public_prospect(
+    '86000000-0000-4000-a000-000000000030',
+    'Pessoa com Perfil Fictícia',
+    '+5548999990030',
+    'profile@example.test',
+    '11144477735',
+    p_birth_date => '1990-03-12',
+    p_gender => ' Feminino '
+  )
+);
+INSERT INTO public_prospect_results (scenario, result)
+VALUES (
+  'with_profile_retry',
+  pg_temp.submit_public_prospect(
+    '86000000-0000-4000-a000-000000000030',
+    'Pessoa com Perfil Fictícia',
+    '+5548999990030',
+    'profile@example.test',
+    '11144477735',
+    p_birth_date => '1990-03-12',
+    p_gender => 'feminino'
+  )
+);
+
+SELECT is(
+  (SELECT birth_date::text || '|' || gender
+   FROM public.presale_customers
+   WHERE cpf = '11144477735'),
+  '1990-03-12|feminino',
+  'a new customer is created with the submitted birth date and gender'
+);
+SELECT is(
+  (SELECT submitted_birth_date::text || '|' || submitted_gender
+   FROM public.assessment_prospect_submissions
+   WHERE request_id = '86000000-0000-4000-a000-000000000030'),
+  '1990-03-12|feminino',
+  'the receipt keeps the submitted birth date and gender'
+);
+SELECT is(
+  (SELECT result->>'status' FROM public_prospect_results WHERE scenario = 'with_profile_retry'),
+  'duplicate',
+  'a same-key retry with the same birth date and gender is idempotent'
+);
+SELECT is(
+  (SELECT submitted_birth_date IS NULL AND submitted_gender IS NULL
+   FROM public.assessment_prospect_submissions
+   WHERE request_id = '86000000-0000-4000-a000-000000000010'),
+  true,
+  'the old form without birth date and gender still works and stays empty'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.submit_public_prospect(
+    '86000000-0000-4000-a000-000000000030',
+    'Pessoa com Perfil Fictícia',
+    '+5548999990030',
+    'profile@example.test',
+    '11144477735',
+    p_birth_date => '1991-03-12',
+    p_gender => 'feminino'
+  )$$,
+  'P0001',
+  'Esta chave de envio já foi usada com outros dados',
+  'a retry cannot change the birth date'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.submit_public_prospect(
+    '86000000-0000-4000-a000-000000000030',
+    'Pessoa com Perfil Fictícia',
+    '+5548999990030',
+    'profile@example.test',
+    '11144477735',
+    p_birth_date => '1990-03-12',
+    p_gender => 'masculino'
+  )$$,
+  'P0001',
+  'Esta chave de envio já foi usada com outros dados',
+  'a retry cannot change the gender'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.submit_public_prospect(
+    '86000000-0000-4000-a000-000000000031',
+    'Pessoa Nascida no Futuro',
+    '+5548999990031',
+    'future@example.test',
+    '45317828791',
+    p_birth_date => (current_date + 2)
+  )$$,
+  '22023',
+  'Data de nascimento inválida',
+  'a future birth date is rejected'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.submit_public_prospect(
+    '86000000-0000-4000-a000-000000000032',
+    'Pessoa Muito Antiga',
+    '+5548999990032',
+    'old@example.test',
+    '45317828791',
+    p_birth_date => '1899-12-31'
+  )$$,
+  '22023',
+  'Data de nascimento inválida',
+  'a birth date before 1900 is rejected'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.submit_public_prospect(
+    '86000000-0000-4000-a000-000000000033',
+    'Pessoa com Gênero Inválido',
+    '+5548999990033',
+    'gender@example.test',
+    '45317828791',
+    p_gender => 'invalido'
+  )$$,
+  '22023',
+  'Gênero inválido',
+  'an unknown gender is rejected'
+);
+
+INSERT INTO public_prospect_results (scenario, result)
+VALUES (
+  'existing_customer_with_profile',
+  pg_temp.submit_public_prospect(
+    '86000000-0000-4000-a000-000000000034',
+    'Nome Enviado Diferente',
+    '+5548999990034',
+    'submitted-profile@example.test',
+    '39053344705',
+    p_birth_date => '1985-05-05',
+    p_gender => 'masculino'
+  )
+);
+
+SELECT is(
+  (SELECT birth_date IS NULL AND gender IS NULL
+   FROM public.presale_customers
+   WHERE id = '86000000-0000-4000-a000-000000000020'),
+  true,
+  'a public submission never fills the profile of an existing customer'
+);
+SELECT is(
+  (SELECT submitted_birth_date::text || '|' || submitted_gender
+   FROM public.assessment_prospect_submissions
+   WHERE request_id = '86000000-0000-4000-a000-000000000034'),
+  '1985-05-05|masculino',
+  'the profile sent for an existing customer stays in the receipt for review'
 );
 
 RESET ROLE;

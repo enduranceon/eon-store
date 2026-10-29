@@ -4,6 +4,9 @@ export const UUID_PATTERN =
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STATE_PATTERN = /^[A-Z]{2}$/;
 
+// Mesmos valores do formulário interno de prospect (vazio = não informado).
+export const GENDERS = ["masculino", "feminino", "outro"] as const;
+
 export type FieldError = {
   field: string;
   code: string;
@@ -25,6 +28,8 @@ export type ProspectPayload = {
   addressNeighborhood: string;
   addressCity: string;
   addressState: string;
+  birthDate: string;
+  gender: string;
   termsAccepted: boolean;
   turnstileToken: string;
 };
@@ -48,6 +53,26 @@ export function validCpf(value: string): boolean {
     return (rest === 10 ? 0 : rest) === Number(value[size]);
   };
   return check(9) && check(10);
+}
+
+function saoPauloToday(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+// Data de nascimento no formato AAAA-MM-DD, existente no calendário, entre
+// 1900-01-01 e hoje (horário de Brasília).
+export function validBirthDate(value: string, today = saoPauloToday()): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    return false;
+  }
+  return value >= "1900-01-01" && value <= today;
 }
 
 export function normalizeBrazilPhone(value: unknown): string {
@@ -90,6 +115,10 @@ export function validateAndNormalizeProspect(
     addressNeighborhood: clean(body.address_neighborhood, 120),
     addressCity: clean(body.address_city, 120),
     addressState: rawAddressState,
+    // Opcionais no servidor: o formulário antigo não envia. A obrigatoriedade
+    // da data de nascimento fica no formulário novo do site.
+    birthDate: clean(body.birth_date, 10),
+    gender: clean(body.gender, 20).toLowerCase(),
     termsAccepted: body.terms_accepted === true,
     turnstileToken: clean(body.turnstile_token, 4096),
   };
@@ -121,6 +150,15 @@ export function validateAndNormalizeProspect(
   if (!payload.addressCity) invalid("address_city", "REQUIRED");
   if (!STATE_PATTERN.test(payload.addressState)) {
     invalid("address_state", "INVALID_STATE");
+  }
+  if (payload.birthDate && !validBirthDate(payload.birthDate)) {
+    invalid("birth_date", "INVALID_BIRTH_DATE");
+  }
+  if (
+    payload.gender &&
+    !(GENDERS as readonly string[]).includes(payload.gender)
+  ) {
+    invalid("gender", "INVALID_GENDER");
   }
   if (!payload.termsAccepted) invalid("terms_accepted", "TERMS_REQUIRED");
   if (!payload.turnstileToken) {

@@ -5,6 +5,7 @@ import {
   matchesProspectSearch,
   prospectContactCustomer,
   prospectSubmittedAddress,
+  prospectSubmittedProfile,
   prospectSubmissionIdentityDifferences,
   sortProspectsByLatestSubmission,
 } from './assessment-prospect-submission.js';
@@ -62,6 +63,17 @@ test('mantém e formata o endereço enviado separado do cliente canônico', () =
     submitted_address_state: 'SC',
   });
   assert.equal(address, 'Rua José Beiro, 218, 502B · Jardim Atlântico · Florianópolis - SC · CEP 88095-122');
+});
+
+test('mostra nascimento e gênero enviados, só o que foi informado', () => {
+  assert.equal(
+    prospectSubmittedProfile({ submitted_birth_date: '1990-03-12', submitted_gender: 'feminino' }),
+    'Nascimento 12/03/1990 · Gênero Feminino',
+  );
+  assert.equal(prospectSubmittedProfile({ submitted_birth_date: '1990-03-12', submitted_gender: null }), 'Nascimento 12/03/1990');
+  assert.equal(prospectSubmittedProfile({ submitted_birth_date: null, submitted_gender: 'outro' }), 'Gênero Outro');
+  assert.equal(prospectSubmittedProfile({ submitted_birth_date: null, submitted_gender: null }), '');
+  assert.equal(prospectSubmittedProfile(null), '');
 });
 
 test('ordena pelo envio mais recente, mesmo quando o contrato é antigo', () => {
