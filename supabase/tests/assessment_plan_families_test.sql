@@ -214,6 +214,8 @@ RETURNS jsonb LANGUAGE sql AS $$
   )
 $$;
 GRANT EXECUTE ON FUNCTION pg_temp.send_profile(uuid, text, date, text, text) TO service_role;
+-- Um teste acima desliga o link; religa para os casos abaixo.
+UPDATE public.assessment_plan_families SET link_enabled = true WHERE id = '8a000000-0000-4000-a000-0000000000f1';
 SET LOCAL ROLE service_role;
 
 SELECT is(
