@@ -5,7 +5,7 @@ import { loadPlanLink, submitPlanLink } from '@/api/plan-link';
 import { PhoneInput } from '@/components/PhoneInput';
 import { formatCep, lookupCepAddress, normalizeCep } from '@/lib/br-address';
 import { durationLabel } from '@/lib/plan-families';
-import { PLAN_LINK_REGIONS, emptyPlanLinkForm, installmentText, preparePlanLinkSubmission, regionFromLink } from '@/lib/plan-link-form';
+import { PLAN_LINK_GENDERS, PLAN_LINK_REGIONS, emptyPlanLinkForm, installmentText, maskBirthDate, preparePlanLinkSubmission, regionFromLink } from '@/lib/plan-link-form';
 import { cn, formatCurrency, maskCpf } from '@/lib/utils';
 
 const FIELD = 'mt-1 block w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-200';
@@ -182,6 +182,16 @@ export default function PlanLinkForm() {
                 <Field id="plan-link-cpf" label="CPF">
                   <input id="plan-link-cpf" inputMode="numeric" className={FIELD}
                     value={form.cpf} onChange={event => set('cpf', maskCpf(event.target.value))} />
+                </Field>
+                <Field id="plan-link-birth" label="Data de nascimento">
+                  <input id="plan-link-birth" inputMode="numeric" autoComplete="bday" placeholder="dd/mm/aaaa" maxLength={10} className={FIELD}
+                    value={form.birth_date} onChange={event => set('birth_date', maskBirthDate(event.target.value))} />
+                </Field>
+                <Field id="plan-link-gender" label="Gênero (opcional)">
+                  <select id="plan-link-gender" className={FIELD} value={form.gender} onChange={event => set('gender', event.target.value)}>
+                    <option value="">Prefiro não informar</option>
+                    {Object.entries(PLAN_LINK_GENDERS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
                 </Field>
                 {!regionFromUrl && (
                   <Field id="plan-link-region" label="Onde vai treinar">

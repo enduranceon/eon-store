@@ -68,7 +68,7 @@ SELECT ok(
 SELECT ok(
   NOT has_table_privilege('anon', 'public.assessment_plan_families', 'SELECT')
   AND NOT has_table_privilege('authenticated', 'public.assessment_plan_families', 'INSERT')
-  AND NOT has_function_privilege('anon', 'public.submit_plan_link_prospect(text, uuid, uuid, uuid, text, text, text, text, text, text, text, text, text, text, text, text, timestamptz, text, text, text)', 'EXECUTE'),
+  AND NOT has_function_privilege('anon', 'public.submit_plan_link_prospect(text, uuid, uuid, uuid, text, text, text, text, text, text, text, text, text, text, text, text, timestamptz, text, text, text, date, text)', 'EXECUTE'),
   'browsers cannot read the links nor call the link function'
 );
 
@@ -201,6 +201,90 @@ SELECT throws_ok(
   'P0002', 'Treinador indisponível para este plano no site',
   'site submissions still require a coach shown on the site'
 );
+
+-- Nascimento e gênero no cadastro pelo link (opcionais no servidor) -------------
+CREATE FUNCTION pg_temp.send_profile(p_request uuid, p_cpf text, p_birth date, p_gender text, p_name text DEFAULT 'pessoa perfil fictícia')
+RETURNS jsonb LANGUAGE sql AS $$
+  SELECT public.submit_plan_link_prospect(
+    'linkcorridateste0001', p_request, '8a000000-0000-4000-a000-0000000000b3', '8a000000-0000-4000-a000-0000000000c1',
+    p_name, '+5548999990602', 'perfil@example.test', p_cpf,
+    'online', '88000000', 'Rua Fictícia', '10', '', 'Centro', 'Florianópolis', 'SC', now(),
+    'ip-hash-link-profile-' || p_request::text, 'phone-hash-link-profile-' || p_request::text, 'teste',
+    p_birth, p_gender
+  )
+$$;
+GRANT EXECUTE ON FUNCTION pg_temp.send_profile(uuid, text, date, text, text) TO service_role;
+SET LOCAL ROLE service_role;
+
+SELECT is(
+  pg_temp.send_profile('8a000000-0000-4000-a000-0000000000e1', '39053344705', '1990-03-12', ' Feminino ')->>'status',
+  'created',
+  'the link accepts birth date and gender'
+);
+SELECT is(
+  (SELECT birth_date::text || '|' || gender FROM public.presale_customers WHERE cpf = '39053344705'),
+  '1990-03-12|feminino',
+  'a new customer from the link gets the submitted birth date and gender'
+);
+SELECT is(
+  (SELECT submitted_birth_date::text || '|' || submitted_gender
+   FROM public.assessment_prospect_submissions WHERE request_id = '8a000000-0000-4000-a000-0000000000e1'),
+  '1990-03-12|feminino',
+  'the receipt keeps the submitted birth date and gender'
+);
+SELECT is(
+  pg_temp.send_profile('8a000000-0000-4000-a000-0000000000e1', '39053344705', '1990-03-12', 'feminino')->>'status',
+  'duplicate',
+  'a same-key retry with the same profile is idempotent'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.send_profile('8a000000-0000-4000-a000-0000000000e1', '39053344705', '1991-03-12', 'feminino')$$,
+  'P0001', 'Esta chave de envio já foi usada com outros dados',
+  'a retry cannot change the birth date'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.send_profile('8a000000-0000-4000-a000-0000000000e1', '39053344705', '1990-03-12', 'masculino')$$,
+  'P0001', 'Esta chave de envio já foi usada com outros dados',
+  'a retry cannot change the gender'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.send_profile('8a000000-0000-4000-a000-0000000000e2', '45317828791', (current_date + 2), NULL)$$,
+  '22023', 'Data de nascimento inválida',
+  'a future birth date is rejected'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.send_profile('8a000000-0000-4000-a000-0000000000e3', '45317828791', '1899-12-31', NULL)$$,
+  '22023', 'Data de nascimento inválida',
+  'a birth date before 1900 is rejected'
+);
+SELECT throws_ok(
+  $$SELECT pg_temp.send_profile('8a000000-0000-4000-a000-0000000000e4', '45317828791', NULL, 'invalido')$$,
+  '22023', 'Gênero inválido',
+  'an unknown gender is rejected'
+);
+SELECT is(
+  (SELECT submitted_birth_date IS NULL AND submitted_gender IS NULL
+   FROM public.assessment_prospect_submissions WHERE request_id = '8a000000-0000-4000-a000-0000000000d1'),
+  true,
+  'a page without birth date and gender still works and stays empty'
+);
+SELECT is(
+  pg_temp.send_profile('8a000000-0000-4000-a000-0000000000e5', '52998224725', '1985-05-05', 'masculino')->>'status',
+  'created',
+  'a customer that already exists can send the form again'
+);
+SELECT is(
+  (SELECT birth_date IS NULL AND gender IS NULL FROM public.presale_customers WHERE cpf = '52998224725'),
+  true,
+  'the link never fills the profile of an existing customer'
+);
+SELECT is(
+  (SELECT submitted_birth_date::text || '|' || submitted_gender
+   FROM public.assessment_prospect_submissions WHERE request_id = '8a000000-0000-4000-a000-0000000000e5'),
+  '1985-05-05|masculino',
+  'the profile sent for an existing customer stays in the receipt for review'
+);
+RESET ROLE;
 
 SELECT * FROM finish();
 ROLLBACK;

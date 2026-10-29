@@ -2,8 +2,10 @@ import {
   clean,
   digits,
   type FieldError,
+  GENDERS,
   normalizeBrazilPhone,
   UUID_PATTERN,
+  validBirthDate,
   validCpf,
 } from "../public-assessment-prospect/validation.ts";
 import { clientIp } from "../_shared/turnstile.ts";
@@ -84,6 +86,8 @@ export type PlanLinkPayload = {
   addressNeighborhood: string;
   addressCity: string;
   addressState: string;
+  birthDate: string;
+  gender: string;
 };
 
 export function validatePlanLink(body: Record<string, unknown>): { payload: PlanLinkPayload; fieldErrors: FieldError[] } {
@@ -106,6 +110,10 @@ export function validatePlanLink(body: Record<string, unknown>): { payload: Plan
     addressNeighborhood: clean(body.address_neighborhood, 120),
     addressCity: clean(body.address_city, 120),
     addressState: clean(body.address_state, 8).toUpperCase(),
+    // Opcionais no servidor (página aberta antes da publicação não quebra);
+    // a data de nascimento é obrigatória na página.
+    birthDate: clean(body.birth_date, 10),
+    gender: clean(body.gender, 20).toLowerCase(),
   };
   const fieldErrors: FieldError[] = [];
   const invalid = (field: string, code: string) => fieldErrors.push({ field, code });
@@ -124,6 +132,8 @@ export function validatePlanLink(body: Record<string, unknown>): { payload: Plan
   if (!payload.addressNeighborhood) invalid("address_neighborhood", "REQUIRED");
   if (!payload.addressCity) invalid("address_city", "REQUIRED");
   if (!STATE_PATTERN.test(payload.addressState)) invalid("address_state", "INVALID_STATE");
+  if (payload.birthDate && !validBirthDate(payload.birthDate)) invalid("birth_date", "INVALID_BIRTH_DATE");
+  if (payload.gender && !(GENDERS as readonly string[]).includes(payload.gender)) invalid("gender", "INVALID_GENDER");
   if (body.confirmed !== true) invalid("confirmed", "CONFIRMATION_REQUIRED");
   return { payload, fieldErrors };
 }
@@ -227,6 +237,8 @@ export async function handlePublicPlanLink(req: Request, deps: PlanLinkDeps): Pr
       p_ip_hash: ipHash,
       p_phone_hash: phoneHash,
       p_user_agent: clean(req.headers.get("user-agent"), 500),
+      p_birth_date: payload.birthDate || null,
+      p_gender: payload.gender || null,
     });
     if (error) {
       log("error", "plan_link_submit_failed", { database_code: error.code || null });
