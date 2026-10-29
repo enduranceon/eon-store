@@ -136,3 +136,31 @@ Deno.test("plan link maps database refusals without leaking details", async () =
     assert(!text.includes("secret") && !text.includes("CPF duplicado"), "database detail leaked");
   }
 });
+
+Deno.test("plan link sends birth date and gender, and keeps both optional", async () => {
+  const receipt = { status: "created", contract_id: "x", request_id: REQUEST_ID, submitted_at: "2026-10-29T12:00:00Z" };
+  const filled = deps(receipt);
+  const response = await handlePublicPlanLink(post({ ...VALID, birth_date: "1990-03-12", gender: " Feminino " }), filled.value);
+  assert(response.status === 201, `expected 201, received ${response.status}`);
+  assert(filled.calls[0].args.p_birth_date === "1990-03-12", "birth date was not sent");
+  assert(filled.calls[0].args.p_gender === "feminino", "gender was not normalized");
+
+  const legacy = deps(receipt);
+  const old = await handlePublicPlanLink(post(VALID), legacy.value);
+  assert(old.status === 201, "a page without the new fields was refused");
+  assert(legacy.calls[0].args.p_birth_date === null && legacy.calls[0].args.p_gender === null, "missing fields should be null");
+});
+
+Deno.test("plan link refuses impossible birth dates and unknown genders before the database", async () => {
+  const mock = deps({});
+  for (const value of ["1990-02-30", "1899-12-31", "2999-01-01", "12/03/1990"]) {
+    const response = await handlePublicPlanLink(post({ ...VALID, birth_date: value }), mock.value);
+    assert(response.status === 400, `birth date ${value} was accepted`);
+    const fields = (await response.json()).field_errors.map((item: { field: string }) => item.field);
+    assert(fields.includes("birth_date"), `birth date ${value} was not flagged`);
+  }
+  const gender = await handlePublicPlanLink(post({ ...VALID, gender: "mulher" }), mock.value);
+  assert(gender.status === 400, "unknown gender was accepted");
+  assert(mock.calls.length === 0, "database was called");
+});
+

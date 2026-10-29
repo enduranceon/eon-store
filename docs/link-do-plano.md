@@ -28,8 +28,12 @@ ninguém tira a taxa mexendo no endereço.
   `?coach=<id do coach>` e/ou `regiao=florianopolis|online`. O que vem no link
   já chega escolhido e a página não pergunta de novo; região fora dessas duas é
   ignorada (a pessoa escolhe).
-- A pessoa escolhe a duração, preenche nome, WhatsApp, e-mail, CPF e endereço e
-  confirma. Vira prospect "Novo" no quadro (envio com `source = 'plan_link'`;
+- A pessoa escolhe a duração, preenche nome, WhatsApp, e-mail, CPF, data de
+  nascimento (obrigatória na página), gênero (opcional: Feminino, Masculino,
+  Outro ou "Prefiro não informar") e endereço e confirma. No servidor os dois
+  campos novos são opcionais (a página aberta antes da publicação não quebra);
+  cliente novo já nasce com eles e cliente existente não é alterado (o enviado
+  fica no comprovante, no card "Perfil enviado" de Prospects). Vira prospect "Novo" no quadro (envio com `source = 'plan_link'`;
   o card mostra "Formulário do link do plano"). No link sem matrícula, o
   prospect chega com matrícula zero.
 - Coach do link: precisa estar ativo e atender a modalidade (pode ser coach que

@@ -72,17 +72,20 @@ test('the link form needs the choice, the person and the address', () => {
   const form = {
     ...emptyPlanLinkForm(),
     plan_id: 'p', coach_id: 'c', full_name: ' pessoa  link ', whatsapp: '(48) 99999-0601', email: 'A@B.test',
-    cpf: '529.982.247-25', address_zip: '88000-000', address_street: 'Rua', address_number: '10',
+    cpf: '529.982.247-25', birth_date: '25/03/1990', address_zip: '88000-000', address_street: 'Rua', address_number: '10',
     address_neighborhood: 'Centro', address_city: 'Florianópolis', address_state: 'sc', confirmed: true,
   };
   const { body } = preparePlanLinkSubmission(form, { token: 'tok', requestId: 'req' });
   assert.equal(body.full_name, 'pessoa link');
   assert.equal(body.whatsapp, '+5548999990601');
   assert.equal(body.cpf, '52998224725');
+  assert.equal(body.birth_date, '1990-03-25');
+  assert.equal(body.gender, '');
   assert.equal(body.address_state, 'SC');
   assert.equal(body.region, null);
   assert.equal(preparePlanLinkSubmission({ ...form, full_name: 'Pessoa' }, {}).error, 'Informe o nome completo');
   assert.equal(preparePlanLinkSubmission({ ...form, cpf: '111.111.111-11' }, {}).error, 'Informe um CPF válido');
+  assert.equal(preparePlanLinkSubmission({ ...form, birth_date: '' }, {}).error, 'Informe a data de nascimento');
   assert.equal(preparePlanLinkSubmission({ ...form, confirmed: false }, {}).error, 'Confirme que os dados estão corretos');
   assert.equal(preparePlanLinkSubmission({ ...form, plan_id: '' }, {}).error, 'Escolha a duração do plano');
   assert.deepEqual(installmentText({ price_total: 1110, max_installments: 6 }), { parts: 6, value: 185 });
