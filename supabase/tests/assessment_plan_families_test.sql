@@ -3,7 +3,7 @@ BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
 
-SELECT plan(24);
+SELECT plan(37);
 
 -- Modalidades, grupos, planos e coaches fictícios.
 INSERT INTO public.assessment_modalities (id, name, active) VALUES
