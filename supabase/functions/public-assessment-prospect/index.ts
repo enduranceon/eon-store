@@ -39,7 +39,7 @@ type Receipt = {
 };
 
 const RECEIPT_SELECT =
-  "id,request_id,submitted_at,customer_id,contract_id,plan_id,coach_id,region,submitted_full_name,submitted_whatsapp,submitted_email,submitted_cpf,submitted_address_zip,submitted_address_street,submitted_address_number,submitted_address_complement,submitted_address_neighborhood,submitted_address_city,submitted_address_state";
+  "id,request_id,submitted_at,customer_id,contract_id,plan_id,coach_id,region,submitted_full_name,submitted_whatsapp,submitted_email,submitted_cpf,submitted_address_zip,submitted_address_street,submitted_address_number,submitted_address_complement,submitted_address_neighborhood,submitted_address_city,submitted_address_state,submitted_birth_date,submitted_gender";
 
 class TurnstileUnavailableError extends Error {
   constructor() {
@@ -212,7 +212,9 @@ async function confirmReceipt(
       expected.addressNeighborhood,
     ) ||
     !same(submission.submitted_address_city, expected.addressCity) ||
-    !same(submission.submitted_address_state, expected.addressState)
+    !same(submission.submitted_address_state, expected.addressState) ||
+    !same(submission.submitted_birth_date, expected.birthDate) ||
+    !same(submission.submitted_gender, expected.gender)
   ) {
     log("error", "public_prospect_receipt_payload_mismatch", {
       request_id: requestId,
@@ -608,6 +610,8 @@ Deno.serve(async (req: Request) => {
         p_ip_hash: ipHash,
         p_phone_hash: phoneHash,
         p_user_agent: clean(req.headers.get("user-agent"), 500),
+        p_birth_date: payload.birthDate || null,
+        p_gender: payload.gender || null,
       },
     );
     if (error) {

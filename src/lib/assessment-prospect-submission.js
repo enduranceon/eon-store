@@ -69,6 +69,18 @@ export function prospectSubmittedAddress(submission) {
   return [streetLine, cityLine, formattedZip ? `CEP ${formattedZip}` : ''].filter(Boolean).join(' · ');
 }
 
+const SUBMITTED_GENDER_LABELS = { masculino: 'Masculino', feminino: 'Feminino', outro: 'Outro' };
+
+// Nascimento e gênero enviados no formulário do site, para a equipe conferir
+// (o cliente já existente nunca é alterado por um envio público).
+export function prospectSubmittedProfile(submission) {
+  if (!submission) return '';
+  const [year, month, day] = String(submission.submitted_birth_date || '').slice(0, 10).split('-');
+  const birth = year && month && day ? `${day}/${month}/${year}` : '';
+  const gender = SUBMITTED_GENDER_LABELS[submission.submitted_gender] || '';
+  return [birth && `Nascimento ${birth}`, gender && `Gênero ${gender}`].filter(Boolean).join(' · ');
+}
+
 export function prospectLatestActivityAt(prospect) {
   return prospect?.latest_submission?.submitted_at || prospect?.created_at || '';
 }

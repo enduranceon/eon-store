@@ -1,6 +1,7 @@
 import {
   normalizeBrazilPhone,
   validateAndNormalizeProspect,
+  validBirthDate,
   validCpf,
 } from "./validation.ts";
 
@@ -101,4 +102,66 @@ Deno.test("CPF validation checks both verifier digits", () => {
   assert(validCpf("52998224725"), "known valid CPF was rejected");
   assert(!validCpf("52998224724"), "invalid verifier digit was accepted");
   assert(!validCpf("00000000000"), "repeated CPF was accepted");
+});
+
+Deno.test("accepts birth date and gender, and keeps both optional", () => {
+  const filled = validateAndNormalizeProspect(
+    validBody({ birth_date: "1990-03-12", gender: " Feminino " }),
+  );
+  assert(filled.fieldErrors.length === 0, "birth date and gender were rejected");
+  assert(filled.payload.birthDate === "1990-03-12", "birth date was not kept");
+  assert(filled.payload.gender === "feminino", "gender was not normalized");
+
+  const empty = validateAndNormalizeProspect(validBody());
+  assert(empty.fieldErrors.length === 0, "the old form without them was rejected");
+  assert(empty.payload.birthDate === "", "missing birth date should be empty");
+  assert(empty.payload.gender === "", "missing gender should be empty");
+
+  const blank = validateAndNormalizeProspect(validBody({ birth_date: "", gender: "" }));
+  assert(blank.fieldErrors.length === 0, "blank optional fields were rejected");
+});
+
+Deno.test("rejects impossible, future and out-of-range birth dates", () => {
+  for (
+    const value of [
+      "1990-02-30",
+      "1899-12-31",
+      "2999-01-01",
+      "12/03/1990",
+      "1990-3-1",
+      "abcd",
+    ]
+  ) {
+    const { fieldErrors } = validateAndNormalizeProspect(
+      validBody({ birth_date: value }),
+    );
+    assert(
+      fieldErrors.some((item) =>
+        item.field === "birth_date" && item.code === "INVALID_BIRTH_DATE"
+      ),
+      `birth date ${value} was accepted`,
+    );
+  }
+});
+
+Deno.test("checks birth dates against a calendar and today's date", () => {
+  assert(validBirthDate("2000-02-29", "2026-10-29"), "leap day failed");
+  assert(!validBirthDate("1900-02-29", "2026-10-29"), "1900 is not a leap year");
+  assert(validBirthDate("1900-01-01", "2026-10-29"), "lower bound failed");
+  assert(validBirthDate("2026-10-29", "2026-10-29"), "today failed");
+  assert(!validBirthDate("2026-10-30", "2026-10-29"), "tomorrow was accepted");
+});
+
+Deno.test("rejects a gender outside the internal prospect values", () => {
+  for (const value of ["m", "mulher", "prefiro nao informar"]) {
+    const { fieldErrors } = validateAndNormalizeProspect(validBody({ gender: value }));
+    assert(
+      fieldErrors.some((item) => item.field === "gender" && item.code === "INVALID_GENDER"),
+      `gender ${value} was accepted`,
+    );
+  }
+  for (const value of ["masculino", "feminino", "outro"]) {
+    const { fieldErrors } = validateAndNormalizeProspect(validBody({ gender: value }));
+    assert(fieldErrors.length === 0, `gender ${value} was rejected`);
+  }
 });
