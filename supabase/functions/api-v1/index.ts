@@ -35,6 +35,7 @@ import { handleCommunicationCaseRequest } from "./communication-cases.ts";
 import { handleCommunicationHistoryRequest } from "./communication-history.ts";
 import { gateLegacyCommunication } from "./communication-legacy-gate.ts";
 import { handleRefundsRequest } from "./refunds.ts";
+import { handleEventCoverRequest } from "./event-cover.ts";
 import { handleReturnsRequest } from "./returns.ts";
 
 function routePath(req: Request): string {
@@ -176,6 +177,9 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (refundsResponse) return refundsResponse;
+
+  const eventCoverResponse = await handleEventCoverRequest(req, path, serviceClient);
+  if (eventCoverResponse) return eventCoverResponse;
 
   const inventoryResponse = await handleInventoryRequest(
     req,

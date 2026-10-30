@@ -26,6 +26,7 @@ import ManualPaymentForm from '@/components/ManualPaymentForm';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
 import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
+import EventCoverCard from '@/components/events/EventCoverCard';
 import { studentProfilePath } from '@/lib/customer-profile';
 import { normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
@@ -1057,6 +1058,8 @@ export default function EventDetail() {
           )}
         </CardContent>
       </Card>
+
+      <EventCoverCard event={event} onChanged={() => refresh({ force: true })} />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card><CardContent className="p-4">
