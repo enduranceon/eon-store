@@ -7,12 +7,17 @@ Levantamento de 06/10/2026, feito só com leitura. Este registro guarda o diagn�
 Aprovada caso a caso pelo usuário e aplicada direto no banco do Hub (`qsaowltbnefzpbphhwmr`), em um único bloco transacional. Sem nomes neste arquivo.
 
 - **Antes:** Store com 227 alunos atuais (219 ativos e 8 em licença); Hub com 240 (229 e 11).
-- **Aplicado no Hub (46 fichas):** 8 saídas (7 "Não renovou" e 1 cancelamento, com a data de fim da Store), 4 retornos de atletas cancelados, 3 voltas de licença, 6 licenças (data de início da Store), 1 troca de coach e 12 atletas criados.
+- **Aplicado no Hub na parte A (34 fichas):** 8 saídas (7 "Não renovou" e 1 cancelamento, com a data de fim da Store), 4 retornos de atletas cancelados, 3 voltas de licença, 6 licenças (data de início da Store), 1 troca de coach e 12 atletas criados.
 - **Formato:** o mesmo das telas do Hub (status em `athletes` mais o movimento em `athlete_movements`, com a data efetiva da Store). Cada movimento leva `extra_data.batch = '2026-11-02'` e `source = 'store_reconciliation'`.
 - **Desfazer:** cada ficha tem um `audit_logs` com `action` iniciando por `store_reconciliation_` e `extra_data.before` com a linha completa anterior (`null` nos 12 criados).
 - **Vínculo:** as fichas tocadas receberam `extra_data.eon_store_customer_id` (o id de `presale_customers`), seguindo o padrão já usado por 15 atletas; as criadas também têm `origem = 'eon-store'` e `eon_store_plan`.
-- **Depois:** os 227 alunos atuais da Store batem no Hub com o mesmo status e coach. O Hub tem 248 (234 ativos e 14 em licença): os 21 a mais são a parte B, ainda sem decisão.
-- **Parte B (pendente):** 6 licenças antigas sem coach e fora da Store (uma é ficha duplicada), 6 ativos sem contrato na Store, 1 aluno com contrato novo começando em 23/11 e 8 fichas da equipe cadastradas como atleta.
+- **Depois da parte A:** os 227 alunos atuais da Store batem no Hub com o mesmo status e coach. O Hub tinha 248 (234 ativos e 14 em licença); os 21 a mais foram para a parte B.
+- **Parte B (mesmo dia, decidida pelo usuário):**
+  - 6 licenças antigas, sem coach e fora da Store (uma era ficha duplicada de uma aluna ativa) viraram saída **datada no início da licença**, em 2024 e 2025. Mesmo marcador, com `part = 'B'`.
+  - 6 parceiros/cortesia continuam ativos sem contrato na Store e ficaram marcados com `extra_data.cortesia = true` e `fora_da_store = 'cortesia'`.
+  - 8 contas da equipe como atleta continuam ativas. Duas receberam a marca que as outras seis já tinham (`is_coach_account`, `linked_coach_id` e a nota "Não contar como aluno"), e as oito têm `fora_da_store = 'equipe'`.
+  - 1 aluno continua ativo no Hub mesmo sem contrato vigente na Store: o anterior acabou em 23/10 e o novo começa em 23/11. A sincronização precisa tolerar esse intervalo quando já existe contrato novo agendado.
+- **Resultado final:** o Hub tem 242 atuais (234 ativos e 8 em licença) = 227 alunos da Store + 1 aluno no intervalo entre contratos + 6 cortesias + 8 contas da equipe. `fora_da_store` é a etiqueta que a sincronização deve usar para não mexer numa ficha.
 - **Pendência de dados:** 9 dos 12 criados vieram da Store sem gênero e nascimento.
 - **Casamento entre os sistemas:** e-mail, depois telefone (8 últimos dígitos) e nome normalizado. 18 alunos só casam por telefone ou nome, porque o e-mail difere entre os sistemas.
 - **Mapa de coaches usado:** pelo nome; Jéssica Vieira (Store) = Jéssica Rodrigues (Hub), Vinicius Koerich = Vinicius Koeric. Modalidade: corrida = `run`, triathlon = `triathlon`.
@@ -119,6 +124,6 @@ O Supabase fixa a região no projeto. Mudar exige um projeto novo em São Paulo 
 ## Decisões pendentes
 
 1. ~~A Store passa a ser dona do ciclo de vida do aluno?~~ Sim, decidido em 02/11/2026.
-2. ~~Começar pela fase 1?~~ Parte A feita em 02/11/2026; falta a parte B (seção da conciliação).
+2. ~~Começar pela fase 1?~~ Feita em 02/11/2026, partes A e B (seção da conciliação).
 3. O coach que existe só no Hub ainda está ativo?
 4. Mover o Hub para São Paulo: se e quando.
