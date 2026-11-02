@@ -18,7 +18,7 @@ Quando houver outros projetos Supabase visiveis, usar `bsiljrrodgtmtdilnuxr` par
 
 - GitHub: `enduranceon/eon-hub` (operacao: treinos, Strava/Intervals, portal do atleta).
 - Supabase do Hub: `qsaowltbnefzpbphhwmr` (us-east-1). Nao e o banco desta aplicacao; ali, so leitura, salvo pedido explicito do usuario.
-- Os alunos ainda sao cadastrados a mao nos dois sistemas. Diagnostico, desenho recomendado e decisoes pendentes da integracao: `docs/eon-hub-integration.md`. Nada implementado ate 2026-10-06.
+- Os alunos ainda sao cadastrados a mao nos dois sistemas. Diagnostico, desenho recomendado e decisoes pendentes da integracao: `docs/eon-hub-integration.md`. Em 2026-11-02 o usuario definiu a Store como dona do ciclo de vida do aluno e o Hub foi conciliado com a Store (registro e como desfazer no mesmo arquivo); a sincronizacao automatica ainda nao existe.
 
 ## Operacao financeira atual
 
