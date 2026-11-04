@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import FinishLeaveDialog from '@/components/assessment/FinishLeaveDialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import {
   AssessmentContract, PreSaleCustomer, AssessmentCoach, AssessmentPlan, AssessmentModality,
@@ -338,6 +339,8 @@ export default function ContractDetail() {
   const [noRenewalModal, setNoRenewalModal] = useState(false);
   const [noRenewalSaving, setNoRenewalSaving] = useState(false);
   const [leaveModal, setLeaveModal] = useState(false);
+  const [finishLeaveTarget, setFinishLeaveTarget] = useState(null);
+  const [finishLeaveBusy, setFinishLeaveBusy] = useState(false);
   const [leaveForm, setLeaveForm] = useState({ start_date: todayLocalStr(), end_date: todayLocalStr(), open_ended: false, reason: '' });
   const [cancelModal, setCancelModal]   = useState(false);
   const [voidModal, setVoidModal]       = useState(false);
@@ -620,21 +623,35 @@ export default function ContractDetail() {
     } catch (e) { toast.error(e.message); }
   };
 
+  // Licença sem data de volta abre o diálogo com o último dia (hoje ou um dia
+  // passado); a que já tem data de fim só pede confirmação.
   const finishLeave = async (leave) => {
-    const message = leave.end_date
-      ? `Encerrar licença de ${leave.days} dias? O aluno retorna ao plano.`
-      : 'Encerrar esta licença sem data definida hoje? O vencimento será prorrogado pelos dias efetivamente transcorridos.';
-    if (!confirm(message)) return;
+    if (!leave.end_date) {
+      setFinishLeaveTarget(leave);
+      return;
+    }
+    if (!confirm(`Encerrar licença de ${leave.days} dias? O aluno retorna ao plano.`)) return;
+    await submitFinishLeave(leave, null);
+  };
+
+  const submitFinishLeave = async (leave, lastDay) => {
+    setFinishLeaveBusy(true);
     try {
       const result = await finishAssessmentContractLeave(
         id,
         leave.id,
         contract.updated_at,
+        lastDay ? { endDate: lastDay } : {},
       );
       const newStatus = result.contract.status;
       toast.success(`Licença encerrada. Aluno ${newStatus === 'active' ? 'retornou ao plano ativo' : 'com contrato vencido'}.`);
+      if (result?.regenerate_competence) {
+        toast.warning(`O fechamento de ${formatDate(result.regenerate_competence).slice(3)} precisa ser gerado de novo.`);
+      }
+      setFinishLeaveTarget(null);
       load();
     } catch (e) { toast.error(e.message); }
+    finally { setFinishLeaveBusy(false); }
   };
 
   // Calcula valor restante proporcional aos dias não usufruídos
@@ -2172,6 +2189,15 @@ export default function ContractDetail() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <FinishLeaveDialog
+        open={Boolean(finishLeaveTarget)}
+        leave={finishLeaveTarget}
+        contractEnd={contract?.end_date}
+        busy={finishLeaveBusy}
+        onClose={() => setFinishLeaveTarget(null)}
+        onConfirm={lastDay => submitFinishLeave(finishLeaveTarget, lastDay)}
+      />
 
       <CommunicationSendDialog
         caseId={communicationCaseId}

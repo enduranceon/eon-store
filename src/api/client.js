@@ -1017,18 +1017,23 @@ export async function startAssessmentContractLeave(
   return response.data;
 }
 
+// endDate (AAAA-MM-DD) e o ultimo dia da licenca, no passado ou hoje. Sem ele,
+// a licenca sem data termina hoje.
 export async function finishAssessmentContractLeave(
   contractId,
   leaveId,
   expectedUpdatedAt,
-  options = {},
+  { endDate, ...options } = {},
 ) {
   const response = await apiRequest(
     `/orders/contract/${contractId}/leaves/${leaveId}/finish`,
     {
       ...options,
       method: 'POST',
-      body: { expected_updated_at: expectedUpdatedAt },
+      body: {
+        expected_updated_at: expectedUpdatedAt,
+        ...(endDate ? { end_date: endDate } : {}),
+      },
     },
   );
   invalidateAssessmentContractLifecycle();
