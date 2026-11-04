@@ -225,9 +225,13 @@ export async function handleContractLifecycleRequest(
       }, 400);
     }
     rpc = "finish_assessment_contract_leave";
+    // p_end_date só vai quando há data: sem ela a chamada é a de antes e segue
+    // funcionando mesmo se a API for publicada antes da migration da data.
     args = {
       p_leave_id: finishMatch![2],
-      p_end_date: hasEndDate ? body.end_date : null,
+      ...(typeof body.end_date === "string"
+        ? { p_end_date: body.end_date }
+        : {}),
     };
   } else if (action === "unschedule_cancel") {
     if (!exactKeys(body, ["expected_updated_at"])) {

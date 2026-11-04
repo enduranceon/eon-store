@@ -186,7 +186,10 @@ Deno.test("Finishing a leave binds it to the contract", async () => {
   assert(response?.status === 200, "leave finish failed");
   assert(calls[0].name === "finish_assessment_contract_leave", "wrong RPC");
   assert(calls[0].args.p_leave_id === LEAVE_ID, "leave id changed");
-  assert(calls[0].args.p_end_date === null, "no date must mean today");
+  assert(
+    !("p_end_date" in calls[0].args),
+    "without a date the call must be the one the database already knows",
+  );
 });
 
 Deno.test("Finishing a leave can name the last day of the leave", async () => {
