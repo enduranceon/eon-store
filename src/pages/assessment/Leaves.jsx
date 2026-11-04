@@ -15,6 +15,7 @@ import {
   PreSaleCustomer,
 } from '@/api/entities';
 import { finishAssessmentContractLeave } from '@/api/client';
+import FinishLeaveDialog from '@/components/assessment/FinishLeaveDialog';
 import { usePageData } from '@/hooks/usePageData';
 import { cn, formatDate, todayLocalStr } from '@/lib/utils';
 
@@ -47,6 +48,7 @@ export default function Leaves() {
   const [coachFilter, setCoachFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [finishingId, setFinishingId] = useState(null);
+  const [finishTarget, setFinishTarget] = useState(null);
   const { data, loading, refresh } = usePageData({
     key: 'assessment-leaves:center:v1',
     loader: loadLeavesPage,
@@ -84,16 +86,31 @@ export default function Leaves() {
       || row.coach?.name?.toLowerCase().includes(query);
   });
 
+  // Licença sem data de volta abre o diálogo com o último dia (hoje ou um dia
+  // passado); a que já tem data de fim só pede confirmação.
   const finishLeave = async row => {
-    const indefinite = !row.end_date;
-    const message = indefinite
-      ? `Encerrar hoje a licença sem data definida de ${row.student?.full_name || 'este aluno'}? O contrato será prorrogado pelo período efetivo.`
-      : `Encerrar a licença de ${row.student?.full_name || 'este aluno'}?`;
-    if (!confirm(message)) return;
+    if (!row.end_date) {
+      setFinishTarget(row);
+      return;
+    }
+    if (!confirm(`Encerrar a licença de ${row.student?.full_name || 'este aluno'}?`)) return;
+    await submitFinish(row, null);
+  };
+
+  const submitFinish = async (row, lastDay) => {
     setFinishingId(row.id);
     try {
-      const result = await finishAssessmentContractLeave(row.contract_id, row.id, row.contract.updated_at);
+      const result = await finishAssessmentContractLeave(
+        row.contract_id,
+        row.id,
+        row.contract.updated_at,
+        lastDay ? { endDate: lastDay } : {},
+      );
       toast.success(`Licença encerrada após ${result.leave.days} dia${result.leave.days !== 1 ? 's' : ''}.`);
+      if (result?.regenerate_competence) {
+        toast.warning(`O fechamento de ${formatDate(result.regenerate_competence).slice(3)} precisa ser gerado de novo.`);
+      }
+      setFinishTarget(null);
       await refresh({ force: true });
     } catch (error) {
       toast.error(error.message || 'Não foi possível encerrar a licença');
@@ -156,6 +173,15 @@ export default function Leaves() {
           ))}
         </div>
       )}
+
+      <FinishLeaveDialog
+        open={Boolean(finishTarget)}
+        leave={finishTarget}
+        contractEnd={finishTarget?.contract?.end_date}
+        busy={Boolean(finishingId)}
+        onClose={() => setFinishTarget(null)}
+        onConfirm={lastDay => submitFinish(finishTarget, lastDay)}
+      />
     </div>
   );
 }

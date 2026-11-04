@@ -207,14 +207,28 @@ export async function handleContractLifecycleRequest(
       p_reason: body.reason,
     };
   } else if (action === "finish_leave") {
-    if (!exactKeys(body, ["expected_updated_at"])) {
+    // Sem end_date (versão anterior da tela), a licença sem data termina hoje.
+    // Com ele, termina nesse dia (passado); quem valida é a RPC.
+    const hasEndDate = "end_date" in body;
+    if (
+      !exactKeys(
+        body,
+        hasEndDate
+          ? ["end_date", "expected_updated_at"]
+          : ["expected_updated_at"],
+      ) ||
+      (hasEndDate && !(body.end_date === null || isCalendarDate(body.end_date)))
+    ) {
       return jsonResponse({
         error: "Requisição inválida",
         code: "invalid_request",
       }, 400);
     }
     rpc = "finish_assessment_contract_leave";
-    args = { p_leave_id: finishMatch![2] };
+    args = {
+      p_leave_id: finishMatch![2],
+      p_end_date: hasEndDate ? body.end_date : null,
+    };
   } else if (action === "unschedule_cancel") {
     if (!exactKeys(body, ["expected_updated_at"])) {
       return jsonResponse({

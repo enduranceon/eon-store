@@ -186,6 +186,46 @@ Deno.test("Finishing a leave binds it to the contract", async () => {
   assert(response?.status === 200, "leave finish failed");
   assert(calls[0].name === "finish_assessment_contract_leave", "wrong RPC");
   assert(calls[0].args.p_leave_id === LEAVE_ID, "leave id changed");
+  assert(calls[0].args.p_end_date === null, "no date must mean today");
+});
+
+Deno.test("Finishing a leave can name the last day of the leave", async () => {
+  const { fake, calls } = client();
+  const path = `/orders/contract/${CONTRACT_ID}/leaves/${LEAVE_ID}/finish`;
+  const response = await handleContractLifecycleRequest(
+    request(path, "POST", {
+      end_date: "2026-10-14",
+      expected_updated_at: UPDATED_AT,
+    }),
+    path,
+    fake,
+    ACTOR_ID,
+  );
+  assert(response?.status === 200, "leave finish with a date failed");
+  assert(calls[0].args.p_end_date === "2026-10-14", "end date was not sent");
+  assert(calls[0].args.p_leave_id === LEAVE_ID, "leave id changed");
+});
+
+Deno.test("Finishing a leave refuses an invalid end date or extra fields", async () => {
+  for (
+    const body of [
+      { end_date: "14/10/2026", expected_updated_at: UPDATED_AT },
+      { end_date: "2026-02-31", expected_updated_at: UPDATED_AT },
+      { end_date: 20261014, expected_updated_at: UPDATED_AT },
+      { end_date: "2026-10-14", reason: "x", expected_updated_at: UPDATED_AT },
+    ]
+  ) {
+    const { fake, calls } = client();
+    const path = `/orders/contract/${CONTRACT_ID}/leaves/${LEAVE_ID}/finish`;
+    const response = await handleContractLifecycleRequest(
+      request(path, "POST", body),
+      path,
+      fake,
+      ACTOR_ID,
+    );
+    assert(response?.status === 400, `invalid body accepted: ${JSON.stringify(body)}`);
+    assert(calls.length === 0, "RPC must not run for an invalid body");
+  }
 });
 
 Deno.test("Cancellation sends inputs for authoritative server calculation", async () => {

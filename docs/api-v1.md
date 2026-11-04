@@ -216,6 +216,20 @@ sem licença; fora disso responde 409. A resposta traz o contrato e
 `had_charge`, que avisa que o link já enviado é do valor anterior. Detalhes em
 `docs/pro-rata.md`.
 
+### Encerrar licença
+
+`POST /orders/contract/:id/leaves/:leave_id/finish` com
+`{ "expected_updated_at": "..." }` encerra a licença hoje (`finish_assessment_contract_leave`).
+Com `"end_date": "AAAA-MM-DD"` a licença **sem data de volta** termina naquele
+dia, que é o último dia de licença: os dias somados ao fim do contrato são
+`(end_date - início) + 1`. A data não pode ser antes do início da licença nem
+futura, e o dia seguinte a ela precisa ser de um mês de repasse ainda aberto
+(o mesmo limite da troca de coach); fora disso responde 400. Licença que já
+tem data de fim não troca de data ao encerrar. Quando existe fechamento em
+revisão que pega o mês da data, a resposta traz `regenerate_competence` para a
+tela avisar que ele precisa ser gerado de novo. Sem `end_date`, o corpo e o
+resultado são os de antes.
+
 ### Link da fatura da assinatura (mensal automática)
 
 `POST /renewals/subscription-link` com `{ "contract_ids": ["uuid"] }` (até 50)
