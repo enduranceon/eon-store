@@ -16,6 +16,7 @@ import { handleEventBillingRequest } from "./event-billing.ts";
 import { handlePlanChangeRequest } from "./plan-changes.ts";
 import { handleOrderExternalBillingRequest } from "./order-external-billing.ts";
 import { handleContractLifecycleRequest } from "./contract-lifecycle.ts";
+import { handleContractParcelsRequest } from "./contract-parcels.ts";
 import { handleContractMembershipRequest } from "./contract-membership.ts";
 import {
   handleContractResidualRequest,
@@ -146,6 +147,14 @@ Deno.serve(async (req: Request) => {
     serviceClient,
   );
   if (asaasCheckResponse) return asaasCheckResponse;
+
+  const contractParcelsResponse = await handleContractParcelsRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (contractParcelsResponse) return contractParcelsResponse;
 
   const catalogResponse = await handleCatalogRequest(req, path, serviceClient);
   if (catalogResponse) return catalogResponse;

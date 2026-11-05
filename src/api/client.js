@@ -1040,6 +1040,67 @@ export async function finishAssessmentContractLeave(
   return response.data;
 }
 
+// Carnê de boleto/PIX parcelado do Asaas. O Asaas so e lido (nada e criado nem
+// alterado la); preview mostra as parcelas e import grava no contrato.
+export async function previewContractParcels(contractId, { link } = {}, options = {}) {
+  const response = await apiRequest(`/orders/contract/${contractId}/parcels/preview`, {
+    ...options,
+    method: 'POST',
+    body: link ? { link } : {},
+  });
+  return response.data;
+}
+
+export async function importContractParcels(contractId, { link, expectedUpdatedAt }, options = {}) {
+  const response = await apiRequest(`/orders/contract/${contractId}/parcels/import`, {
+    ...options,
+    method: 'POST',
+    body: { ...(link ? { link } : {}), expected_updated_at: expectedUpdatedAt },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function syncContractParcels(contractId, options = {}) {
+  const response = await apiRequest(`/orders/contract/${contractId}/parcels/sync`, {
+    ...options,
+    method: 'POST',
+    body: {},
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function recordContractParcelPayment(contractId, parcelId, expectedUpdatedAt, options = {}) {
+  const response = await apiRequest(`/orders/contract/${contractId}/parcels/${parcelId}/payment`, {
+    ...options,
+    method: 'POST',
+    body: { expected_updated_at: expectedUpdatedAt },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function reopenContractParcelPayment(contractId, parcelId, expectedUpdatedAt, options = {}) {
+  const response = await apiRequest(`/orders/contract/${contractId}/parcels/${parcelId}/reopen`, {
+    ...options,
+    method: 'POST',
+    body: { expected_updated_at: expectedUpdatedAt },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
+export async function removeContractParcels(contractId, expectedUpdatedAt, options = {}) {
+  const response = await apiRequest(`/orders/contract/${contractId}/parcels/remove`, {
+    ...options,
+    method: 'POST',
+    body: { expected_updated_at: expectedUpdatedAt },
+  });
+  invalidateAssessmentContractLifecycle();
+  return response.data;
+}
+
 export async function cancelAssessmentContract(
   contractId,
   { cancellationDate, cancellationFeePct, reason = null, expectedUpdatedAt },

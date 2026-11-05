@@ -30,6 +30,8 @@ const PAYMENT_METHOD_LABELS = {
   boleto_asaas:  'Boleto (via Asaas)',
   card_asaas_3x: 'Cartão Asaas 3x',
   card_asaas_12x:'Cartão Asaas 12x',
+  // Parcelas do Asaas importadas no contrato
+  carne_boleto_pix: 'Boleto/PIX parcelado (carnê)',
 };
 
 // Retorna label legível para um payment_method code. Faz fallback para card_Nx genérico.
