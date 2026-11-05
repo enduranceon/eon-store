@@ -17,6 +17,9 @@
 --     enquanto faltar parcela registrada e "pago" quando a última entrar;
 --   - a renovação conta como "Renovou" na primeira parcela registrada (decisão
 --     do responsável, 2026-11-05); o mesmo vale para a conversão de prospect;
+--   - o vencimento e o link do contrato acompanham a próxima parcela ainda não
+--     registrada, para a Central cobrar a parcela certa (e não o link de uma
+--     parcela já paga);
 --   - o repasse do coach continua exigindo contrato pago (payment_status =
 --     paid): só sai com o carnê fechado até a regra da fase 3 ser decidida;
 --   - "Receber" (pagamento manual integral), "Reabrir pagamento" e a troca ou
@@ -115,6 +118,7 @@ DECLARE
   v_next_payment_status text;
   v_next_status text;
   v_first_due date;
+  v_first_link text;
   v_parcels jsonb;
 BEGIN
   IF p_actor_id IS NULL THEN
@@ -208,6 +212,21 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = 'P0001',
       MESSAGE = 'Estas parcelas já estão no contrato ' || v_other_number;
   END IF;
+  SELECT other.contract_number
+  INTO v_other_number
+  FROM public.assessment_contracts AS other
+  WHERE other.id <> p_contract_id
+    AND other.status NOT IN ('cancelled', 'voided')
+    AND rtrim(other.external_payment_link, '/') IN (
+      SELECT rtrim(item.value->>'invoice_url', '/')
+      FROM jsonb_array_elements(p_parcels) AS item(value)
+      WHERE nullif(item.value->>'invoice_url', '') IS NOT NULL
+    )
+  LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001',
+      MESSAGE = 'Um link destas parcelas já está no contrato ' || v_other_number;
+  END IF;
 
   IF p_expected_updated_at IS NULL
      OR v_contract.updated_at IS DISTINCT FROM p_expected_updated_at THEN
@@ -257,9 +276,11 @@ BEGIN
          now()
   FROM jsonb_array_elements(p_parcels) AS item(value);
 
-  SELECT min(parcel.due_date) INTO v_first_due
+  SELECT parcel.due_date, parcel.invoice_url INTO v_first_due, v_first_link
   FROM public.assessment_contract_parcels AS parcel
-  WHERE parcel.contract_id = p_contract_id;
+  WHERE parcel.contract_id = p_contract_id
+  ORDER BY parcel.due_date, parcel.installment_number
+  LIMIT 1;
 
   v_previous := v_contract;
   v_next_payment_status := CASE
@@ -276,6 +297,7 @@ BEGIN
   SET payment_method = 'carne_boleto_pix',
       installments = v_count,
       due_date = v_first_due,
+      external_payment_link = coalesce(v_first_link, external_payment_link),
       payment_status = v_next_payment_status,
       status = v_next_status,
       updated_at = now()
@@ -308,6 +330,7 @@ BEGIN
       'previous_payment_method', v_previous.payment_method,
       'previous_installments', v_previous.installments,
       'previous_due_date', v_previous.due_date,
+      'previous_external_payment_link', v_previous.external_payment_link,
       'payment_status_before', v_previous.payment_status,
       'payment_status_after', v_next_payment_status
     ),
@@ -363,6 +386,7 @@ DECLARE
   v_unknown jsonb;
   v_missing jsonb;
   v_next_due date;
+  v_next_link text;
 BEGIN
   IF p_actor_id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Operador inválido';
@@ -451,14 +475,20 @@ BEGIN
     );
 
   -- O vencimento do contrato acompanha a próxima parcela ainda não registrada.
-  SELECT min(parcel.due_date) INTO v_next_due
+  SELECT parcel.due_date, parcel.invoice_url INTO v_next_due, v_next_link
   FROM public.assessment_contract_parcels AS parcel
   WHERE parcel.contract_id = p_contract_id
     AND parcel.payment_row_id IS NULL
-    AND parcel.asaas_status NOT IN ('DELETED', 'REFUNDED');
-  IF v_next_due IS NOT NULL AND v_contract.due_date IS DISTINCT FROM v_next_due THEN
+    AND parcel.asaas_status NOT IN ('DELETED', 'REFUNDED')
+  ORDER BY parcel.due_date, parcel.installment_number
+  LIMIT 1;
+  IF v_next_due IS NOT NULL
+     AND (v_contract.due_date IS DISTINCT FROM v_next_due
+          OR v_contract.external_payment_link IS DISTINCT FROM v_next_link) THEN
     UPDATE public.assessment_contracts
-    SET due_date = v_next_due, updated_at = now()
+    SET due_date = v_next_due,
+        external_payment_link = coalesce(v_next_link, external_payment_link),
+        updated_at = now()
     WHERE id = p_contract_id
     RETURNING * INTO v_contract;
   END IF;
@@ -504,6 +534,7 @@ DECLARE
   v_next_payment_status text;
   v_next_status text;
   v_next_due date;
+  v_next_link text;
 BEGIN
   IF p_actor_id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Operador inválido';
@@ -609,11 +640,13 @@ BEGIN
     WHEN v_contract.status = 'draft' THEN 'active'
     ELSE v_contract.status
   END;
-  SELECT min(parcel.due_date) INTO v_next_due
+  SELECT parcel.due_date, parcel.invoice_url INTO v_next_due, v_next_link
   FROM public.assessment_contract_parcels AS parcel
   WHERE parcel.contract_id = p_contract_id
     AND parcel.payment_row_id IS NULL
-    AND parcel.asaas_status NOT IN ('DELETED', 'REFUNDED');
+    AND parcel.asaas_status NOT IN ('DELETED', 'REFUNDED')
+  ORDER BY parcel.due_date, parcel.installment_number
+  LIMIT 1;
 
   UPDATE public.assessment_contracts
   SET payment_status = v_next_payment_status,
@@ -623,6 +656,7 @@ BEGIN
       manual_payment = true,
       manual_fee = NULL,
       due_date = coalesce(v_next_due, v_contract.due_date),
+      external_payment_link = coalesce(v_next_link, v_contract.external_payment_link),
       status = v_next_status,
       updated_at = now()
   WHERE id = p_contract_id
@@ -698,6 +732,7 @@ DECLARE
   v_total integer;
   v_next_payment_status text;
   v_next_due date;
+  v_next_link text;
 BEGIN
   IF p_actor_id IS NULL THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Operador inválido';
@@ -751,11 +786,13 @@ BEGIN
   FROM public.assessment_contract_parcels AS parcel
   WHERE parcel.contract_id = p_contract_id;
   v_next_payment_status := CASE WHEN v_recorded = 0 THEN 'charge_sent' ELSE 'partially_paid' END;
-  SELECT min(parcel.due_date) INTO v_next_due
+  SELECT parcel.due_date, parcel.invoice_url INTO v_next_due, v_next_link
   FROM public.assessment_contract_parcels AS parcel
   WHERE parcel.contract_id = p_contract_id
     AND parcel.payment_row_id IS NULL
-    AND parcel.asaas_status NOT IN ('DELETED', 'REFUNDED');
+    AND parcel.asaas_status NOT IN ('DELETED', 'REFUNDED')
+  ORDER BY parcel.due_date, parcel.installment_number
+  LIMIT 1;
 
   v_previous := v_contract;
   UPDATE public.assessment_contracts
@@ -764,6 +801,7 @@ BEGIN
       manual_payment = v_recorded > 0,
       manual_fee = NULL,
       due_date = coalesce(v_next_due, v_contract.due_date),
+      external_payment_link = coalesce(v_next_link, v_contract.external_payment_link),
       updated_at = now()
   WHERE id = p_contract_id
   RETURNING * INTO v_contract;
@@ -875,6 +913,7 @@ BEGIN
   SET payment_method = coalesce(v_import.payload->>'previous_payment_method', payment_method),
       installments = coalesce((v_import.payload->>'previous_installments')::integer, installments),
       due_date = coalesce((v_import.payload->>'previous_due_date')::date, due_date),
+      external_payment_link = coalesce(v_import.payload->>'previous_external_payment_link', external_payment_link),
       updated_at = now()
   WHERE id = p_contract_id
   RETURNING * INTO v_contract;

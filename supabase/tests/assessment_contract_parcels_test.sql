@@ -4,7 +4,7 @@ CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
 SET LOCAL timezone = 'America/Sao_Paulo';
 
-SELECT plan(66);
+SELECT plan(69);
 
 -- Acesso ----------------------------------------------------------------------
 
@@ -161,6 +161,16 @@ SELECT is(
 
 -- Importar --------------------------------------------------------------------
 
+-- Um link de parcela que já é o link de outro contrato barra a importação.
+UPDATE public.assessment_contracts
+SET external_payment_link = 'https://www.asaas.com/i/carnex1'
+WHERE id = pg_temp.k(2);
+SELECT throws_like(
+  $$SELECT pg_temp.imp(1, pg_temp.carne('carnex', 600, 3, current_date + 5))$$,
+  '%link destas parcelas já está no contrato ASS-996402%',
+  'a parcel link already used as the link of another contract is refused'
+);
+
 SELECT throws_like(
   $$SELECT pg_temp.imp(1, pg_temp.carne('carne1', 600, 1, current_date + 5))$$,
   '%de 2 a 24 parcelas%',
@@ -201,6 +211,11 @@ SELECT is(
   (SELECT payment_status FROM public.assessment_contracts WHERE id = pg_temp.k(1)),
   'charge_sent',
   'importing does not change the payment status'
+);
+SELECT is(
+  (SELECT external_payment_link FROM public.assessment_contracts WHERE id = pg_temp.k(1)),
+  'https://www.asaas.com/i/carne11',
+  'the contract link is the link of the first open parcel'
 );
 SELECT is(
   (SELECT count(*)::int FROM public.assessment_contract_parcels WHERE contract_id = pg_temp.k(1)),
@@ -293,6 +308,11 @@ SELECT is(
   (SELECT due_date FROM public.assessment_contracts WHERE id = pg_temp.k(1)),
   current_date + 35,
   'the contract due date moves to the next unrecorded parcel'
+);
+SELECT is(
+  (SELECT external_payment_link FROM public.assessment_contracts WHERE id = pg_temp.k(1)),
+  'https://www.asaas.com/i/carne12',
+  'the contract link moves to the next open parcel, not the paid one'
 );
 SELECT is(
   (SELECT payment_date FROM public.assessment_contracts WHERE id = pg_temp.k(1)),
@@ -453,8 +473,9 @@ SELECT is(
 );
 SELECT ok(
   (SELECT payment_method = 'card_3x' AND installments = 3 AND due_date = current_date + 4
+     AND external_payment_link = 'https://www.asaas.com/i/carnelink1'
    FROM public.assessment_contracts WHERE id = pg_temp.k(1)),
-  'payment form, installments and due date are back to what they were'
+  'payment form, installments, due date and link are back to what they were'
 );
 SELECT ok(
   EXISTS (
