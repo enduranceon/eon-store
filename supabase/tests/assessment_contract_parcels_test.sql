@@ -475,7 +475,7 @@ SELECT lives_ok(
   'and its first parcel is recorded'
 );
 UPDATE public.assessment_contracts
-SET status = 'cancelled', cancellation_reason = 'Teste de carnê', cancellation_date = current_date
+SET status = 'cancelled', cancellation_reason = 'Teste de carnê', cancellation_date = current_date + 30
 WHERE id = pg_temp.k(1);
 SELECT is(
   (SELECT payment_status FROM public.assessment_contracts WHERE id = pg_temp.k(1)),

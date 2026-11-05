@@ -1,4 +1,4 @@
-import { Calendar, Check, Copy, HandCoins, Link2, MessageCircle, Pencil, Trash2 } from 'lucide-react';
+import { Calendar, Check, Copy, HandCoins, Layers, Link2, MessageCircle, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { externalChargeMethodLabel, normalizeExternalChargeMethod } from '@/lib/external-charge';
 
@@ -14,6 +14,7 @@ export default function ExternalChargeSummary({
   onEdit,
   onRemove,
   onRecordPayment,
+  onImportParcels,
   removing = false,
   paymentActionLabel = 'Registrar pagamento',
 }) {
@@ -78,6 +79,11 @@ export default function ExternalChargeSummary({
             disabled={removing}
           >
             <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Remover
+          </Button>
+        )}
+        {onImportParcels && (
+          <Button size="sm" variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-50" onClick={onImportParcels}>
+            <Layers className="w-3.5 h-3.5 mr-1.5" /> Importar parcelas (carnê)
           </Button>
         )}
         {onRecordPayment && (
