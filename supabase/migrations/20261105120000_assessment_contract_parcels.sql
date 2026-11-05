@@ -18,7 +18,7 @@
 --   - a renovação conta como "Renovou" na primeira parcela registrada (decisão
 --     do responsável, 2026-11-05); o mesmo vale para a conversão de prospect;
 --   - o repasse do coach continua exigindo contrato pago (payment_status =
---     'paid'): só sai com o carnê fechado até a regra da fase 3 ser decidida;
+--     paid): só sai com o carnê fechado até a regra da fase 3 ser decidida;
 --   - "Receber" (pagamento manual integral), "Reabrir pagamento" e a troca ou
 --     remoção da cobrança externa recusam contrato com carnê, porque apagariam
 --     as linhas por parcela;
@@ -935,75 +935,46 @@ COMMENT ON FUNCTION public.remove_assessment_contract_parcels(uuid, timestamptz,
 -- por vez e aborta se o trecho não aparecer uma única vez, para nunca aplicar
 -- uma correção parcial.
 
-CREATE FUNCTION pg_temp.patch_function(
-  p_function regprocedure,
-  p_anchor text,
-  p_replacement text
-)
-RETURNS void
-LANGUAGE plpgsql
-AS $patch$
+DO $do$
 DECLARE
-  v_def text := pg_get_functiondef(p_function);
+  v_patch record;
+  v_def text;
   v_hits integer;
 BEGIN
-  v_hits := (length(v_def) - length(replace(v_def, p_anchor, ''))) / length(p_anchor);
-  IF v_hits <> 1 THEN
-    RAISE EXCEPTION 'patch %: trecho encontrado % vez(es), esperado 1: %',
-      p_function, v_hits, left(p_anchor, 80);
-  END IF;
-  EXECUTE replace(v_def, p_anchor, p_replacement);
-END;
-$patch$;
-
--- "Receber" (pagamento manual integral) apagaria as linhas por parcela.
-SELECT pg_temp.patch_function(
-  'public.api_record_manual_payment(text,uuid,uuid,date,numeric,jsonb,uuid)'::regprocedure,
+  FOR v_patch IN
+    SELECT patch.fn, patch.anchor, patch.replacement
+    FROM (VALUES
+      ('public.api_record_manual_payment(text,uuid,uuid,date,numeric,jsonb,uuid)'::regprocedure,
   E'  IF v_previous_status IN (\'cancelled\', \'refunded\') THEN\n',
   E'  IF p_order_type = \'contract\'\n'
   || E'     AND EXISTS (SELECT 1 FROM public.assessment_contract_parcels WHERE contract_id = p_order_id) THEN\n'
   || E'    RAISE EXCEPTION USING ERRCODE = \'P0001\',\n'
   || E'      MESSAGE = \'Este contrato tem parcelas do Asaas (carnê). Registre o pagamento de cada parcela no card de parcelas.\';\n'
   || E'  END IF;\n'
-  || E'  IF v_previous_status IN (\'cancelled\', \'refunded\') THEN\n'
-);
-
--- "Reabrir pagamento" também apagaria todas as linhas manuais do contrato.
-SELECT pg_temp.patch_function(
-  'public.api_reopen_manual_payment(text,uuid,uuid)'::regprocedure,
+  || E'  IF v_previous_status IN (\'cancelled\', \'refunded\') THEN\n'),
+      ('public.api_reopen_manual_payment(text,uuid,uuid)'::regprocedure,
   E'  IF v_payment_status = v_target_status AND NOT COALESCE(v_manual_payment, false) THEN\n',
   E'  IF p_order_type = \'contract\'\n'
   || E'     AND EXISTS (SELECT 1 FROM public.assessment_contract_parcels WHERE contract_id = p_order_id) THEN\n'
   || E'    RAISE EXCEPTION USING ERRCODE = \'P0001\',\n'
   || E'      MESSAGE = \'Este contrato tem parcelas do Asaas (carnê). Desfaça o registro da parcela no card de parcelas.\';\n'
   || E'  END IF;\n'
-  || E'  IF v_payment_status = v_target_status AND NOT COALESCE(v_manual_payment, false) THEN\n'
-);
-
--- Trocar ou remover a cobrança externa mudaria forma de pagamento e vencimento
--- que o carnê controla.
-SELECT pg_temp.patch_function(
-  'public.save_assessment_contract_external_charge(uuid,text,date,text,text,text,timestamptz,uuid)'::regprocedure,
+  || E'  IF v_payment_status = v_target_status AND NOT COALESCE(v_manual_payment, false) THEN\n'),
+      ('public.save_assessment_contract_external_charge(uuid,text,date,text,text,text,timestamptz,uuid)'::regprocedure,
   E'    RAISE EXCEPTION USING ERRCODE = \'P0001\', MESSAGE = \'Este contrato não aceita nova cobrança\';\n  END IF;\n',
   E'    RAISE EXCEPTION USING ERRCODE = \'P0001\', MESSAGE = \'Este contrato não aceita nova cobrança\';\n  END IF;\n'
   || E'  IF EXISTS (SELECT 1 FROM public.assessment_contract_parcels WHERE contract_id = p_contract_id) THEN\n'
   || E'    RAISE EXCEPTION USING ERRCODE = \'P0001\',\n'
   || E'      MESSAGE = \'Este contrato tem parcelas importadas do Asaas. Remova o carnê no card de parcelas antes de trocar a cobrança.\';\n'
-  || E'  END IF;\n'
-);
-SELECT pg_temp.patch_function(
-  'public.remove_assessment_contract_external_charge(uuid,timestamptz,uuid)'::regprocedure,
+  || E'  END IF;\n'),
+      ('public.remove_assessment_contract_external_charge(uuid,timestamptz,uuid)'::regprocedure,
   E'  IF nullif(v_contract.external_payment_link, \'\') IS NULL\n     AND nullif(v_contract.external_invoice_number, \'\') IS NULL THEN\n',
   E'  IF EXISTS (SELECT 1 FROM public.assessment_contract_parcels WHERE contract_id = p_contract_id) THEN\n'
   || E'    RAISE EXCEPTION USING ERRCODE = \'P0001\',\n'
   || E'      MESSAGE = \'Este contrato tem parcelas importadas do Asaas. Remova o carnê no card de parcelas antes de remover a cobrança.\';\n'
   || E'  END IF;\n'
-  || E'  IF nullif(v_contract.external_payment_link, \'\') IS NULL\n     AND nullif(v_contract.external_invoice_number, \'\') IS NULL THEN\n'
-);
-
--- Renovação: "Renovou" já na primeira parcela registrada (decisão de 2026-11-05).
-SELECT pg_temp.patch_function(
-  'eon_private.sync_assessment_renewal_stage()'::regprocedure,
+  || E'  IF nullif(v_contract.external_payment_link, \'\') IS NULL\n     AND nullif(v_contract.external_invoice_number, \'\') IS NULL THEN\n'),
+      ('eon_private.sync_assessment_renewal_stage()'::regprocedure,
   E'    IF NEW.payment_status = \'paid\'\n       AND OLD.payment_status IS DISTINCT FROM \'paid\' THEN\n',
   E'    IF (NEW.payment_status = \'paid\'\n        AND OLD.payment_status IS DISTINCT FROM \'paid\')\n'
   || E'       OR (NEW.payment_status = \'partially_paid\'\n'
@@ -1011,11 +982,8 @@ SELECT pg_temp.patch_function(
   || E'           AND EXISTS (\n'
   || E'             SELECT 1 FROM public.assessment_contract_parcels AS parcel\n'
   || E'             WHERE parcel.contract_id = NEW.id AND parcel.payment_row_id IS NOT NULL\n'
-  || E'           )) THEN\n'
-);
--- Pagamento desfeito: volta a aguardar quando não sobra parcela registrada.
-SELECT pg_temp.patch_function(
-  'eon_private.sync_assessment_renewal_stage()'::regprocedure,
+  || E'           )) THEN\n'),
+      ('eon_private.sync_assessment_renewal_stage()'::regprocedure,
   E'        AND OLD.payment_status = \'paid\'\n        AND NEW.payment_status IN (\n          \'pending\', \'awaiting_charge\', \'charge_sent\', \'overdue\', \'partially_paid\'\n        )\n',
   E'        AND OLD.payment_status IN (\'paid\', \'partially_paid\')\n'
   || E'        AND NEW.payment_status IN (\n          \'pending\', \'awaiting_charge\', \'charge_sent\', \'overdue\', \'partially_paid\'\n        )\n'
@@ -1025,12 +993,8 @@ SELECT pg_temp.patch_function(
   || E'            SELECT 1 FROM public.assessment_contract_parcels AS parcel\n'
   || E'            WHERE parcel.contract_id = NEW.id AND parcel.payment_row_id IS NOT NULL\n'
   || E'          )\n'
-  || E'        )\n'
-);
-
--- Prospect converte na primeira parcela registrada, como no pagamento integral.
-SELECT pg_temp.patch_function(
-  'public.sync_assessment_prospect_conversion()'::regprocedure,
+  || E'        )\n'),
+      ('public.sync_assessment_prospect_conversion()'::regprocedure,
   E'     AND NEW.payment_status = \'paid\'\n     AND OLD.payment_status IS DISTINCT FROM NEW.payment_status THEN\n',
   E'     AND (\n'
   || E'       NEW.payment_status = \'paid\'\n'
@@ -1042,13 +1006,8 @@ SELECT pg_temp.patch_function(
   || E'         )\n'
   || E'       )\n'
   || E'     )\n'
-  || E'     AND OLD.payment_status IS DISTINCT FROM NEW.payment_status THEN\n'
-);
-
--- Cancelar contrato com parcela registrada mantém "pago parcial", como o "pago"
--- é mantido: as linhas de dinheiro recebido não viram canceladas sozinhas.
-SELECT pg_temp.patch_function(
-  'public.normalize_contract_on_cancel()'::regprocedure,
+  || E'     AND OLD.payment_status IS DISTINCT FROM NEW.payment_status THEN\n'),
+      ('public.normalize_contract_on_cancel()'::regprocedure,
   E'    IF NEW.payment_status IN (\'pending\',\'awaiting_charge\',\'message_sent\',\'charge_sent\',\'partially_paid\',\'overdue\') THEN\n',
   E'    IF NEW.payment_status IN (\'pending\',\'awaiting_charge\',\'message_sent\',\'charge_sent\',\'partially_paid\',\'overdue\')\n'
   || E'       AND NOT (\n'
@@ -1057,8 +1016,20 @@ SELECT pg_temp.patch_function(
   || E'           SELECT 1 FROM public.assessment_contract_parcels AS parcel\n'
   || E'           WHERE parcel.contract_id = NEW.id AND parcel.payment_row_id IS NOT NULL\n'
   || E'         )\n'
-  || E'       ) THEN\n'
-);
+  || E'       ) THEN\n')
+    ) AS patch(fn, anchor, replacement)
+  LOOP
+    v_def := pg_get_functiondef(v_patch.fn);
+    v_hits := (length(v_def) - length(replace(v_def, v_patch.anchor, '')))
+      / length(v_patch.anchor);
+    IF v_hits <> 1 THEN
+      RAISE EXCEPTION 'patch %: trecho encontrado % vez(es), esperado 1: %',
+        v_patch.fn, v_hits, left(v_patch.anchor, 80);
+    END IF;
+    EXECUTE replace(v_def, v_patch.anchor, v_patch.replacement);
+  END LOOP;
+END
+$do$;
 
 -- 8. Conferência do quadro: "Renovou" com carnê parcialmente pago é normal --------
 
