@@ -266,6 +266,48 @@ liga a renovação automática e guarda a assinatura em
 com `subscription_changed` ou `not_eligible` quando a conferência mudou. As
 duas rotas respondem 503 sem chave de produção do Asaas.
 
+### Carnê de boleto/PIX parcelado (parcelas do Asaas)
+
+Quando a pessoa escolhe boleto/PIX parcelado no link do Asaas, cada parcela é
+uma cobrança própria. O sistema só **lê** o Asaas (`GET /payments/:id` e
+`GET /installments/:id/payments`; nada é criado, alterado, cancelado ou
+estornado lá) e guarda cada parcela em `assessment_contract_parcels` com o seu
+link (`https://www.asaas.com/i/<código>`). Todas as rotas são `POST`, de admin,
+e as que leem o Asaas respondem 503 sem chave de produção.
+
+| Rota | Corpo | O que faz |
+| --- | --- | --- |
+| `/orders/contract/:id/parcels/preview` | `{ "link"? }` | Lê o parcelamento pelo link de qualquer parcela (ou pelo link do contrato) e devolve parcelas, soma, valor do contrato, `customer_check` e `blockers`. Não grava. |
+| `/orders/contract/:id/parcels/import` | `{ "link"?, "expected_updated_at" }` | Lê de novo e importa (`import_assessment_contract_parcels`). Recusa com 409 `import_blocked` se houver bloqueio. |
+| `/orders/contract/:id/parcels/sync` | `{}` | Atualiza situação, valor, vencimento e link das parcelas (`sync_assessment_contract_parcels`). |
+| `/orders/contract/:id/parcels/:parcel_id/payment` | `{ "expected_updated_at" }` | Registra o pagamento da parcela (`record_assessment_contract_parcel_payment`) com as datas do Asaas. |
+| `/orders/contract/:id/parcels/:parcel_id/reopen` | `{ "expected_updated_at" }` | Desfaz o registro da parcela (`reopen_assessment_contract_parcel_payment`). |
+| `/orders/contract/:id/parcels/remove` | `{ "expected_updated_at" }` | Remove o carnê importado, se nenhuma parcela estiver registrada (`remove_assessment_contract_parcels`). |
+
+Regras:
+
+- O parcelamento vem da cobrança do link (`installment`); precisa ter de 2 a 24
+  parcelas numeradas de 1 até o total, e a soma precisa fechar com o valor do
+  contrato (tolerância de R$ 0,05).
+- Importar e registrar só valem se o CPF (ou o CNPJ cadastrado) da fatura no
+  Asaas for o da pessoa do contrato (`customer_check` = `match` ou
+  `match_cnpj`). Os documentos ficam no servidor.
+- Registrar uma parcela exige que o Asaas mostre `RECEIVED`, `CONFIRMED` ou
+  `RECEIVED_IN_CASH`. A data do pagamento vem de `clientPaymentDate`,
+  `confirmedDate` ou `paymentDate`; o crédito, de `creditDate` ou da previsão.
+  A rota atualiza as parcelas e relê o Asaas antes de gravar.
+- O pagamento de cada parcela vira uma linha manual confirmada em
+  `asaas_payments` (`installment_group_id` = parcelamento do Asaas, uma linha por
+  parcela). Taxas não são registradas.
+- O contrato fica `partially_paid` enquanto faltar parcela registrada e `paid`
+  na última. A renovação conta como "Renovou" na primeira parcela registrada, e
+  o prospect converte na primeira. O repasse do coach continua exigindo
+  contrato `paid`.
+- Com carnê importado, "Receber" (`api_record_manual_payment`), "Reabrir
+  pagamento" (`api_reopen_manual_payment`) e a troca ou remoção da cobrança
+  externa recusam o contrato com 409 (apagariam as linhas por parcela).
+- Cancelar o contrato com parcela registrada mantém `partially_paid`.
+
 ### Conferência de cobranças no Asaas
 
 `POST /asaas/payment-check` consulta no Asaas, só lendo, as cobranças externas

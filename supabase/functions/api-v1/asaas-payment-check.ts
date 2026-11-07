@@ -77,7 +77,7 @@ interface CustomerDocuments {
 }
 
 export const MAX_CHECK_ORDERS = 100;
-const PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
+export const PAID_STATUSES = new Set(["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"]);
 const CHECK_PATH = "/asaas/payment-check";
 const CONCURRENCY = 4;
 const DEADLINE_MS = 60_000;
@@ -129,13 +129,13 @@ export function parseCheckOrders(body: unknown): OrderRef[] | null {
   return orders;
 }
 
-function dateValue(value: unknown): string | null {
+export function dateValue(value: unknown): string | null {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)
     ? value.slice(0, 10)
     : null;
 }
 
-function moneyValue(value: unknown): number | null {
+export function moneyValue(value: unknown): number | null {
   const amount = typeof value === "number" ? value : Number(value);
   return value !== null && value !== "" && Number.isFinite(amount)
     ? Math.round(amount * 100) / 100
@@ -173,7 +173,7 @@ function byInstallmentOrder(a: AsaasPaymentFacts, b: AsaasPaymentFacts) {
     String(a.due_date).localeCompare(String(b.due_date));
 }
 
-function asaasConfigured(): boolean {
+export function asaasConfigured(): boolean {
   return Boolean(
     Deno.env.get("ASAAS_BASE_URL")?.trim() &&
       Deno.env.get("ASAAS_API_KEY")?.trim(),
@@ -183,12 +183,12 @@ function asaasConfigured(): boolean {
 // As faturas salvas são da conta real (www.asaas.com). Com o sandbox, toda
 // consulta voltaria "não encontrada"; melhor dizer o motivo de uma vez.
 // Chave de sandbox começa com $aact_hmlg_ e a de produção com $aact_prod_.
-function asaasSandboxConfigured(): boolean {
+export function asaasSandboxConfigured(): boolean {
   return /sandbox/i.test(Deno.env.get("ASAAS_BASE_URL") ?? "") ||
     (Deno.env.get("ASAAS_API_KEY") ?? "").trim().startsWith("$aact_hmlg_");
 }
 
-function digits(value: unknown): string {
+export function digits(value: unknown): string {
   return typeof value === "string" ? value.replace(/\D/g, "") : "";
 }
 

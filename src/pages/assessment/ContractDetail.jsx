@@ -16,6 +16,8 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import FinishLeaveDialog from '@/components/assessment/FinishLeaveDialog';
+import ContractParcelsCard from '@/components/assessment/ContractParcelsCard';
+import ImportParcelsDialog from '@/components/assessment/ImportParcelsDialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import {
   AssessmentContract, PreSaleCustomer, AssessmentCoach, AssessmentPlan, AssessmentModality,
@@ -149,6 +151,10 @@ const EVENT_META = {
   payment_message_sent:       { icon: MessageCircle, color: 'text-green-600', bg: 'bg-green-50', label: 'Mensagem de cobrança enviada' },
   manual_payment_installments_edited: { icon: Banknote, color: 'text-blue-700', bg: 'bg-blue-50', label: 'Parcelas editadas' },
   manual_payment_recorded:  { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Pagamento manual' },
+  parcels_imported:         { icon: Link2,      color: 'text-blue-700',   bg: 'bg-blue-50',   label: 'Parcelas do Asaas importadas' },
+  parcel_payment_recorded:  { icon: Banknote,   color: 'text-green-700',  bg: 'bg-green-50',  label: 'Parcela paga' },
+  parcel_payment_reverted:  { icon: RotateCcw,  color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Registro de parcela desfeito' },
+  parcels_removed:          { icon: Link2,      color: 'text-gray-500',   bg: 'bg-gray-100',  label: 'Parcelas removidas' },
   renewed:                  { icon: RefreshCcw, color: 'text-green-600',  bg: 'bg-green-50',  label: 'Renovado' },
   sale_voided:              { icon: XCircle,    color: 'text-amber-600',  bg: 'bg-amber-50',  label: 'Venda descartada' },
   sale_replaced:            { icon: RotateCcw,  color: 'text-blue-600',   bg: 'bg-blue-50',   label: 'Venda substituída' },
@@ -202,6 +208,13 @@ function formatEventSummary(ev) {
       return `${p.method || ''}${p.value ? ' · R$ ' + Number(p.value).toFixed(2) : ''}`;
     case 'external_charge_registered':
       return p.due_date ? `Vence em ${formatDate(p.due_date)}` : 'Link externo salvo';
+    case 'parcels_imported':
+      return `${p.total_installments || '?'} parcelas · ${formatCurrency(p.total_value)}${p.previous_payment_method ? ` · antes: ${externalChargeMethodLabel(p.previous_payment_method)}` : ''}`;
+    case 'parcel_payment_recorded':
+    case 'parcel_payment_reverted':
+      return `Parcela ${p.installment_number}/${p.total_installments} · ${formatCurrency(p.value)}${p.payment_date ? ` · paga em ${formatDate(p.payment_date)}` : ''}`;
+    case 'parcels_removed':
+      return `${p.parcels_removed || 0} parcelas removidas do contrato`;
     case 'external_charge_removed':
       return 'Link externo removido';
     case 'payment_message_sent':
@@ -310,6 +323,9 @@ export default function ContractDetail() {
   const [modality, setModality] = useState(null);
   // Parcelas projetadas (asaas_payments) — detalhamento do pagamento
   const [paymentInstallments, setPaymentInstallments] = useState([]);
+  // Parcelas do carnê de boleto/PIX parcelado importadas do Asaas
+  const [parcels, setParcels] = useState([]);
+  const [parcelsDialog, setParcelsDialog] = useState(false);
   const [coaches, setCoaches]   = useState([]);
   const [plans, setPlans]       = useState([]);
   const [modalities, setModalities] = useState([]);
@@ -448,6 +464,12 @@ export default function ContractDetail() {
         .order('installment_number', { ascending: true })
         .then(({ data }) => setPaymentInstallments(data || []))
         .catch(() => setPaymentInstallments([]));
+      supabase.from('assessment_contract_parcels')
+        .select('*')
+        .eq('contract_id', id)
+        .order('installment_number', { ascending: true })
+        .then(({ data }) => setParcels(data || []))
+        .catch(() => setParcels([]));
     } catch (e) {
       console.error('Erro ao carregar contrato:', e);
       toast.error('Erro ao carregar contrato: ' + (e.message || 'desconhecido'));
@@ -1523,6 +1545,15 @@ export default function ContractDetail() {
         onNeedsCharge={openExternalSaleModal}
       />
 
+      {parcels.length > 0 && (
+        <ContractParcelsCard
+          contract={contract}
+          parcels={parcels}
+          studentName={student?.full_name}
+          onChanged={load}
+        />
+      )}
+
       {/* Status do pagamento (read-only + detalhamento) — aparece quando PAID ou REFUNDED */}
       {['paid', 'refunded'].includes(contract.payment_status) && (() => {
         const activeInstallments = paymentInstallments.filter(p => !['CANCELLED','REFUNDED'].includes(p.status));
@@ -1594,7 +1625,9 @@ export default function ContractDetail() {
                       ? 'Recebimento no fluxo de caixa'
                       : `${activeInstallments.length} parcelas no fluxo de caixa`}
                   </div>
-                  <ManualInstallmentsEditor orderType="contract" order={contract} installments={paymentInstallments} onSaved={load} />
+                  {parcels.length === 0 && (
+                    <ManualInstallmentsEditor orderType="contract" order={contract} installments={paymentInstallments} onSaved={load} />
+                  )}
                   <div className="divide-y">
                     {activeInstallments.map(p => {
                       const isPaid = ['RECEIVED','CONFIRMED','RECEIVED_IN_CASH'].includes(p.status);
@@ -1622,7 +1655,7 @@ export default function ContractDetail() {
               )}
 
               {/* Ações em pagamentos manuais ativos */}
-              {contract.payment_status === 'paid' && contract.manual_payment && (
+              {contract.payment_status === 'paid' && contract.manual_payment && parcels.length === 0 && (
                 <div className="pt-3 border-t space-y-2">
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -1662,7 +1695,7 @@ export default function ContractDetail() {
       })()}
 
       {/* Cobrança Asaas — só aparece se ainda há ação a tomar */}
-      {!['paid', 'refunded', 'cancelled'].includes(contract.payment_status) && !['cancelled', 'voided'].includes(contract.status) && (
+      {parcels.length === 0 && !['paid', 'refunded', 'cancelled'].includes(contract.payment_status) && !['cancelled', 'voided'].includes(contract.status) && (
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Zap className="w-4 h-4 text-blue-600" /> Cobrança e pagamento</CardTitle></CardHeader>
         <CardContent>
@@ -1720,6 +1753,7 @@ export default function ContractDetail() {
               onEdit={openExternalSaleModal}
               onRemove={removeExternalSale}
               onRecordPayment={openManualPay}
+              onImportParcels={() => setParcelsDialog(true)}
             />
           ) : (
             <div className="space-y-3">
@@ -2197,6 +2231,13 @@ export default function ContractDetail() {
         busy={finishLeaveBusy}
         onClose={() => setFinishLeaveTarget(null)}
         onConfirm={lastDay => submitFinishLeave(finishLeaveTarget, lastDay)}
+      />
+
+      <ImportParcelsDialog
+        open={parcelsDialog}
+        contract={contract}
+        onClose={() => setParcelsDialog(false)}
+        onImported={load}
       />
 
       <CommunicationSendDialog
