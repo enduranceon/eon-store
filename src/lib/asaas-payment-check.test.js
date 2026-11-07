@@ -166,7 +166,6 @@ test('anything that is not a clean full payment goes to review', () => {
     [checked(fact({ status: 'REFUNDED' })), /Estornada no Asaas/],
     [checked(fact({ status: 'RECEIVED_IN_CASH' })), /recebida em dinheiro/],
     [checked(fact({ status: 'DELETED' })), /removida no Asaas/],
-    [checked(fact({ billing_type: 'BOLETO', value: 300 }), [fact({ billing_type: 'BOLETO', value: 300 }), fact({ billing_type: 'BOLETO', value: 300 })]), /Boleto parcelado/],
     [checked(fact({ client_payment_date: null, confirmed_date: null, payment_date: null })), /não informou a data/],
     [checked(fact({ client_payment_date: '2026-10-07' })), /no futuro/],
     [checked(fact(), []), /Parcelas não encontradas/],
@@ -258,4 +257,130 @@ test('one failed registration does not stop the others', async () => {
     { key: 'y', ok: false, message: 'A venda já foi paga por outro fluxo' },
     { key: 'z', ok: true },
   ]);
+});
+
+// Carnê de boleto/PIX parcelado ------------------------------------------------
+
+const carneFact = (number, overrides = {}) => fact({
+  status: 'PENDING',
+  billing_type: 'UNDEFINED',
+  value: 200,
+  installment_number: number,
+  due_date: ['2026-11-10', '2026-12-10', '2027-01-10'][number - 1],
+  client_payment_date: null,
+  confirmed_date: null,
+  payment_date: null,
+  credit_date: null,
+  estimated_credit_date: null,
+  ...overrides,
+});
+const paidCarneFact = (number, overrides = {}) => carneFact(number, {
+  status: 'RECEIVED',
+  billing_type: 'BOLETO',
+  client_payment_date: '2026-10-04',
+  estimated_credit_date: '2026-10-05',
+  ...overrides,
+});
+const carneChecked = (facts, customerCheck = 'match') => checked(facts[0], facts, customerCheck);
+// Parcelas do contrato fictício como o sistema as guarda depois de importar.
+const storedParcel = (number, recorded) => ({
+  id: `parcel-${number}`,
+  installment_number: number,
+  payment_row_id: recorded ? `row-${number}` : null,
+  asaas_status: recorded ? 'RECEIVED' : 'PENDING',
+});
+const importedCarne = recordedNumbers => ({
+  parcels: [1, 2, 3].map(number => storedParcel(number, recordedNumbers.includes(number))),
+  open: [1, 2, 3].filter(number => !recordedNumbers.includes(number)).map(number => storedParcel(number, false)),
+});
+
+test('a boleto/PIX installment with the 1st parcel paid is a carnê ready to import and register', () => {
+  const item = classifyAsaasCheck(order(), carneChecked([paidCarneFact(1), carneFact(2), carneFact(3)]), methods, TODAY);
+  assert.equal(item.kind, 'ready');
+  assert.equal(item.mode, 'carne');
+  assert.equal(item.imported, false);
+  assert.equal(item.count, 3);
+  assert.equal(item.paidCount, 1);
+  assert.deepEqual(item.toRecord, [{ number: 1, value: 200, paymentDate: '2026-10-04', creditDate: '2026-10-05' }]);
+  assert.deepEqual(item.parcels.map(row => [row.number, row.paid, row.dueDate]), [
+    [1, true, '2026-11-10'], [2, false, '2026-12-10'], [3, false, '2027-01-10'],
+  ]);
+});
+
+test('a carnê paid entirely in Asaas registers every parcel', () => {
+  const item = classifyAsaasCheck(order(), carneChecked([paidCarneFact(1), paidCarneFact(2), paidCarneFact(3)]), methods, TODAY);
+  assert.equal(item.kind, 'ready');
+  assert.deepEqual(item.toRecord.map(row => row.number), [1, 2, 3]);
+});
+
+test('an already imported carnê only registers the parcels paid since the last registration', () => {
+  const imported = order({ payment_status: 'partially_paid', carne: importedCarne([1]) });
+  const item = classifyAsaasCheck(imported, carneChecked([paidCarneFact(1), paidCarneFact(2), carneFact(3)]), methods, TODAY);
+  assert.equal(item.kind, 'ready');
+  assert.equal(item.imported, true);
+  assert.equal(item.recordedCount, 1);
+  assert.deepEqual(item.toRecord.map(row => row.number), [2]);
+});
+
+test('an imported carnê with nothing new paid stays open and shows the balance', () => {
+  const imported = order({ payment_status: 'partially_paid', carne: importedCarne([1]) });
+  const item = classifyAsaasCheck(imported, carneChecked([paidCarneFact(1), carneFact(2), carneFact(3, { status: 'OVERDUE' })]), methods, TODAY);
+  assert.equal(item.kind, 'open');
+  assert.equal(item.balance, 400);
+  assert.match(item.label, /já registradas/);
+});
+
+test('an imported carnê with no parcel paid yet stays open', () => {
+  const imported = order({ payment_status: 'charge_sent', carne: importedCarne([]) });
+  const item = classifyAsaasCheck(imported, carneChecked([carneFact(1), carneFact(2), carneFact(3)]), methods, TODAY);
+  assert.equal(item.kind, 'open');
+});
+
+test('a carnê goes to review when the document, the total or the dates are not right', () => {
+  const facts = [paidCarneFact(1), carneFact(2), carneFact(3)];
+  const mismatch = classifyAsaasCheck(order(), carneChecked(facts, 'mismatch'), methods, TODAY);
+  assert.equal(mismatch.kind, 'review');
+  assert.match(mismatch.reason, /outra pessoa/);
+  const unknown = classifyAsaasCheck(order(), carneChecked(facts, 'unknown'), methods, TODAY);
+  assert.equal(unknown.kind, 'review');
+  const total = classifyAsaasCheck(order({ total_value: 700 }), carneChecked(facts), methods, TODAY);
+  assert.equal(total.kind, 'review');
+  assert.match(total.reason, /Valor no Asaas/);
+  const noDate = classifyAsaasCheck(order(), carneChecked([paidCarneFact(1, { client_payment_date: null }), carneFact(2), carneFact(3)]), methods, TODAY);
+  assert.equal(noDate.kind, 'review');
+  assert.match(noDate.reason, /parcela 1/);
+  const future = classifyAsaasCheck(order(), carneChecked([paidCarneFact(1, { client_payment_date: '2026-10-07' }), carneFact(2), carneFact(3)]), methods, TODAY);
+  assert.equal(future.kind, 'review');
+  assert.match(future.reason, /no futuro/);
+});
+
+test('a partial card installment is still not a carnê: it waits for the other parcels', () => {
+  const cards = cardParcels(['CONFIRMED', 'PENDING', 'PENDING']);
+  const item = classifyAsaasCheck(order(), checked(cards[0], cards), methods, TODAY);
+  assert.equal(item.kind, 'review');
+  assert.match(item.reason, /1 de 3 parcelas pagas/);
+});
+
+test('boleto installments of other sales still go through "Receber"', () => {
+  const boletos = [fact({ billing_type: 'BOLETO', value: 300 }), fact({ billing_type: 'BOLETO', value: 300 })];
+  const item = classifyAsaasCheck(order({ type: 'presale' }), checked(boletos[0], boletos), methods, TODAY);
+  assert.equal(item.kind, 'review');
+  assert.match(item.reason, /Boleto parcelado/);
+});
+
+test('an imported carnê with an open parcel is checked even though the contract is partially paid', () => {
+  const imported = order({ id: 'carne', payment_status: 'partially_paid', carne: importedCarne([1]) });
+  const done = order({ id: 'done', payment_status: 'partially_paid', carne: importedCarne([1, 2, 3]) });
+  const plain = order({ id: 'plain', payment_status: 'partially_paid' });
+  assert.deepEqual(asaasCheckCandidates([imported, done, plain]).map(item => item.id), ['carne']);
+});
+
+test('the second check keeps a carnê only when the parcels to register are the same', () => {
+  const imported = order({ payment_status: 'partially_paid', carne: importedCarne([1]) });
+  const shown = classifyAsaasCheck(imported, carneChecked([paidCarneFact(1), paidCarneFact(2), carneFact(3)]), methods, TODAY);
+  const same = reconfirmAsaasItems([shown], summarizeAsaasCheck([imported], [carneChecked([paidCarneFact(1), paidCarneFact(2), carneFact(3)])], methods, TODAY));
+  assert.equal(same.confirmed.length, 1);
+  const moreParcelsPaid = reconfirmAsaasItems([shown], summarizeAsaasCheck([imported], [carneChecked([paidCarneFact(1), paidCarneFact(2), paidCarneFact(3)])], methods, TODAY));
+  assert.equal(moreParcelsPaid.confirmed.length, 0);
+  assert.equal(moreParcelsPaid.changed.length, 1);
 });

@@ -58,13 +58,18 @@ export function hasAsaasInvoiceLink(order) {
   return INVOICE_LINK.test(String(order?.external_payment_link || '').trim());
 }
 
+// Carnê de boleto/PIX parcelado já importado, com parcela ainda sem registro.
+function hasOpenCarne(order) {
+  return order?.payment_status === 'partially_paid' && order.carne?.open?.length > 0;
+}
+
 // Vendas abertas, com fatura do Asaas e sem cobrança da integração automática.
 export function asaasCheckCandidates(orders) {
   return (orders || []).filter(order =>
     order
     && !order.asaas_charge_id
     && Number(order.total_value) > 0
-    && !CLOSED_PAYMENT_STATUSES.has(order.payment_status)
+    && (!CLOSED_PAYMENT_STATUSES.has(order.payment_status) || hasOpenCarne(order))
     && hasAsaasInvoiceLink(order));
 }
 
@@ -123,6 +128,13 @@ export function classifyAsaasCheck(order, check, methods, today) {
     const status = statuses.includes('OVERDUE') ? 'OVERDUE' : statuses[0];
     return { ...base, kind: 'open', status, label: asaasStatusLabel(status) };
   }
+
+  // Boleto/PIX parcelado (carnê): cada parcela é uma cobrança e é registrada
+  // à parte; o contrato vira "pago parcial" na primeira e "pago" na última.
+  const isCarne = order.type === 'contract' && parcels && parcels.length >= 2
+    && (order.carne || facts.some(fact => PAID.has(fact?.status) && fact?.billing_type !== 'CREDIT_CARD'));
+  if (isCarne) return classifyCarne({ base, review, order, facts, check, today });
+
   if (paidCount < facts.length) return review(`${paidCount} de ${facts.length} parcelas pagas no Asaas.`);
 
   // A fatura precisa ser do CPF da pessoa ou do CNPJ cadastrado na ficha dela:
@@ -137,6 +149,8 @@ export function classifyAsaasCheck(order, check, methods, today) {
   const billingTypes = [...new Set(facts.map(fact => fact?.billing_type))];
   const billingType = billingTypes.length === 1 ? billingTypes[0] : null;
   if (!billingType) return review('As parcelas foram pagas de formas diferentes no Asaas.');
+  // Boleto/PIX parcelado de contrato é carnê (acima); nas outras vendas segue
+  // pelo "Receber", que não tem forma de pagamento para isso.
   if (parcels && billingType !== 'CREDIT_CARD') {
     return review(`${billingTypeLabel(billingType)} parcelado no Asaas: registre pelo "Receber".`);
   }
@@ -172,6 +186,66 @@ export function classifyAsaasCheck(order, check, methods, today) {
   };
 }
 
+const CUSTOMER_REASONS = {
+  mismatch: 'A fatura no Asaas é de outra pessoa (CPF/CNPJ diferente). Confira o link salvo nesta venda ou cadastre o CNPJ na ficha da pessoa.',
+  other: 'Não deu para conferir o CPF do cliente no Asaas. Confira e registre pelas parcelas do contrato.',
+};
+
+// Carnê: o que registrar agora são as parcelas pagas no Asaas que ainda não
+// foram registradas aqui. Se o carnê ainda não foi importado, a importação vem
+// junto, no mesmo passo.
+function classifyCarne({ base, review, order, facts, check, today }) {
+  if (check.customer_check === 'mismatch') return review(CUSTOMER_REASONS.mismatch);
+  if (!['match', 'match_cnpj'].includes(check.customer_check)) return review(CUSTOMER_REASONS.other);
+
+  const asaasTotal = facts.reduce((sum, fact) => sum + (Number(fact?.value) || 0), 0);
+  if (Math.abs(cents(asaasTotal) - cents(order.total_value)) > Math.max(1, facts.length)) {
+    return review(`Valor no Asaas ${money.format(asaasTotal)}; no sistema ${money.format(Number(order.total_value) || 0)}.`);
+  }
+
+  const recorded = new Set((order.carne?.parcels || [])
+    .filter(parcel => parcel.payment_row_id)
+    .map(parcel => parcel.installment_number));
+  const rows = facts.map((fact, index) => ({
+    number: fact?.installment_number ?? index + 1,
+    value: Number(fact?.value) || 0,
+    dueDate: fact?.due_date || null,
+    paid: PAID.has(fact?.status),
+    paymentDate: paidOn(fact),
+    creditDate: fact?.credit_date || fact?.estimated_credit_date || paidOn(fact),
+  }));
+  const toRecord = rows.filter(row => row.paid && !recorded.has(row.number));
+
+  if (!toRecord.length) {
+    const balance = rows.filter(row => !row.paid).reduce((sum, row) => sum + row.value, 0);
+    return {
+      ...base,
+      kind: 'open',
+      status: 'PENDING',
+      label: 'Parcelas pagas já registradas; aguardando as demais',
+      balance,
+    };
+  }
+  for (const row of toRecord) {
+    if (!row.paymentDate) return review(`O Asaas não informou a data do pagamento da parcela ${row.number}.`);
+    if (today && row.paymentDate > today) return review(`O Asaas informou uma data de pagamento no futuro (parcela ${row.number}).`);
+  }
+
+  return {
+    ...base,
+    kind: 'ready',
+    mode: 'carne',
+    imported: Boolean(order.carne),
+    count: rows.length,
+    paidCount: rows.filter(row => row.paid).length,
+    recordedCount: recorded.size,
+    total: Number(order.total_value),
+    parcels: rows,
+    toRecord: toRecord.map(({ number, value, paymentDate, creditDate }) => ({ number, value, paymentDate, creditDate })),
+    paidByCompany: check.customer_check === 'match_cnpj',
+  };
+}
+
 export function summarizeAsaasCheck(orders, results, methods, today) {
   const byKey = new Map((results || []).map(item => [`${item.type}:${item.id}`, item]));
   const groups = { ready: [], review: [], open: [], skip: [] };
@@ -183,6 +257,13 @@ export function summarizeAsaasCheck(orders, results, methods, today) {
 }
 
 function sameRegistration(shown, now) {
+  if (shown?.mode === 'carne' || now?.mode === 'carne') {
+    return Boolean(shown && now && now.kind === 'ready'
+      && shown.mode === 'carne' && now.mode === 'carne'
+      && shown.imported === now.imported
+      && Boolean(shown.paidByCompany) === Boolean(now.paidByCompany)
+      && JSON.stringify(shown.toRecord) === JSON.stringify(now.toRecord));
+  }
   return Boolean(shown && now && now.kind === 'ready'
     && shown.method?.id === now.method?.id
     && shown.paymentDate === now.paymentDate

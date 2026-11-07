@@ -213,6 +213,28 @@ async function loadOrders(
       rows.set(`${type}:${String(row.id).toLowerCase()}`, row);
     }
   }
+
+  // Carnê de boleto/PIX parcelado já importado e só em parte registrado: as
+  // outras parcelas podem ter sido pagas, então segue na conferência mesmo
+  // com o contrato "pago parcial".
+  const partialContracts = [...rows.entries()].filter(([key, row]) =>
+    key.startsWith("contract:") && row.payment_status === "partially_paid"
+  );
+  if (partialContracts.length > 0) {
+    const { data, error } = await supabase
+      .from("assessment_contract_parcels")
+      .select("contract_id, payment_row_id")
+      .in("contract_id", partialContracts.map(([, row]) => String(row.id)));
+    if (error) throw error;
+    const withOpenParcels = new Set(
+      ((data ?? []) as Record<string, unknown>[])
+        .filter((parcel) => parcel.payment_row_id == null)
+        .map((parcel) => String(parcel.contract_id).toLowerCase()),
+    );
+    for (const [, row] of partialContracts) {
+      row.has_open_parcels = withOpenParcels.has(String(row.id).toLowerCase());
+    }
+  }
   return rows;
 }
 
@@ -274,7 +296,9 @@ async function checkOrder(
 ): Promise<AsaasCheckResult> {
   if (!row) return { ...order, result: "not_found" };
   const localStatus = String(row.payment_status ?? "");
-  if (CLOSED_STATUSES.has(localStatus)) {
+  const openCarne = localStatus === "partially_paid" &&
+    row.has_open_parcels === true;
+  if (CLOSED_STATUSES.has(localStatus) && !openCarne) {
     return { ...order, result: "closed", local_status: localStatus };
   }
   // Cobrança criada pela integração automática segue o fluxo próprio dela.

@@ -311,7 +311,11 @@ Regras:
 ### Conferência de cobranças no Asaas
 
 `POST /asaas/payment-check` consulta no Asaas, só lendo, as cobranças externas
-abertas informadas:
+abertas informadas. Contrato "pago parcial" com carnê importado e parcela ainda
+sem registro (`assessment_contract_parcels.payment_row_id` nulo) também é
+consultado: o link do contrato aponta para a próxima parcela em aberto, do mesmo
+parcelamento. O painel decide o que registrar (veja "Carnê de boleto/PIX
+parcelado") e chama as rotas de `/orders/contract/:id/parcels/*`.
 
 ```json
 { "orders": [{ "type": "contract", "id": "uuid" }] }
