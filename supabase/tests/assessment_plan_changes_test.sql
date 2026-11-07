@@ -839,28 +839,35 @@ SELECT is(
 RESET ROLE;
 
 -- Licenças -----------------------------------------------------------------------------
+-- As datas seguem o primeiro dia aberto (o mês depois do fechamento aprovado acima),
+-- para o teste valer em qualquer dia: com datas fixas, o mês da data passava a cair
+-- dentro do fechamento aprovado e a mensagem esperada mudava.
+
+CREATE FUNCTION pg_temp.first_open() RETURNS date LANGUAGE sql AS $$
+  SELECT (date_trunc('month', current_date - 5) + interval '1 month')::date;
+$$;
 
 INSERT INTO public.assessment_leaves (contract_id, start_date, end_date, days, reason, status)
-VALUES ('40000000-0000-4000-a000-000000000101', '2026-12-01', '2026-12-20', 20, 'Viagem', 'finished');
+VALUES ('40000000-0000-4000-a000-000000000101', pg_temp.first_open() + 10, pg_temp.first_open() + 29, 20, 'Viagem', 'finished');
 
 SET LOCAL ROLE service_role;
 SELECT is(
   pg_temp.error_of($$SELECT public.preview_assessment_plan_change(
     '40000000-0000-4000-a000-000000000101', '40000000-0000-4000-a000-000000000013',
-    '2026-12-10', '40000000-0000-4000-a000-000000000022', NULL)$$),
+    pg_temp.first_open() + 15, '40000000-0000-4000-a000-000000000022', NULL)$$),
   'A data efetiva cai dentro de uma licença; escolha um dia depois do retorno',
   'the effective date never falls inside a leave'
 );
 RESET ROLE;
 
 INSERT INTO public.assessment_leaves (contract_id, start_date, end_date, days, reason, status)
-VALUES ('40000000-0000-4000-a000-000000000101', '2027-01-10', NULL, NULL, 'Lesão', 'active');
+VALUES ('40000000-0000-4000-a000-000000000101', pg_temp.first_open() + 60, NULL, NULL, 'Lesão', 'active');
 
 SET LOCAL ROLE service_role;
 SELECT is(
   pg_temp.error_of($$SELECT public.preview_assessment_plan_change(
     '40000000-0000-4000-a000-000000000101', '40000000-0000-4000-a000-000000000013',
-    '2026-11-01', '40000000-0000-4000-a000-000000000022', NULL)$$),
+    pg_temp.first_open() + 3, '40000000-0000-4000-a000-000000000022', NULL)$$),
   'Aluno em licença sem data de volta; registre o retorno antes da mudança',
   'a leave without return date blocks the change'
 );
