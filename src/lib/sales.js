@@ -43,9 +43,16 @@ export function isBillableProspectOpenSale(order) {
   );
 }
 
+// Carnê de boleto/PIX parcelado com parcela registrada: o contrato fica "pago
+// parcial" (conta como pago para tempo de casa e renovação), mas o saldo das
+// parcelas em aberto ainda é venda em aberto, com vencimento e cobrança.
+export function isOpenPartialSale(order) {
+  return Boolean(order) && order.payment_status === 'partially_paid' && order.status !== 'voided';
+}
+
 export function isOpenSaleForFinancial(order) {
   if (order?.status === 'draft') return isBillableProspectOpenSale(order);
-  return isEffectiveOpenSale(order);
+  return isEffectiveOpenSale(order) || isOpenPartialSale(order);
 }
 
 // A venda pode precisar aparecer na fila de cobranca antes de existir um link,
@@ -53,7 +60,7 @@ export function isOpenSaleForFinancial(order) {
 export function isOpenCollectionSale(order) {
   if (!order || order.status === 'voided') return false;
   if (TERMINAL_PAYMENT_STATUSES.has(order.payment_status)) return false;
-  if (PAID_PAYMENT_STATUSES.has(order.payment_status)) return false;
+  if (PAID_PAYMENT_STATUSES.has(order.payment_status) && !isOpenPartialSale(order)) return false;
   if (order.status === 'draft') return isBillableProspectOpenSale(order);
   return true;
 }

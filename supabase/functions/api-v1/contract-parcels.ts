@@ -552,7 +552,12 @@ export async function handleContractParcelsRequest(
       ) {
         return invalidRequest("Informe a versão do contrato");
       }
-      if (contract.updated_at !== body.expected_updated_at) {
+      // O banco compara a versão exata; aqui só evita ler o Asaas à toa. A
+      // comparação é por instante porque o texto pode vir em formatos diferentes.
+      if (
+        Date.parse(String(contract.updated_at)) !==
+          Date.parse(String(body.expected_updated_at))
+      ) {
         return jsonResponse({
           error:
             "O contrato foi alterado por outra ação. Atualize a página e tente novamente",

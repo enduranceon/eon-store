@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   DollarSign, Calendar, CheckCircle2, Clock, AlertTriangle,
   ChevronRight, RefreshCw, Wallet, Receipt,
-  BarChart3, RotateCcw, MessageCircle, Banknote,
+  BarChart3, RotateCcw, MessageCircle, Banknote, Copy,
 } from 'lucide-react';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,13 +35,18 @@ import AsaasPaymentCheckDialog from '@/components/AsaasPaymentCheckDialog';
 import { createManualInstallments, findPreferredPaymentMethod, loadActivePaymentMethods } from '@/lib/manual-payment';
 import { readPageCache, writePageCache } from '@/lib/page-cache';
 import { buildContractLifecycleRows } from '@/lib/assessment-contract-lifecycle';
+import {
+  asaasCheckOrders as buildAsaasCheckOrders,
+  attachCarneToContracts,
+  carneParcelRows,
+} from '@/lib/carne-open-sales';
 import { toast } from 'sonner';
 
 // ─────────────────────────────────────────────────────────────────
 // CACHE
 // ─────────────────────────────────────────────────────────────────
 const FINANCIAL_PAGE_CACHE_TTL = 60 * 1000;
-const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview:v4';
+const FINANCIAL_PAGE_CACHE_KEY = 'financial:overview:v5';
 const ADJUSTABLE_DUE_DATE_STATUSES = new Set([
   'pending',
   'awaiting_charge',
@@ -152,7 +157,8 @@ function OrderRow({ o, contact, onEditDueDate, onCollectPayment, onRegisterPayme
   const hasUnsupportedInstallment = !!o.asaas_charge_id && getInstallmentN(o) > 1;
   const canEditDueDate = !!onEditDueDate
     && ADJUSTABLE_DUE_DATE_STATUSES.has(o.payment_status)
-    && !hasUnsupportedInstallment;
+    && !hasUnsupportedInstallment
+    && !o.is_carne_parcel;
   const canCollect = !!onCollectPayment && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
   // Atalho "Receber": abre o modal de pagamento manual direto na lista (sem
   // navegar), pra dar conta de processar várias cobranças em sequência.
@@ -162,6 +168,7 @@ function OrderRow({ o, contact, onEditDueDate, onCollectPayment, onRegisterPayme
   // Some ao já ter cobrança Asaas ativa: lá o registro manual é bloqueado mesmo.
   const canRegisterPayment = !!onRegisterPayment
     && !o.is_prospect
+    && !o.is_carne_parcel
     && !o.asaas_charge_id
     && !['paid', 'refunded', 'cancelled'].includes(o.payment_status);
 
@@ -183,7 +190,15 @@ function OrderRow({ o, contact, onEditDueDate, onCollectPayment, onRegisterPayme
             <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-medium">Prospect</span>
           )}
           <PaymentStageChip status={o.payment_status} hasAsaasCharge={!!o.asaas_charge_id} />
-          {o.external_payment_link && !o.asaas_payment_link && (
+          {o.is_carne_parcel && (
+            <span className="text-[10px] bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded font-medium">
+              Carnê {o.carne_parcel.number}/{o.carne_parcel.total}
+            </span>
+          )}
+          {o.is_carne_parcel && o.carne_parcel.paid_in_asaas && (
+            <span className="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-medium">Paga no Asaas · registrar</span>
+          )}
+          {o.external_payment_link && !o.asaas_payment_link && !o.is_carne_parcel && (
             <span className="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-medium">Link externo salvo</span>
           )}
         </div>
@@ -204,6 +219,22 @@ function OrderRow({ o, contact, onEditDueDate, onCollectPayment, onRegisterPayme
           </span>
         )}
         <span className="font-semibold text-sm">{formatCurrency(o.total_value)}</span>
+        {o.is_carne_parcel && o.carne_parcel.invoice_url && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={`Copiar link da parcela ${o.carne_parcel.number} de ${o.order_number}`}
+            className="min-h-11 px-3 text-xs"
+            onClick={() => {
+              navigator.clipboard.writeText(o.carne_parcel.invoice_url);
+              toast.success('Link da parcela copiado');
+            }}
+          >
+            <Copy className="w-3.5 h-3.5 sm:mr-1" />
+            <span className="hidden sm:inline">Link</span>
+          </Button>
+        )}
         {canCollect && (
           <Button
             type="button"
@@ -433,7 +464,7 @@ export default function Financial() {
         sevenMonthsAgo.setDate(1);
         const apFromStr = toLocalDateStr(sevenMonthsAgo);
 
-        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, eventRegsRes, eventTypesRes, eventsRes, paymentsRes, qualityRes] = await Promise.all([
+        const [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, eventRegsRes, eventTypesRes, eventsRes, paymentsRes, qualityRes, parcelsRes] = await Promise.all([
           supabase.from('presale_orders')
             .select('id, order_number, checkout_name, checkout_whatsapp, customer_whatsapp, total_value, payment_status, payment_date, due_date, asaas_charge_id, asaas_payment_link, asaas_pix_copy, external_payment_link, external_invoice_number, payment_message_sent_at, payment_method, items')
             .neq('payment_status', 'cancelled').neq('payment_status', 'refunded'),
@@ -460,6 +491,9 @@ export default function Financial() {
             sort: '-scheduled_on',
           }),
           listFinancialDataQuality(),
+          // Parcelas do carnê de boleto/PIX parcelado: cada uma em aberto vira uma venda em aberto.
+          supabase.from('assessment_contract_parcels')
+            .select('id, contract_id, installment_number, total_installments, value, due_date, asaas_status, invoice_url, payment_row_id'),
         ]);
         for (const result of [presaleRes, stockRes, contractRes, plansRes, customersRes, centersRes, eventRegsRes, eventTypesRes, eventsRes]) {
           if (result.error) throw result.error;
@@ -553,7 +587,11 @@ export default function Financial() {
           })
           .filter(o => o.total_value > 0);
 
-        const nextOrders = [...presale, ...stock, ...contracts, ...eventOrders];
+        // Contrato com carnê: o saldo está nas parcelas, uma linha por parcela em aberto.
+        // A linha do contrato fica (identifica os recebimentos), fora da lista de cobrança.
+        const contractsWithCarne = attachCarneToContracts(contracts, parcelsRes.data || []);
+        const carneRows = contractsWithCarne.flatMap(carneParcelRows);
+        const nextOrders = [...presale, ...stock, ...contractsWithCarne, ...carneRows, ...eventOrders];
         const nextCenters = centersRes.data || [];
 
         // ── Estornos pendentes ──────────────────────────────────────
@@ -625,11 +663,12 @@ export default function Financial() {
   // O livro-caixa continua usando somente movimentos/recebiveis ja registrados.
   const activeOrders = orders.filter(o =>
     isOpenCollectionSale(o) &&
-    !ordersWithReceiptMovement.has(o.id)
+    !o.carne &&
+    (o.is_carne_parcel || !ordersWithReceiptMovement.has(o.id))
   );
 
   const ordersByMovementKey = useMemo(
-    () => new Map(orders.map(order => [`${order.type}:${order.id}`, order])),
+    () => new Map(orders.filter(order => !order.is_carne_parcel).map(order => [`${order.type}:${order.id}`, order])),
     [orders]
   );
   const paidThisMonth = financialMovements
@@ -835,7 +874,7 @@ export default function Financial() {
               <Wallet className="w-3.5 h-3.5 mr-1.5" /> Ver fluxo de caixa
             </Button>
           </Link>
-          <Button variant="outline" size="sm" onClick={() => setAsaasCheckOrders(activeOrders)}>
+          <Button variant="outline" size="sm" onClick={() => setAsaasCheckOrders(buildAsaasCheckOrders(activeOrders, orders))}>
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Conferir pagamentos no Asaas
           </Button>
         </div>

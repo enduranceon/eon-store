@@ -4,7 +4,7 @@ CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
 SET LOCAL timezone = 'America/Sao_Paulo';
 
-SELECT plan(69);
+SELECT plan(71);
 
 -- Acesso ----------------------------------------------------------------------
 
@@ -320,6 +320,11 @@ SELECT is(
   'the contract payment date is the first parcel date'
 );
 SELECT is(
+  eon_private.communication_open_balance('contract', pg_temp.k(1), 'partially_paid', 600),
+  400::numeric,
+  'the Central balance of a partially paid carnê is the sum of the open parcels'
+);
+SELECT is(
   (SELECT renewal_stage FROM public.assessment_contracts WHERE id = pg_temp.k(1)),
   'renewed',
   'the renewal counts as renewed on the first recorded parcel'
@@ -398,6 +403,11 @@ SELECT is(
   (SELECT pg_temp.rec(1, 3)->>'payment_status'),
   'paid',
   'the last parcel closes the contract as paid'
+);
+SELECT is(
+  eon_private.communication_open_balance('contract', pg_temp.k(1), 'paid', 600),
+  0::numeric,
+  'a paid carnê has no balance for the Central'
 );
 SELECT is(
   (SELECT sum(value) FROM public.asaas_payments

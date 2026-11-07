@@ -16,6 +16,8 @@ const STOCK_CLOSED = "33333333-3333-4333-8333-333333333333";
 const EVENT_OTHER_LINK = "44444444-4444-4444-8444-444444444444";
 const CONTRACT_MISSING_IN_ASAAS = "55555555-5555-4555-8555-555555555555";
 const CONTRACT_UNKNOWN = "66666666-6666-4666-8666-666666666666";
+const CONTRACT_CARNE_OPEN = "77777777-7777-4777-8777-777777777777";
+const CONTRACT_CARNE_DONE = "88888888-8888-4888-8888-888888888888";
 
 const TABLE_ROWS: Record<string, Record<string, unknown>[]> = {
   assessment_contracts: [
@@ -23,6 +25,20 @@ const TABLE_ROWS: Record<string, Record<string, unknown>[]> = {
       id: CONTRACT_PAID,
       payment_status: "charge_sent",
       external_payment_link: "https://www.asaas.com/i/pixpago0000000001",
+      asaas_charge_id: null,
+      customer_id: "cust-pix",
+    },
+    {
+      id: CONTRACT_CARNE_OPEN,
+      payment_status: "partially_paid",
+      external_payment_link: "https://www.asaas.com/i/carneaberto000002",
+      asaas_charge_id: null,
+      customer_id: "cust-pix",
+    },
+    {
+      id: CONTRACT_CARNE_DONE,
+      payment_status: "partially_paid",
+      external_payment_link: "https://www.asaas.com/i/carnefechado00003",
       asaas_charge_id: null,
       customer_id: "cust-pix",
     },
@@ -46,6 +62,12 @@ const TABLE_ROWS: Record<string, Record<string, unknown>[]> = {
     external_payment_link: "https://www.asaas.com/i/japago0000000001",
     asaas_charge_id: null,
   }],
+  assessment_contract_parcels: [
+    { contract_id: CONTRACT_CARNE_OPEN, payment_row_id: "row-1" },
+    { contract_id: CONTRACT_CARNE_OPEN, payment_row_id: null },
+    { contract_id: CONTRACT_CARNE_DONE, payment_row_id: "row-1" },
+    { contract_id: CONTRACT_CARNE_DONE, payment_row_id: "row-2" },
+  ],
   presale_customers: [
     { id: "cust-pix", cpf: "123.456.789-01" },
     { id: "cust-card", cpf: "987.654.321-00" },
@@ -68,10 +90,10 @@ function fakeDatabase() {
           columns = selected;
           return query;
         },
-        in(_field: string, ids: string[]) {
+        in(field: string, ids: string[]) {
           queries.push({ table, columns, ids });
           const data = (TABLE_ROWS[table] ?? []).filter((row) =>
-            ids.includes(String(row.id))
+            ids.includes(String(row[field]))
           );
           return Promise.resolve({ data, error: null });
         },
@@ -552,6 +574,52 @@ Deno.test("when every lookup fails the access problem is reported once", async (
     assert(
       String(body.error).includes("chave de API fornecida é inválida"),
       "keeps the Asaas reason",
+    );
+  });
+});
+
+Deno.test("a partially paid carnê with open parcels is still checked; a fully recorded one is closed", async () => {
+  const database = fakeDatabase();
+  await withAsaas((url) => {
+    if (url.pathname === "/v3/payments/pay_carneaberto000002") {
+      return json(asaasPayment({
+        id: "pay_carneaberto000002",
+        status: "RECEIVED",
+        installment: "ins-carne-teste",
+      }));
+    }
+    if (url.pathname === "/v3/installments/ins-carne-teste/payments") {
+      return json({
+        data: [
+          asaasPayment({ installmentNumber: 1, status: "RECEIVED" }),
+          asaasPayment({ installmentNumber: 2, status: "PENDING" }),
+        ],
+      });
+    }
+    return asaasCustomer(url) ?? json({}, 404);
+  }, async (calls) => {
+    const response = await handleAsaasPaymentCheckRequest(
+      checkRequest([
+        { type: "contract", id: CONTRACT_CARNE_OPEN },
+        { type: "contract", id: CONTRACT_CARNE_DONE },
+      ]),
+      "/asaas/payment-check",
+      database.client,
+    );
+    assert(response?.status === 200, "the check answers");
+    const body = await response.json();
+    const open = body.data.results.find((item: { id: string }) =>
+      item.id === CONTRACT_CARNE_OPEN
+    );
+    const done = body.data.results.find((item: { id: string }) =>
+      item.id === CONTRACT_CARNE_DONE
+    );
+    assert(open.result === "checked", "the open carnê is read in Asaas");
+    assert(open.installments.length === 2, "every parcel comes back");
+    assert(done.result === "closed", "a carnê with every parcel recorded stays closed");
+    assert(
+      calls.every((call) => call.method === "GET"),
+      "Asaas is only read",
     );
   });
 });

@@ -3,8 +3,14 @@ import { AlertTriangle, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { checkAsaasPayments, listPaymentMethods } from '@/api/client';
+import {
+  checkAsaasPayments,
+  importContractParcels,
+  listPaymentMethods,
+  recordContractParcelPayment,
+} from '@/api/client';
 import { createManualInstallments } from '@/lib/manual-payment';
+import { registerCarneItem } from '@/lib/carne-register';
 import {
   asaasCheckCandidates,
   reconfirmAsaasItems,
@@ -56,6 +62,54 @@ function Section({ icon: Icon, tone, title, count, children }) {
 }
 
 const EMPTY_GROUPS = { ready: [], review: [], open: [], skip: [] };
+
+const carneApi = { importContractParcels, recordContractParcelPayment };
+
+function numbersLabel(rows) {
+  const numbers = rows.map(row => `${row.number}ª`);
+  return numbers.length > 1 ? `${numbers.slice(0, -1).join(', ')} e ${numbers[numbers.length - 1]}` : numbers[0];
+}
+
+// O que vai acontecer com um carnê, em palavras: importar (se for o caso),
+// registrar as pagas e deixar as outras em aberto com o vencimento de cada uma.
+function CarneSummary({ item, detailed = false }) {
+  const open = item.parcels.filter(row => !row.paid);
+  const recordNow = item.toRecord;
+  return (
+    <>
+      <span className="block text-xs text-slate-600">
+        Carnê boleto/PIX · {item.paidCount} de {item.count} {item.count === 1 ? 'parcela paga' : 'parcelas pagas'} no Asaas
+        {item.recordedCount > 0 && ` · ${item.recordedCount} já registrada${item.recordedCount > 1 ? 's' : ''}`}
+      </span>
+      <span className="block text-xs text-slate-600">
+        {item.imported ? 'Registra' : `Importa as ${item.count} parcelas e registra`} a {numbersLabel(recordNow)}{' '}
+        ({formatCurrency(recordNow.reduce((sum, row) => sum + row.value, 0))}, paga em {formatDate(recordNow[0].paymentDate)}).
+      </span>
+      {open.length > 0 ? (
+        <span className="block text-xs text-slate-500">
+          Ficam em aberto, em Vendas em aberto, com o link de cada uma:{' '}
+          {open.map(row => `${row.number}ª em ${formatDate(row.dueDate)} (${formatCurrency(row.value)})`).join('; ')}.
+        </span>
+      ) : (
+        <span className="block text-xs text-slate-500">É a última parcela: o contrato fica pago.</span>
+      )}
+      {detailed && (
+        <ol className="grid gap-x-4 gap-y-0.5 pt-0.5 text-xs text-slate-600 sm:grid-cols-2">
+          {item.parcels.map(row => {
+            const registering = recordNow.some(candidate => candidate.number === row.number);
+            return (
+              <li key={row.number}>
+                {row.number}ª parcela · {formatCurrency(row.value)} · {registering
+                  ? `paga em ${formatDate(row.paymentDate)}, vai registrar`
+                  : row.paid ? 'já registrada' : `vence ${formatDate(row.dueDate)}`}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </>
+  );
+}
 
 // Consulta no Asaas as cobranças abertas com fatura do Asaas e registra as
 // pagas pelo mesmo pagamento manual do "Receber". Nada muda no Asaas.
@@ -134,13 +188,15 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
     const items = review?.confirmed || [];
     if (!items.length) return;
     setPhase('saving');
-    const results = await registerAsaasPayments(items, item => createManualInstallments(
-      item.method,
-      item.paymentDate,
-      { order_id: item.order.id, order_type: item.order.type, external_reference: item.order.order_number },
-      item.total,
-      item.schedule || undefined,
-    ));
+    const results = await registerAsaasPayments(items, item => (item.mode === 'carne'
+      ? registerCarneItem(item, carneApi)
+      : createManualInstallments(
+        item.method,
+        item.paymentDate,
+        { order_id: item.order.id, order_type: item.order.type, external_reference: item.order.order_number },
+        item.total,
+        item.schedule || undefined,
+      )));
     setSaved(current => ({ ...current, ...Object.fromEntries(results.map(result => [result.key, result])) }));
     setReview(null);
     setPhase('ready');
@@ -159,6 +215,7 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
         <p className="text-sm text-muted-foreground">
           Consulta as cobranças abertas que têm fatura do Asaas. Nada muda no Asaas: as pagas são registradas aqui
           como no &quot;Receber&quot;, com a forma, a data e as parcelas (valor e data de crédito) que estão no Asaas.
+          Boleto/PIX parcelado de assessoria é um carnê: a parcela paga é registrada e as outras ficam em aberto, cada uma com seu vencimento e link.
         </p>
 
         {phase === 'loading' && (
@@ -189,11 +246,15 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
                 {review.confirmed.map(item => (
                   <li key={item.key} className="space-y-1 rounded-lg border border-emerald-200 p-3">
                     <SaleLine order={item.order} />
-                    <span className="block text-xs text-slate-600">
-                      {item.method.name} · pago em {formatDate(item.paymentDate)} · total {formatCurrency(item.total)}
-                    </span>
+                    {item.mode === 'carne' ? (
+                      <CarneSummary item={item} detailed />
+                    ) : (
+                      <span className="block text-xs text-slate-600">
+                        {item.method.name} · pago em {formatDate(item.paymentDate)} · total {formatCurrency(item.total)}
+                      </span>
+                    )}
                     {item.paidByCompany && <span className="block text-xs font-medium text-amber-800">Pago com o CNPJ cadastrado na ficha da pessoa.</span>}
-                    {item.schedule ? (
+                    {item.mode === 'carne' ? null : item.schedule ? (
                       <ol className="grid gap-x-4 gap-y-0.5 text-xs text-slate-600 sm:grid-cols-2">
                         {item.schedule.map(row => (
                           <li key={row.number}>
@@ -262,10 +323,16 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
                         )}
                         <span className="min-w-0 flex-1 space-y-0.5">
                           <SaleLine order={item.order} />
-                          <span className="block text-xs text-slate-600">
-                            {item.method.name} · pago em {formatDate(item.paymentDate)} · {formatCurrency(item.total)}
-                          </span>
-                          <span className="block text-xs text-slate-500">{scheduleLabel(item.schedule)}</span>
+                          {item.mode === 'carne' ? (
+                            <CarneSummary item={item} />
+                          ) : (
+                            <>
+                              <span className="block text-xs text-slate-600">
+                                {item.method.name} · pago em {formatDate(item.paymentDate)} · {formatCurrency(item.total)}
+                              </span>
+                              <span className="block text-xs text-slate-500">{scheduleLabel(item.schedule)}</span>
+                            </>
+                          )}
                           {item.paidByCompany && <span className="block text-xs text-amber-800">Pago com o CNPJ cadastrado na ficha da pessoa.</span>}
                           {item.order.is_prospect && !result?.ok && (
                             <span className="block text-xs text-violet-700">Ao registrar, o prospect vira aluno.</span>
@@ -296,7 +363,7 @@ export default function AsaasPaymentCheckDialog({ orders, onClose }) {
                 {groups.open.map(item => (
                   <li key={item.key} className="flex flex-col gap-1 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <SaleLine order={item.order} />
-                    <span className="text-xs text-slate-600">{item.label} · {formatCurrency(item.order.total_value)}</span>
+                    <span className="text-xs text-slate-600">{item.label} · {formatCurrency(item.balance ?? item.order.total_value)}</span>
                   </li>
                 ))}
               </ul>
