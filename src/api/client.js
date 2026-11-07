@@ -933,6 +933,45 @@ export async function uploadRefundReceipt(sourceType, sourceId, file) {
   return response.data;
 }
 
+// Capa da página de inscrição: mesmo caminho do comprovante de estorno, com
+// URL assinada da API e o arquivo indo direto para o bucket público.
+export async function uploadEventCover(eventId, file) {
+  const { data: signed } = await apiRequest(`/events/${eventId}/cover/upload-url`, {
+    method: 'POST',
+    body: { mime_type: file.type, size_bytes: file.size },
+  });
+
+  const { error } = await supabase.storage
+    .from('event-covers')
+    .uploadToSignedUrl(signed.path, signed.token, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+  if (error) {
+    throw new ApiError('Não foi possível enviar a imagem', {
+      status: 500,
+      code: 'storage_upload_failed',
+      details: error.message,
+    });
+  }
+
+  const response = await apiRequest(`/events/${eventId}/cover`, {
+    method: 'PUT',
+    body: { path: signed.path },
+  });
+  invalidatePageCacheByTag('events');
+  return response.data;
+}
+
+export async function removeEventCover(eventId) {
+  const response = await apiRequest(`/events/${eventId}/cover`, {
+    method: 'PUT',
+    body: { path: null },
+  });
+  invalidatePageCacheByTag('events');
+  return response.data;
+}
+
 export async function getRefundReceiptUrl(receiptId, options = {}) {
   const response = await apiRequest(`/refunds/receipts/${receiptId}/download`, options);
   return response.data;

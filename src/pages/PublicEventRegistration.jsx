@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { createPublicEventRegistration, getPublicEvent } from '@/api/public';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { eventCoverUrl } from '@/lib/event-cover';
 import { toast } from 'sonner';
 
 function normalizeFieldToken(value = '') {
@@ -239,10 +240,17 @@ export default function PublicEventRegistration() {
   const soldOut = selectedType?.spots_left === 0;
   const eventTime = timeSummary(event);
   const mapUrl = eventMapUrl(event);
+  const coverUrl = eventCoverUrl(event.cover_image_path, import.meta.env.VITE_SUPABASE_URL);
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4">
       <div className="max-w-lg mx-auto space-y-4">
+        {/* Capa 4:1, como o cabeçalho do Google Forms. */}
+        {coverUrl && (
+          <div className="aspect-[4/1] rounded-xl overflow-hidden bg-gray-200 shadow-sm">
+            <img src={coverUrl} alt={event.name} className="w-full h-full object-cover" />
+          </div>
+        )}
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900">{event.name}</h1>
           <div className="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
