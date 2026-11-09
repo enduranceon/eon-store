@@ -5,7 +5,7 @@ import { NAV_AREAS, resolveNavigation } from './navigation.js';
 test('the nine areas retain one selected item for existing list and detail routes', () => {
   assert.equal(NAV_AREAS.length, 9);
   const paths = [
-    ['/hoje', 'today', 'today'],
+    ['/admin', 'overview', 'overview'],
     ['/pessoas/123?aba=contracts', 'people', 'people'],
     ['/clientes/123', 'people', 'people'],
     ['/assessoria/alunos/123', 'people', 'people'],
@@ -26,7 +26,6 @@ test('the nine areas retain one selected item for existing list and detail route
     ['/financeiro/conciliacao', 'finance', 'reconciliation'],
     ['/comunicacao', 'communication', 'contact_queue'],
     ['/comunicacao/configuracoes', 'communication', 'message_rules'],
-    ['/admin', 'indicators', 'overview'],
     ['/admin/saude', 'settings', 'health'],
     ['/produtos/pre-venda/123', 'store', 'presale'],
     ['/estoque/pedidos/123', 'store', 'orders'],
@@ -39,14 +38,15 @@ test('the nine areas retain one selected item for existing list and detail route
 
 test('navigation items have unique identifiers and destinations', () => {
   const items = NAV_AREAS.flatMap(area => area.items || [area]);
-  assert.equal(items.length, 37);
+  assert.equal(items.length, 36);
   assert.equal(new Set(items.map(item => item.id)).size, items.length);
   assert.equal(new Set(items.map(item => item.to)).size, items.length);
 });
 
 test('contextual tabs preserve all destinations previously linked from the sidebar', () => {
+  // /hoje deixou de ser uma tela: redireciona para a Visão geral (/admin).
   const previousDestinations = [
-    '/hoje', '/pessoas', '/assessoria/renovacoes', '/assessoria/contratos',
+    '/pessoas', '/assessoria/renovacoes', '/assessoria/contratos',
     '/assessoria/licencas', '/assessoria/prospects', '/assessoria/auditoria',
     '/assessoria/planos', '/pedidos', '/produtos', '/campanhas',
     '/produtos/pre-venda', '/devolucoes', '/eventos', '/financeiro',
@@ -58,8 +58,19 @@ test('contextual tabs preserve all destinations previously linked from the sideb
     '/fornecedores', '/cupons', '/centros-receita',
     '/configuracoes/pagamento', '/assessoria/configuracoes', '/admin/saude',
   ];
-  assert.equal(previousDestinations.length, 37);
+  assert.equal(previousDestinations.length, 36);
   for (const path of previousDestinations) {
     assert.notEqual(resolveNavigation(path).areaId, null, path);
   }
+});
+
+test('the overview is the first entry and only /admin itself selects it', () => {
+  assert.equal(NAV_AREAS[0].id, 'overview');
+  assert.equal(NAV_AREAS[0].to, '/admin');
+  assert.equal(NAV_AREAS[0].badge, undefined, 'no badge: the attention strip carries the summary');
+  assert.equal(NAV_AREAS.some(area => area.id === 'today'), false, 'no duplicated Hoje/Visão geral entry');
+  assert.deepEqual(resolveNavigation('/admin'), { areaId: 'overview', itemId: 'overview' });
+  assert.deepEqual(resolveNavigation('/admin/'), { areaId: 'overview', itemId: 'overview' });
+  assert.deepEqual(resolveNavigation('/admin/saude'), { areaId: 'settings', itemId: 'health' });
+  assert.deepEqual(resolveNavigation('/admin/qualquer'), { areaId: null, itemId: null });
 });

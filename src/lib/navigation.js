@@ -1,7 +1,8 @@
 // A navegação organiza as telas existentes sem alterar seus dados ou operações.
 // Cada destino tem um único item selecionável, inclusive quando a URL é antiga.
 export const NAV_AREAS = [
-  { id: 'today', label: 'Hoje', description: 'O que exige minha ação agora?', to: '/hoje', icon: 'today', badge: 'today' },
+  // Entrada gerencial. Sem selo: a faixa Atenção da própria página já resume o que exige ação.
+  { id: 'overview', label: 'Visão geral', description: 'Como está a EON hoje?', to: '/admin', exact: true, icon: 'overview' },
   { id: 'people', label: 'Pessoas', description: 'Quem é a pessoa e qual seu vínculo?', to: '/pessoas', icon: 'people', badge: 'clients' },
   {
     id: 'assessment', label: 'Assessoria', description: 'O ciclo do aluno', icon: 'assessment',
@@ -48,7 +49,6 @@ export const NAV_AREAS = [
   {
     id: 'indicators', label: 'Indicadores', description: 'Evolução e relatórios', icon: 'indicators',
     items: [
-      { id: 'overview', label: 'Visão geral', to: '/admin', icon: 'overview', exact: true },
       { id: 'assessment_indicators', label: 'Assessoria', to: '/assessoria/indicadores', icon: 'indicators' },
       { id: 'assessment_movement', label: 'Entradas e saídas', to: '/assessoria/movimento', icon: 'indicators' },
       { id: 'analytics', label: 'Analytics', to: '/analytics', icon: 'analytics' },
@@ -94,7 +94,7 @@ export function resolveNavigation(pathname) {
   if (legacy) return { areaId: legacy[1], itemId: legacy[2] };
 
   const candidates = NAV_AREAS.flatMap(area => {
-    if (area.to) return matchesRoute(path, area.to) ? [{ areaId: area.id, itemId: area.id, length: area.to.length }] : [];
+    if (area.to) return matchesRoute(path, area.to, area.exact) ? [{ areaId: area.id, itemId: area.id, length: area.to.length }] : [];
     return area.items
       .filter(item => matchesRoute(path, item.to, item.exact))
       .map(item => ({ areaId: area.id, itemId: item.id, length: item.to.length }));
