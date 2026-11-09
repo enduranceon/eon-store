@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.110.7";
 import { jsonResponse } from "../_shared/http.ts";
 
-// Área de Eventos: escrita operacional de inscrições/cancelamentos. Pagamento
+// Área de Eventos: escrita operacional de inscrições/cancelamentos, responsáveis do
+// evento (coaches) e situação do grupo do WhatsApp. Pagamento
 // e cobrança de inscrição usam o fluxo financeiro canônico em /orders/event/...
 // para alimentar Central de Cobranças, Asaas, asaas_payments e fluxo de caixa.
 // Leitura de events/event_registration_types/event_registrations é direta pelo
@@ -9,6 +10,8 @@ import { jsonResponse } from "../_shared/http.ts";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const WHATSAPP_GROUP_STATUSES = ["pending", "added", "declined"];
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -143,6 +146,71 @@ export async function handleEventsRequest(
       error: "Use /orders/event/{id}/manual-payment para registrar pagamento de inscrição",
       code: "route_deprecated",
     }, 410);
+  }
+
+  // Responsáveis do evento: a lista inteira é trocada de uma vez (lista vazia tira todos).
+  const coachesMatch = path.match(/^\/events\/([^/]+)\/coaches$/);
+  if (coachesMatch && req.method === "PUT") {
+    const [, eventId] = coachesMatch;
+    if (!UUID_PATTERN.test(eventId)) {
+      return jsonResponse({
+        error: "Identificador de evento inválido",
+        code: "invalid_event_id",
+      }, 400);
+    }
+
+    const body = await parseObject(req);
+    if (
+      !body || !Array.isArray(body.coach_ids) || body.coach_ids.length > 50 ||
+      body.coach_ids.some((id) => typeof id !== "string" || !UUID_PATTERN.test(id))
+    ) {
+      return jsonResponse({
+        error: "Lista de coaches inválida",
+        code: "invalid_request",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc("set_event_coaches", {
+      p_event_id: eventId,
+      p_coach_ids: body.coach_ids,
+      p_actor_id: actorId,
+    });
+    if (error) return databaseError(error, "set event coaches");
+    return jsonResponse({ data });
+  }
+
+  // Situação da pessoa no grupo do WhatsApp do evento (evento com grupo, inscrição paga).
+  const groupMatch = path.match(/^\/events\/registrations\/([^/]+)\/whatsapp-group$/);
+  if (groupMatch && req.method === "PATCH") {
+    const [, registrationId] = groupMatch;
+    if (!UUID_PATTERN.test(registrationId)) {
+      return jsonResponse({
+        error: "Identificador de inscrição inválido",
+        code: "invalid_registration_id",
+      }, 400);
+    }
+
+    const body = await parseObject(req);
+    if (
+      !body || typeof body.status !== "string" ||
+      !WHATSAPP_GROUP_STATUSES.includes(body.status)
+    ) {
+      return jsonResponse({
+        error: "Situação do grupo inválida",
+        code: "invalid_request",
+      }, 400);
+    }
+
+    const { data, error } = await supabase.rpc(
+      "set_event_registration_whatsapp_group",
+      {
+        p_registration_id: registrationId,
+        p_status: body.status,
+        p_actor_id: actorId,
+      },
+    );
+    if (error) return databaseError(error, "set whatsapp group");
+    return jsonResponse({ data });
   }
 
   const cancelMatch = path.match(/^\/events\/registrations\/([^/]+)\/cancel$/);

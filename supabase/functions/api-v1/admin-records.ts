@@ -641,6 +641,7 @@ const ADMIN_RESOURCES: Record<string, ResourceSpec> = {
       public_notes: s(10_000, { nullable: true, preserveWhitespace: true }),
       internal_notes: s(10_000, { nullable: true, preserveWhitespace: true }),
       revenue_center_id: u({ nullable: true }),
+      whatsapp_group_enabled: b(),
       status: s(20, { required: true, values: ["draft", "open", "closed", "cancelled"] }),
     },
     defaultSort: "-event_date",

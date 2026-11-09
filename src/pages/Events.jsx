@@ -8,8 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { listFinancialMovements } from '@/api/client';
-import { EventRecord, EventRegistration, RevenueCenter } from '@/api/entities';
+import { listFinancialMovements, setEventCoaches } from '@/api/client';
+import { AssessmentCoach, EventRecord, EventRegistration, RevenueCenter } from '@/api/entities';
+import EventOperationFields from '@/components/events/EventOperationFields';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { summarizeFinancialMovements } from '@/lib/financial-dashboard';
 import { usePageData } from '@/hooks/usePageData';
@@ -35,6 +36,8 @@ const EMPTY_EVENT_FORM = {
   description: '',
   public_notes: '',
   internal_notes: '',
+  whatsapp_group_enabled: false,
+  coach_ids: [],
 };
 
 function slugify(name) {
@@ -69,6 +72,7 @@ function eventPayload(form, centers) {
     description: form.description.trim() || null,
     public_notes: form.public_notes.trim() || null,
     internal_notes: form.internal_notes.trim() || null,
+    whatsapp_group_enabled: Boolean(form.whatsapp_group_enabled),
     status: 'draft',
     revenue_center_id: eventsCenter?.id || null,
   };
@@ -90,10 +94,11 @@ function dateSummary(event) {
 }
 
 async function loadEvents() {
-  const [events, registrations, centers, financialMovements] = await Promise.all([
+  const [events, registrations, centers, coaches, financialMovements] = await Promise.all([
     EventRecord.list('-event_date'),
     EventRegistration.list('-created_at'),
     RevenueCenter.list().catch(() => []),
+    AssessmentCoach.list('name').catch(() => []),
     listFinancialMovements({ orderType: 'event' }).catch(error => {
       console.error('[Events] Erro ao carregar métricas financeiras:', error);
       return [];
@@ -123,6 +128,7 @@ async function loadEvents() {
     countByEvent,
     paidByEvent,
     centers,
+    coaches,
     financeByEvent,
     financeSummary: summarizeFinancialMovements(financialMovements),
   };
@@ -131,13 +137,13 @@ async function loadEvents() {
 export default function Events() {
   const navigate = useNavigate();
   const {
-    data: { events, countByEvent, paidByEvent, centers, financeByEvent, financeSummary },
+    data: { events, countByEvent, paidByEvent, centers, coaches, financeByEvent, financeSummary },
     refresh,
   } = usePageData({
     key: 'events:list',
     loader: loadEvents,
-    initialData: { events: [], countByEvent: {}, paidByEvent: {}, centers: [], financeByEvent: {}, financeSummary: summarizeFinancialMovements([]) },
-    tags: ['events', 'event_registrations', 'event_expenses', 'financial_movements'],
+    initialData: { events: [], countByEvent: {}, paidByEvent: {}, centers: [], coaches: [], financeByEvent: {}, financeSummary: summarizeFinancialMovements([]) },
+    tags: ['events', 'event_registrations', 'event_expenses', 'financial_movements', 'assessment_coaches'],
     onError: () => toast.error('Erro ao carregar eventos'),
   });
 
@@ -154,9 +160,19 @@ export default function Events() {
     setSaving(true);
     try {
       const created = await EventRecord.create(eventPayload(form, centers));
+      let coachesSaved = true;
+      if (form.coach_ids.length > 0) {
+        try {
+          await setEventCoaches(created.id, form.coach_ids);
+        } catch (coachError) {
+          coachesSaved = false;
+          console.error('[Events] Erro ao salvar coaches responsáveis:', coachError);
+        }
+      }
       setCreateModal(false);
       setForm(EMPTY_EVENT_FORM);
-      toast.success('Evento criado como rascunho');
+      if (coachesSaved) toast.success('Evento criado como rascunho');
+      else toast.warning('Evento criado, mas não foi possível salvar os coaches responsáveis. Defina em Editar.');
       refresh({ force: true });
       navigate(`/eventos/${created.id}`);
     } catch (e) {
@@ -318,6 +334,7 @@ export default function Events() {
               <Textarea className="mt-1" rows={2} value={form.internal_notes}
                 onChange={e => setForm(f => ({ ...f, internal_notes: e.target.value }))} />
             </div>
+            <EventOperationFields coaches={coaches} form={form} setForm={setForm} />
             <p className="text-xs text-muted-foreground">
               O evento nasce como rascunho. Depois de criar, você adiciona os tipos de inscrição e o formulário de cada um.
             </p>

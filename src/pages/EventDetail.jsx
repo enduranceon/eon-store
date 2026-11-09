@@ -15,18 +15,24 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  AssessmentCoach, EventExpense, EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
+  AssessmentCoach, EventCoach, EventExpense, EventRecord, EventRegistration, EventRegistrationType, PreSaleCustomer,
 } from '@/api/entities';
 import {
   cancelEventRegistration, confirmEventRegistrationCustomer,
   createEventRegistration, createOrderCharge, linkEventRegistrationCustomer,
   listFinancialMovements, removeEventExternalCharge, saveEventExternalCharge,
+  setEventCoaches, setEventRegistrationWhatsappGroup,
 } from '@/api/client';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
 import ExternalChargeDialog from '@/components/billing/ExternalChargeDialog';
 import ExternalChargeSummary from '@/components/billing/ExternalChargeSummary';
+import EventOperationFields from '@/components/events/EventOperationFields';
 import { studentProfilePath } from '@/lib/customer-profile';
+import {
+  WHATSAPP_GROUP_OPTIONS, canChangeWhatsappGroup, groupStatusOf, isMissingFromGroup,
+  responsibleCoachIds, sameCoachSet, summarizeWhatsappGroup, summaryText,
+} from '@/lib/event-whatsapp-group';
 import { normalizeExternalChargeMethod } from '@/lib/external-charge';
 import { TASK_BUCKET, TASK_KIND } from '@/lib/communication-tasks';
 import { defaultPaymentDueDate } from '@/lib/payment-methods';
@@ -76,6 +82,8 @@ const EMPTY_EVENT_FORM = {
   description: '',
   public_notes: '',
   internal_notes: '',
+  whatsapp_group_enabled: false,
+  coach_ids: [],
 };
 const EMPTY_FIELD = { key: '', label: '', kind: 'text', required: false, options: [] };
 const EMPTY_TYPE_FORM = { name: '', price: '', max_quantity: '', active: true, fields: [] };
@@ -147,6 +155,7 @@ function eventToForm(event) {
     description: event.description || '',
     public_notes: event.public_notes || '',
     internal_notes: event.internal_notes || '',
+    whatsapp_group_enabled: Boolean(event.whatsapp_group_enabled),
   };
 }
 
@@ -165,6 +174,7 @@ function eventPayload(form) {
     description: form.description.trim() || null,
     public_notes: form.public_notes.trim() || null,
     internal_notes: form.internal_notes.trim() || null,
+    whatsapp_group_enabled: Boolean(form.whatsapp_group_enabled),
   };
 }
 
@@ -178,19 +188,20 @@ function fieldKeyFromLabel(label) {
 }
 
 async function loadEventDetail(eventId) {
-  const [event, types, registrations, customers, expenses, coaches, financialMovements] = await Promise.all([
+  const [event, types, registrations, customers, expenses, coaches, eventCoaches, financialMovements] = await Promise.all([
     EventRecord.get(eventId),
     EventRegistrationType.filter({ event_id: eventId }),
     EventRegistration.filter({ event_id: eventId }),
     PreSaleCustomer.list('full_name'),
     EventExpense.filter({ event_id: eventId }, '-expense_date'),
     AssessmentCoach.list('name').catch(() => []),
+    EventCoach.filter({ event_id: eventId }).catch(() => []),
     listFinancialMovements({ orderType: 'event' }).catch(error => {
       console.error('[EventDetail] Erro ao carregar métricas financeiras:', error);
       return [];
     }),
   ]);
-  return { event, types, registrations, customers, expenses, coaches, financialMovements };
+  return { event, types, registrations, customers, expenses, coaches, eventCoaches, financialMovements };
 }
 
 // Desenha um formulário a partir da definição de campos do tipo de inscrição.
@@ -297,13 +308,13 @@ export default function EventDetail() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const {
-    data: { event, types, registrations, customers, expenses, coaches, financialMovements },
+    data: { event, types, registrations, customers, expenses, coaches, eventCoaches, financialMovements },
     loading, refresh,
   } = usePageData({
     key: `events:detail:${id}`,
     loader: () => loadEventDetail(id),
-    initialData: { event: null, types: [], registrations: [], customers: [], expenses: [], coaches: [], financialMovements: [] },
-    tags: ['events', 'event_registration_types', 'event_registrations', 'presale_customers', 'event_expenses', 'assessment_coaches', 'financial_movements'],
+    initialData: { event: null, types: [], registrations: [], customers: [], expenses: [], coaches: [], eventCoaches: [], financialMovements: [] },
+    tags: ['events', 'event_registration_types', 'event_registrations', 'event_coaches', 'presale_customers', 'event_expenses', 'assessment_coaches', 'financial_movements'],
     forceOnMount: true,
     onError: () => toast.error('Erro ao carregar o evento'),
   });
@@ -325,6 +336,24 @@ export default function EventDetail() {
     [types],
   );
   const activeRegs = registrations.filter(r => r.payment_status !== 'cancelled');
+  const groupSummary = useMemo(() => summarizeWhatsappGroup(registrations), [registrations]);
+  const [onlyMissingGroup, setOnlyMissingGroup] = useState(false);
+  const [groupSavingId, setGroupSavingId] = useState(null);
+  const visibleRegistrations = onlyMissingGroup && event?.whatsapp_group_enabled
+    ? registrations.filter(isMissingFromGroup)
+    : registrations;
+
+  const changeWhatsappGroup = async (registration, status) => {
+    setGroupSavingId(registration.id);
+    try {
+      await setEventRegistrationWhatsappGroup(registration.id, status);
+      await refresh({ force: true });
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível atualizar o grupo do WhatsApp');
+    } finally {
+      setGroupSavingId(null);
+    }
+  };
   const usedByType = useMemo(() => {
     const counts = {};
     for (const reg of registrations) {
@@ -338,8 +367,11 @@ export default function EventDetail() {
   const [eventForm, setEventForm] = useState(EMPTY_EVENT_FORM);
   const [eventSaving, setEventSaving] = useState(false);
 
+  const assignedCoachIds = useMemo(() => responsibleCoachIds(eventCoaches, id), [eventCoaches, id]);
+  const responsibleCoaches = assignedCoachIds.map(coachId => coachesById[coachId]).filter(Boolean);
+
   const openEditEvent = () => {
-    setEventForm(eventToForm(event));
+    setEventForm({ ...eventToForm(event), coach_ids: assignedCoachIds });
     setEventModal(true);
   };
 
@@ -353,6 +385,9 @@ export default function EventDetail() {
     setEventSaving(true);
     try {
       await EventRecord.update(id, eventPayload(eventForm));
+      if (!sameCoachSet(eventForm.coach_ids, assignedCoachIds)) {
+        await setEventCoaches(id, eventForm.coach_ids);
+      }
       setEventModal(false);
       toast.success('Evento atualizado');
       refresh({ force: true });
@@ -1016,6 +1051,20 @@ export default function EventDetail() {
               {event.address && <p className="text-xs text-muted-foreground">{event.address}</p>}
             </div>
             <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Coaches responsáveis</p>
+              <p className="text-sm inline-flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-muted-foreground" />
+                {responsibleCoaches.length ? responsibleCoaches.map(coach => coach.name).join(', ') : 'Nenhum definido'}
+              </p>
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Grupo no WhatsApp</p>
+              <p className="text-sm inline-flex items-center gap-1.5">
+                <MessageCircle className="w-4 h-4 text-muted-foreground" />
+                {event.whatsapp_group_enabled ? 'Sim, este evento tem grupo' : 'Não'}
+              </p>
+            </div>
+            <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground">Mapa</p>
               {mapUrl ? (
                 <a className="text-sm text-blue-700 hover:underline inline-flex items-center gap-1.5"
@@ -1267,11 +1316,23 @@ export default function EventDetail() {
               <Plus className="w-3.5 h-3.5 mr-1" /> Nova inscrição
             </Button>
           </div>
+          {event.whatsapp_group_enabled && registrations.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+              <p className="text-sm text-green-900 inline-flex items-center gap-1.5">
+                <MessageCircle className="w-4 h-4 shrink-0" /> Grupo do WhatsApp: {summaryText(groupSummary)}
+              </p>
+              <Button size="sm" variant={onlyMissingGroup ? 'default' : 'outline'} onClick={() => setOnlyMissingGroup(value => !value)}>
+                {onlyMissingGroup ? 'Mostrar todos' : 'Mostrar só quem falta'}
+              </Button>
+            </div>
+          )}
           {registrations.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhuma inscrição ainda.</p>
+          ) : visibleRegistrations.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Ninguém falta adicionar ao grupo.</p>
           ) : (
             <div className="divide-y">
-              {registrations.map(reg => {
+              {visibleRegistrations.map(reg => {
                 const customer = customersById[reg.customer_id];
                 const coach = coachesById[reg.coach_id] || coachesById[customer?.coach_id];
                 const type = typesById[reg.registration_type_id];
@@ -1333,6 +1394,29 @@ export default function EventDetail() {
                       )}
                       {reg.cancellation_reason && (
                         <p className="text-xs text-red-600 mt-0.5">Motivo: {reg.cancellation_reason}</p>
+                      )}
+                      {event.whatsapp_group_enabled && reg.payment_status !== 'cancelled' && reg.payment_status !== 'refunded' && (
+                        canChangeWhatsappGroup(event, reg) ? (
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <MessageCircle className="w-3.5 h-3.5 text-green-700" />
+                            <label className="text-xs text-muted-foreground" htmlFor={`group-${reg.id}`}>Grupo do WhatsApp</label>
+                            <select
+                              id={`group-${reg.id}`}
+                              value={groupStatusOf(reg)}
+                              disabled={groupSavingId === reg.id}
+                              onChange={e => changeWhatsappGroup(reg, e.target.value)}
+                              className="h-8 rounded-md border bg-white px-2 text-xs"
+                            >
+                              {WHATSAPP_GROUP_OPTIONS.map(option => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <p className="mt-1 text-xs text-muted-foreground inline-flex items-center gap-1.5">
+                            <MessageCircle className="w-3.5 h-3.5" /> Grupo do WhatsApp: depois que pagar
+                          </p>
+                        )
                       )}
                     </div>
                     <div className="flex items-center gap-1">
@@ -1456,6 +1540,7 @@ export default function EventDetail() {
               <Textarea className="mt-1" rows={3} value={eventForm.internal_notes}
                 onChange={e => setEventForm(f => ({ ...f, internal_notes: e.target.value }))} />
             </div>
+            <EventOperationFields coaches={coaches} assignedIds={assignedCoachIds} form={eventForm} setForm={setEventForm} />
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" onClick={() => setEventModal(false)} disabled={eventSaving}>Cancelar</Button>
               <Button className="flex-1" onClick={saveEvent} disabled={eventSaving}>
