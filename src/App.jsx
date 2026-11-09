@@ -7,7 +7,7 @@ import RouteFallback from '@/components/RouteFallback';
 import { legacyPersonRedirectPath } from '@/lib/customer-profile';
 
 const AdminLayout = lazy(() => import('@/components/layout/AdminLayout'));
-const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const Overview = lazy(() => import('@/pages/Overview'));
 const Campaigns = lazy(() => import('@/pages/Campaigns'));
 const CampaignDetail = lazy(() => import('@/pages/CampaignDetail'));
 const ProductLibrary = lazy(() => import('@/pages/ProductLibrary'));
@@ -37,7 +37,6 @@ const PublicStoreConfirmation = lazy(() => import('@/pages/PublicStoreConfirmati
 const Financial = lazy(() => import('@/pages/Financial'));
 const Returns = lazy(() => import('@/pages/Returns'));
 const Refunds = lazy(() => import('@/pages/Refunds'));
-const Today = lazy(() => import('@/pages/Today'));
 const CommunicationCenter = lazy(() => import('@/pages/CommunicationCenter'));
 const CommunicationSettings = lazy(() => import('@/pages/CommunicationSettings'));
 const Coupons = lazy(() => import('@/pages/Coupons'));
@@ -127,8 +126,9 @@ export default function App() {
           {/* Admin */}
           <Route path="/login" element={<Login />} />
           <Route path="/migrar" element={<AdminLayout><Migrate /></AdminLayout>} />
-          <Route path="/admin" element={<AdminLayout><Dashboard /></AdminLayout>} />
-          <Route path="/hoje" element={<AdminLayout><Today /></AdminLayout>} />
+          <Route path="/admin" element={<AdminLayout><Overview /></AdminLayout>} />
+          {/* /hoje é alias da Visão geral (links e favoritos antigos). */}
+          <Route path="/hoje" element={<Navigate to="/admin" replace />} />
           <Route path="/comunicacao" element={<AdminLayout><CommunicationCenter /></AdminLayout>} />
           <Route path="/comunicacao/configuracoes" element={<AdminLayout><CommunicationSettings /></AdminLayout>} />
           <Route path="/campanhas" element={<AdminLayout><Campaigns /></AdminLayout>} />
@@ -207,7 +207,7 @@ export default function App() {
           <Route path="/estoque/pedidos/novo" element={<AdminLayout><StockOrderNewAdmin /></AdminLayout>} />
           <Route path="/estoque/pedidos/:id" element={<AdminLayout><StockOrderDetail /></AdminLayout>} />
           <Route path="/estoque/:id" element={<AdminLayout><ProductStockManager /></AdminLayout>} />
-          <Route path="*" element={<Navigate to="/hoje" replace />} />
+          <Route path="*" element={<Navigate to="/admin" replace />} />
             </Routes>
           </Suspense>
         </RouteErrorBoundary>

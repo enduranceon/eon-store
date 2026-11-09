@@ -1,6 +1,6 @@
 import { useState, Suspense } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { Inbox, MessageCircle, RefreshCcw, Users } from 'lucide-react';
+import { LayoutDashboard, MessageCircle, RefreshCcw, Users } from 'lucide-react';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import RouteFallback from '@/components/RouteFallback';
 import { useAuth } from '@/hooks/useAuth';
@@ -9,7 +9,7 @@ import TopBar from '@/components/layout/TopBar';
 import { resolveNavigation } from '@/lib/navigation';
 
 const MOBILE_SHORTCUTS = [
-  { label: 'Hoje', to: '/hoje', icon: Inbox, selected: state => state.areaId === 'today' },
+  { label: 'Visão geral', to: '/admin', icon: LayoutDashboard, selected: state => state.areaId === 'overview' },
   { label: 'Pessoas', to: '/pessoas', icon: Users, selected: state => state.areaId === 'people' },
   { label: 'Contatos', to: '/comunicacao', icon: MessageCircle, selected: state => state.areaId === 'communication' },
   { label: 'Renovações', to: '/assessoria/renovacoes', icon: RefreshCcw, selected: state => state.itemId === 'renewals' },

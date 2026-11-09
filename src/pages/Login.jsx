@@ -32,7 +32,7 @@ export default function Login() {
     }
 
     setLoading(false);
-    navigate('/hoje');
+    navigate('/admin', { replace: true });
   };
 
   return (

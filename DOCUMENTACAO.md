@@ -72,8 +72,8 @@ O sistema **NÃO automatiza o envio de mensagens** ao cliente. Ele **prepara a m
 
 Sidebar organizada em 4 seções:
 
-#### 📥 Hoje
-**`/hoje`** — Caixa de entrada do dia. Mostra apenas itens que precisam de ação:
+#### 📥 Visão geral
+**`/admin`** — Página de entrada (desde 2026-11-09; ver `docs/visao-geral.md`). `/hoje` apenas redireciona para ela. A fila de ações do dia (lista abaixo) era a antiga tela Hoje e foi substituída pela faixa "Atenção" e pelas telas de destino:
 - Cobranças em atraso
 - Pedidos novos para cobrar
 - Mensagens aguardando resposta
@@ -83,7 +83,6 @@ Sidebar organizada em 4 seções:
 - Devoluções recebidas para repor estoque
 
 #### Pré-venda
-- **Dashboard** (`/admin`) — Métricas gerais
 - **Campanhas** (`/campanhas`) — Criar/gerenciar campanhas
 - **Pedidos** (`/pedidos`) — Lista de pedidos pré-venda
 - **Clientes** (`/clientes`) — Base de clientes
