@@ -11,7 +11,7 @@ import { loadAssessmentMetricContracts, loadAssessmentMetricPlans } from '@/lib/
 import { financialMovementDate } from '@/lib/financial-dashboard';
 import { loadOpenSalesOrders, selectActiveOpenOrders } from '@/lib/open-sales-source';
 import { buildAttentionGroups } from '@/lib/overview-attention';
-import { buildYearCash } from '@/lib/overview-cash';
+import { buildYearReceipts } from '@/lib/overview-receipts';
 import { summarizeOpenSales } from '@/lib/overview-overdue';
 import { buildOverviewStudents } from '@/lib/overview-students';
 
@@ -71,16 +71,19 @@ async function loadOpenSales(today, now) {
   return summarizeOpenSales(selectActiveOpenOrders(orders, receiptOrderIds), today);
 }
 
-export async function loadCashYear(year, now = new Date()) {
+// Só recebimentos: o sistema ainda não controla saídas, então nenhuma consulta
+// traz despesa, repasse ou devolução para esta visão.
+export async function loadReceiptsYear(year, now = new Date()) {
   const [movements, earliest] = await Promise.all([
     listFinancialMovements({
+      movementKind: 'receipt',
       isActual: true,
       scheduledFrom: `${year}-01-01`,
       scheduledTo: `${year}-12-31`,
       sort: '-scheduled_on',
       limit: MOVEMENTS_LIMIT,
     }),
-    listFinancialMovements({ isActual: true, sort: 'scheduled_on', limit: 1 }),
+    listFinancialMovements({ movementKind: 'receipt', isActual: true, sort: 'scheduled_on', limit: 1 }),
   ]);
   const coverageFrom = earliest[0] ? financialMovementDate(earliest[0]) || null : null;
   const truncated = movements.length >= MOVEMENTS_LIMIT;
@@ -88,7 +91,7 @@ export async function loadCashYear(year, now = new Date()) {
     year,
     movements,
     coverageFrom,
-    cash: buildYearCash(movements, { year, now, coverageFrom, truncated }),
+    receipts: buildYearReceipts(movements, { year, now, coverageFrom, truncated }),
   };
 }
 
@@ -117,10 +120,10 @@ export async function loadOverviewBlocks() {
   const now = new Date();
   const today = localDate(now);
   const year = now.getFullYear();
-  const [students, openSales, cash, sources] = await Promise.all([
+  const [students, openSales, receipts, sources] = await Promise.all([
     settle(loadStudents(today)),
     settle(loadOpenSales(today, now)),
-    settle(loadCashYear(year, now)),
+    settle(loadReceiptsYear(year, now)),
     loadAttentionSources(),
   ]);
 
@@ -137,7 +140,7 @@ export async function loadOverviewBlocks() {
     year,
     students,
     openSales,
-    cash,
+    receipts,
     attention: {
       groups: buildAttentionGroups({
         overdue: openSales.status === 'ok' ? openSales.data.overdue : undefined,

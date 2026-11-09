@@ -4,27 +4,19 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { CASH_MONTH_STATE, selectMonthMovements } from '@/lib/overview-cash';
+import { RECEIPT_MONTH_STATE, selectMonthReceipts } from '@/lib/overview-receipts';
 import { financialMovementDate } from '@/lib/financial-dashboard';
-import { loadCashYear } from './overview-loader';
+import { loadReceiptsYear } from './overview-loader';
 import OverviewDetailDialog from './OverviewDetailDialog';
 
 const MONTH_SHORT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const MONTH_LONG = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
-const KIND_LABEL = {
-  receipt: 'Recebimento',
-  refund: 'Estorno',
-  expense: 'Despesa',
-  payout: 'Repasse',
-  payout_adjustment: 'Ajuste de repasse',
-};
-
 const STATE_LABEL = {
-  [CASH_MONTH_STATE.REALIZED]: 'Realizado',
-  [CASH_MONTH_STATE.PARTIAL]: 'Parcial',
-  [CASH_MONTH_STATE.FUTURE]: 'Futuro',
-  [CASH_MONTH_STATE.INSUFFICIENT]: 'Sem histórico',
+  [RECEIPT_MONTH_STATE.REALIZED]: 'Fechado',
+  [RECEIPT_MONTH_STATE.PARTIAL]: 'Parcial',
+  [RECEIPT_MONTH_STATE.FUTURE]: 'Futuro',
+  [RECEIPT_MONTH_STATE.INSUFFICIENT]: 'Sem histórico',
 };
 
 function compact(value) {
@@ -48,23 +40,15 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
-function Line({ label, value, sign, strong }) {
-  return (
-    <div className={`flex items-center justify-between gap-4 py-1 ${strong ? 'border-t font-semibold' : ''}`}>
-      <span className="text-slate-700">{sign ? `${sign} ` : ''}{label}</span>
-      <span className="tabular-nums">{formatCurrency(value)}</span>
-    </div>
-  );
-}
-
-// Caixa do ano: recebimentos e saídas realizados mês a mês. Escolher ano ou mês aqui
-// não muda os cartões do topo (eles são sempre de hoje).
-export default function CashPanel({ block, today, onRetry }) {
+// Recebimentos do ano: quanto entrou por mês (planos, eventos, loja), líquido de taxa.
+// Não é caixa nem resultado: o sistema ainda não controla saídas. Escolher ano ou
+// mês aqui não muda os cartões do topo (eles são sempre de hoje).
+export default function ReceiptsPanel({ block, today, onRetry }) {
   const currentYear = Number(today.slice(0, 4));
   const [year, setYear] = useState(currentYear);
   const [other, setOther] = useState({ year: null, status: 'idle' }); // ano diferente do corrente
   const [month, setMonth] = useState(today.slice(0, 7));
-  const [showMovements, setShowMovements] = useState(false);
+  const [showReceipts, setShowReceipts] = useState(false);
 
   const coverageFrom = block?.status === 'ok' ? block.data.coverageFrom : null;
   const firstYear = coverageFrom ? Math.min(Number(coverageFrom.slice(0, 4)), currentYear) : currentYear;
@@ -76,10 +60,10 @@ export default function CashPanel({ block, today, onRetry }) {
   const loadOther = useCallback(async targetYear => {
     setOther({ year: targetYear, status: 'loading' });
     try {
-      const data = await loadCashYear(targetYear, new Date());
+      const data = await loadReceiptsYear(targetYear, new Date());
       setOther({ year: targetYear, status: 'ok', data });
     } catch (error) {
-      console.error('[Visão geral] Erro ao carregar caixa do ano:', error);
+      console.error('[Visão geral] Erro ao carregar recebimentos do ano:', error);
       setOther({ year: targetYear, status: 'error' });
     }
   }, []);
@@ -100,48 +84,49 @@ export default function CashPanel({ block, today, onRetry }) {
   else view = { status: 'loading' };
 
   const retry = year === currentYear ? onRetry : () => loadOther(year);
-  const cash = view.status === 'ok' ? view.data.cash : null;
-  const selected = cash?.months.find(item => item.ym === month) || cash?.months[0];
-  const hasValue = selected && (selected.state === CASH_MONTH_STATE.REALIZED || selected.state === CASH_MONTH_STATE.PARTIAL);
+  const receipts = view.status === 'ok' ? view.data.receipts : null;
+  const selected = receipts?.months.find(item => item.ym === month) || receipts?.months[0];
+  const hasValue = selected && (selected.state === RECEIPT_MONTH_STATE.REALIZED || selected.state === RECEIPT_MONTH_STATE.PARTIAL);
+  const hasFuture = receipts?.months.some(item => item.state === RECEIPT_MONTH_STATE.FUTURE);
+  const hasInsufficient = receipts?.months.some(item => item.state === RECEIPT_MONTH_STATE.INSUFFICIENT);
 
-  const chartData = cash?.months.map(item => ({
+  const chartData = receipts?.months.map(item => ({
     ym: item.ym,
     label: MONTH_SHORT[item.monthIndex],
     received: item.received,
-    outflows: item.outflows,
   }));
 
-  const monthMovements = view.status === 'ok' && selected ? selectMonthMovements(view.data.movements, selected.ym) : [];
+  const monthReceipts = view.status === 'ok' && selected ? selectMonthReceipts(view.data.movements, selected.ym) : [];
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <CardTitle className="text-base">Caixa do ano</CardTitle>
+            <CardTitle className="text-base">Recebimentos do ano</CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Todas as áreas · só dinheiro realizado (recebimentos líquidos e saídas), pela data do movimento.
+              Todas as áreas · dinheiro que entrou (planos, eventos, loja), líquido de taxa, pela data do recebimento.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="text-xs text-slate-600" htmlFor="overview-cash-year">Ano</label>
+            <label className="text-xs text-slate-600" htmlFor="overview-receipts-year">Ano</label>
             <select
-              id="overview-cash-year"
+              id="overview-receipts-year"
               value={year}
               onChange={event => changeYear(Number(event.target.value))}
               className="h-8 rounded-md border bg-white px-2 text-sm"
             >
               {years.map(item => <option key={item} value={item}>{item}</option>)}
             </select>
-            <label className="text-xs text-slate-600" htmlFor="overview-cash-month">Mês</label>
+            <label className="text-xs text-slate-600" htmlFor="overview-receipts-month">Mês</label>
             <select
-              id="overview-cash-month"
+              id="overview-receipts-month"
               value={selected?.ym || month}
               onChange={event => setMonth(event.target.value)}
-              disabled={!cash}
+              disabled={!receipts}
               className="h-8 rounded-md border bg-white px-2 text-sm"
             >
-              {(cash?.months || []).map(item => (
+              {(receipts?.months || []).map(item => (
                 <option key={item.ym} value={item.ym}>{MONTH_LONG[item.monthIndex]} — {STATE_LABEL[item.state]}</option>
               ))}
             </select>
@@ -149,25 +134,25 @@ export default function CashPanel({ block, today, onRetry }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {view.status === 'loading' && <div className="h-64 animate-pulse rounded bg-slate-100" role="status" aria-label="Caixa: carregando" />}
+        {view.status === 'loading' && <div className="h-64 animate-pulse rounded bg-slate-100" role="status" aria-label="Recebimentos: carregando" />}
         {(view.status === 'error') && (
           <div role="alert" className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-4">
-            <p className="text-sm font-semibold text-amber-900">Não foi possível carregar o caixa de {year}.</p>
-            <p className="text-xs text-amber-800">Nenhum valor é mostrado até a consulta funcionar; isto não significa caixa zerado.</p>
+            <p className="text-sm font-semibold text-amber-900">Não foi possível carregar os recebimentos de {year}.</p>
+            <p className="text-xs text-amber-800">Nenhum valor é mostrado até a consulta funcionar; isto não significa que nada foi recebido.</p>
             <Button variant="outline" size="sm" onClick={retry}>Tentar novamente</Button>
           </div>
         )}
-        {cash && (
+        {receipts && (
           <>
-            {cash.truncated && (
+            {receipts.truncated && (
               <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                A consulta atingiu o limite de movimentos e os valores deste ano podem estar incompletos.
+                A consulta atingiu o limite de recebimentos e os valores deste ano podem estar incompletos.
               </p>
             )}
             <div
               className="h-64"
               role="img"
-              aria-label={`Recebido líquido e saídas por mês em ${cash.year}. Acumulado realizado: ${formatCurrency(cash.accumulated)}.`}
+              aria-label={`Recebido líquido por mês em ${receipts.year}. Total recebido no ano até agora: ${formatCurrency(receipts.accumulated)}.`}
             >
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -178,72 +163,65 @@ export default function CashPanel({ block, today, onRetry }) {
                   <Bar dataKey="received" name="Recebido líquido" fill="#059669" radius={[4, 4, 0, 0]} onClick={entry => setMonth(entry.ym)} cursor="pointer">
                     {chartData.map(item => <Cell key={item.ym} fillOpacity={item.ym === selected?.ym ? 1 : 0.55} />)}
                   </Bar>
-                  <Bar dataKey="outflows" name="Saídas" fill="#f97316" radius={[4, 4, 0, 0]} onClick={entry => setMonth(entry.ym)} cursor="pointer">
-                    {chartData.map(item => <Cell key={item.ym} fillOpacity={item.ym === selected?.ym ? 1 : 0.55} />)}
-                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
             <p className="text-[11px] text-slate-500">
-              Meses futuros e anteriores ao primeiro movimento registrado{cash.coverageFrom ? ` (${formatDate(cash.coverageFrom)})` : ''} ficam sem barra: ausência de barra não é zero.
-              Acumulado realizado em {cash.year}: <b>{formatCurrency(cash.accumulated)}</b>.
+              {(hasFuture || hasInsufficient) && (
+                <>
+                  {hasFuture && hasInsufficient ? 'Mês futuro ou anterior ao primeiro recebimento registrado' : hasFuture ? 'Mês futuro' : 'Mês anterior ao primeiro recebimento registrado'}
+                  {hasInsufficient && receipts.coverageFrom ? ` (${formatDate(receipts.coverageFrom)})` : ''} fica sem barra: ausência de barra não é zero.{' '}
+                </>
+              )}
+              Total recebido em {receipts.year}{receipts.year === Number(receipts.today.slice(0, 4)) ? ' até agora' : ''}: <b>{formatCurrency(receipts.accumulated)}</b>.
             </p>
 
             {selected && (
-              <section aria-label={`Detalhe de ${MONTH_LONG[selected.monthIndex]} de ${cash.year}`} className="rounded-lg border bg-slate-50 p-3 text-sm">
+              <section aria-label={`Detalhe de ${MONTH_LONG[selected.monthIndex]} de ${receipts.year}`} className="rounded-lg border bg-slate-50 p-3 text-sm">
                 <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-semibold text-gray-900">{MONTH_LONG[selected.monthIndex]} de {cash.year} · {STATE_LABEL[selected.state]}</h3>
+                  <h3 className="font-semibold text-gray-900">{MONTH_LONG[selected.monthIndex]} de {receipts.year} · {STATE_LABEL[selected.state]}</h3>
                   {hasValue && (
-                    <Button variant="outline" size="sm" onClick={() => setShowMovements(true)}>Ver movimentações ({monthMovements.length})</Button>
+                    <Button variant="outline" size="sm" onClick={() => setShowReceipts(true)}>Ver recebimentos ({monthReceipts.length})</Button>
                   )}
                 </div>
                 {hasValue ? (
                   <>
-                    <Line label="Recebido líquido" value={selected.received} />
-                    {selected.positiveAdjustments > 0 && <Line label="Ajustes positivos" value={selected.positiveAdjustments} sign="+" />}
-                    <Line label="Saídas realizadas" value={selected.outflows} sign="−" />
-                    <Line label="Resultado do mês" value={selected.result} sign="=" strong />
-                    {!selected.reconciles && (
-                      <p role="alert" className="mt-1 text-xs text-red-700">A composição não fecha com o resultado. Não use este mês como conferência.</p>
+                    <div className="flex items-center justify-between gap-4 py-1">
+                      <span className="text-slate-700">Recebido líquido · {selected.receiptCount} {selected.receiptCount === 1 ? 'recebimento' : 'recebimentos'}</span>
+                      <span className="font-semibold tabular-nums">{formatCurrency(selected.received)}</span>
+                    </div>
+                    {selected.state === RECEIPT_MONTH_STATE.PARTIAL && (
+                      <p className="mt-1 text-xs text-slate-600">Parcial: recebido até {formatDate(receipts.today)}.</p>
                     )}
-                    {selected.state === CASH_MONTH_STATE.PARTIAL && (
-                      <p className="mt-1 text-xs text-slate-600">Parcial: valores realizados até {formatDate(cash.today)}.</p>
-                    )}
-                    <p className="mt-1 text-xs text-slate-600">Diferença entre movimentos registrados; não é saldo bancário. A taxa já está abatida no recebido líquido.</p>
+                    <p className="mt-1 text-xs text-slate-600">A taxa já está abatida. Estornos, repasses e despesas não entram aqui: o sistema ainda não analisa saídas.</p>
                   </>
-                ) : selected.state === CASH_MONTH_STATE.FUTURE ? (
-                  <p className="text-slate-600">Mês que ainda não aconteceu: não há valor realizado.</p>
+                ) : selected.state === RECEIPT_MONTH_STATE.FUTURE ? (
+                  <p className="text-slate-600">Mês que ainda não aconteceu: não há valor recebido.</p>
                 ) : (
                   <p className="text-slate-600">
-                    Sem histórico confiável neste mês{cash.coverageFrom ? `: o primeiro movimento registrado é de ${formatDate(cash.coverageFrom)}` : ''}. Nenhum valor é mostrado em vez de um zero.
+                    Sem histórico confiável neste mês{receipts.coverageFrom ? `: o primeiro recebimento registrado é de ${formatDate(receipts.coverageFrom)}` : ''}. Nenhum valor é mostrado em vez de um zero.
                   </p>
                 )}
               </section>
             )}
             <div className="flex justify-end">
-              <Button asChild variant="link" size="sm"><Link to="/financeiro/fluxo-caixa">Abrir fluxo de caixa completo</Link></Button>
+              <Button asChild variant="link" size="sm"><Link to="/financeiro/fluxo-caixa">Abrir fluxo de caixa</Link></Button>
             </div>
           </>
         )}
       </CardContent>
 
       <OverviewDetailDialog
-        open={showMovements}
-        onClose={() => setShowMovements(false)}
-        title={selected ? `Movimentações de ${MONTH_LONG[selected.monthIndex]} de ${cash?.year}` : 'Movimentações'}
-        description="Movimentos realizados que compõem o resultado do mês."
-        summary={hasValue ? `${monthMovements.length} movimentos · resultado ${formatCurrency(selected.result)}` : undefined}
-        rows={monthMovements}
+        open={showReceipts}
+        onClose={() => setShowReceipts(false)}
+        title={selected ? `Recebimentos de ${MONTH_LONG[selected.monthIndex]} de ${receipts?.year}` : 'Recebimentos'}
+        description="Recebimentos que compõem o valor do mês, já com a taxa abatida."
+        summary={hasValue ? `${monthReceipts.length} recebimentos · ${formatCurrency(selected.received)}` : undefined}
+        rows={monthReceipts}
         columns={[
           { key: 'date', label: 'Data', render: row => formatDate(financialMovementDate(row)) },
-          { key: 'kind', label: 'Tipo', render: row => KIND_LABEL[row.movement_kind] || row.movement_kind },
           { key: 'description', label: 'Descrição', render: row => row.description || '—' },
-          {
-            key: 'amount',
-            label: 'Valor líquido',
-            align: 'right',
-            render: row => formatCurrency(Number.isFinite(Number(row.signed_net_amount)) ? Number(row.signed_net_amount) : Number(row.net_amount) || 0),
-          },
+          { key: 'amount', label: 'Líquido', align: 'right', render: row => formatCurrency(Number(row.net_amount) || 0) },
         ]}
         destination={{ to: '/financeiro/fluxo-caixa', label: 'Abrir fluxo de caixa' }}
       />
