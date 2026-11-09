@@ -24,6 +24,7 @@ import {
 } from "./contract-residual.ts";
 import { handleOrdersRequest } from "./orders.ts";
 import { handleEventsRequest, handlePublicEventRequest } from "./events.ts";
+import { handleCoachAccessRequest } from "./coach-access.ts";
 import { handleFinancialRequest } from "./financial.ts";
 import { handleInventoryRequest } from "./inventory.ts";
 import { handlePaymentsRequest } from "./payments.ts";
@@ -332,6 +333,14 @@ Deno.serve(async (req: Request) => {
     gate.userId!,
   );
   if (ordersResponse) return ordersResponse;
+
+  const coachAccessResponse = await handleCoachAccessRequest(
+    req,
+    path,
+    serviceClient,
+    gate.userId!,
+  );
+  if (coachAccessResponse) return coachAccessResponse;
 
   const eventsResponse = await handleEventsRequest(
     req,

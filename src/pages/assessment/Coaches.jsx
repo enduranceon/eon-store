@@ -14,6 +14,7 @@ import { diffSitePlans, sitePlanForm, sitePlanKey, sitePlanOptions } from '@/lib
 import { formatCurrency } from '@/lib/utils';
 import { toast } from 'sonner';
 import ContextTabs from '@/components/layout/ContextTabs';
+import CoachAccessDialog from '@/components/assessment/CoachAccessDialog';
 
 const ROLE_LABEL = { junior: 'Junior', pleno: 'Pleno', senior: 'Senior' };
 const ROLE_COLOR = {
@@ -61,6 +62,7 @@ export default function Coaches() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [accessCoach, setAccessCoach] = useState(null);
 
   const open = (c) => {
     if (c) {
@@ -180,6 +182,7 @@ export default function Coaches() {
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Atletas</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Interno</th>
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Site</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Acesso</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -224,6 +227,15 @@ export default function Coaches() {
                         <p className="text-[11px] text-amber-700 mt-1">lista de espera</p>
                       )}
                     </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        onClick={() => setAccessCoach(c)}
+                        aria-label={`Acesso de ${c.name} ao sistema`}
+                        className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.auth_user_id ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                      >
+                        {c.auth_user_id ? 'Com acesso' : 'Sem acesso'}
+                      </button>
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <Link to={`/assessoria/coaches/${c.id}/match`} aria-label={`Formulário de match de ${c.name}`} title="Formulário de match" className="inline-flex p-1.5 hover:bg-gray-100 rounded text-gray-500"><ClipboardList className="w-3.5 h-3.5" /></Link>
                       <button onClick={() => open(c)} aria-label={`Editar ${c.name}`} className="p-1.5 hover:bg-gray-100 rounded text-gray-500"><Pencil className="w-3.5 h-3.5" /></button>
@@ -235,6 +247,13 @@ export default function Coaches() {
           </table>
         </div>
       )}
+
+      <CoachAccessDialog
+        coach={accessCoach ? (coaches.find(item => item.id === accessCoach.id) || accessCoach) : null}
+        open={Boolean(accessCoach)}
+        onClose={() => setAccessCoach(null)}
+        onChanged={() => refresh({ force: true })}
+      />
 
       <Dialog open={modal} onOpenChange={setModal}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Store, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/api/db';
-import { getCurrentAdmin } from '@/api/client';
+import { getCoachMe, getCurrentAdmin } from '@/api/client';
+import { homePathForRole, resolveAccountRole } from '@/lib/auth-role';
 import { toast } from 'sonner';
 
 export default function Login() {
@@ -23,16 +24,19 @@ export default function Login() {
       return toast.error('E-mail ou senha incorretos');
     }
 
-    try {
-      await getCurrentAdmin({ accessToken: data.session?.access_token });
-    } catch {
+    const accessToken = data.session?.access_token;
+    const { role } = await resolveAccountRole({
+      checkAdmin: () => getCurrentAdmin({ accessToken }),
+      checkCoach: () => getCoachMe({ accessToken }),
+    });
+    if (!role) {
       await supabase.auth.signOut();
       setLoading(false);
-      return toast.error('Esta conta não tem acesso ao painel');
+      return toast.error('Esta conta não tem acesso ao sistema');
     }
 
     setLoading(false);
-    navigate('/admin', { replace: true });
+    navigate(homePathForRole(role), { replace: true });
   };
 
   return (
@@ -43,7 +47,7 @@ export default function Login() {
             <Store className="w-7 h-7 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">EON Store</h1>
-          <p className="text-sm text-slate-400 mt-1">Painel administrativo</p>
+          <p className="text-sm text-slate-400 mt-1">Painel administrativo e área do coach</p>
         </div>
 
         <div className="bg-white rounded-2xl p-6 shadow-xl">

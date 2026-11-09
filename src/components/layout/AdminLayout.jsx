@@ -16,7 +16,7 @@ const MOBILE_SHORTCUTS = [
 ];
 
 export default function AdminLayout({ children }) {
-  const { user, loading, signOut } = useAuth();
+  const { user, role, loading, signOut } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigation = resolveNavigation(location.pathname);
@@ -30,6 +30,8 @@ export default function AdminLayout({ children }) {
   }
 
   if (!user) return <Navigate to="/login" replace />;
+  // Coach tem a área dele; o painel (e as chamadas dele) são só da equipe.
+  if (role !== 'admin') return <Navigate to={role === 'coach' ? '/coach' : '/login'} replace />;
 
   return (
     <div className="flex h-screen bg-gray-50">

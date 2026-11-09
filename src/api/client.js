@@ -4,6 +4,7 @@ import { invalidatePageCacheByTag } from '@/lib/page-cache';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL?.replace(/\/$/, '');
 const SUPABASE_PUBLIC_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const API_BASE_URL = `${SUPABASE_URL}/functions/v1/api-v1`;
+const COACH_API_BASE_URL = `${SUPABASE_URL}/functions/v1/coach-api`;
 
 export class ApiError extends Error {
   constructor(message, { status = 500, code = 'api_error', details = null } = {}) {
@@ -61,6 +62,7 @@ export async function apiRequest(path, {
   accessToken,
   idempotencyKey,
   signal,
+  baseUrl = API_BASE_URL,
 } = {}) {
   if (!SUPABASE_URL || !SUPABASE_PUBLIC_KEY) {
     throw new ApiError('API não configurada no frontend', {
@@ -71,7 +73,7 @@ export async function apiRequest(path, {
 
   const token = await getAccessToken(accessToken);
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const response = await fetch(`${API_BASE_URL}${normalizedPath}`, {
+  const response = await fetch(`${baseUrl}${normalizedPath}`, {
     method,
     signal,
     headers: {
@@ -115,6 +117,55 @@ export async function publicApiRequest(path, {
 
 export function getCurrentAdmin(options = {}) {
   return apiRequest('/session', options);
+}
+
+// ── Coach ────────────────────────────────────────────────────────────────
+// A área do coach fala só com a coach-api: o navegador dele não lê tabela nenhuma e a
+// API devolve apenas os campos permitidos (sem valores).
+export function coachRequest(path, options = {}) {
+  return apiRequest(path, { ...options, baseUrl: COACH_API_BASE_URL });
+}
+
+export function getCoachMe(options = {}) {
+  return coachRequest('/me', options);
+}
+
+export async function listCoachEvents(options = {}) {
+  const response = await coachRequest('/events', options);
+  return response.data;
+}
+
+export async function getCoachEvent(eventId, options = {}) {
+  const response = await coachRequest(`/events/${eventId}`, options);
+  return response.data;
+}
+
+export async function setCoachRegistrationWhatsappGroup(registrationId, status, options = {}) {
+  const response = await coachRequest(`/registrations/${registrationId}/whatsapp-group`, {
+    ...options,
+    method: 'PATCH',
+    body: { status },
+  });
+  return response.data;
+}
+
+// ── Acesso do coach (equipe) ─────────────────────────────────────────────
+// Cria a conta de login do coach e devolve a senha provisória (aparece uma vez).
+export async function createCoachAccess(coachId, options = {}) {
+  const response = await apiRequest(`/coaches/${coachId}/access`, { ...options, method: 'POST' });
+  invalidatePageCacheByTag('assessment_coaches');
+  return response.data;
+}
+
+export async function resetCoachPassword(coachId, options = {}) {
+  const response = await apiRequest(`/coaches/${coachId}/access/password`, { ...options, method: 'POST' });
+  return response.data;
+}
+
+export async function removeCoachAccess(coachId, options = {}) {
+  const response = await apiRequest(`/coaches/${coachId}/access`, { ...options, method: 'DELETE' });
+  invalidatePageCacheByTag('assessment_coaches');
+  return response.data;
 }
 
 function financialQuery(filters = {}) {
