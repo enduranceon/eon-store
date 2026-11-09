@@ -276,6 +276,29 @@ export async function cancelEventRegistration(registrationId, reason, options = 
   return response.data;
 }
 
+// Troca todos os coaches responsáveis do evento de uma vez (lista vazia tira todos).
+export async function setEventCoaches(eventId, coachIds, options = {}) {
+  const response = await apiRequest(`/events/${eventId}/coaches`, {
+    ...options,
+    method: 'PUT',
+    body: { coach_ids: coachIds },
+  });
+  invalidatePageCacheByTag('event_coaches');
+  invalidatePageCacheByTag('events');
+  return response.data;
+}
+
+// Situação da pessoa no grupo do WhatsApp do evento: pending, added ou declined.
+export async function setEventRegistrationWhatsappGroup(registrationId, status, options = {}) {
+  const response = await apiRequest(`/events/registrations/${registrationId}/whatsapp-group`, {
+    ...options,
+    method: 'PATCH',
+    body: { status },
+  });
+  invalidatePageCacheByTag('event_registrations');
+  return response.data;
+}
+
 export async function linkEventRegistrationCustomer(registrationId, customerId, options = {}) {
   const response = await apiRequest(`/events/registrations/${registrationId}/customer`, {
     ...options,

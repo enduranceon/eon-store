@@ -16,6 +16,7 @@ export const EventRecord      = createAdminRecordEntity('events', 'events');
 export const EventRegistrationType = createAdminRecordEntity('event-registration-types', 'event_registration_types');
 export const EventExpense     = createAdminRecordEntity('event-expenses', 'event_expenses');
 export const EventRegistration = db.entities.EventRegistration;
+export const EventCoach = db.entities.EventCoach;
 
 // Universal
 export const RevenueCenter    = createCatalogEntity('revenue-centers', 'revenue_centers');

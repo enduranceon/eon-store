@@ -89,6 +89,7 @@ const TABLE_MAP = {
   Coupon:           'coupons',
   // Eventos
   EventRegistration: 'event_registrations',
+  EventCoach: 'event_coaches',
   // Universal
   RevenueCenter:    'revenue_centers',
   DiscountLog:      'discount_log',

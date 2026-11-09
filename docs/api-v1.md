@@ -308,6 +308,25 @@ Regras:
   externa recusam o contrato com 409 (apagariam as linhas por parcela).
 - Cancelar o contrato com parcela registrada mantém `partially_paid`.
 
+### Eventos: coaches responsáveis e grupo do WhatsApp
+
+- `PUT /events/:id/coaches` com `{ "coach_ids": ["<uuid>", ...] }` troca **todos** os
+  coaches responsáveis do evento de uma vez (lista vazia tira todos; até 50; ids
+  repetidos contam uma vez). Novo responsável precisa estar ativo; quem já era
+  responsável e ficou inativo pode ser mantido. Chama `set_event_coaches`.
+- `PATCH /events/registrations/:id/whatsapp-group` com `{ "status": "pending" | "added" | "declined" }`
+  grava a situação da pessoa no grupo do WhatsApp (falta adicionar, no grupo, não quer
+  entrar). Só vale em evento com `whatsapp_group_enabled`, fora de inscrição
+  cancelada/reembolsada, e sair de `pending` exige inscrição **paga**. Guarda quem e
+  quando. Chama `set_event_registration_whatsapp_group`.
+- `whatsapp_group_enabled` (booleano) é um campo do recurso `events` em
+  `/admin-records/events`.
+- Regra de negócio recusada pelo banco volta como 409 (`invalid_transition`); evento
+  ou inscrição inexistente, 404.
+- A leitura continua direta pelo navegador (RLS só para administrador). `event_coaches`
+  é a base do futuro login do coach (o coach verá só os eventos em que é responsável) e
+  ainda não dá acesso a ninguém.
+
 ### Conferência de cobranças no Asaas
 
 `POST /asaas/payment-check` consulta no Asaas, só lendo, as cobranças externas
