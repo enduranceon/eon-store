@@ -2,7 +2,7 @@ import { AlertTriangle, TrendingUp, Users, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn, formatCurrency } from '@/lib/utils';
-import { CASH_MONTH_STATE } from '@/lib/overview-cash';
+import { RECEIPT_MONTH_STATE } from '@/lib/overview-receipts';
 
 function monthName(ym) {
   const name = new Date(`${ym}-01T12:00:00`).toLocaleString('pt-BR', { month: 'long' });
@@ -77,11 +77,11 @@ function Value({ label, value, sub, hint }) {
 export default function OverviewCards({ blocks, onOpen, onRetry }) {
   const students = blocks?.students;
   const openSales = blocks?.openSales;
-  const cash = blocks?.cash;
+  const receipts = blocks?.receipts;
 
-  const currentMonth = cash?.status === 'ok'
-    ? cash.data.cash.months.find(month => month.state === CASH_MONTH_STATE.PARTIAL)
-      || cash.data.cash.months[new Date(`${blocks.today}T12:00:00`).getMonth()]
+  const currentMonth = receipts?.status === 'ok'
+    ? receipts.data.receipts.months.find(month => month.state === RECEIPT_MONTH_STATE.PARTIAL)
+      || receipts.data.receipts.months[new Date(`${blocks.today}T12:00:00`).getMonth()]
     : null;
 
   return (
@@ -105,13 +105,13 @@ export default function OverviewCards({ blocks, onOpen, onRetry }) {
           />
         )}
       </CardShell>
-      <CardShell label="Recebido líquido no mês" icon={Wallet} tone="green" block={cash} onOpen={() => onOpen('received')} onRetry={onRetry}>
+      <CardShell label="Recebido líquido no mês" icon={Wallet} tone="green" block={receipts} onOpen={() => onOpen('received')} onRetry={onRetry}>
         {currentMonth && (
           <Value
             label="Recebido líquido no mês"
             value={formatCurrency(currentMonth.received ?? 0)}
             sub={`${monthName(currentMonth.ym)} · todas as áreas`}
-            hint={currentMonth.state === CASH_MONTH_STATE.PARTIAL ? `Parcial até ${dayMonth(blocks.today)}` : undefined}
+            hint={currentMonth.state === RECEIPT_MONTH_STATE.PARTIAL ? `Parcial até ${dayMonth(blocks.today)}` : undefined}
           />
         )}
       </CardShell>

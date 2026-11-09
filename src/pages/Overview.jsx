@@ -10,10 +10,10 @@ import { financialMovementDate } from '@/lib/financial-dashboard';
 import { loadOverviewBlocks } from '@/components/overview/overview-loader';
 import OverviewCards from '@/components/overview/OverviewCards';
 import AttentionStrip from '@/components/overview/AttentionStrip';
-import CashPanel from '@/components/overview/CashPanel';
+import ReceiptsPanel from '@/components/overview/ReceiptsPanel';
 import ModalitiesPanel from '@/components/overview/ModalitiesPanel';
 import OverviewDetailDialog from '@/components/overview/OverviewDetailDialog';
-import { selectMonthMovements } from '@/lib/overview-cash';
+import { selectMonthReceipts } from '@/lib/overview-receipts';
 
 const ORDER_PATH = {
   contract: order => `/assessoria/contratos/${order.id}`,
@@ -74,13 +74,13 @@ function detailFor(key, blocks) {
       destination: { to: '/assessoria/indicadores', label: 'Abrir Indicadores' },
     };
   }
-  if (key === 'received' && blocks.cash?.status === 'ok') {
+  if (key === 'received' && blocks.receipts?.status === 'ok') {
     const ym = blocks.today.slice(0, 7);
-    const rows = selectMonthMovements(blocks.cash.data.movements, ym).filter(item => item.movement_kind === 'receipt');
-    const total = blocks.cash.data.cash.months.find(month => month.ym === ym)?.received ?? 0;
+    const rows = selectMonthReceipts(blocks.receipts.data.movements, ym);
+    const total = blocks.receipts.data.receipts.months.find(month => month.ym === ym)?.received ?? 0;
     return {
       title: 'Recebido líquido no mês',
-      description: `Recebimentos realizados de todas as áreas até ${formatDate(blocks.today)}, já com a taxa abatida. Não inclui o que ainda vai entrar.`,
+      description: `Recebimentos de todas as áreas até ${formatDate(blocks.today)}, já com a taxa abatida. Não inclui o que ainda vai entrar nem saídas (estornos, repasses, despesas).`,
       summary: `${formatCurrency(total)} · ${rows.length} recebimentos`,
       rows,
       columns: [
@@ -159,7 +159,7 @@ export default function Overview() {
         <>
           <AttentionStrip attention={blocks?.attention} />
           <OverviewCards blocks={blocks} onOpen={setOpenKey} onRetry={retry} />
-          <CashPanel block={blocks?.cash} today={blocks?.today || todayLocalStr()} onRetry={retry} />
+          <ReceiptsPanel block={blocks?.receipts} today={blocks?.today || todayLocalStr()} onRetry={retry} />
           <ModalitiesPanel block={blocks?.students} onRetry={retry} />
         </>
       )}
