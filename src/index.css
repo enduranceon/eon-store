@@ -41,6 +41,22 @@
   to   { transform: translateY(0);    opacity: 1; }
 }
 
+/* Entrada suave das telas da área do coach (some para quem pede menos movimento). */
+@keyframes coachEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.coach-enter {
+  animation: coachEnter 0.28s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coach-enter {
+    animation: none;
+  }
+}
+
 @media print {
   @page {
     size: A4;
