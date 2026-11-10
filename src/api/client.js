@@ -130,6 +130,13 @@ export function getCoachMe(options = {}) {
   return coachRequest('/me', options);
 }
 
+// Painel do coach (alunos, entradas e saídas): conta feita no servidor com as mesmas regras
+// do perfil do coach no painel da equipe; só vem o que é do coach logado, sem valores.
+export async function getCoachPanel(options = {}) {
+  const response = await coachRequest('/panel', options);
+  return response.data;
+}
+
 export async function listCoachEvents(options = {}) {
   const response = await coachRequest('/events', options);
   return response.data;

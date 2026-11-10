@@ -101,7 +101,7 @@ export default function CoachEvents() {
 
   const { upcoming, past } = splitEvents(events, todayLocalStr());
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h1 className="text-xl font-bold text-gray-900">Seus eventos</h1>
         <p className="text-sm text-muted-foreground">Eventos em que você é responsável.</p>

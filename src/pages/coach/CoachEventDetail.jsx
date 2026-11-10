@@ -133,7 +133,7 @@ export default function CoachEventDetail() {
   }
 
   const back = (
-    <Link to="/coach" className="inline-flex items-center gap-1.5 text-sm text-blue-700 hover:underline">
+    <Link to="/coach/eventos" className="inline-flex items-center gap-1.5 text-sm text-blue-700 hover:underline">
       <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Seus eventos
     </Link>
   );
@@ -163,7 +163,7 @@ export default function CoachEventDetail() {
     : '');
 
   return (
-    <div className="space-y-5">
+    <div className="mx-auto max-w-3xl space-y-5">
       {back}
       <div>
         <h1 className="text-xl font-bold text-gray-900">{event.name}</h1>
