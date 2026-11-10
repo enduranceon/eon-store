@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/api/db';
-import { getCurrentAdmin } from '@/api/client';
+import { getCoachMe, getCurrentAdmin } from '@/api/client';
 import { AuthContext } from '@/contexts/AuthContext';
+import { resolveAccountRole } from '@/lib/auth-role';
 import { clearPageCache } from '@/lib/page-cache';
 
+const SIGNED_OUT = { user: null, role: null, coach: null };
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [account, setAccount] = useState(SIGNED_OUT);
   const [loading, setLoading] = useState(true);
   // Guarda o id já verificado — evita revalidar RPC e re-setar `user`
   // (que dispararia re-render em cascata) quando Supabase re-emite SIGNED_IN
@@ -23,7 +26,7 @@ export function AuthProvider({ children }) {
       if (!sessionUserId) {
         clearPageCache();
         verifiedIdRef.current = null;
-        setUser(null);
+        setAccount(SIGNED_OUT);
         setLoading(false);
         return;
       }
@@ -34,25 +37,23 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // Usuário novo (ou primeira validação): valida o JWT e a permissão na API.
-      let accessGranted = false;
-      let accessError = null;
-      try {
-        await getCurrentAdmin({ accessToken: session.access_token });
-        accessGranted = true;
-      } catch (error) {
-        accessError = error;
-      }
+      // Usuário novo (ou primeira validação): a API valida o JWT e diz se a conta é de
+      // administrador ou de coach. Conta sem nenhum dos dois papéis é desconectada.
+      const accessToken = session.access_token;
+      const result = await resolveAccountRole({
+        checkAdmin: () => getCurrentAdmin({ accessToken }),
+        checkCoach: () => getCoachMe({ accessToken }),
+      });
       if (!active) return;
 
-      if (!accessGranted) {
+      if (!result.role) {
         verifiedIdRef.current = null;
-        setUser(null);
-        if (accessError) console.error('Validação da sessão na API falhou:', accessError);
+        setAccount(SIGNED_OUT);
+        if (result.error) console.error('Validação da sessão na API falhou:', result.error);
         await supabase.auth.signOut();
       } else {
         verifiedIdRef.current = sessionUserId;
-        setUser(session.user);
+        setAccount({ user: session.user, role: result.role, coach: result.coach });
       }
       setLoading(false);
     };
@@ -64,6 +65,12 @@ export function AuthProvider({ children }) {
       if (event === 'TOKEN_REFRESHED') return;
       // INITIAL_SESSION é tratado pelo getSession() acima
       if (event === 'INITIAL_SESSION') return;
+      // Troca de senha/dados da própria conta: mesmo usuário, só atualiza o objeto
+      // (o aviso de "trocar a senha" depende dos dados da conta).
+      if (event === 'USER_UPDATED' && session?.user?.id && verifiedIdRef.current === session.user.id) {
+        setAccount(current => (current.user ? { ...current, user: session.user } : current));
+        return;
+      }
       setTimeout(() => validateSession(session), 0);
     });
 
@@ -80,7 +87,10 @@ export function AuthProvider({ children }) {
     return supabase.auth.signOut();
   }, []);
 
-  const value = useMemo(() => ({ user, loading, signOut }), [user, loading, signOut]);
+  const value = useMemo(
+    () => ({ user: account.user, role: account.role, coach: account.coach, loading, signOut }),
+    [account, loading, signOut],
+  );
 
   return (
     <AuthContext.Provider value={value}>

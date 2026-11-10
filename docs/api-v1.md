@@ -327,6 +327,36 @@ Regras:
   é a base do futuro login do coach (o coach verá só os eventos em que é responsável) e
   ainda não dá acesso a ninguém.
 
+### Acesso (login) do coach: rotas da equipe
+
+- `POST /coaches/:id/access` cria a conta de login do coach (e-mail do cadastro, já
+  confirmada) e a liga ao coach. Responde 201 com `{ email, temporary_password }`: a
+  **senha provisória aparece só nesta resposta** (o coach troca no primeiro acesso).
+  409 se o coach está inativo, já tem acesso ou o e-mail já tem conta; 400 sem e-mail
+  válido. Se a ligação falhar, a conta recém-criada é apagada.
+- `POST /coaches/:id/access/password` gera outra senha provisória (409 se não há acesso).
+- `DELETE /coaches/:id/access` desliga o coach (ele perde os dados na hora) e apaga a conta.
+- Funções do banco: `coach_access_target`, `link_coach_auth_user`, `unlink_coach_auth_user`.
+
+## `coach-api` (função própria, para o login do coach)
+
+Base: `/functions/v1/coach-api`. Exige o JWT de uma conta ligada a um coach **ativo**;
+administrador sem coach e conta sem coach recebem 403. A identidade vem só do token.
+Todas as regras e a lista de campos ficam nas funções `coach_*` do banco. Nunca devolve
+valores.
+
+- `GET /me` → `{ coach_id, name }`.
+- `GET /events` → eventos em que o coach é responsável, com contagens (`registered`, `paid`,
+  `not_paid` e, em evento com grupo, `group_added`, `group_missing`, `group_declined`).
+- `GET /events/:id` → `{ event, summary, registrations }`. Cada inscrição traz `id`,
+  `registration_number`, `person_name`, `type_name`, `payment` (`paid`, `not_paid` ou
+  `cancelled`) e, só para inscrição paga em evento com grupo, `whatsapp_group_status` e
+  `whatsapp`. Evento que não é do coach ou inexistente: 404 igual.
+- `PATCH /registrations/:id/whatsapp-group` com `{ "status": "pending" | "added" | "declined" }`
+  marca o grupo de uma inscrição de evento do coach (mesmas regras da rota da equipe).
+- Erros: 403 sem acesso de coach, 404 não encontrado, 409 regra de negócio, 400 entrada
+  inválida.
+
 ### Conferência de cobranças no Asaas
 
 `POST /asaas/payment-check` consulta no Asaas, só lendo, as cobranças externas

@@ -7,6 +7,7 @@ import RouteFallback from '@/components/RouteFallback';
 import { legacyPersonRedirectPath } from '@/lib/customer-profile';
 
 const AdminLayout = lazy(() => import('@/components/layout/AdminLayout'));
+const CoachLayout = lazy(() => import('@/components/coach/CoachLayout'));
 const Overview = lazy(() => import('@/pages/Overview'));
 const Campaigns = lazy(() => import('@/pages/Campaigns'));
 const CampaignDetail = lazy(() => import('@/pages/CampaignDetail'));
@@ -28,6 +29,9 @@ const PublicHome = lazy(() => import('@/pages/PublicHome'));
 const Migrate = lazy(() => import('@/pages/Migrate'));
 const CampaignReport = lazy(() => import('@/pages/CampaignReport'));
 const Login = lazy(() => import('@/pages/Login'));
+const CoachEvents = lazy(() => import('@/pages/coach/CoachEvents'));
+const CoachEventDetail = lazy(() => import('@/pages/coach/CoachEventDetail'));
+const CoachSetPassword = lazy(() => import('@/pages/coach/CoachSetPassword'));
 const StockMovements = lazy(() => import('@/pages/StockMovements'));
 const ProductStockManager = lazy(() => import('@/pages/ProductStockManager'));
 const ProductStockSetup = lazy(() => import('@/pages/ProductStockSetup'));
@@ -125,6 +129,10 @@ export default function App() {
 
           {/* Admin */}
           <Route path="/login" element={<Login />} />
+          {/* Área do coach: só conta de coach entra (CoachLayout) e só fala com a coach-api. */}
+          <Route path="/coach" element={<CoachLayout><CoachEvents /></CoachLayout>} />
+          <Route path="/coach/eventos/:id" element={<CoachLayout><CoachEventDetail /></CoachLayout>} />
+          <Route path="/coach/senha" element={<CoachLayout><CoachSetPassword /></CoachLayout>} />
           <Route path="/migrar" element={<AdminLayout><Migrate /></AdminLayout>} />
           <Route path="/admin" element={<AdminLayout><Overview /></AdminLayout>} />
           {/* /hoje é alias da Visão geral (links e favoritos antigos). */}
