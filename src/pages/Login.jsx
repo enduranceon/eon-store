@@ -47,7 +47,7 @@ export default function Login() {
             <Store className="w-7 h-7 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">EON Store</h1>
-          <p className="text-sm text-slate-400 mt-1">Painel administrativo e área do coach</p>
+          <p className="text-sm text-slate-400 mt-1">Software administrativo da EON, para a equipe e para os coaches</p>
         </div>
 
         <div className="bg-white rounded-2xl p-6 shadow-xl">
@@ -62,6 +62,7 @@ export default function Login() {
                 onChange={e => setEmail(e.target.value)}
                 placeholder="seu@email.com"
                 className="mt-1.5 w-full h-11 rounded-xl border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                autoComplete="username"
                 autoFocus
               />
             </div>
@@ -74,10 +75,12 @@ export default function Login() {
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
                   className="mt-1.5 w-full h-11 rounded-xl border border-gray-200 px-3 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPw(!showPw)}
+                  aria-label={showPw ? 'Ocultar senha' : 'Mostrar senha'}
                   className="absolute right-3 top-1/2 translate-y-[-35%] text-gray-400 hover:text-gray-600"
                 >
                   {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -94,6 +97,9 @@ export default function Login() {
             </button>
           </form>
 
+          <p className="mt-4 text-center text-xs text-slate-500">
+            Esqueceu a senha? Peça uma nova para a equipe da EON.
+          </p>
         </div>
       </div>
     </div>

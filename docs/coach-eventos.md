@@ -88,14 +88,8 @@ Pedido do usuário em 2026-11-10: o coach ter um perfil com seus alunos, entrada
 4. **Sem WhatsApp/e-mail/CPF** dos alunos no painel.
 5. Ajustes manuais do extrato: valor e motivo curto (etapa 2).
 
-**Telas** (`/coach`, `/coach/alunos`, `/coach/movimento`, `/coach/eventos`):
-- **Visão geral:** alunos ativos hoje, entradas (novos e retornos), saídas, saldo, churn médio e
-  renovações dos últimos 12 meses (+ quantas em andamento), gráfico de alunos ativos por mês e
-  alunos por modalidade.
-- **Meus alunos:** ativos hoje (modalidade, plano, início, fim do contrato, situação) e quem saiu
-  nos últimos 12 meses, com o motivo registrado. Busca por nome.
-- **Mês a mês:** base no início, entradas, retornos, renovações, saídas, base no fim e churn.
-- **Eventos:** o que já existia.
+**Telas** (`/coach`, `/coach/alunos`, `/coach/movimento`, `/coach/eventos`): ver a seção
+"Interface do coach" abaixo (redesenho de 2026-11-10, sem mudança de dados nem de regras).
 
 **O que o coach não vê, de propósito:** mensalidade/valor, pagamento atrasado do aluno (aparece como
 "Ativo"), contato e ids internos. Situação mostrada: Ativo, Em licença ou Renovação em andamento.
@@ -120,3 +114,42 @@ função do coach recebe o "hoje" de Brasília explícito (`today` é obrigatór
 check-in no dia do evento, ver respostas do formulário de inscrição e, do perfil completo,
 as etapas 2 a 4: **recebimentos** (fechamentos aprovados, extrato, repasse aguardando o aluno
 pagar), **previsão do mês** (com a conta do fechamento) e renovações/prospects/PDF do extrato.
+
+## Interface do coach (redesenho)
+
+Pedido do usuário em 2026-11-10: a área do coach estava "crua", sem cara de software. O redesenho
+mexe **só na apresentação**: a API, os campos e as regras de cálculo são os mesmos, e nada de
+dinheiro ou contato passou a aparecer.
+
+- **Casca:** é o **software administrativo da EON** também para o coach (decisão do usuário em
+  2026-11-10): mesma marca do painel da equipe (raio azul, "Endurance ON"), com "Administrativo ·
+  Coach" embaixo. No computador, barra lateral escura (mesmo tom do painel da equipe) com
+  Início, Alunos, Evolução e Eventos, mais conta, "Trocar senha" e "Sair" embaixo. No celular,
+  barra de abas fixa embaixo (área do polegar) e menu da conta no topo. O título da aba do
+  navegador muda por tela.
+- **Início:** saudação por horário e data por extenso; cartão de destaque com os alunos ativos
+  hoje e a linha dos últimos 12 meses; **"Precisa da sua atenção"** (contrato que já venceu,
+  vence em até 30 dias, renovação em andamento e licença, do mais urgente ao menos); próximos
+  eventos com contagem regressiva e pendências; alunos por modalidade; os números dos 12 meses em
+  linguagem simples (entraram, renovaram, saíram, saldo) e entradas × saídas por mês.
+- **Alunos:** abas Ativos/Saíram, busca (sem acento, sem diferenciar maiúsculas), filtros por
+  situação (Vencendo, Em renovação, Em licença, só os que têm alguém), modalidade e ordem
+  (nome, vencimento, início). Cada aluno mostra a barra do contrato e "faltam N dias". Quem
+  está em renovação ou licença não aparece como "vencendo": a conversa já começou. Saíram:
+  mais recente primeiro, com o motivo ou "Sem motivo registrado".
+- **Evolução:** período de 6 ou 12 meses, frase-resumo, melhor mês e mês com mais saídas, dois
+  gráficos (alunos no fim de cada mês; entradas para cima e saídas para baixo) e a tabela mês a
+  mês, com o mês atual marcado "em andamento".
+- **Eventos:** data em destaque, contagem regressiva, barra de pagos e de grupo. No detalhe, o
+  grupo do WhatsApp é marcado com **três botões** (Falta / No grupo / Não quer) no lugar da lista
+  suspensa: a escolha aparece na hora e volta ao que estava se o servidor recusar. Filtros
+  (todos, pagos, sem pagar, faltam no grupo) e "Copiar números de quem falta" (só o que o coach
+  já via: nome e número de quem pagou, em evento com grupo).
+- **Senha e login:** tela de senha com mostrar/ocultar e requisitos que acendem; o login segue
+  "EON Store", agora com "Software administrativo da EON, para a equipe e para os coaches",
+  preenchimento automático e aviso de que, para recuperar a senha, o coach pede para a equipe.
+- **Código:** regras testáveis em `src/lib/coach-ui.js` (atenção, filtros, ordem, resumo do
+  período, contagem regressiva de eventos; datas por número de dia em UTC, então o resultado não
+  depende do fuso do aparelho); peças visuais em `src/components/coach/` (`kit.jsx`, `charts.jsx`,
+  `event-parts.jsx`). Aba, busca e filtros da lista de alunos ficam no estado da tela; o
+  endereço só abre a tela já filtrada (`?q=`, `?filtro=`, `?aba=`, `?modalidade=`, `?ordem=`).

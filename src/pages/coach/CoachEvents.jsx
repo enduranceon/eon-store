@@ -1,75 +1,70 @@
 import { Link } from 'react-router-dom';
-import { CalendarDays, ChevronRight, Clock, MapPin, MessageCircle, Users } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { CalendarDays, ChevronRight, Clock, MapPin } from 'lucide-react';
 import { listCoachEvents } from '@/api/client';
+import {
+  CountdownPill, EVENT_STATUS, EventDateTile, EventNumbers, eventDateLabel, eventTimeLabel,
+} from '@/components/coach/event-parts';
+import { EmptyState, ErrorCard, PageHeader, Pill, ProgressBar, Skeleton } from '@/components/coach/kit';
 import { usePageData } from '@/hooks/usePageData';
 import { splitEvents } from '@/lib/coach-events';
-import { formatDate, todayLocalStr } from '@/lib/utils';
+import { registrationShares } from '@/lib/coach-ui';
+import { cn, todayLocalStr } from '@/lib/utils';
 
-const EVENT_STATUS = {
-  draft: { label: 'Em preparação', variant: 'secondary' },
-  open: { label: 'Inscrições abertas', variant: 'success' },
-  closed: { label: 'Inscrições encerradas', variant: 'info' },
-  cancelled: { label: 'Cancelado', variant: 'destructive' },
-};
-
-function dateLabel(event) {
-  if (!event.event_date) return 'Data a definir';
-  if (event.end_date && event.end_date !== event.event_date) return `${formatDate(event.event_date)} a ${formatDate(event.end_date)}`;
-  return formatDate(event.event_date);
-}
-
-function timeLabel(event) {
-  const start = String(event.start_time || '').slice(0, 5);
-  const end = String(event.end_time || '').slice(0, 5);
-  if (start && end) return `${start} às ${end}`;
-  return start || end || '';
-}
-
-function EventCard({ event }) {
+function EventCard({ event, today, past = false }) {
   const status = EVENT_STATUS[event.status] || EVENT_STATUS.draft;
-  const time = timeLabel(event);
+  const time = eventTimeLabel(event);
+  const shares = registrationShares({ paid: event.paid, not_paid: event.not_paid, cancelled: Math.max(0, event.registered - event.paid - event.not_paid) });
   return (
-    <Link to={`/coach/eventos/${event.id}`} className="block focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 rounded-xl">
-      <Card className="transition-shadow hover:shadow-md">
-        <CardContent className="space-y-3 p-4">
+    <Link
+      to={`/coach/eventos/${event.id}`}
+      className={cn(
+        'group block rounded-2xl border bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 sm:p-5',
+        past ? 'border-slate-200/80' : 'border-slate-200',
+      )}
+    >
+      <div className="flex items-start gap-3.5">
+        <EventDateTile event={event} past={past} className="h-16 w-16" />
+        <div className="min-w-0 flex-1 space-y-2.5">
           <div className="flex items-start justify-between gap-2">
-            <p className="font-semibold leading-snug text-gray-900">{event.name}</p>
-            <Badge variant={status.variant} className="shrink-0">{status.label}</Badge>
+            <div className="min-w-0">
+              <p className="font-semibold leading-snug text-slate-900">{event.name}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-slate-500">
+                <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" aria-hidden="true" /> {eventDateLabel(event)}</span>
+                {time && <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" aria-hidden="true" /> {time}</span>}
+                {event.location && <span className="inline-flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> <span className="truncate">{event.location}</span></span>}
+              </div>
+            </div>
+            <ChevronRight className="mt-1 h-5 w-5 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
           </div>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-4 w-4" aria-hidden="true" /> {dateLabel(event)}</span>
-            {time && <span className="inline-flex items-center gap-1.5"><Clock className="h-4 w-4" aria-hidden="true" /> {time}</span>}
-            {event.location && <span className="inline-flex items-center gap-1.5"><MapPin className="h-4 w-4" aria-hidden="true" /> {event.location}</span>}
+          <div className="flex flex-wrap items-center gap-2">
+            <CountdownPill event={event} today={today} />
+            <Pill tone={status.tone}>{status.label}</Pill>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-sm">
-            <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="inline-flex items-center gap-1.5"><Users className="h-4 w-4 text-muted-foreground" aria-hidden="true" /> {event.registered} {event.registered === 1 ? 'inscrito' : 'inscritos'}</span>
-              <span className="text-green-700">{event.paid} {event.paid === 1 ? 'pago' : 'pagos'}</span>
-              {event.not_paid > 0 && <span className="text-amber-700">{event.not_paid} sem pagar</span>}
-            </span>
-            {event.whatsapp_group_enabled && (
-              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${event.group_missing > 0 ? 'text-amber-700' : 'text-green-700'}`}>
-                <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                {event.group_missing > 0 ? `${event.group_missing} ${event.group_missing === 1 ? 'falta' : 'faltam'} no grupo` : 'Grupo em dia'}
-              </span>
-            )}
-            <ChevronRight className="h-4 w-4 text-slate-400" aria-hidden="true" />
-          </div>
-        </CardContent>
-      </Card>
+          {shares.total > 0 && (
+            <div className="space-y-1.5">
+              <ProgressBar
+                label={`${event.paid} pagos de ${event.registered} inscritos`}
+                segments={[
+                  { value: shares.paid, className: 'bg-emerald-500' },
+                  { value: shares.notPaid, className: 'bg-amber-400' },
+                ]}
+              />
+              <EventNumbers event={event} />
+            </div>
+          )}
+          {shares.total === 0 && <p className="text-[13px] text-slate-500">Nenhuma inscrição ainda.</p>}
+        </div>
+      </div>
     </Link>
   );
 }
 
-function Section({ title, events }) {
+function Section({ title, count, events, today, past }) {
   if (!events.length) return null;
   return (
     <section className="space-y-3" aria-label={title}>
-      <h2 className="text-sm font-semibold text-gray-700">{title}</h2>
-      <div className="space-y-3">{events.map(event => <EventCard key={event.id} event={event} />)}</div>
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700">{title}<span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600">{count}</span></h2>
+      <div className="grid gap-3 lg:grid-cols-2">{events.map(event => <EventCard key={event.id} event={event} today={today} past={past} />)}</div>
     </section>
   );
 }
@@ -82,38 +77,38 @@ export default function CoachEvents() {
     maxAge: 30_000,
     forceOnMount: true,
   });
-  const retry = () => refresh({ force: true }).catch(() => {});
 
   if (loading && !events) {
-    return <div className="space-y-3" role="status" aria-label="Carregando eventos">
-      {[0, 1].map(item => <div key={item} className="h-32 animate-pulse rounded-xl bg-slate-200" />)}
-    </div>;
+    return (
+      <div className="space-y-4" role="status" aria-label="Carregando eventos">
+        <Skeleton className="h-8 w-48" />
+        {[0, 1].map(item => <Skeleton key={item} className="h-36" />)}
+      </div>
+    );
   }
   if (!events) {
     return (
-      <Card className="border-amber-200"><CardContent className="space-y-2 p-4" role="alert">
-        <p className="text-sm font-semibold text-amber-900">Não foi possível carregar seus eventos.</p>
-        <p className="text-xs text-amber-800">{error?.message || 'Tente novamente em instantes.'}</p>
-        <Button variant="outline" size="sm" onClick={retry}>Tentar novamente</Button>
-      </CardContent></Card>
+      <ErrorCard
+        title="Não foi possível carregar seus eventos."
+        message={error?.message || 'Tente novamente em instantes.'}
+        onRetry={() => refresh({ force: true }).catch(() => {})}
+      />
     );
   }
 
-  const { upcoming, past } = splitEvents(events, todayLocalStr());
+  const today = todayLocalStr();
+  const { upcoming, past } = splitEvents(events, today);
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">Seus eventos</h1>
-        <p className="text-sm text-muted-foreground">Eventos em que você é responsável.</p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader title="Seus eventos" subtitle="Eventos em que você é responsável." />
       {events.length === 0 ? (
-        <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">
-          Você ainda não é responsável por nenhum evento. A equipe define os responsáveis em cada evento.
-        </CardContent></Card>
+        <EmptyState icon={CalendarDays} title="Você ainda não é responsável por nenhum evento.">
+          A equipe define os responsáveis em cada evento. Quando você for incluído, ele aparece aqui.
+        </EmptyState>
       ) : (
         <>
-          <Section title="Próximos" events={upcoming} />
-          <Section title="Anteriores" events={past} />
+          <Section title="Próximos" count={upcoming.length} events={upcoming} today={today} />
+          <Section title="Anteriores" count={past.length} events={past} today={today} past />
         </>
       )}
     </div>

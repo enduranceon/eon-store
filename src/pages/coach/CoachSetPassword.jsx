@@ -1,30 +1,71 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Check, Circle, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/api/db';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { useAuth } from '@/hooks/useAuth';
 import { mustChangePassword } from '@/lib/auth-role';
+import { firstNameOf } from '@/lib/coach-access';
+import { cn } from '@/lib/utils';
 
 const MIN_LENGTH = 8;
+
+function PasswordField({ id, label, value, onChange, autoComplete }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div>
+      <label htmlFor={id} className="text-sm font-medium text-slate-800">{label}</label>
+      <div className="relative mt-1.5">
+        <input
+          id={id}
+          type={visible ? 'text' : 'password'}
+          autoComplete={autoComplete}
+          value={value}
+          onChange={event => onChange(event.target.value)}
+          className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3.5 pr-12 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        />
+        <button
+          type="button"
+          onClick={() => setVisible(current => !current)}
+          aria-label={visible ? 'Ocultar senha' : 'Mostrar senha'}
+          aria-pressed={visible}
+          className="absolute right-1.5 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+        >
+          {visible ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Requirement({ ok, children }) {
+  return (
+    <li className={cn('flex items-center gap-2 text-sm transition-colors', ok ? 'text-emerald-700' : 'text-slate-500')}>
+      {ok ? <Check className="h-4 w-4" aria-hidden="true" /> : <Circle className="h-4 w-4" aria-hidden="true" />}
+      {children}
+      <span className="sr-only">{ok ? ' (cumprido)' : ' (pendente)'}</span>
+    </li>
+  );
+}
 
 // Troca de senha do coach. No primeiro acesso (senha provisória da equipe) é obrigatória.
 export default function CoachSetPassword() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, coach } = useAuth();
   const forced = mustChangePassword(user);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState('');
 
+  const longEnough = password.length >= MIN_LENGTH;
+  const matches = password.length > 0 && password === confirm;
+
   async function submit(event) {
     event.preventDefault();
-    if (password.length < MIN_LENGTH) return setProblem(`A senha precisa ter pelo menos ${MIN_LENGTH} caracteres.`);
-    if (password !== confirm) return setProblem('As duas senhas não são iguais.');
+    if (!longEnough) return setProblem(`A senha precisa ter pelo menos ${MIN_LENGTH} caracteres.`);
+    if (!matches) return setProblem('As duas senhas não são iguais.');
     setProblem('');
     setSaving(true);
     const { error } = await supabase.auth.updateUser({ password, data: { must_change_password: false } });
@@ -38,33 +79,36 @@ export default function CoachSetPassword() {
     navigate('/coach', { replace: true });
   }
 
+  const first = firstNameOf(coach?.name);
   return (
-    <div className="mx-auto max-w-sm space-y-4">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">{forced ? 'Crie sua senha' : 'Trocar senha'}</h1>
-        <p className="text-sm text-muted-foreground">
+    <div className="mx-auto max-w-md space-y-5 py-2 sm:py-6">
+      <div className="text-center">
+        <span className="mx-auto inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-md">
+          <ShieldCheck className="h-7 w-7" aria-hidden="true" />
+        </span>
+        <h1 className="mt-4 text-2xl font-bold tracking-tight text-slate-900">
+          {forced ? `Bem-vindo${first ? `, ${first}` : ''}!` : 'Trocar senha'}
+        </h1>
+        <p className="mt-1.5 text-sm text-slate-600">
           {forced
-            ? 'Este é o seu primeiro acesso. Troque a senha provisória por uma só sua para continuar.'
+            ? 'Este é o seu primeiro acesso. Crie uma senha só sua no lugar da provisória para continuar.'
             : 'Escolha uma senha nova para a sua conta.'}
         </p>
       </div>
-      <Card><CardContent className="p-4">
-        <form onSubmit={submit} className="space-y-3">
-          <div>
-            <Label htmlFor="coach-new-password">Senha nova</Label>
-            <Input id="coach-new-password" type="password" autoComplete="new-password" className="mt-1" value={password} onChange={e => setPassword(e.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="coach-confirm-password">Repita a senha</Label>
-            <Input id="coach-confirm-password" type="password" autoComplete="new-password" className="mt-1" value={confirm} onChange={e => setConfirm(e.target.value)} />
-          </div>
-          {problem && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{problem}</p>}
-          <div className="flex gap-2">
-            {!forced && <Button asChild variant="outline" className="flex-1"><Link to="/coach">Cancelar</Link></Button>}
-            <Button type="submit" className="flex-1" disabled={saving}>{saving ? 'Salvando...' : 'Salvar senha'}</Button>
-          </div>
-        </form>
-      </CardContent></Card>
+
+      <form onSubmit={submit} className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6" noValidate>
+        <PasswordField id="coach-new-password" label="Senha nova" value={password} onChange={setPassword} autoComplete="new-password" />
+        <PasswordField id="coach-confirm-password" label="Repita a senha" value={confirm} onChange={setConfirm} autoComplete="new-password" />
+        <ul className="space-y-1.5 rounded-xl bg-slate-50 p-3" aria-label="Requisitos da senha">
+          <Requirement ok={longEnough}>Pelo menos {MIN_LENGTH} caracteres</Requirement>
+          <Requirement ok={matches}>As duas senhas são iguais</Requirement>
+        </ul>
+        {problem && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{problem}</p>}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          {!forced && <Button asChild variant="outline" className="h-11 flex-1 rounded-xl"><Link to="/coach">Cancelar</Link></Button>}
+          <Button type="submit" className="h-11 flex-1 rounded-xl text-base" disabled={saving}>{saving ? 'Salvando...' : 'Salvar senha'}</Button>
+        </div>
+      </form>
     </div>
   );
 }
