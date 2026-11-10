@@ -346,6 +346,11 @@ Todas as regras e a lista de campos ficam nas funções `coach_*` do banco. Nunc
 valores.
 
 - `GET /me` → `{ coach_id, name }`.
+- `GET /panel` → painel do coach: `kpis` (alunos ativos, entradas, retornos, renovações,
+  saídas, saldo, churn médio, renovações em andamento), `students` (nome, modalidade, plano,
+  início, fim, situação), `exits` (nome, data, modalidade, plano, motivo), `monthly` (12 meses) e
+  `by_modality`. Calculado no servidor com as regras do perfil do coach da equipe; só do coach da
+  sessão; sem valores, contatos nem ids. 500 `panel_unavailable` se não for possível calcular.
 - `GET /events` → eventos em que o coach é responsável, com contagens (`registered`, `paid`,
   `not_paid` e, em evento com grupo, `group_added`, `group_missing`, `group_declined`).
 - `GET /events/:id` → `{ event, summary, registrations }`. Cada inscrição traz `id`,

@@ -29,6 +29,9 @@ const PublicHome = lazy(() => import('@/pages/PublicHome'));
 const Migrate = lazy(() => import('@/pages/Migrate'));
 const CampaignReport = lazy(() => import('@/pages/CampaignReport'));
 const Login = lazy(() => import('@/pages/Login'));
+const CoachHome = lazy(() => import('@/pages/coach/CoachHome'));
+const CoachStudents = lazy(() => import('@/pages/coach/CoachStudents'));
+const CoachMovement = lazy(() => import('@/pages/coach/CoachMovement'));
 const CoachEvents = lazy(() => import('@/pages/coach/CoachEvents'));
 const CoachEventDetail = lazy(() => import('@/pages/coach/CoachEventDetail'));
 const CoachSetPassword = lazy(() => import('@/pages/coach/CoachSetPassword'));
@@ -130,7 +133,10 @@ export default function App() {
           {/* Admin */}
           <Route path="/login" element={<Login />} />
           {/* Área do coach: só conta de coach entra (CoachLayout) e só fala com a coach-api. */}
-          <Route path="/coach" element={<CoachLayout><CoachEvents /></CoachLayout>} />
+          <Route path="/coach" element={<CoachLayout><CoachHome /></CoachLayout>} />
+          <Route path="/coach/alunos" element={<CoachLayout><CoachStudents /></CoachLayout>} />
+          <Route path="/coach/movimento" element={<CoachLayout><CoachMovement /></CoachLayout>} />
+          <Route path="/coach/eventos" element={<CoachLayout><CoachEvents /></CoachLayout>} />
           <Route path="/coach/eventos/:id" element={<CoachLayout><CoachEventDetail /></CoachLayout>} />
           <Route path="/coach/senha" element={<CoachLayout><CoachSetPassword /></CoachLayout>} />
           <Route path="/migrar" element={<AdminLayout><Migrate /></AdminLayout>} />

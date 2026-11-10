@@ -19,6 +19,9 @@ export interface RpcResult {
 export interface CoachApiDeps {
   authenticate(req: Request): Promise<UserAuth>;
   rpc(name: string, args: Record<string, unknown>): Promise<RpcResult>;
+  // Painel do coach (alunos, entradas e saídas): conta feita no servidor com todos os
+  // contratos; devolve só o que é do coach informado, em lista fixa de campos.
+  loadPanel(coachId: string): Promise<unknown>;
 }
 
 function databaseError(
@@ -88,6 +91,24 @@ export async function handleCoachApi(
     const { data, error } = await deps.rpc("coach_me", { p_user_id: userId });
     if (error) return databaseError(error, "me");
     return jsonResponse({ data });
+  }
+
+  if (req.method === "GET" && path === "/panel") {
+    // O coach vem do banco pela conta da sessão (e confirma que é coach ativo): nunca de
+    // um parâmetro da chamada.
+    const me = await deps.rpc("coach_me", { p_user_id: userId });
+    if (me.error) return databaseError(me.error, "panel");
+    const coachId = (me.data as { coach_id?: string } | null)?.coach_id;
+    if (!coachId) return databaseError({ code: "42501" }, "panel");
+    try {
+      return jsonResponse({ data: await deps.loadPanel(coachId) });
+    } catch (error) {
+      console.error("coach-api panel:", (error as { code?: string })?.code ?? (error as Error)?.name);
+      return jsonResponse({
+        error: "Não foi possível carregar o painel",
+        code: "panel_unavailable",
+      }, 500);
+    }
   }
 
   if (req.method === "GET" && path === "/events") {

@@ -1,11 +1,18 @@
 import { Suspense } from 'react';
-import { Link, Navigate, useLocation } from 'react-router-dom';
+import { Link, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { KeyRound, LogOut } from 'lucide-react';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import RouteFallback from '@/components/RouteFallback';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { homePathForRole, mustChangePassword } from '@/lib/auth-role';
+
+const TABS = [
+  { to: '/coach', label: 'Visão geral', end: true },
+  { to: '/coach/alunos', label: 'Meus alunos' },
+  { to: '/coach/movimento', label: 'Mês a mês' },
+  { to: '/coach/eventos', label: 'Eventos' },
+];
 
 // Casca da área do coach. Só entra conta de coach (a API confirma no servidor); quem é
 // administrador volta para o painel. Enquanto a senha provisória não for trocada, só a
@@ -29,7 +36,7 @@ export default function CoachLayout({ children }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
           <Link to="/coach" className="min-w-0">
             <p className="text-sm font-bold text-gray-900">Endurance ON · Coach</p>
             {coach?.name && <p className="truncate text-xs text-muted-foreground">{coach.name}</p>}
@@ -45,8 +52,25 @@ export default function CoachLayout({ children }) {
             </Button>
           </div>
         </div>
+        {!forced && (
+          <nav aria-label="Áreas do coach" className="mx-auto max-w-5xl overflow-x-auto px-4">
+            <ul className="flex gap-1">
+              {TABS.map(tab => (
+                <li key={tab.to}>
+                  <NavLink
+                    to={tab.to}
+                    end={tab.end}
+                    className={({ isActive }) => `block whitespace-nowrap border-b-2 px-2 py-2 text-[13px] font-medium sm:px-3 sm:text-sm ${isActive ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
+                  >
+                    {tab.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        )}
       </header>
-      <main className="mx-auto max-w-3xl p-4 sm:p-6">
+      <main className="mx-auto max-w-5xl p-4 sm:p-6">
         <ErrorBoundary routeKey={location.pathname}>
           <Suspense fallback={<RouteFallback />}>
             {children}

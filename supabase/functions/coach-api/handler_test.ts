@@ -34,6 +34,7 @@ function deps(options: {
       calls.push({ name, args });
       return Promise.resolve(options.result ?? { data: { ok: true }, error: null });
     },
+    loadPanel: () => Promise.resolve(null),
   };
   return { fake, calls };
 }
@@ -157,4 +158,60 @@ Deno.test("rota ou método desconhecido responde 404 sem tocar no banco", async 
     assert(response.status === 404, `${method} ${path}: deve responder 404`);
   }
   assert(calls.length === 0, "nenhuma chamada ao banco");
+});
+
+function panelDeps(options: { loader?: (coachId: string) => Promise<unknown>; meError?: { code: string; message: string } } = {}) {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const loaded: string[] = [];
+  const fake: CoachApiDeps = {
+    authenticate: () => Promise.resolve({ ok: true as const, userId: USER_ID }),
+    rpc(name, args) {
+      calls.push({ name, args });
+      return Promise.resolve(options.meError
+        ? { data: null, error: options.meError }
+        : { data: { coach_id: "coach-from-db", name: "Coach Teste" }, error: null });
+    },
+    loadPanel(coachId) {
+      loaded.push(coachId);
+      return options.loader ? options.loader(coachId) : Promise.resolve({ students: [] });
+    },
+  };
+  return { fake, calls, loaded };
+}
+
+Deno.test("GET /panel usa o coach que o banco achou pela conta da sessão", async () => {
+  const { fake, calls, loaded } = panelDeps();
+  const response = await handleCoachApi(request(`/panel?coach_id=outro&coachId=outro`), fake);
+  assert(response.status === 200, "painel carregado");
+  assert(calls.length === 1 && calls[0].name === "coach_me", "confere a conta antes de tudo");
+  assert(calls[0].args.p_user_id === USER_ID, "usa o usuário da sessão");
+  assert(loaded.length === 1 && loaded[0] === "coach-from-db", "carrega o coach do banco, não o da chamada");
+  assert((await response.json()).data.students.length === 0, "devolve o painel");
+});
+
+Deno.test("GET /panel recusa conta sem acesso de coach sem carregar nada", async () => {
+  const { fake, loaded } = panelDeps({ meError: { code: "42501", message: "Esta conta não tem acesso de coach" } });
+  const response = await handleCoachApi(request("/panel"), fake);
+  assert(response.status === 403, "sem acesso de coach");
+  assert(loaded.length === 0, "não carrega painel nenhum");
+});
+
+Deno.test("GET /panel sem sessão não chega ao banco nem ao carregador", async () => {
+  const calls: string[] = [];
+  const fake: CoachApiDeps = {
+    authenticate: () => Promise.resolve({ ok: false as const, status: 401, error: "invalid_token" }),
+    rpc: (name) => { calls.push(name); return Promise.resolve({ data: null, error: null }); },
+    loadPanel: () => { calls.push("loadPanel"); return Promise.resolve(null); },
+  };
+  const response = await handleCoachApi(request("/panel"), fake);
+  assert(response.status === 401 && calls.length === 0, "401 e nada chamado");
+});
+
+Deno.test("GET /panel não vaza detalhes quando o carregamento falha", async () => {
+  const { fake } = panelDeps({ loader: () => Promise.reject(new Error("detalhe interno: tabela secreta")) });
+  const response = await handleCoachApi(request("/panel"), fake);
+  assert(response.status === 500, "erro do servidor");
+  const body = await response.json();
+  assert(body.code === "panel_unavailable", "código claro");
+  assert(!JSON.stringify(body).includes("tabela secreta"), "sem detalhe interno");
 });

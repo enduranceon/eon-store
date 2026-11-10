@@ -76,6 +76,47 @@ conta é desconectada ("Esta conta não tem acesso ao sistema").
 4. As funções `coach_*`, `link_coach_auth_user` e `unlink_coach_auth_user` só executam
    como `service_role`.
 
+## Painel do coach: alunos, entradas e saídas (etapa 1 do perfil completo)
+
+Pedido do usuário em 2026-11-10: o coach ter um perfil com seus alunos, entradas e saídas, e
+(próximas etapas) o que tem a receber e o que já recebeu. Decisões (todas "segue o recomendado"):
+
+1. O coach só verá **dinheiro dele** (o repasse, nas próximas etapas). Nunca mensalidade, valor
+   do plano nem "carteira por mês" (o que a empresa fatura).
+2. Fechamento de repasse **em revisão** só aparece depois de aprovado (etapa 2).
+3. Coach líder: só o valor do bônus de liderança, sem lista dos alunos da equipe (etapa 2).
+4. **Sem WhatsApp/e-mail/CPF** dos alunos no painel.
+5. Ajustes manuais do extrato: valor e motivo curto (etapa 2).
+
+**Telas** (`/coach`, `/coach/alunos`, `/coach/movimento`, `/coach/eventos`):
+- **Visão geral:** alunos ativos hoje, entradas (novos e retornos), saídas, saldo, churn médio e
+  renovações dos últimos 12 meses (+ quantas em andamento), gráfico de alunos ativos por mês e
+  alunos por modalidade.
+- **Meus alunos:** ativos hoje (modalidade, plano, início, fim do contrato, situação) e quem saiu
+  nos últimos 12 meses, com o motivo registrado. Busca por nome.
+- **Mês a mês:** base no início, entradas, retornos, renovações, saídas, base no fim e churn.
+- **Eventos:** o que já existia.
+
+**O que o coach não vê, de propósito:** mensalidade/valor, pagamento atrasado do aluno (aparece como
+"Ativo"), contato e ids internos. Situação mostrada: Ativo, Em licença ou Renovação em andamento.
+
+**Como é calculado.** Com **as mesmas regras do perfil do coach no painel da equipe**
+(`coach-profile.js`): quem é entrada, retorno, renovação ou saída depende de TODOS os contratos
+(um aluno que veio de outro coach, por exemplo), então a conta roda **no servidor**
+(`coach-api`, `GET /panel`) e o navegador do coach só recebe o resultado dele, em lista fixa de
+campos (o teste confere as chaves exatas, que nada de dinheiro/contato aparece e que gente de
+outro coach nunca entra). Os contratos ficam em memória por 60 segundos entre as chamadas.
+
+**Código compartilhado e fuso horário.** Os módulos de cálculo (`assessment-movement`,
+`-yearly-indicators`, `-contract-lifecycle`, `-contract-mrr`, `-renewal-pipeline`,
+`-metric-data`, `coach-profile`) passaram a morar em `supabase/functions/_shared/assessment-metrics/`;
+os arquivos de `src/lib/` só reexportam, então o painel da equipe não mudou. O servidor roda em
+UTC e o painel em horário de Brasília: para os dois darem **o mesmo número**, a conversão de um
+instante (`created_at`, `updated_at`...) em dia é sempre no fuso de Brasília (`dates.js`), e a
+função do coach recebe o "hoje" de Brasília explícito (`today` é obrigatório). O teste
+`coach-panel.test.js` roda a conta em quatro fusos, a 22h10 de Brasília, e exige resultado idêntico.
+
 **Fora desta etapa:** "esqueci a senha" pelo próprio coach (a equipe gera nova senha),
-check-in no dia do evento, ver respostas do formulário de inscrição, e mais assuntos do
-coach além de eventos (por exemplo o extrato de repasse).
+check-in no dia do evento, ver respostas do formulário de inscrição e, do perfil completo,
+as etapas 2 a 4: **recebimentos** (fechamentos aprovados, extrato, repasse aguardando o aluno
+pagar), **previsão do mês** (com a conta do fechamento) e renovações/prospects/PDF do extrato.
