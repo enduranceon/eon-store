@@ -121,7 +121,9 @@ Pedido do usuário em 2026-11-10: a área do coach estava "crua", sem cara de so
 mexe **só na apresentação**: a API, os campos e as regras de cálculo são os mesmos, e nada de
 dinheiro ou contato passou a aparecer.
 
-- **Casca:** no computador, barra lateral escura (a mesma identidade do painel da equipe) com
+- **Casca:** é o **software administrativo da EON** também para o coach (decisão do usuário em
+  2026-11-10): mesma marca do painel da equipe (raio azul, "Endurance ON"), com "Administrativo ·
+  Coach" embaixo. No computador, barra lateral escura (mesmo tom do painel da equipe) com
   Início, Alunos, Evolução e Eventos, mais conta, "Trocar senha" e "Sair" embaixo. No celular,
   barra de abas fixa embaixo (área do polegar) e menu da conta no topo. O título da aba do
   navegador muda por tela.
@@ -143,9 +145,9 @@ dinheiro ou contato passou a aparecer.
   suspensa: a escolha aparece na hora e volta ao que estava se o servidor recusar. Filtros
   (todos, pagos, sem pagar, faltam no grupo) e "Copiar números de quem falta" (só o que o coach
   já via: nome e número de quem pagou, em evento com grupo).
-- **Senha e login:** tela de senha com mostrar/ocultar e requisitos que acendem; login com a marca
-  "Endurance ON", preenchimento automático e aviso de que, para recuperar a senha, o coach pede
-  para a equipe.
+- **Senha e login:** tela de senha com mostrar/ocultar e requisitos que acendem; o login segue
+  "EON Store", agora com "Software administrativo da EON, para a equipe e para os coaches",
+  preenchimento automático e aviso de que, para recuperar a senha, o coach pede para a equipe.
 - **Código:** regras testáveis em `src/lib/coach-ui.js` (atenção, filtros, ordem, resumo do
   período, contagem regressiva de eventos; datas por número de dia em UTC, então o resultado não
   depende do fuso do aparelho); peças visuais em `src/components/coach/` (`kit.jsx`, `charts.jsx`,

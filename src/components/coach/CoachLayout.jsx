@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, useLocation } from 'react-router-dom';
-import { Activity, CalendarDays, ChevronDown, Home, KeyRound, LogOut, TrendingUp, Users } from 'lucide-react';
+import { CalendarDays, ChevronDown, Home, KeyRound, LogOut, TrendingUp, Users, Zap } from 'lucide-react';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import RouteFallback from '@/components/RouteFallback';
 import { Avatar } from '@/components/coach/kit';
@@ -24,12 +24,12 @@ function titleFor(pathname) {
 function Brand({ compact = false }) {
   return (
     <Link to="/coach" className="flex min-w-0 items-center gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
-      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm">
-        <Activity className="h-5 w-5" aria-hidden="true" />
+      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500 text-white">
+        <Zap className="h-[18px] w-[18px]" aria-hidden="true" />
       </span>
       <span className="min-w-0 leading-tight">
         <span className="block truncate text-sm font-bold text-white">Endurance ON</span>
-        {!compact && <span className="block truncate text-[11px] font-medium text-slate-400">Área do coach</span>}
+        <span className="block truncate text-[11px] font-medium text-slate-400">{compact ? 'Coach' : 'Administrativo · Coach'}</span>
       </span>
     </Link>
   );
@@ -155,7 +155,7 @@ export default function CoachLayout({ children }) {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {!forced && (
-        <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-[#1a1a2e] p-4 lg:flex">
+        <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-slate-900 p-4 lg:flex">
           <div className="px-1 pb-6 pt-2"><Brand /></div>
           <nav aria-label="Áreas do coach" className="flex-1 space-y-1">
             {NAV.map(item => <SideNavLink key={item.to} item={item} />)}
@@ -178,7 +178,7 @@ export default function CoachLayout({ children }) {
         </aside>
       )}
 
-      <header className={cn('sticky top-0 z-30 bg-[#1a1a2e] shadow-sm', !forced && 'lg:hidden')}>
+      <header className={cn('sticky top-0 z-30 bg-slate-900 shadow-sm', !forced && 'lg:hidden')}>
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-3 px-4">
           <Brand compact />
           {forced

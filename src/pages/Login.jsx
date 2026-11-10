@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Eye, EyeOff } from 'lucide-react';
+import { Store, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/api/db';
 import { getCoachMe, getCurrentAdmin } from '@/api/client';
 import { homePathForRole, resolveAccountRole } from '@/lib/auth-role';
@@ -43,11 +43,11 @@ export default function Login() {
     <div className="min-h-screen bg-[#1a1a2e] flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg">
-            <Activity className="w-7 h-7 text-white" aria-hidden="true" />
+          <div className="w-14 h-14 bg-blue-500 rounded-xl flex items-center justify-center mx-auto mb-3">
+            <Store className="w-7 h-7 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Endurance ON</h1>
-          <p className="text-sm text-slate-400 mt-1">Painel da equipe e área do coach</p>
+          <h1 className="text-2xl font-bold text-white">EON Store</h1>
+          <p className="text-sm text-slate-400 mt-1">Software administrativo da EON, para a equipe e para os coaches</p>
         </div>
 
         <div className="bg-white rounded-2xl p-6 shadow-xl">
@@ -98,7 +98,7 @@ export default function Login() {
           </form>
 
           <p className="mt-4 text-center text-xs text-slate-500">
-            Esqueceu a senha? Peça uma nova para a equipe da Endurance ON.
+            Esqueceu a senha? Peça uma nova para a equipe da EON.
           </p>
         </div>
       </div>

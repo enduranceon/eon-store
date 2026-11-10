@@ -27,7 +27,7 @@ function Hero({ data }) {
   return (
     <section
       aria-label="Seus alunos ativos"
-      className="overflow-hidden rounded-3xl bg-gradient-to-br from-[#1a1a2e] via-[#1e1b4b] to-blue-900 text-white shadow-lg"
+      className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-[#1e1b4b] to-blue-900 text-white shadow-lg"
     >
       <div className="grid gap-2 p-5 sm:p-6 md:grid-cols-5 md:items-center md:gap-6">
         <div className="md:col-span-2">

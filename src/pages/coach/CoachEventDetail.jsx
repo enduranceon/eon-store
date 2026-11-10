@@ -135,7 +135,7 @@ function Hero({ event, today, mapHref }) {
   const time = eventTimeLabel(event);
   const status = EVENT_STATUS[event.status] || EVENT_STATUS.draft;
   return (
-    <section aria-label="Sobre o evento" className="overflow-hidden rounded-3xl bg-gradient-to-br from-[#1a1a2e] via-[#1e1b4b] to-blue-900 p-5 text-white shadow-lg sm:p-6">
+    <section aria-label="Sobre o evento" className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-[#1e1b4b] to-blue-900 p-5 text-white shadow-lg sm:p-6">
       <div className="flex flex-wrap items-center gap-2">
         <CountdownPill event={event} today={today} />
         <Pill tone={status.tone}>{status.label}</Pill>
