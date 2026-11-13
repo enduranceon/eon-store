@@ -1,0 +1,432 @@
+{
+  "as_of": "2026-11-12",
+  "scope": "entirely_invented_test_fixture",
+  "store": [
+    {
+      "store": {
+        "id": "00000000-0000-4000-a000-000000000001",
+        "name": "Pessoa Aurora Fictícia",
+        "customer_code": "1",
+        "lifecycle_active": true,
+        "contract_count": 1,
+        "active_contracts": [
+          {
+            "id": "00000000-0000-4000-a000-000000001001",
+            "number": "DEMO-1",
+            "status": "on_leave",
+            "start": "2026-10-01",
+            "end": "2027-04-01",
+            "coach": "Coach Exemplo",
+            "coach_id": "00000000-0000-4000-a000-000000000900",
+            "modality": "corrida"
+          }
+        ],
+        "latest_contract": {
+          "status": "on_leave",
+          "start": "2026-10-01",
+          "end": "2027-04-01",
+          "coach": "Coach Exemplo"
+        }
+      },
+      "match": {
+        "hub_id": "00000000-0000-4000-a000-000000000101"
+      }
+    },
+    {
+      "store": {
+        "id": "00000000-0000-4000-a000-000000000002",
+        "name": "Pessoa Brisa Fictícia",
+        "customer_code": "2",
+        "lifecycle_active": true,
+        "contract_count": 1,
+        "active_contracts": [
+          {
+            "id": "00000000-0000-4000-a000-000000001002",
+            "number": "DEMO-2",
+            "status": "active",
+            "start": "2026-10-01",
+            "end": "2027-04-01",
+            "coach": "Coach Exemplo",
+            "coach_id": "00000000-0000-4000-a000-000000000900",
+            "modality": "corrida"
+          }
+        ],
+        "latest_contract": {
+          "status": "active",
+          "start": "2026-10-01",
+          "end": "2027-04-01",
+          "coach": "Coach Exemplo"
+        }
+      },
+      "match": null
+    },
+    {
+      "store": {
+        "id": "00000000-0000-4000-a000-000000000003",
+        "name": "Pessoa Cedro Fictícia",
+        "customer_code": "3",
+        "lifecycle_active": false,
+        "contract_count": 1,
+        "active_contracts": [],
+        "latest_contract": {
+          "status": "active",
+          "start": "2026-10-01",
+          "end": "2027-04-01",
+          "coach": "Coach Exemplo"
+        }
+      },
+      "match": null
+    },
+    {
+      "store": {
+        "id": "00000000-0000-4000-a000-000000000004",
+        "name": "Pessoa Duna Fictícia",
+        "customer_code": "4",
+        "lifecycle_active": false,
+        "contract_count": 1,
+        "active_contracts": [],
+        "latest_contract": {
+          "status": "active",
+          "start": "2026-10-01",
+          "end": "2027-04-01",
+          "coach": "Coach Exemplo"
+        }
+      },
+      "match": {
+        "hub_id": "00000000-0000-4000-a000-000000000104"
+      }
+    },
+    {
+      "store": {
+        "id": "00000000-0000-4000-a000-000000000005",
+        "name": "Pessoa Estrela Fictícia",
+        "customer_code": "5",
+        "lifecycle_active": true,
+        "contract_count": 1,
+        "active_contracts": [
+          {
+            "id": "00000000-0000-4000-a000-000000001005",
+            "number": "DEMO-5",
+            "status": "active",
+            "start": "2026-10-01",
+            "end": "2027-04-01",
+            "coach": "Coach Exemplo",
+            "coach_id": "00000000-0000-4000-a000-000000000900",
+            "modality": "corrida"
+          }
+        ],
+        "latest_contract": {
+          "status": "active",
+          "start": "2026-10-01",
+          "end": "2027-04-01",
+          "coach": "Coach Exemplo"
+        }
+      },
+      "match": {
+        "hub_id": "00000000-0000-4000-a000-000000000105"
+      }
+    },
+    {
+      "store": {
+        "id": "00000000-0000-4000-a000-000000000006",
+        "name": "Pessoa Farol Fictícia",
+        "customer_code": "6",
+        "lifecycle_active": false,
+        "contract_count": 1,
+        "active_contracts": [],
+        "latest_contract": {
+          "status": "active",
+          "start": "2026-10-01",
+          "end": "2027-04-01",
+          "coach": "Coach Exemplo"
+        }
+      },
+      "match": {
+        "hub_id": "00000000-0000-4000-a000-000000000106"
+      }
+    }
+  ],
+  "hub": [
+    {
+      "id": "00000000-0000-4000-a000-000000000101",
+      "code": "101",
+      "name": "Pessoa Aurora Fictícia",
+      "status": "active",
+      "active": true,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": "suspended"
+    },
+    {
+      "id": "00000000-0000-4000-a000-000000000102",
+      "code": "102",
+      "name": "Nome antigo Aurora Fictícia",
+      "status": "cancelled",
+      "active": false,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": null
+    },
+    {
+      "id": "00000000-0000-4000-a000-000000000103",
+      "code": "103",
+      "name": "Pessoa Cedro Fictícia",
+      "status": "active",
+      "active": true,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": null
+    },
+    {
+      "id": "00000000-0000-4000-a000-000000000104",
+      "code": "104",
+      "name": "Pessoa Duna Fictícia",
+      "status": "active",
+      "active": true,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": null
+    },
+    {
+      "id": "00000000-0000-4000-a000-000000000105",
+      "code": "105",
+      "name": "Pessoa Estrela Fictícia",
+      "status": "on_leave",
+      "active": false,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": null
+    },
+    {
+      "id": "00000000-0000-4000-a000-000000000106",
+      "code": "106",
+      "name": "Pessoa Farol Fictícia",
+      "status": "active",
+      "active": true,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": null
+    },
+    {
+      "id": "00000000-0000-4000-a000-000000000107",
+      "code": "107",
+      "name": "Coach Horizonte Fictício",
+      "status": "active",
+      "active": true,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": "suspended"
+    },
+    {
+      "id": "00000000-0000-4000-a000-000000000108",
+      "code": "108",
+      "name": "Atleta Íris Fictícia",
+      "status": "active",
+      "active": true,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": null
+    },
+    {
+      "id": "00000000-0000-4000-a000-000000000109",
+      "code": "109",
+      "name": "Ex Coach Jardim Fictício",
+      "status": "active",
+      "active": true,
+      "coach": "Coach Exemplo",
+      "coach_id": "00000000-0000-4000-a000-000000000900",
+      "modality": "corrida",
+      "start_date": "2026-01-01",
+      "end_date": null,
+      "portal_status": null
+    }
+  ],
+  "decisions": [
+    {
+      "decision_id": "demo-benefit-104",
+      "hub_id": "00000000-0000-4000-a000-000000000104",
+      "source": "explicit_user_reply",
+      "action": "plan_benefit",
+      "note": "Decisão fictícia de benefício sem cobrança.",
+      "membership_category": "parceiro",
+      "exclude_active_student_count": true,
+      "planned_is_coach": false,
+      "effective_date": null,
+      "planned_is_athlete": true,
+      "planned_billing_required": false,
+      "planned_charge_amount": 0
+    },
+    {
+      "decision_id": "demo-benefit-107",
+      "hub_id": "00000000-0000-4000-a000-000000000107",
+      "source": "explicit_user_reply",
+      "action": "plan_benefit",
+      "note": "Decisão fictícia de benefício sem cobrança.",
+      "membership_category": "equipe",
+      "exclude_active_student_count": true,
+      "planned_is_coach": true,
+      "effective_date": null,
+      "planned_is_athlete": true,
+      "planned_billing_required": false,
+      "planned_charge_amount": 0
+    },
+    {
+      "decision_id": "demo-benefit-108",
+      "hub_id": "00000000-0000-4000-a000-000000000108",
+      "source": "explicit_user_reply",
+      "action": "plan_benefit",
+      "note": "Decisão fictícia de benefício sem cobrança.",
+      "membership_category": "equipe",
+      "exclude_active_student_count": true,
+      "planned_is_coach": false,
+      "effective_date": null,
+      "planned_is_athlete": true,
+      "planned_billing_required": false,
+      "planned_charge_amount": 0
+    },
+    {
+      "decision_id": "demo-new",
+      "store_id": "00000000-0000-4000-a000-000000000002",
+      "action": "prepare_new_hub_athlete",
+      "create_auth_account": false,
+      "note": "Cadastro fictício a criar apenas no piloto."
+    },
+    {
+      "decision_id": "demo-alias",
+      "store_id": "00000000-0000-4000-a000-000000000001",
+      "hub_id": "00000000-0000-4000-a000-000000000101",
+      "action": "map_to_existing_active_athlete",
+      "note": "Preservar cadastro histórico fictício."
+    },
+    {
+      "decision_id": "demo-date",
+      "store_id": "00000000-0000-4000-a000-000000000006",
+      "hub_id": "00000000-0000-4000-a000-000000000106",
+      "action": "correct_existing_contract_dates",
+      "production_applied": true,
+      "note": "Correção previamente aplicada; não reproduzir."
+    },
+    {
+      "decision_id": "demo-sports-101",
+      "hub_id": "00000000-0000-4000-a000-000000000101",
+      "action": "plan_hub_sporting_status",
+      "note": "Situação esportiva fictícia confirmada.",
+      "planned_hub_status": "on_leave"
+    },
+    {
+      "decision_id": "demo-sports-103",
+      "hub_id": "00000000-0000-4000-a000-000000000103",
+      "action": "plan_hub_sporting_status",
+      "note": "Situação esportiva fictícia confirmada.",
+      "planned_hub_status": "cancelled"
+    },
+    {
+      "decision_id": "demo-sports-105",
+      "hub_id": "00000000-0000-4000-a000-000000000105",
+      "action": "plan_hub_sporting_status",
+      "note": "Situação esportiva fictícia confirmada.",
+      "planned_hub_status": "active"
+    },
+    {
+      "decision_id": "demo-sports-109",
+      "hub_id": "00000000-0000-4000-a000-000000000109",
+      "action": "plan_hub_sporting_status",
+      "note": "Situação esportiva fictícia confirmada.",
+      "planned_hub_status": "cancelled"
+    }
+  ],
+  "participation_decisions": [
+    {
+      "decision_id": "demo-role-107",
+      "hub_id": "00000000-0000-4000-a000-000000000107",
+      "hub_coach_id": "00000000-0000-4000-a000-000000000901",
+      "store_coach_id": "00000000-0000-4000-a000-000000000902",
+      "planned_is_coach": true
+    },
+    {
+      "decision_id": "demo-ex-coach",
+      "hub_id": "00000000-0000-4000-a000-000000000109",
+      "hub_coach_id": "00000000-0000-4000-a000-000000000903",
+      "store_coach_id": "00000000-0000-4000-a000-000000000904",
+      "planned_is_coach": false
+    }
+  ],
+  "benefit_policy_decisions": [
+    {
+      "decision_id": "demo-benefit-104",
+      "hub_id": "00000000-0000-4000-a000-000000000104",
+      "source": "explicit_user_reply",
+      "action": "plan_benefit",
+      "note": "Decisão fictícia de benefício sem cobrança.",
+      "membership_category": "parceiro",
+      "exclude_active_student_count": true,
+      "planned_is_coach": false,
+      "effective_date": null,
+      "planned_is_athlete": true,
+      "planned_billing_required": false,
+      "planned_charge_amount": 0
+    },
+    {
+      "decision_id": "demo-benefit-107",
+      "hub_id": "00000000-0000-4000-a000-000000000107",
+      "source": "explicit_user_reply",
+      "action": "plan_benefit",
+      "note": "Decisão fictícia de benefício sem cobrança.",
+      "membership_category": "equipe",
+      "exclude_active_student_count": true,
+      "planned_is_coach": true,
+      "effective_date": null,
+      "planned_is_athlete": true,
+      "planned_billing_required": false,
+      "planned_charge_amount": 0
+    },
+    {
+      "decision_id": "demo-benefit-108",
+      "hub_id": "00000000-0000-4000-a000-000000000108",
+      "source": "explicit_user_reply",
+      "action": "plan_benefit",
+      "note": "Decisão fictícia de benefício sem cobrança.",
+      "membership_category": "equipe",
+      "exclude_active_student_count": true,
+      "planned_is_coach": false,
+      "effective_date": null,
+      "planned_is_athlete": true,
+      "planned_billing_required": false,
+      "planned_charge_amount": 0
+    }
+  ],
+  "duplicates": [
+    {
+      "id": "00000000-0000-4000-a000-000000000102",
+      "tests": 2,
+      "activities": 9,
+      "workouts": 1,
+      "race_results": 3,
+      "movements": 4
+    }
+  ]
+}
