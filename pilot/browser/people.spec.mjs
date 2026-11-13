@@ -1,21 +1,22 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { normalizeSnapshot } from '../domain.mjs'
-import { publicPerson, normalizeSearch } from '../db.mjs'
+import { customerPerson, normalizeSearch } from '../db.mjs'
 
 const read = name => JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url)))
-const data = normalizeSnapshot(read('synthetic-snapshot'), read('synthetic-manifest'))
-const people = data.people.map(publicPerson)
-const summary = { ...data.summary, asOf: data.asOf, people: data.summary.totalPeople,
-  onLeave: data.summary.commercialOnLeave, needsAthleteProfile: data.summary.newAthleteProfiles }
+const data = normalizeSnapshot(read('synthetic-snapshot'), read('synthetic-manifest'), read('synthetic-store'))
+const people = data.people.filter(p => p.sources.some(source => source.system === 'store') || ['team', 'partner'].includes(p.category)).map(customerPerson)
+const summary = { ...data.summary, asOf: data.asOf, people: data.summary.operationalPeople,
+  onLeave: data.summary.storeOnLeave, needsAthleteProfile: data.summary.newAthleteProfiles }
 
 async function fixtureApi(page, { failList = false, many = false } = {}) {
   const rows = many ? [...people, ...Array.from({ length: 30 }, (_, i) => ({
-    ...people[0], id: `00000000-0000-4000-a000-${String(900 + i).padStart(12, '0')}`,
+    ...people.find(p => p.category === 'commercial'), id: `00000000-0000-4000-a000-${String(900 + i).padStart(12, '0')}`,
     name: `Cadastro sintético adicional ${String(i).padStart(2, '0')}`,
   }))] : people
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url())
+    expect(url.searchParams.get('view')).toBe('customers')
     if (url.pathname === '/api/summary') return route.fulfill({ json: summary })
     if (url.pathname === '/api/people') {
       if (failList) return route.fulfill({ status: 503, json: { error: 'Falha fictícia' } })
@@ -39,7 +40,7 @@ test('searches, separates free membership from coach role and restores keyboard 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Pessoas.' })).toBeVisible()
   await expect(page.locator('.metric').filter({ hasText: 'Alunos ativos' }).locator('strong')).toHaveText('4')
-  await page.getByLabel('Vínculo', { exact: true }).selectOption('team')
+  await page.getByLabel('Mostrar', { exact: true }).selectOption('team')
   await expect(page.locator('tbody tr')).toHaveCount(2)
   await page.getByLabel('Buscar pessoa pelo nome').fill('iris')
   await expect(page.locator('tbody tr')).toHaveCount(1)
@@ -47,9 +48,11 @@ test('searches, separates free membership from coach role and restores keyboard 
   await open.click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: 'Atleta Íris Fictícia' })).toBeVisible()
-  await expect(dialog.getByText('Fora da contagem de alunos ativos', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: 'Assessoria', exact: true })).toBeVisible()
+  await expect(dialog).not.toContainText('Store')
+  await expect(dialog).not.toContainText('Registros de origem')
   await expect(dialog.locator('.badges')).not.toContainText('Coach')
-  await expect(dialog).toContainText('sem cobrança')
+  await expect(dialog).toContainText('Sem cobrança')
   await page.keyboard.press('Escape')
   await expect(dialog).not.toBeVisible()
   await expect(open).toBeFocused()
@@ -66,7 +69,7 @@ test('paginates and resets the page when changing filters', async ({ page }) => 
   await expect(page.locator('tbody tr')).toHaveCount(25)
   await page.getByRole('button', { name: 'Próxima página' }).click()
   await expect(page.locator('.pagination')).toContainText('Página 2 de 2')
-  await page.getByLabel('Vínculo', { exact: true }).selectOption('review')
+  await page.getByLabel('Mostrar', { exact: true }).selectOption('historical')
   await expect(page.locator('.pagination')).toContainText('Página 1 de 1')
   await expect(page.getByRole('button', { name: 'Página anterior' })).toBeDisabled()
 })
@@ -74,11 +77,11 @@ test('paginates and resets the page when changing filters', async ({ page }) => 
 test('shows a service failure and recovers by retrying', async ({ page }) => {
   await fixtureApi(page, { failList: true })
   await page.goto('/')
-  await expect(page.getByRole('alert')).toContainText('indisponível')
+  await expect(page.getByRole('alert')).toContainText('Não foi possível carregar')
   await page.unroute('**/api/**')
   await fixtureApi(page)
   await page.getByRole('button', { name: 'Tentar novamente' }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(people.length)
+  await expect(page.locator('tbody tr')).toHaveCount(people.filter(p => p.category === 'commercial').length)
 })
 
 test('keeps mobile filters and detail readable without page overflow', async ({ page }) => {
@@ -88,7 +91,8 @@ test('keeps mobile filters and detail readable without page overflow', async ({ 
   await page.getByLabel('Buscar pessoa pelo nome').fill('Aurora')
   await expect(page.locator('tbody tr')).toHaveCount(1)
   await page.locator('.person-link').click()
-  await expect(page.getByRole('dialog')).toContainText('Histórico associado')
+  await expect(page.getByRole('dialog').getByRole('heading', { name: 'Contratos', exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog')).not.toContainText('Reconciliação')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.getByRole('button', { name: 'Fechar detalhes' }).click()
   await expect(page.getByRole('dialog')).not.toBeVisible()

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS eon_pilot.imports (
   id text PRIMARY KEY CHECK (id ~ '^[a-f0-9]{64}$'),
   snapshot_sha256 text NOT NULL,
   manifest_sha256 text NOT NULL,
+  store_sha256 text,
   projection_sha256 text,
   projection_version integer,
   as_of date NOT NULL,
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS eon_pilot.imports (
 -- A new projector output creates a new import instead of rewriting their rows.
 ALTER TABLE eon_pilot.imports ADD COLUMN IF NOT EXISTS projection_sha256 text;
 ALTER TABLE eon_pilot.imports ADD COLUMN IF NOT EXISTS projection_version integer;
+ALTER TABLE eon_pilot.imports ADD COLUMN IF NOT EXISTS store_sha256 text;
 
 -- Stable mapping survives subsequent snapshots; a source may never silently move
 -- to another person. A different reconciliation requires an explicit migration.

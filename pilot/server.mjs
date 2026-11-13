@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPool, normalizeSearch } from './db.mjs';
+import { createPool, normalizeSearch, customerPerson } from './db.mjs';
 
 const categories = new Set(['commercial','team','partner','historical','review']);
 const sportsStatuses = new Set(['active','on_leave','cancelled']);
@@ -13,6 +13,17 @@ const defaultStaticRoot = fileURLToPath(new URL('../pilot-dist/', import.meta.ur
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 
 function httpError(status, message) { return Object.assign(new Error(message), { status }); }
+
+function parseView(params) {
+  const view = params.get('view') ?? '';
+  if (view && view !== 'customers') throw httpError(400, 'Visão inválida.');
+  return view;
+}
+
+// Operational clients are Store customers plus explicitly confirmed benefits.
+// Unlinked Hub archives never constitute a second customer base.
+const customerPredicate = `(p.display->'sources' @> '[{"system":"store","kind":"customer"}]'::jsonb
+  OR p.category IN ('team','partner'))`;
 
 export function parseFilters(params) {
   const integer = (key, fallback, max) => {
@@ -27,23 +38,34 @@ export function parseFilters(params) {
   if (q.length > 120) throw httpError(400, 'Busca muito longa.');
   if (category && !categories.has(category)) throw httpError(400, 'Categoria inválida.');
   if (sportsStatus && !sportsStatuses.has(sportsStatus)) throw httpError(400, 'Situação esportiva inválida.');
-  return { q, category, sportsStatus, page: integer('page', 1, 100000), limit: integer('limit', 25, 100) };
+  const view = parseView(params);
+  if (view === 'customers' && sportsStatus) throw httpError(400, 'A situação do cliente vem da Store.');
+  return { q, category, sportsStatus, view, page: integer('page', 1, 100000), limit: integer('limit', 25, 100) };
 }
 
 export function createRepository(pool) {
   return {
-    async summary() {
+    async summary(view = '') {
       const { rows: [row] } = await pool.query(`SELECT i.as_of::text AS as_of,i.summary FROM eon_pilot.imports i
         JOIN eon_pilot.current_import c ON c.import_id=i.id`);
       if (!row) throw httpError(503, 'Importe o retrato reconciliado antes de abrir o piloto.');
+      if (view === 'customers') return {
+        asOf: row.as_of, people: row.summary.operationalPeople,
+        operationalPeople: row.summary.operationalPeople, activeStudents: row.summary.activeStudents,
+        benefits: row.summary.benefits, team: row.summary.team, partners: row.summary.partners,
+        storeOnLeave: row.summary.storeOnLeave, onLeave: row.summary.storeOnLeave,
+        isLiveCount: false, customerAuthority: 'store',
+      };
       return { ...row.summary, asOf: row.as_of, people: row.summary.totalPeople,
-        onLeave: row.summary.commercialOnLeave, needsAthleteProfile: row.summary.newAthleteProfiles };
+        onLeave: row.summary.storeOnLeave, needsAthleteProfile: row.summary.newAthleteProfiles };
     },
     async people(filters) {
       const values = [];
       const where = ['p.import_id=(SELECT import_id FROM eon_pilot.current_import)'];
       const add = (column, value) => { values.push(value); where.push(`${column}=$${values.length}`); };
-      if (filters.category) add('p.category', filters.category);
+      if (filters.view === 'customers') where.push(customerPredicate);
+      if (filters.view === 'customers' && filters.category === 'historical') where.push("p.category IN ('historical','review')");
+      else if (filters.category) add('p.category', filters.category);
       if (filters.sportsStatus) add('p.sports_status', filters.sportsStatus);
       if (filters.q.trim()) {
         values.push(`%${normalizeSearch(filters.q.trim()).replace(/[\\%_]/g, char => `\\${char}`)}%`);
@@ -59,14 +81,16 @@ export function createRepository(pool) {
           ORDER BY p.search_name,p.id LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
         [...values, filters.limit, (filters.page - 1) * filters.limit]);
         await client.query('COMMIT');
-        return { items: rows.map(row => row.display), total: count.total, page: filters.page, limit: filters.limit };
+        return { items: rows.map(row => filters.view === 'customers' ? customerPerson(row.display) : row.display),
+          total: count.total, page: filters.page, limit: filters.limit };
       } catch (error) { await client.query('ROLLBACK'); throw error; }
       finally { client.release(); }
     },
-    async person(id) {
-      const { rows: [row] } = await pool.query(`SELECT display FROM eon_pilot.people
-        WHERE import_id=(SELECT import_id FROM eon_pilot.current_import) AND id=$1`, [id]);
-      return row?.display ?? null;
+    async person(id, view = '') {
+      const { rows: [row] } = await pool.query(`SELECT p.display FROM eon_pilot.people p
+        WHERE p.import_id=(SELECT import_id FROM eon_pilot.current_import) AND p.id=$1
+        ${view === 'customers' ? `AND ${customerPredicate}` : ''}`, [id]);
+      return row ? (view === 'customers' ? customerPerson(row.display) : row.display) : null;
     },
   };
 }
@@ -86,12 +110,12 @@ export function createPilotServer(repository, { staticRoot = defaultStaticRoot }
         || request.headers['sec-fetch-site'] === 'cross-site') throw httpError(403, 'Este piloto está disponível somente no ambiente local.');
       if (request.method !== 'GET') { response.setHeader('Allow', 'GET'); throw httpError(405, 'O piloto permite apenas leitura.'); }
       const url = new URL(request.url, 'http://127.0.0.1:8787');
-      if (url.pathname === '/api/summary') return json(200, await repository.summary());
+      if (url.pathname === '/api/summary') return json(200, await repository.summary(parseView(url.searchParams)));
       if (url.pathname === '/api/people') return json(200, await repository.people(parseFilters(url.searchParams)));
       if (url.pathname.startsWith('/api/people/')) {
         const id = url.pathname.slice('/api/people/'.length);
         if (!uuid.test(id)) throw httpError(400, 'Identificador inválido.');
-        const person = await repository.person(id);
+        const person = await repository.person(id, parseView(url.searchParams));
         if (!person) throw httpError(404, 'Pessoa não encontrada.');
         return json(200, person);
       }

@@ -1,12 +1,15 @@
 # Piloto de pessoas — EON Hub
 
-Primeira etapa da unificação: um cadastro de pessoa reúne a identidade comercial da Store e os perfis esportivos do Hub, com origem e decisões rastreáveis. O piloto usa uma entrada Vite separada, uma API local de consulta e um PostgreSQL local. Não faz parte do build nem das rotas da aplicação atual.
+Primeira etapa da EON Hub: a Store continua sendo a base dos clientes, contratos, coach, modalidade e situação dos alunos. Do Hub será aproveitado o histórico de provas, testes e resultados. A experiência de uso é uma plataforma só, com as regras já existentes da Store.
+
+O piloto usa uma entrada Vite separada, uma API local de consulta e um PostgreSQL local. Não faz parte do build nem das rotas da aplicação atual. A reconciliação e os IDs antigos ficam nos controles técnicos; não aparecem como etapas ou conceitos para o usuário.
 
 ## Regras do cadastro
 
 - A pessoa pode ter perfil de atleta e papel de coach. Ter benefício da equipe não concede papel de coach nem permissão de acesso.
 - O vínculo é comercial, benefício da equipe ou parceria. Equipe e parceiros treinam sem cobrança e ficam fora da métrica **Alunos ativos**.
-- Situação esportiva e situação comercial são independentes. Licença comercial não define automaticamente a situação dos treinos. Alunos comerciais em licença continuam na métrica comercial conforme a regra da Store.
+- A situação apresentada vem da classificação existente em `src/pages/Customers.jsx`, incluindo suas regras de contratos e cobrança. O status do antigo Hub não controla cadastro, situação, coach ou modalidade. Status de contrato (como Cancelado e Concluído) permanece no detalhe do contrato, como já acontece na Store.
+- Alunos em licença continuam na métrica de alunos ativos conforme a regra da Store. Benefícios seguem fora dessa contagem. Não existe outra coluna de "status esportivo" nem marcação de elegibilidade para a contagem por pessoa.
 - Ligações entre identidades usam exclusivamente o mapa reconciliado. Não há deduplicação automática por nome, telefone ou contato compartilhado.
 - Duplicatas confirmadas conservam os IDs antigos como aliases. Identidades históricas ainda sem confirmação permanecem separadas e identificadas para revisão.
 - Saída confirmada encerra a participação projetada, preservando cadastro e referências. Não inventa data de saída nem transforma uma confirmação de saída em confirmação de identidade.
@@ -18,7 +21,7 @@ Requer Node 24, npm e Docker local. O script do banco cria um container identifi
 ```sh
 npm ci
 npm run pilot:db
-npm run pilot:import -- --snapshot /caminho/privado/mapeamento-revisado.json --manifest /caminho/privado/ensaio-migracao-manifesto.json
+npm run pilot:import -- --snapshot /caminho/privado/mapeamento-revisado.json --manifest /caminho/privado/ensaio-migracao-manifesto.json --store /caminho/privado/store-operacional-piloto.json
 npm run pilot:build
 npm run pilot:serve
 ```
@@ -30,10 +33,12 @@ O importador confere a integridade do snapshot contra o manifesto antes de grava
 Para experimentar sem o levantamento privado, substitua a importação pelos arquivos fictícios incluídos no projeto:
 
 ```sh
-npm run pilot:import -- --snapshot pilot/fixtures/synthetic-snapshot.json --manifest pilot/fixtures/synthetic-manifest.json
+npm run pilot:import -- --snapshot pilot/fixtures/synthetic-snapshot.json --manifest pilot/fixtures/synthetic-manifest.json --store pilot/fixtures/synthetic-store.json
 ```
 
 Cada importação guarda os hashes dos arquivos e da projeção produzida. Repetir a mesma importação não cria duplicatas; mudanças na projeção geram uma nova versão consultável, conservando as anteriores. O apontador da tela passa à última nova importação concluída.
+
+`--store` recebe uma projeção operacional mínima calculada na origem: situação, coach, modalidade e referência contratual, com a mesma data e exatamente os clientes do levantamento. A cobertura e a composição dos alunos ativos são conferidas antes de importar. O arquivo não contém valores, documentos, contatos ou lançamentos financeiros. Sem essa projeção, a situação fica desconhecida; não se tenta reconstruí-la usando o último contrato parcial ou o cadastro antigo do Hub.
 
 Os dados privados devem ficar fora do repositório ou em `pilot/.local/`. Não publicar este piloto com os dados reais em um deploy público. As fixtures de testes são inventadas e não derivadas de clientes reais.
 
@@ -42,6 +47,8 @@ Os dados privados devem ficar fora do repositório ou em `pilot/.local/`. Não p
 A referência reconciliada de 12/11/2026 projeta 225 alunos comerciais (incluindo oito em licença), 13 benefícios (sete da equipe e seis parceiros), quatro novos perfis esportivos e 73 cadastros históricos da Store sem identidade conciliada. São contagens do levantamento e das decisões; não são métricas ao vivo.
 
 O primeiro import preserva 974 identidades de origem em 709 cadastros provisórios: 339 clientes Store e 635 atletas Hub, com 262 ligações selecionadas e três aliases confirmados. Cadastros provisórios não equivalem a uma contagem definitiva de pessoas únicas: a revisão histórica continua pendente.
+
+A lista de uso diário (`view=customers`) contém os 339 clientes da Store e oito benefícios confirmados sem cadastro correspondente nela: 347 cadastros. Os outros cinco benefícios já estão entre os clientes da Store. Arquivos históricos do Hub não viram uma segunda base operacional de alunos. Pendências técnicas, fontes e decisões de reconciliação ficam fora dessa resposta e da tela.
 
 O banco de teste contém a projeção do cadastro, vínculos, referências de origem e decisões. **Atividades, voltas, testes, provas, arquivos, pagamentos e contas de acesso não foram migrados.** O histórico esportivo permanece no Hub; os IDs preservados permitem a próxima etapa. As propostas de status e novos perfis existem somente no piloto. Não há chamadas de escrita ao Supabase, Asaas, e-mail ou WhatsApp.
 

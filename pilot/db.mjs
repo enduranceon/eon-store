@@ -43,6 +43,7 @@ export function publicPerson(person) {
   // source snapshots are copied to the HTTP projection.
   return {
     id: person.id, name: person.name, category: person.category,
+    customerStatus: person.customerStatus ?? { key: 'unknown', label: 'Não informado', source: 'unresolved' },
     roles: person.roles, sportsStatus: person.sportsStatus ?? null,
     coach: person.coach ?? null, modality: person.modality ?? null,
     inActiveStudents: Boolean(person.inActiveStudents),
@@ -81,5 +82,27 @@ export function publicPerson(person) {
       authenticationMigrated: false,
       paymentsMigrated: false,
     },
+  };
+}
+
+/** Everyday customer view. Source reconciliation and Hub lifecycle stay in audit data. */
+export function customerPerson(person) {
+  return {
+    id: person.id, name: person.name,
+    category: person.category === 'review' ? 'historical' : person.category,
+    roles: person.roles,
+    customerStatus: person.customerStatus,
+    coach: person.coach ?? null, modality: person.modality ?? null,
+    inActiveStudents: Boolean(person.inActiveStudents),
+    memberships: person.memberships.map(membership => ({
+      category: membership.category, status: membership.status,
+      inActiveStudents: membership.inActiveStudents,
+      billingRequired: membership.billingRequired, chargeAmount: membership.chargeAmount,
+      financialStatus: membership.financialStatus,
+      contracts: (membership.contracts ?? []).map(contract => ({
+        number: contract.number, start: contract.start, end: contract.end,
+        status: contract.status, coach: contract.coach, modality: contract.modality,
+      })),
+    })),
   };
 }

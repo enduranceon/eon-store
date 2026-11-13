@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateDatabaseUrl, publicPerson } from './db.mjs';
+import { validateDatabaseUrl, publicPerson, customerPerson } from './db.mjs';
 import { readImport, importNormalized } from './import.mjs';
 
 const fixtures = fileURLToPath(new URL('./fixtures/', import.meta.url));
@@ -36,6 +36,19 @@ test('import verifies raw snapshot SHA before normalization', async () => {
   } finally { await rm(dir, { recursive: true }); }
 });
 
+test('operational Store input must name the canonical project and reconciled date', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'eon-pilot-store-'));
+  try {
+    const path = join(dir, 'store.json');
+    const validShape = { project: 'bsiljrrodgtmtdilnuxr', asOf: '2026-11-12', customers: [] };
+    for (const invalid of [{ ...validShape, project: 'another-project' }, { ...validShape, asOf: '2026-11-13' },
+      { ...validShape, customers: null }, null]) {
+      await writeFile(path, JSON.stringify(invalid));
+      await assert.rejects(readImport(snapshot, manifest, path), /canonical Store project/);
+    }
+  } finally { await rm(dir, { recursive: true }); }
+});
+
 test('HTTP projection excludes private fields while preserving benefit and source evidence', async () => {
   const data = await readImport(snapshot, manifest);
   const person = structuredClone(data.people.find(p => p.category === 'team'));
@@ -49,6 +62,21 @@ test('HTTP projection excludes private fields while preserving benefit and sourc
   assert.equal(JSON.stringify(projected).includes('private text'), false);
   assert.equal(JSON.stringify(projected).includes('private@example'), false);
   assert.equal(JSON.stringify(projected).includes('2000-01-01'), false);
+});
+
+test('customer projection preserves Store status without audit source IDs or Hub state', () => {
+  const customer = customerPerson({ id: 'local-id', name: 'Pessoa Fictícia', category: 'commercial', roles: ['athlete'],
+    customerStatus: { key: 'on_leave', label: 'Em licença', source: 'store' },
+    sportsStatus: 'active', coach: 'Coach Store', modality: 'triathlon', inActiveStudents: true,
+    memberships: [{ category: 'commercial', status: 'current', inActiveStudents: true,
+      contracts: [{ id: 'private-source-id', number: 'DEMO-1', start: '2026-10-01', end: '2027-04-01', status: 'on_leave' }] }],
+    sources: [{ id: 'private-source-id' }], decisions: [], metadata: { observedSportsStatus: 'active' } });
+  assert.equal(customer.customerStatus.key, 'on_leave');
+  assert.equal(customer.coach, 'Coach Store');
+  assert.equal(JSON.stringify(customer).includes('private-source-id'), false);
+  assert.equal('sportsStatus' in customer, false);
+  assert.equal('sources' in customer, false);
+  assert.equal('metadata' in customer, false);
 });
 
 test('import locks before writes, repeated snapshots skip and identity conflicts roll back', async () => {

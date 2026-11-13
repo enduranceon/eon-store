@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
+import { ACTIVE_CONTRACT_STATUSES } from '../supabase/functions/_shared/assessment-metrics/assessment-contract-lifecycle.js';
 
-const CURRENT_SPORTS = new Set(['active', 'on_leave']);
 const clone = value => structuredClone(value);
 const fail = message => { throw new Error(`Invalid pilot snapshot: ${message}`); };
 const indexed = (items, key, label) => {
@@ -13,6 +13,14 @@ const indexed = (items, key, label) => {
   return map;
 };
 
+// Labels are the existing src/pages/Customers.jsx labels. The optional Store
+// projection is calculated at source with that page's lifecycle/due-date rules;
+// no financial records are exported and no Hub field determines this status.
+const STORE_CUSTOMER_LABELS = {
+  active: 'Ativo', overdue: 'Inadimplente', on_leave: 'Em licença',
+  scheduled: 'Agendado', inactive: 'Inativo', none: null,
+};
+
 /** Stable identities are namespaced by source ID; names never establish identity. */
 export function personId(source, id) {
   const hex = createHash('sha256').update(`eon-local-pilot:v1:${source}:${id}`).digest('hex');
@@ -20,7 +28,7 @@ export function personId(source, id) {
 }
 
 /** Pure projection only. No database, production, billing, authentication or date-dependent I/O. */
-export function normalizeSnapshot(snapshot, manifest) {
+export function normalizeSnapshot(snapshot, manifest, storeOperationalSnapshot = null) {
   if (!snapshot || !manifest || !manifest.operations) fail('snapshot and manifest are required');
   const asOf = snapshot.as_of;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf ?? '') || manifest.input?.snapshot_reference_date !== asOf) {
@@ -28,6 +36,25 @@ export function normalizeSnapshot(snapshot, manifest) {
   }
   const storeRows = indexed((snapshot.store ?? []).map(row => ({ ...row, id: row.store?.id })), 'id', 'Store customer');
   const hubRows = indexed(snapshot.hub, 'id', 'Hub athlete');
+  let operationalCustomers = null;
+  if (storeOperationalSnapshot) {
+    if (storeOperationalSnapshot.asOf !== asOf || storeOperationalSnapshot.project !== 'bsiljrrodgtmtdilnuxr'
+      || storeOperationalSnapshot.rule !== 'Customers.jsx:getAssessmentStatus'
+      || !Array.isArray(storeOperationalSnapshot.customers)) {
+      fail('Store operational source is incomplete, from another project or reference date');
+    }
+    operationalCustomers = indexed(storeOperationalSnapshot.customers, 'customerId', 'Store operational customer');
+    if (operationalCustomers.size !== storeRows.size) fail('Store operational customer coverage differs');
+    for (const [id, customer] of operationalCustomers) {
+      if (!storeRows.has(id)) fail(`unscoped operational customer: ${id}`);
+      if (!Object.hasOwn(STORE_CUSTOMER_LABELS, customer.status) || typeof customer.onLeave !== 'boolean'
+        || typeof customer.countsAsActive !== 'boolean'
+        || customer.countsAsActive !== ACTIVE_CONTRACT_STATUSES.has(customer.status)) {
+        fail(`invalid Store operational customer projection: ${id}`);
+      }
+      if (customer.onLeave && !ACTIVE_CONTRACT_STATUSES.has(customer.status)) fail(`non-current Store leave: ${id}`);
+    }
+  }
   const ops = manifest.operations;
   const selected = indexed(ops.identity_link_proposals, 'store_customer_id', 'selected Store link');
   const creations = indexed(ops.new_athlete_proposals, 'store_customer_id', 'new athlete proposal');
@@ -110,7 +137,9 @@ export function normalizeSnapshot(snapshot, manifest) {
     benefits: people.filter(p => ['team', 'partner'].includes(p.category)).length,
     team: people.filter(p => p.category === 'team').length,
     partners: people.filter(p => p.category === 'partner').length,
-    commercialOnLeave: active.filter(p => p.sportsStatus === 'on_leave').length,
+    storeOnLeave: active.filter(p => p.metadata.storeOnLeave).length,
+    commercialOnLeave: active.filter(p => p.metadata.storeOnLeave).length,
+    operationalPeople: people.filter(p => p.storeAuthority || ['team', 'partner'].includes(p.category)).length,
     newAthleteProfiles: people.filter(p => p.needsAthleteProfile).length,
     historicalReview: holds.size,
     sourceLinks: people.reduce((n, p) => n + p.sources.length, 0),
@@ -129,7 +158,6 @@ export function normalizeSnapshot(snapshot, manifest) {
   for (const [expectedKey, actualKey] of Object.entries({
     projected_commercial_current_including_leave: 'activeStudents',
     benefits_excluded_from_active_students_metric: 'benefits',
-    projected_commercial_on_leave: 'commercialOnLeave',
     planned_new_athletes: 'newAthleteProfiles',
     historical_customers_without_selected_identity: 'historicalReview',
     selected_identity_links_all_customers: 'identityLinks',
@@ -169,24 +197,45 @@ export function normalizeSnapshot(snapshot, manifest) {
     const sportsStatus = sportChange?.proposed_status ?? hub?.status ?? (creation ? 'active' : null);
     if (sportsStatus && !['active', 'on_leave', 'cancelled'].includes(sportsStatus)) fail(`unsupported sports status: ${sportsStatus}`);
     const category = benefit ? (benefit.membership_category === 'equipe' ? 'team' : 'partner')
-      : commercialCurrent ? 'commercial' : hold ? 'review' : CURRENT_SPORTS.has(sportsStatus) ? 'review' : 'historical';
+      : commercialCurrent ? 'commercial' : hold ? 'review' : 'historical';
     const roles = [];
-    if (CURRENT_SPORTS.has(sportsStatus)) roles.push('athlete');
+    if (commercialCurrent || benefit) roles.push('athlete');
     if ((evidence?.planned_is_coach ?? part?.planned_is_coach) === true) roles.push('coach');
     const ids = new Set(sources.map(s => s.id));
     if (part?.hub_coach_id) ids.add(part.hub_coach_id);
     if (part?.store_coach_id) ids.add(part.store_coach_id);
     const decisions = [...allDecisions.values()].filter(d => ids.has(d.store_id) || ids.has(d.hub_id));
-    const contracts = clone(store?.active_contracts ?? []);
+    let contracts = clone(store?.active_contracts ?? []);
     const latest = store?.latest_contract ?? null;
     if (correction) {
       // Record the verified corrected reference; never replay the operation or invent its payment data.
       const contract = contracts.find(c => c.id === correction.contract_id);
       if (contract) Object.assign(contract, { start: correction.start_date, end: correction.end_date });
       else contracts.push({ id: correction.contract_id, number: correction.contract_number,
-        start: correction.start_date, end: correction.end_date, status: latest?.status ?? 'active',
-        coach: hub?.coach ?? latest?.coach ?? null, modality: hub?.modality ?? null,
+        start: correction.start_date, end: correction.end_date, status: latest?.status ?? null,
+        coach: latest?.coach ?? null, modality: latest?.modality ?? null,
         provenance: 'previously_applied_verified_correction' });
+    }
+    const currentContract = [...contracts].sort((a, b) => String(b.start ?? '').localeCompare(String(a.start ?? '')))[0];
+    const storeContract = commercialCurrent ? currentContract : latest;
+    let customerStatus = { key: null, label: null, source: 'unresolved' };
+    let operationalCoach = storeContract?.coach ?? null;
+    let operationalModality = storeContract?.modality ?? null;
+    let storeOnLeave = commercialCurrent && contracts.some(c => c.status === 'on_leave');
+    if (store && operationalCustomers) {
+      const customer = operationalCustomers.get(store.id);
+      if (ACTIVE_CONTRACT_STATUSES.has(customer.status) !== commercialCurrent) fail(`Store operational cohort drift: ${store.id}`);
+      customerStatus = { key: customer.status, label: STORE_CUSTOMER_LABELS[customer.status], source: 'store' };
+      storeOnLeave = customer.onLeave;
+      operationalCoach = customer.coach ?? null;
+      operationalModality = customer.modality ?? null;
+      contracts = customer.contractId ? [{ id: customer.contractId, number: customer.contractNumber,
+        status: customer.contractStatus, start: customer.start, end: customer.end,
+        coach: operationalCoach, modality: operationalModality,
+        provenance: 'store_operational_projection' }] : [];
+    }
+    if (benefit && (!store || (operationalCustomers ? operationalCustomers.get(store.id).status === 'none' : store.contract_count === 0))) {
+      customerStatus = { key: null, label: 'Sem contrato', source: 'confirmed_benefit' };
     }
     const memberships = [];
     if (store) memberships.push({ category: 'commercial', status: commercialCurrent ? 'current' : 'historical',
@@ -204,13 +253,15 @@ export function normalizeSnapshot(snapshot, manifest) {
     return {
       id: personId(store ? 'store' : 'hub', store?.id ?? hub.id),
       name: store?.name ?? hub.name,
+      storeAuthority: Boolean(store),
+      customerStatus,
+      // Technical audit compatibility only. Never expose sportsStatus as customer lifecycle.
       category, roles, sportsStatus,
-      coach: hub?.coach ?? contracts[0]?.coach ?? latest?.coach ?? null,
-      modality: hub?.modality ?? contracts[0]?.modality ?? null,
+      coach: operationalCoach,
+      modality: operationalModality,
       inActiveStudents: commercialCurrent && !benefit,
       needsAthleteProfile: Boolean(creation),
-      reviewReason: hold ? `Identidade histórica sem vínculo selecionado (${hold.reason}).`
-        : category === 'review' ? 'Participação esportiva sem vínculo comercial ou benefício confirmado.' : null,
+      reviewReason: hold ? `Identidade histórica sem vínculo selecionado (${hold.reason}).` : null,
       sources, memberships, decisions: clone(decisions),
       metadata: {
         storeCustomerCode: store?.customer_code ?? null,
@@ -219,6 +270,12 @@ export function normalizeSnapshot(snapshot, manifest) {
           : store ? 'historical' : 'not_applicable',
         observedSportsStatus: hub?.status ?? null,
         observedPortalStatus: hub?.portal_status ?? null,
+        hubProfiles: sources.filter(s => s.system === 'hub').map(s => ({
+          relationship: s.relationship, observed: clone(hubRows.get(s.id)),
+        })),
+        operationalAuthority: 'store',
+        storeOnLeave,
+        storeOperationalObservedAt: storeOperationalSnapshot?.observedAt ?? null,
         sportsStatusOrigin: sportChange ? 'user_decision' : creation ? 'planned_new_profile' : hub ? 'hub_snapshot' : null,
         sportsProfilePresent: Boolean(hub),
         sportsProfilePlanned: Boolean(creation),
