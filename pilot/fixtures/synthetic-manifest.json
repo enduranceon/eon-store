@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "mode": "synthetic_local_pilot",
+  "input": {
+    "file": "synthetic-snapshot.json",
+    "snapshot_reference_date": "2026-11-12",
+    "sha256": "a501413a68003336ee1edd08801e29d9f5e17a17538da2e4461cbb554977bc65"
+  },
+  "operations": {
+    "identity_link_proposals": [
+      {
+        "store_customer_id": "00000000-0000-4000-a000-000000000001",
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000101",
+        "commercial_current_after_recorded_corrections": true,
+        "evidence_level": "synthetic_explicit_mapping"
+      },
+      {
+        "store_customer_id": "00000000-0000-4000-a000-000000000004",
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000104",
+        "commercial_current_after_recorded_corrections": false,
+        "evidence_level": "synthetic_explicit_mapping"
+      },
+      {
+        "store_customer_id": "00000000-0000-4000-a000-000000000005",
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000105",
+        "commercial_current_after_recorded_corrections": true,
+        "evidence_level": "synthetic_explicit_mapping"
+      },
+      {
+        "store_customer_id": "00000000-0000-4000-a000-000000000006",
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000106",
+        "commercial_current_after_recorded_corrections": true,
+        "evidence_level": "synthetic_explicit_mapping"
+      }
+    ],
+    "new_athlete_proposals": [
+      {
+        "store_customer_id": "00000000-0000-4000-a000-000000000002",
+        "source_decision_id": "demo-new",
+        "create_auth_account": false,
+        "activate_portal": false
+      }
+    ],
+    "membership_benefit_assignments": [
+      {
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000104",
+        "membership_category": "parceiro",
+        "source_decision_id": "demo-benefit-104",
+        "expected_sporting_status": "active",
+        "expected_portal_status": null,
+        "charge_amount": 0,
+        "exclude_active_student_count": true
+      },
+      {
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000107",
+        "membership_category": "equipe",
+        "source_decision_id": "demo-benefit-107",
+        "expected_sporting_status": "active",
+        "expected_portal_status": "suspended",
+        "charge_amount": 0,
+        "exclude_active_student_count": true
+      },
+      {
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000108",
+        "membership_category": "equipe",
+        "source_decision_id": "demo-benefit-108",
+        "expected_sporting_status": "active",
+        "expected_portal_status": null,
+        "charge_amount": 0,
+        "exclude_active_student_count": true
+      }
+    ],
+    "sporting_status_proposals": [
+      {
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000101",
+        "expected_status": "active",
+        "expected_portal_status": "suspended",
+        "proposed_status": "on_leave",
+        "historical_effective_date": null,
+        "source_decision_id": "demo-sports-101"
+      },
+      {
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000103",
+        "expected_status": "active",
+        "expected_portal_status": null,
+        "proposed_status": "cancelled",
+        "historical_effective_date": null,
+        "source_decision_id": "demo-sports-103"
+      },
+      {
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000105",
+        "expected_status": "on_leave",
+        "expected_portal_status": null,
+        "proposed_status": "active",
+        "historical_effective_date": null,
+        "source_decision_id": "demo-sports-105"
+      },
+      {
+        "hub_athlete_id": "00000000-0000-4000-a000-000000000109",
+        "expected_status": "active",
+        "expected_portal_status": null,
+        "proposed_status": "cancelled",
+        "historical_effective_date": null,
+        "source_decision_id": "demo-sports-109"
+      }
+    ],
+    "birth_date_correction_proposals": [],
+    "confirmed_historical_aliases_to_preserve": [
+      {
+        "store_customer_id": "00000000-0000-4000-a000-000000000001",
+        "principal_hub_id": "00000000-0000-4000-a000-000000000101",
+        "preserve_historical_hub_ids": [
+          "00000000-0000-4000-a000-000000000102"
+        ],
+        "source_decision_id": "demo-alias"
+      }
+    ]
+  },
+  "previously_applied_do_not_replay": [
+    {
+      "store_id": "00000000-0000-4000-a000-000000000006",
+      "contract_id": "00000000-0000-4000-a000-000000001006",
+      "contract_number": "DEMO-6",
+      "decision_id": "demo-date",
+      "production_applied": true,
+      "lifecycle_active_after": true,
+      "start_date": "2026-10-23",
+      "end_date": "2027-04-23",
+      "applied_at": "2026-11-12T00:00:00Z"
+    }
+  ],
+  "historical_identity_hold_queue": [
+    {
+      "store_customer_id": "00000000-0000-4000-a000-000000000003",
+      "reason": "ambiguous_identity",
+      "candidate_hub_ids": [
+        "00000000-0000-4000-a000-000000000103"
+      ],
+      "auto_merge": false
+    }
+  ],
+  "summary": {
+    "projected_commercial_current_including_leave": 4,
+    "benefits_excluded_from_active_students_metric": 3,
+    "projected_commercial_on_leave": 1,
+    "planned_new_athletes": 1,
+    "historical_customers_without_selected_identity": 1,
+    "selected_identity_links_all_customers": 4,
+    "projected_all_with_sporting_status_active": 6
+  }
+}

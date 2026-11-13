@@ -10,7 +10,14 @@
     "test": "npm run test:unit && npm run test:edge",
     "test:unit": "node --test src/lib/*.test.js",
     "test:edge": "npx --yes deno@2.9.5 test --node-modules-dir=none --frozen --allow-env --deny-net supabase/functions/api-v1/ supabase/functions/coach-api/ supabase/functions/prepare-renewals/ supabase/functions/asaas-store-webhook/ supabase/functions/generate-monthly-closing/ supabase/functions/public-assessment-prospect/ supabase/functions/coach-match-admin/ supabase/functions/coach-match-form/ supabase/functions/public-coach-match/ supabase/functions/public-coach-waitlist/ supabase/functions/public-contact-request/ supabase/functions/public-plan-link/",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "pilot:db": "node pilot/setup-db.mjs",
+    "pilot:import": "node pilot/import.mjs",
+    "pilot:dev": "vite --config pilot/vite.config.mjs",
+    "pilot:build": "vite build --config pilot/vite.config.mjs",
+    "pilot:serve": "node pilot/server.mjs",
+    "pilot:test": "node --test pilot/*.test.mjs",
+    "pilot:test:browser": "playwright test --config pilot/playwright.config.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -47,6 +54,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.58.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
@@ -55,6 +63,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "pg": "8.16.3",
     "postcss": "^8.5.14",
     "tailwindcss": "^3.4.19",
     "vite": "^8.0.12"
