@@ -5,12 +5,19 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { markOrderShipped } from '@/api/client';
-import { parseShippingMoney, shipmentFormError } from '@/lib/order-shipping';
+import { ExternalChargeFields } from '@/components/billing/ExternalChargeForm';
+import CommunicationSendDialog from '@/components/CommunicationSendDialog';
+import { supabase } from '@/api/db';
+import { markOrderShipped, saveOrderExternalCharge } from '@/api/client';
+import { parseShippingMoney, shipmentFormError, shippingChargeFormError } from '@/lib/order-shipping';
 import { formatCurrency } from '@/lib/utils';
 
 function moneyText(value) {
   return value === null || value === undefined || value === '' ? '' : String(value).replace('.', ',');
+}
+
+function emptyChargeForm() {
+  return { link: '', due_date: '', payment_method: 'pix', invoice_number: '' };
 }
 
 // Marca o pedido com frete como Enviado: rastreio, quanto foi pago e quanto vai
@@ -22,6 +29,9 @@ export default function ShipOrderDialog({ open, onOpenChange, orderType, order, 
   const [price, setPrice] = useState('');
   const [priceTouched, setPriceTouched] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [chargeNow, setChargeNow] = useState(true);
+  const [chargeForm, setChargeForm] = useState(emptyChargeForm);
+  const [messageTask, setMessageTask] = useState(null);
   const alreadyShipped = ['shipped', 'delivered'].includes(order?.delivery_status);
 
   useEffect(() => {
@@ -30,6 +40,8 @@ export default function ShipOrderDialog({ open, onOpenChange, orderType, order, 
     setCost(moneyText(order?.shipping_cost));
     setPrice(moneyText(order?.shipping_cost));
     setPriceTouched(false);
+    setChargeNow(true);
+    setChargeForm(emptyChargeForm());
   }, [open, order?.tracking_code, order?.shipping_cost]);
 
   const changeCost = value => {
@@ -41,9 +53,13 @@ export default function ShipOrderDialog({ open, onOpenChange, orderType, order, 
   const error = shipmentFormError({ trackingCode, cost, price, chargeExists });
   const paid = parseShippingMoney(cost);
   const charged = chargeExists ? null : parseShippingMoney(price);
+  const willCharge = !chargeExists && Number.isFinite(charged) && charged > 0;
+  const collectNow = willCharge && chargeNow;
+  const chargeError = collectNow ? shippingChargeFormError(chargeForm) : null;
 
   const save = async () => {
     if (error) return toast.error(error);
+    if (chargeError) return toast.error(chargeError);
     setSaving(true);
     try {
       const result = await markOrderShipped(orderType, order.id, {
@@ -52,11 +68,37 @@ export default function ShipOrderDialog({ open, onOpenChange, orderType, order, 
         shippingPrice: chargeExists ? 0 : charged,
       });
       const charge = result?.shipping_charge;
-      toast.success(charge && !chargeExists
+      const created = Boolean(charge && !chargeExists);
+      toast.success(created
         ? `Enviado. Cobrança do frete ${charge.order_number || ''} criada (${formatCurrency(charge.total_value)}).`
         : alreadyShipped ? 'Envio atualizado.' : 'Pedido marcado como enviado.');
+
+      // O envio já foi gravado. Se o link falhar, a cobrança do frete existe e
+      // pode ser completada na própria cobrança; nada se perde.
+      let linked = false;
+      if (created && collectNow) {
+        try {
+          // Versão atual da cobrança recém-criada (evita conflito de edição).
+          const { data: fresh } = await supabase.from('stock_orders')
+            .select('updated_date, created_date').eq('id', charge.id).maybeSingle();
+          await saveOrderExternalCharge('stock', charge.id, {
+            externalLink: chargeForm.link.trim(),
+            dueDate: chargeForm.due_date,
+            paymentMethod: chargeForm.payment_method,
+            invoiceNumber: chargeForm.invoice_number.trim() || null,
+            expectedUpdatedAt: fresh?.updated_date || fresh?.created_date || charge.updated_date || charge.created_date,
+          });
+          linked = true;
+          toast.success('Link da cobrança do frete salvo.');
+        } catch (linkError) {
+          toast.error(`${linkError.message || 'Não foi possível salvar o link'}. O envio foi registrado; complete o link na cobrança do frete.`);
+        }
+      }
       onOpenChange(false);
       onShipped?.(result);
+      if (linked) {
+        setMessageTask({ sourceType: 'stock', sourceId: charge.id, kind: 'charge_send', sourceUi: 'ship_dialog' });
+      }
     } catch (e) {
       toast.error(e.message || 'Não foi possível registrar o envio');
     } finally {
@@ -108,15 +150,42 @@ export default function ShipOrderDialog({ open, onOpenChange, orderType, order, 
               {' '}O que você pagou entra como despesa da loja no Financeiro.
             </p>
           )}
+          {willCharge && (
+            <div className="space-y-3 rounded-lg border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={chargeNow} disabled={saving}
+                  onChange={event => setChargeNow(event.target.checked)} />
+                Já cobrar agora
+              </label>
+              {chargeNow ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Gere a cobrança no Asaas e cole o link aqui. Ao salvar, abre a mensagem de cobrança para enviar à pessoa.
+                  </p>
+                  <ExternalChargeFields form={chargeForm} setForm={setChargeForm} saving={saving} />
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  A cobrança fica aguardando o link em Cobranças, como hoje.
+                </p>
+              )}
+            </div>
+          )}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-            <Button onClick={save} disabled={saving || Boolean(error)}>
+            <Button onClick={save} disabled={saving || Boolean(error) || Boolean(chargeError)}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
               {alreadyShipped ? 'Salvar' : 'Marcar como enviado'}
             </Button>
           </div>
         </div>
       </DialogContent>
+      <CommunicationSendDialog
+        task={messageTask}
+        onClose={() => setMessageTask(null)}
+        onChanged={() => onShipped?.()}
+        onSent={() => setMessageTask(null)}
+      />
     </Dialog>
   );
 }

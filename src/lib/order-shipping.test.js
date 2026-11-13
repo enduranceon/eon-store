@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  shippingChargeFormError,
   currentShippingCharge,
   isShippingCharge,
   parseShippingMoney,
@@ -66,4 +67,12 @@ test('the order card says where the shipping charge is', () => {
   assert.deepEqual(shippingChargeTag({ payment_status: 'paid' }), { label: 'Frete pago', tone: 'green' });
   assert.equal(shippingChargeTag({ payment_status: 'cancelled' }), null);
   assert.equal(shippingChargeTag(null), null);
+});
+
+test('shippingChargeFormError confere link, vencimento e forma', () => {
+  const ok = { link: 'https://www.asaas.com/i/abc', due_date: '2026-11-20', payment_method: 'pix' };
+  assert.equal(shippingChargeFormError(ok), null);
+  assert.match(shippingChargeFormError({ ...ok, link: 'abc' }), /link/);
+  assert.match(shippingChargeFormError({ ...ok, due_date: '' }), /vencimento/);
+  assert.match(shippingChargeFormError({ ...ok, payment_method: '' }), /forma/);
 });
