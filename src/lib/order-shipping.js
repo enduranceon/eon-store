@@ -3,6 +3,8 @@
 // frete: um pedido da loja só com o item "Frete", ligado ao pedido de origem
 // (shipping_parent_type/id). Quem grava é mark_order_shipped; aqui só se lê.
 
+import { isSafePaymentUrl } from './sales.js';
+
 export const SHIPPING_MONEY_MAX = 100000;
 export const TRACKING_CODE_MAX = 80;
 
@@ -33,6 +35,15 @@ export function shipmentFormError({ trackingCode = '', cost, price, chargeExists
   if (chargeExists) return null;
   const charged = parseShippingMoney(price);
   if (!Number.isFinite(charged) || charged > SHIPPING_MONEY_MAX) return 'Informe quanto vai cobrar (0 para frete grátis)';
+  return null;
+}
+
+// Confere o link, o vencimento e a forma da cobrança do frete criada no envio.
+// Devolve a mensagem do primeiro erro ou null.
+export function shippingChargeFormError({ link = '', due_date: dueDate = '', payment_method: method = '' } = {}) {
+  if (!isSafePaymentUrl(String(link).trim())) return 'Informe um link de pagamento válido começando com https://';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dueDate || ''))) return 'Informe o vencimento da cobrança do frete';
+  if (!String(method || '').trim()) return 'Informe a forma da cobrança do frete';
   return null;
 }
 

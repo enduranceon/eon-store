@@ -23,6 +23,17 @@ no cartão "Envio e frete" do pedido):
 comum (`update_order_fulfillment`) também aceita Enviado, mas só em pedido com
 frete; na tela, Enviado sai sempre pela janela do envio.
 
+## Cobrar na hora do envio
+
+Ao marcar como enviado (ou em "Cobrar frete" depois), com valor a cobrar maior
+que zero, a janela mostra "Já cobrar agora" (ligado por padrão): forma, link,
+número da fatura e vencimento. O link vem do Asaas, gerado a mão; o sistema não
+cria nada no provedor. Ao salvar, grava o envio, cria a cobrança do frete, salva
+o link nela (`PUT /orders/stock/:id/external-charge`) e abre a mensagem de
+cobrança (`charge_send`, `source_ui = ship_dialog`). Desmarcando, a cobrança
+fica aguardando o link em Cobranças, como antes. Se o link falhar, o envio e a
+cobrança já existem e o link se completa na própria cobrança.
+
 ## Cobrança do frete
 
 Com valor a cobrar maior que zero, nasce um pedido da loja só com o item
