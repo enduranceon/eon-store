@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { ArrowRight, ArrowUpRight, ChevronLeft, ChevronRight, Clock3, FileClock, HeartHandshake, LockKeyhole, Search, UsersRound, X } from 'lucide-react';
 import './styles.css';
 
-const categoryLabels = { commercial: 'Aluno', team: 'Equipe', partner: 'Parceiro', historical: 'Cadastro antigo' };
-const groupLabels = { commercial: 'Alunos', team: 'Equipe', partner: 'Parceiros', historical: 'Cadastros antigos' };
+const categoryLabels = { commercial: 'Aluno', team: 'Equipe', partner: 'Parceiro', historical: 'Cliente' };
+const groupLabels = { commercial: 'Alunos', team: 'Equipe', partner: 'Parceiros', historical: 'Outros cadastros' };
 const contractLabels = { active: 'Ativo', on_leave: 'Em licença', overdue: 'Atrasado', scheduled: 'Agendado', finished: 'Concluído', cancelled: 'Cancelado', voided: 'Descartado', draft: 'Prospect' };
 const modalityLabels = { run: 'Corrida', both: 'Corrida e triathlon', bike: 'Ciclismo', swim: 'Natação', trail_run: 'Trail running', running: 'Corrida', corrida: 'Corrida', triathlon: 'Triathlon', cycling: 'Ciclismo', ciclismo: 'Ciclismo', swimming: 'Natação', natacao: 'Natação' };
 const formatNumber = (number) => Number.isFinite(number) ? new Intl.NumberFormat('pt-BR').format(number) : '—';
