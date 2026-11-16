@@ -34,3 +34,9 @@ dist-ssr
 # Local Netlify folder
 .netlify
 supabase/.temp/
+
+# Isolated unification pilot: credentials, imported customer data and captures
+pilot/.local/
+pilot-dist/
+test-results/
+playwright-report/

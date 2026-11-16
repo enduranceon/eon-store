@@ -1,0 +1,87 @@
+{
+  "asOf": "2026-11-12",
+  "project": "bsiljrrodgtmtdilnuxr",
+  "observedAt": "2026-11-12T12:00:00Z",
+  "scope": "entirely_invented_test_fixture",
+  "customers": [
+    {
+      "customerId": "00000000-0000-4000-a000-000000000001",
+      "status": "on_leave",
+      "onLeave": true,
+      "coach": "Coach Exemplo",
+      "modality": "corrida",
+      "contractId": "00000000-0000-4000-a000-000000001001",
+      "contractNumber": "DEMO-1",
+      "contractStatus": "on_leave",
+      "start": "2026-10-01",
+      "end": "2027-04-01",
+      "countsAsActive": true
+    },
+    {
+      "customerId": "00000000-0000-4000-a000-000000000002",
+      "status": "active",
+      "onLeave": false,
+      "coach": "Coach Exemplo",
+      "modality": "corrida",
+      "contractId": "00000000-0000-4000-a000-000000001002",
+      "contractNumber": "DEMO-2",
+      "contractStatus": "active",
+      "start": "2026-10-01",
+      "end": "2027-04-01",
+      "countsAsActive": true
+    },
+    {
+      "customerId": "00000000-0000-4000-a000-000000000003",
+      "status": "inactive",
+      "onLeave": false,
+      "coach": "Coach Exemplo",
+      "modality": "corrida",
+      "contractId": "00000000-0000-4000-a000-000000001003",
+      "contractNumber": "DEMO-3",
+      "contractStatus": "active",
+      "start": "2026-10-01",
+      "end": "2026-10-31",
+      "countsAsActive": false
+    },
+    {
+      "customerId": "00000000-0000-4000-a000-000000000004",
+      "status": "inactive",
+      "onLeave": false,
+      "coach": "Coach Exemplo",
+      "modality": "corrida",
+      "contractId": "00000000-0000-4000-a000-000000001004",
+      "contractNumber": "DEMO-4",
+      "contractStatus": "finished",
+      "start": "2026-10-01",
+      "end": "2027-04-01",
+      "countsAsActive": false
+    },
+    {
+      "customerId": "00000000-0000-4000-a000-000000000005",
+      "status": "active",
+      "onLeave": false,
+      "coach": "Coach Exemplo",
+      "modality": "corrida",
+      "contractId": "00000000-0000-4000-a000-000000001005",
+      "contractNumber": "DEMO-5",
+      "contractStatus": "active",
+      "start": "2026-10-01",
+      "end": "2027-04-01",
+      "countsAsActive": true
+    },
+    {
+      "customerId": "00000000-0000-4000-a000-000000000006",
+      "status": "active",
+      "onLeave": false,
+      "coach": "Coach Exemplo",
+      "modality": "corrida",
+      "contractId": "00000000-0000-4000-a000-000000001006",
+      "contractNumber": "DEMO-6",
+      "contractStatus": "active",
+      "start": "2026-10-23",
+      "end": "2027-04-23",
+      "countsAsActive": true
+    }
+  ],
+  "rule": "Customers.jsx:getAssessmentStatus"
+}
