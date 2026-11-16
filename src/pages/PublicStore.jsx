@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import CouponInput from '@/components/CouponInput';
 import { computeDiscount } from '@/lib/coupon';
+import { PICKUP_CITY, checkoutDelivery } from '@/lib/checkout-delivery';
 import {
   findStockVariation,
   hasStockVariations,
@@ -68,7 +69,7 @@ export default function PublicStore() {
   const [selectedQuantity, setSelectedQuantity] = useState(1);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('Todos');
-  const [form, setForm] = useState({ name: '', whatsapp: '', email: '', payment_method: '', delivery_method: '', delivery_city: '' });
+  const [form, setForm] = useState({ name: '', whatsapp: '', email: '', payment_method: '' });
   const [submitting, setSubmitting] = useState(false);
   const [appliedCoupon, setAppliedCoupon] = useState(null);
 
@@ -236,8 +237,6 @@ export default function PublicStore() {
     if (cleanWhatsapp.length < 10 || cleanWhatsapp.length > 11) return toast.error('WhatsApp inválido. Informe DDD + número');
     if (cart.length === 0) return toast.error('Adicione produtos ao carrinho');
     if (!form.payment_method) return toast.error('Selecione a forma de pagamento');
-    if (!form.delivery_method) return toast.error('Selecione a forma de entrega');
-    if (form.delivery_method === 'pickup' && !form.delivery_city) return toast.error('Selecione a cidade de retirada');
 
     setSubmitting(true);
     try {
@@ -247,10 +246,7 @@ export default function PublicStore() {
           whatsapp: cleanWhatsapp,
           email: form.email,
         },
-        delivery: {
-          method: form.delivery_method,
-          city: form.delivery_city || null,
-        },
+        delivery: checkoutDelivery(),
         payment_preference: form.payment_method,
         coupon_code: appliedCoupon?.code || null,
         items: cart.map(i => ({
@@ -472,31 +468,15 @@ export default function PublicStore() {
               <div className="px-5 py-4 border-b border-gray-100">
                 <h3 className="font-bold text-gray-900">Forma de entrega</h3>
               </div>
-              <div className="px-5 py-4 space-y-3">
-                {[
-                  { value: 'pickup', label: 'Retirada em Treino Coletivo', desc: 'Retire no treino coletivo da sua cidade' },
-                  { value: 'shipping', label: 'Frete', desc: 'Valor calculado e enviado via WhatsApp' },
-                ].map(opt => (
-                  <label key={opt.value} className={cn('flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all', form.delivery_method === opt.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300')}>
-                    <input type="radio" name="delivery_method" value={opt.value} checked={form.delivery_method === opt.value}
-                      onChange={() => setForm(f => ({ ...f, delivery_method: opt.value, delivery_city: '' }))} className="mt-0.5 accent-blue-600" />
-                    <div className="flex-1">
-                      <p className="font-semibold text-gray-900 text-sm">{opt.label}</p>
-                      {form.delivery_method === opt.value && opt.value === 'pickup' && (
-                        <div className="flex gap-2 mt-3">
-                          {['Florianópolis', 'São Paulo'].map(city => (
-                            <button key={city} type="button" onClick={() => setForm(f => ({ ...f, delivery_city: city }))}
-                              className={cn('flex-1 py-2 px-3 rounded-xl text-sm font-semibold border-2 transition-all',
-                                form.delivery_city === city ? 'border-blue-500 bg-blue-500 text-white' : 'border-gray-200 text-gray-600 hover:border-blue-300'
-                              )}>
-                              {city}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </label>
-                ))}
+              <div className="px-5 py-4">
+                {/* Única forma de entrega: todo treino coletivo é em Florianópolis e não há frete */}
+                <div className="flex items-start gap-3 p-4 rounded-xl border-2 border-blue-500 bg-blue-50">
+                  <CheckCircle2 className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">Retirada em Treino Coletivo</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Retire seu pedido no treino coletivo de {PICKUP_CITY}</p>
+                  </div>
+                </div>
               </div>
             </div>
 
