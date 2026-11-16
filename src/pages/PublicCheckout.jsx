@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import CouponInput from '@/components/CouponInput';
 import { computeDiscount } from '@/lib/coupon';
+import { defaultGender } from '@/lib/checkout-gender';
 
 const extrasTotal = (extras) => (extras || []).reduce((s, e) => s + (e.price || 0), 0);
 
@@ -742,7 +743,8 @@ function ProductCard({ product: p, cart, onAdd, onQty, onOpen }) {
   const hasVars     = variations.length > 0;
   const productExtras = p.extras || [];
 
-  const [selGender, setSelGender] = useState(null);
+  // Produto com um gênero só (ex.: cropped feminino) já abre com ele escolhido.
+  const [selGender, setSelGender] = useState(() => defaultGender(genders));
   const [selVar,    setSelVar]    = useState(null);
   const [qty,       setQty]       = useState(1);
   const [selExtras, setSelExtras] = useState(() =>
@@ -769,7 +771,10 @@ function ProductCard({ product: p, cart, onAdd, onQty, onOpen }) {
   const requiredMet  = productExtras.filter(e => e.required).every(r => selExtras.find(e => e.name === r.name));
   const selectedExtrasCost = extrasTotal(selExtras);
 
-  const handleGender = (g) => { setSelGender(g === selGender ? null : g); setSelVar(null); setQty(1); };
+  const handleGender = (g) => {
+    if (genders.length === 1) return; // único gênero: não há o que desmarcar
+    setSelGender(g === selGender ? null : g); setSelVar(null); setQty(1);
+  };
   const handleSize   = (v) => { setSelVar(selVar?.name === v.name ? null : v); setQty(1); };
   const handleAdd    = () => { onAdd(p, selVar, qty, selExtras); setSelVar(null); setQty(1); };
 
@@ -1032,7 +1037,8 @@ function ProductDetailModal({ product: p, cart, onAdd, onQty, onClose }) {
   const hasVars        = variations.length > 0;
   const productExtras  = p.extras || [];
 
-  const [selGender, setSelGender] = useState(null);
+  // Produto com um gênero só (ex.: cropped feminino) já abre com ele escolhido.
+  const [selGender, setSelGender] = useState(() => defaultGender(genders));
   const [selVar,    setSelVar]    = useState(null);
   const [qty,       setQty]       = useState(1);
   const [imgIdx,    setImgIdx]    = useState(0);
@@ -1062,7 +1068,10 @@ function ProductDetailModal({ product: p, cart, onAdd, onQty, onClose }) {
   const requiredMet        = productExtras.filter(e => e.required).every(r => selExtras.find(e => e.name === r.name));
   const selectedExtrasCost = extrasTotal(selExtras);
 
-  const handleGender = (g) => { setSelGender(g === selGender ? null : g); setSelVar(null); setQty(1); };
+  const handleGender = (g) => {
+    if (genders.length === 1) return; // único gênero: não há o que desmarcar
+    setSelGender(g === selGender ? null : g); setSelVar(null); setQty(1);
+  };
   const handleSize   = (v) => { setSelVar(selVar?.name === v.name ? null : v); setQty(1); };
   const handleAdd    = () => { onAdd(p, selVar, qty, selExtras); setSelVar(null); setQty(1); };
 
