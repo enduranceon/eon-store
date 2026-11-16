@@ -1221,9 +1221,14 @@ export default function ContractDetail() {
     && !contract.renewal_generated
     && !isNonRenewalReason(contract.cancellation_reason)
     && ['active', 'overdue', 'on_leave', 'finished'].includes(contract.status);
+  // No mensal quase todo contrato é uma renovação, e o mês corrente costuma estar
+  // com a cobrança em aberto: renovação que já começou também aceita "Não renovar".
+  // A venda de renovação ainda não iniciada sai pela tela de Renovações.
+  const isStartedRenewal = isRenewalContract(contract)
+    && !!contract.start_date && contract.start_date <= todayLocalStr();
   const canMarkNoRenewal = canCancel
-    && !isUnpaid
-    && !contract.parent_contract_id
+    && (!isUnpaid || isStartedRenewal)
+    && (!contract.parent_contract_id || isStartedRenewal)
     && ['active', 'overdue', 'on_leave'].includes(contract.status)
     && !String(contract.cancellation_reason || '').trim()
     && !contract.cancellation_date
@@ -1349,6 +1354,20 @@ export default function ContractDetail() {
         );
       })()}
 
+      {/* Banner: aluno avisou que não vai renovar (vigência segue até o fim) */}
+      {isNonRenewalReason(contract.cancellation_reason)
+        && ['active', 'overdue', 'on_leave'].includes(contract.status) && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <Ban className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+          <div>
+            <p className="text-sm font-semibold text-amber-900">Não vai renovar</p>
+            <p className="text-xs text-amber-800 mt-0.5">
+              O contrato segue ativo até {formatDate(contract.end_date)} e não gera nova renovação. Sem multa ou estorno.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Banner de licença ativa */}
       {contract.status === 'on_leave' && (() => {
         const activeLeave = leaves.find(l => l.status === 'active');
@@ -1434,10 +1453,15 @@ export default function ContractDetail() {
               )}
               <button
                 onClick={toggleAutoRenewal}
-                disabled={!contract.auto_renewal && !allowsAutoRenewal({ period_months: planVal('period_months'), period: planVal('period') })}
-                title={!contract.auto_renewal && !allowsAutoRenewal({ period_months: planVal('period_months'), period: planVal('period') })
-                  ? AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE
-                  : undefined}
+                disabled={!contract.auto_renewal && (
+                  !allowsAutoRenewal({ period_months: planVal('period_months'), period: planVal('period') })
+                  || isNonRenewalReason(contract.cancellation_reason)
+                )}
+                title={!contract.auto_renewal && isNonRenewalReason(contract.cancellation_reason)
+                  ? 'O aluno avisou que não vai renovar'
+                  : !contract.auto_renewal && !allowsAutoRenewal({ period_months: planVal('period_months'), period: planVal('period') })
+                    ? AUTO_RENEWAL_MONTHLY_ONLY_MESSAGE
+                    : undefined}
                 className={`text-xs font-semibold px-2.5 py-1 rounded-full border transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
                   contract.auto_renewal
                     ? 'bg-green-100 text-green-700 border-green-300 hover:bg-green-200'
@@ -2192,7 +2216,18 @@ export default function ContractDetail() {
               : <>O contrato permanece ativo até <b>{formatDate(contract.end_date)}</b>.</>}
           </p>
           <p className="text-muted-foreground">Não haverá multa, estorno ou nova cobrança.</p>
+          {contract.auto_renewal && (
+            <p>A renovação automática será desligada.</p>
+          )}
+          {isUnpaid && (
+            <p className="text-muted-foreground">A cobrança desta vigência continua valendo.</p>
+          )}
         </div>
+        {(contract.auto_renewal || contract.asaas_subscription_id) && (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            O sistema não cancela nada no Asaas. Se a pessoa tem uma assinatura mensal lá, cancele a assinatura no Asaas para não gerar a próxima cobrança.
+          </p>
+        )}
       </ConfirmDialog>
 
       {/* MODAL: licença */}
