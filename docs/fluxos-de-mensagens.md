@@ -334,6 +334,18 @@ flowchart TD
 - "Não vou renovar": depois do encerramento seguro, abre a despedida
   (agradece e pede um feedback). O envio fica no histórico do contrato
   (`renewal_farewell_sent`), sem mudar o resultado.
+- Aviso antecipado de que não vai renovar (desde 16/11/2026): quando a pessoa já
+  avisou antes de a renovação nascer, a ficha do contrato tem o botão "Não
+  renovar" (`mark_assessment_contract_non_renewal`), que registra "Não renovou"
+  com `cancellation_date` = fim da vigência, sem multa nem estorno. O contrato
+  segue ativo até o fim, a automática é desligada junto e nenhuma renovação
+  (manual ou automática) nasce, nem entra no quadro. Vale também para renovação
+  que já começou, com a cobrança do mês em aberto (no mensal quase todo contrato
+  é uma renovação); a cobrança do mês continua valendo. A venda de renovação que
+  ainda não começou sai pela tela de Renovações. Quem tem "Não renovou" não
+  aparece em "Conferir assinaturas no Asaas". O sistema não cancela a assinatura
+  no Asaas: o aviso do botão lembra de cancelá-la lá. Migração
+  `20261116120000_non_renewal_on_started_renewal.sql`.
 - "Vou renovar": cadastro da cobrança e a mensagem "Sua renovação está
   confirmada". Na Central, a primeira cobrança da renovação usa o mesmo texto
   (modelo `billing-renewal-confirmed`); depois vale a régua da Cobrança.
