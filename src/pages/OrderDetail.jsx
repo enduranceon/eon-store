@@ -18,6 +18,8 @@ import { supabase } from '@/api/db';
 import { formatCurrency, formatDate, todayLocalStr } from '@/lib/utils';
 import { loadActivePaymentMethods, createManualInstallments, adjustManualInstallmentsValue, reopenManualPayment } from '@/lib/manual-payment';
 import { isSafePaymentUrl, publicTrackingToken } from '@/lib/sales';
+import CancelOrderEffects, { notifyOrderCancelled } from '@/components/orders/CancelOrderEffects';
+import DeliveryDateWarning from '@/components/orders/DeliveryDateWarning';
 import { phoneDigitsForWhatsApp } from '@/lib/phone';
 import ManualPaymentForm from '@/components/ManualPaymentForm';
 import CommunicationSendDialog from '@/components/CommunicationSendDialog';
@@ -578,6 +580,9 @@ export default function OrderDetail() {
     setExternalChargeSaving(true);
     try {
       const hadExternalLink = Boolean(order?.external_payment_link);
+      // Link novo depois do envio: a pessoa ainda tem o link antigo.
+      const replacedSentLink = hadExternalLink && Boolean(order?.payment_message_sent_at)
+        && order.external_payment_link !== link;
       await saveOrderExternalCharge('presale', id, {
         externalLink: link,
         dueDate: externalChargeForm.due_date,
@@ -585,7 +590,11 @@ export default function OrderDetail() {
         invoiceNumber: externalChargeForm.invoice_number.trim() || null,
         expectedUpdatedAt: order?.updated_date || order?.created_date,
       });
-      toast.success(hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa cadastrada!');
+      if (replacedSentLink) {
+        toast.warning('Link trocado. A pessoa ainda tem o link antigo: reenvie a cobrança com o link novo.', { duration: 12000 });
+      } else {
+        toast.success(hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa cadastrada!');
+      }
       setExternalChargeModal(false);
       await load();
     } catch (error) {
@@ -753,9 +762,11 @@ export default function OrderDetail() {
 
     setCancelOrderLoading(true);
     try {
-      await cancelOrderViaApi('presale', id, reason);
+      // O cancelamento limpa o link da fatura do pedido: guarda o que a pessoa vai precisar ver.
+      const cancelledOrder = order;
+      const result = await cancelOrderViaApi('presale', id, reason);
 
-      toast.success('Pedido cancelado.');
+      notifyOrderCancelled(cancelledOrder, result, 'presale');
       setCancelOrderModal(false);
       load();
     } catch (e) {
@@ -1236,10 +1247,10 @@ export default function OrderDetail() {
           <div className="space-y-4">
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 flex gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>
-                Esta ação cancela <strong>todo</strong> o pedido. Se houver cobrança Asaas ativa, ela será cancelada também.
-                Esta ação não pode ser desfeita pelo sistema.
-              </span>
+              <div className="space-y-2">
+                <CancelOrderEffects order={order} orderType="presale" />
+                <p>Esta ação não pode ser desfeita pelo sistema.</p>
+              </div>
             </div>
 
             <div>
@@ -2006,6 +2017,7 @@ export default function OrderDetail() {
             <div>
               <Label>Data de Entrega</Label>
               <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="mt-1" />
+              <DeliveryDateWarning date={deliveryDate} order={order} today={todayLocalStr()} />
             </div>
           </div>
           {deliveryStatus === 'cancelled' && order.delivery_status !== 'cancelled' && (

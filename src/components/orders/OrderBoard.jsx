@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import ShipOrderDialog from '@/components/orders/ShipOrderDialog';
+import DeliveryDateWarning from '@/components/orders/DeliveryDateWarning';
 import { updateOrderFulfillment } from '@/api/client';
 import { fulfillmentStatus } from '@/lib/order-fulfillment';
 import { nextFulfillmentStep } from '@/lib/order-board';
@@ -212,6 +213,7 @@ export default function OrderBoard({ board, hasFilters, onOpen, onChanged }) {
                 <Label htmlFor="order-board-delivery-date">Data da entrega</Label>
                 <Input id="order-board-delivery-date" type="date" className="mt-1" value={deliveryDate}
                   max={todayLocalStr()} onChange={event => setDeliveryDate(event.target.value)} />
+                <DeliveryDateWarning date={deliveryDate} order={pending.order} today={todayLocalStr()} />
               </div>
             )}
             {pending.order.payment_status !== 'paid' && (

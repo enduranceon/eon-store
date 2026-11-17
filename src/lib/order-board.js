@@ -21,7 +21,7 @@ export const ORDER_BOARD_COLUMNS = Object.freeze([
   { id: 'to_separate', title: 'A separar', hint: 'Pago e com o produto disponível.', dot: 'bg-violet-500', badge: 'bg-violet-100 text-violet-700' },
   { id: 'ready', title: 'Pronto para entregar', hint: 'Separado, falta entregar, retirar ou enviar.', dot: 'bg-orange-500', badge: 'bg-orange-100 text-orange-800' },
   { id: 'shipped', title: 'Enviado', hint: 'Saiu pelo correio; falta chegar.', dot: 'bg-sky-500', badge: 'bg-sky-100 text-sky-800' },
-  { id: 'delivered', title: 'Entregue', hint: `Últimos ${DELIVERED_WINDOW_DAYS} dias.`, dot: 'bg-green-500', badge: 'bg-green-100 text-green-700' },
+  { id: 'delivered', title: 'Entregue', hint: `Últimos ${DELIVERED_WINDOW_DAYS} dias. Sem pagamento, fica até pagar.`, dot: 'bg-green-500', badge: 'bg-green-100 text-green-700' },
   { id: 'cancelled', title: 'Cancelados', hint: 'Cobrança cancelada, reembolsada ou entrega interrompida.', dot: 'bg-red-400', badge: 'bg-red-100 text-red-700' },
 ]);
 
@@ -107,19 +107,36 @@ export function orderCardSignals(order, today) {
   return signals;
 }
 
+// Aviso (não bloqueia) para a data de entrega digitada: no futuro, ou antes de o
+// pedido existir. Venda lançada depois da entrega pode ter data anterior de
+// verdade, por isso só avisa. Caso EST-000086: pedido criado em 05/11 marcado
+// como entregue em 10/10, e o quadro o escondeu como "entregue antigo".
+export function deliveryDateWarning(date, order, today) {
+  const value = localDate(date);
+  if (!value) return null;
+  if (today && value > today) return 'A data de entrega está no futuro. Confira o dia e o mês.';
+  const created = localDate(order?.created_date);
+  if (created && value < created) {
+    const [year, month, day] = created.split('-');
+    return `A data é anterior à criação do pedido (${day}/${month}/${year}). Se a entrega foi mesmo antes, tudo bem; senão, confira o dia e o mês.`;
+  }
+  return null;
+}
+
 function deliveredOn(order) {
   return localDate(order.delivery_date || order.status_changed_at || order.updated_date || order.created_date);
 }
 
 // Monta as colunas. Entregues antigos e cancelados ficam de fora (contados),
-// para o quadro mostrar só o que ainda pede ação.
+// para o quadro mostrar só o que ainda pede ação. Entregue e ainda sem pagamento
+// ainda pede ação (cobrar), então não sai do quadro por ser antigo.
 export function buildOrderBoard(orders, { today, showCancelled = false, deliveredWindowDays = DELIVERED_WINDOW_DAYS } = {}) {
   const buckets = new Map(ORDER_BOARD_COLUMNS.map(column => [column.id, []]));
   let olderDelivered = 0;
   for (const order of orders) {
     if (isShippingCharge(order)) continue;
     const column = orderBoardColumn(order);
-    if (column === 'delivered') {
+    if (column === 'delivered' && order.payment_status === 'paid') {
       const age = daysBetween(deliveredOn(order), today);
       if (age !== null && age > deliveredWindowDays) {
         olderDelivered += 1;

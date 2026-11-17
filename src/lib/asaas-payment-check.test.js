@@ -202,6 +202,36 @@ test('the invoice must belong to the CPF of the sale or the CNPJ in the person r
   assert.equal(open.kind, 'open', 'an open charge is not blocked by the CPF check');
 });
 
+test('each reason the CPF cannot be checked tells what to do', () => {
+  const cases = [
+    ['no_customer', /não está ligada a uma pessoa cadastrada[\s\S]*Vincule a pessoa/],
+    ['no_person_document', /sem CPF na ficha[\s\S]*Preencha o CPF/],
+    ['no_asaas_document', /cliente da fatura no Asaas está sem CPF\/CNPJ/],
+  ];
+  for (const [customerCheck, reason] of cases) {
+    const item = classifyAsaasCheck(order(), checked(fact(), null, customerCheck), methods, TODAY);
+    assert.equal(item.kind, 'review', `${customerCheck} is held for review`);
+    assert.match(item.reason, reason);
+    assert.doesNotMatch(item.reason, /Não deu para conferir o CPF/, `${customerCheck} is not the generic message`);
+  }
+});
+
+test('a paid carnê also says why the CPF could not be checked', () => {
+  const carneOrder = order({ carne: null });
+  const parcels = [1, 2, 3].map(number => fact({
+    status: number === 1 ? 'RECEIVED' : 'PENDING',
+    billing_type: 'BOLETO',
+    value: 200,
+    installment_number: number,
+  }));
+  const noCustomer = classifyAsaasCheck(carneOrder, checked(parcels[0], parcels, 'no_customer'), methods, TODAY);
+  assert.equal(noCustomer.kind, 'review');
+  assert.match(noCustomer.reason, /Vincule a pessoa/);
+  const unknown = classifyAsaasCheck(carneOrder, checked(parcels[0], parcels, 'unknown'), methods, TODAY);
+  assert.equal(unknown.kind, 'review');
+  assert.match(unknown.reason, /registre pelas parcelas do contrato/);
+});
+
 test('second check before saving keeps only what did not change in Asaas', () => {
   const orders = [order({ id: 'same' }), order({ id: 'refunded' }), order({ id: 'new-date' })];
   const first = summarizeAsaasCheck(orders, orders.map(item => ({ ...checked(fact()), id: item.id })), methods, TODAY);
