@@ -43,6 +43,22 @@ const CHECK_RESULT_REASONS = {
   not_checked: 'Não deu tempo de consultar esta cobrança. Confira de novo.',
 };
 
+// Por que o CPF da fatura não pôde ser conferido, dito de um jeito que aponta o
+// que fazer. `how` fecha a frase genérica (onde registrar na mão).
+const CUSTOMER_CHECK_REASONS = {
+  mismatch: 'A fatura no Asaas é de outra pessoa (CPF/CNPJ diferente). Confira o link salvo nesta venda ou cadastre o CNPJ na ficha da pessoa.',
+  no_customer: 'Esta venda não está ligada a uma pessoa cadastrada, então não há CPF para conferir. Vincule a pessoa na tela da venda e confira de novo.',
+  no_person_document: 'A pessoa desta venda está sem CPF na ficha. Preencha o CPF (ou o CNPJ, se pagou pela empresa) e confira de novo.',
+  no_asaas_document: 'O cliente da fatura no Asaas está sem CPF/CNPJ, então não dá para conferir. Confira no Asaas e registre manualmente.',
+};
+
+// Motivo para segurar a venda para conferência, ou null quando o CPF/CNPJ confere.
+export function customerCheckProblem(customerCheck, how) {
+  if (['match', 'match_cnpj'].includes(customerCheck)) return null;
+  return CUSTOMER_CHECK_REASONS[customerCheck]
+    || `Não deu para conferir o CPF do cliente no Asaas. Confira e registre ${how}.`;
+}
+
 const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const cents = value => Math.round((Number(value) || 0) * 100);
 
@@ -139,12 +155,8 @@ export function classifyAsaasCheck(order, check, methods, today) {
 
   // A fatura precisa ser do CPF da pessoa ou do CNPJ cadastrado na ficha dela:
   // pega link colado na venda errada.
-  if (check.customer_check === 'mismatch') {
-    return review('A fatura no Asaas é de outra pessoa (CPF/CNPJ diferente). Confira o link salvo nesta venda ou cadastre o CNPJ na ficha da pessoa.');
-  }
-  if (!['match', 'match_cnpj'].includes(check.customer_check)) {
-    return review('Não deu para conferir o CPF do cliente no Asaas. Confira e registre pelo "Receber".');
-  }
+  const customerProblem = customerCheckProblem(check.customer_check, 'pelo "Receber"');
+  if (customerProblem) return review(customerProblem);
 
   const billingTypes = [...new Set(facts.map(fact => fact?.billing_type))];
   const billingType = billingTypes.length === 1 ? billingTypes[0] : null;
@@ -186,17 +198,12 @@ export function classifyAsaasCheck(order, check, methods, today) {
   };
 }
 
-const CUSTOMER_REASONS = {
-  mismatch: 'A fatura no Asaas é de outra pessoa (CPF/CNPJ diferente). Confira o link salvo nesta venda ou cadastre o CNPJ na ficha da pessoa.',
-  other: 'Não deu para conferir o CPF do cliente no Asaas. Confira e registre pelas parcelas do contrato.',
-};
-
 // Carnê: o que registrar agora são as parcelas pagas no Asaas que ainda não
 // foram registradas aqui. Se o carnê ainda não foi importado, a importação vem
 // junto, no mesmo passo.
 function classifyCarne({ base, review, order, facts, check, today }) {
-  if (check.customer_check === 'mismatch') return review(CUSTOMER_REASONS.mismatch);
-  if (!['match', 'match_cnpj'].includes(check.customer_check)) return review(CUSTOMER_REASONS.other);
+  const customerProblem = customerCheckProblem(check.customer_check, 'pelas parcelas do contrato');
+  if (customerProblem) return review(customerProblem);
 
   const asaasTotal = facts.reduce((sum, fact) => sum + (Number(fact?.value) || 0), 0);
   if (Math.abs(cents(asaasTotal) - cents(order.total_value)) > Math.max(1, facts.length)) {

@@ -22,6 +22,8 @@ import {
   findPreferredPaymentMethod,
 } from '@/lib/manual-payment';
 import { isSafePaymentUrl } from '@/lib/sales';
+import CancelOrderEffects, { notifyOrderCancelled } from '@/components/orders/CancelOrderEffects';
+import DeliveryDateWarning from '@/components/orders/DeliveryDateWarning';
 import { defaultAsaasDueDate, defaultPaymentDueDate } from '@/lib/payment-methods';
 import {
   fulfillmentDefinition,
@@ -350,9 +352,11 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
 
     setCancelOrderLoading(true);
     try {
-      await cancelOrder('stock', id, reason.trim());
+      // O cancelamento limpa o link da fatura do pedido: guarda o que a pessoa vai precisar ver.
+      const cancelledOrder = order;
+      const result = await cancelOrder('stock', id, reason.trim());
       setCancelOrderModal(false);
-      toast.success('Pedido cancelado. As peças voltaram para o estoque.');
+      notifyOrderCancelled(cancelledOrder, result, 'stock');
       load();
     } catch (e) {
       toast.error(e.message || 'Erro ao cancelar o pedido');
@@ -439,6 +443,9 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
     setExternalChargeSaving(true);
     try {
       const hadExternalLink = Boolean(order?.external_payment_link);
+      // Link novo depois do envio: a pessoa ainda tem o link antigo.
+      const replacedSentLink = hadExternalLink && Boolean(order?.payment_message_sent_at)
+        && order.external_payment_link !== link;
       await saveOrderExternalCharge('stock', id, {
         externalLink: link,
         dueDate: externalChargeForm.due_date,
@@ -446,7 +453,11 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
         invoiceNumber: externalChargeForm.invoice_number.trim() || null,
         expectedUpdatedAt: order?.updated_date || order?.created_date,
       });
-      toast.success(hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa cadastrada!');
+      if (replacedSentLink) {
+        toast.warning('Link trocado. A pessoa ainda tem o link antigo: reenvie a cobrança com o link novo.', { duration: 12000 });
+      } else {
+        toast.success(hadExternalLink ? 'Cobrança externa atualizada!' : 'Cobrança externa cadastrada!');
+      }
       setExternalChargeModal(false);
       onChanged?.();
       await load();
@@ -884,10 +895,10 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
             <DialogTitle className="flex items-center gap-2 text-red-600"><X className="w-5 h-5" /> Cancelar pedido</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              O pedido inteiro será cancelado e as peças reservadas <strong>voltam para o estoque</strong>.
-              Se houver cobrança em aberto, ela também é cancelada. Esta ação não pode ser desfeita pela tela.
-            </p>
+            <div className="text-sm text-muted-foreground space-y-2">
+              <CancelOrderEffects order={order} orderType="stock" />
+              <p>Esta ação não pode ser desfeita pela tela.</p>
+            </div>
             <div className="space-y-1.5">
               {CANCEL_REASONS.map(r => (
                 <button key={r} type="button" onClick={() => setCancelOrderReason(r)}
@@ -1369,6 +1380,7 @@ export default function StockOrderDetail({ orderId, embedded = false, onChanged 
             <div>
               <Label>Data de Entrega</Label>
               <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="mt-1" />
+              <DeliveryDateWarning date={deliveryDate} order={order} today={todayLocalStr()} />
             </div>
           </div>
           )}

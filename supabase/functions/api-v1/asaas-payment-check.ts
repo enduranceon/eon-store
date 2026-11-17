@@ -64,10 +64,17 @@ export type AsaasCheckResult =
 // CPF do cliente da fatura no Asaas x CPF do cliente da venda. Só o
 // resultado sai da rota; os CPFs ficam no servidor.
 // match: CPF da pessoa; match_cnpj: CNPJ cadastrado da pessoa (pagou pela empresa).
+// Sem comparação possível, o motivo diz o que falta para a tela orientar:
+// no_customer: a venda não está ligada a uma pessoa (compra pública ainda sem
+// vínculo); no_person_document: a pessoa está sem CPF e sem CNPJ na ficha;
+// no_asaas_document: o cliente da fatura no Asaas está sem CPF/CNPJ.
 export type CustomerCheck =
   | "match"
   | "match_cnpj"
   | "mismatch"
+  | "no_customer"
+  | "no_person_document"
+  | "no_asaas_document"
   | "unknown"
   | "skipped";
 
@@ -256,10 +263,13 @@ async function loadCustomerDocuments(
     .select("id, cpf, cnpj")
     .in("id", ids);
   if (error) throw error;
+  // A pessoa entra mesmo sem CPF/CNPJ: "sem pessoa" e "pessoa sem documento"
+  // pedem ações diferentes de quem confere.
   for (const customer of (data ?? []) as Record<string, unknown>[]) {
-    const cpf = digits(customer.cpf);
-    const cnpj = digits(customer.cnpj);
-    if (cpf || cnpj) documents.set(String(customer.id), { cpf, cnpj });
+    documents.set(String(customer.id), {
+      cpf: digits(customer.cpf),
+      cnpj: digits(customer.cnpj),
+    });
   }
   return documents;
 }
@@ -267,10 +277,16 @@ async function loadCustomerDocuments(
 // Uma consulta por cliente do Asaas, mesmo que ele tenha várias cobranças.
 async function compareCustomer(
   asaasCustomerId: unknown,
+  customerId: unknown,
   local: CustomerDocuments | undefined,
   cache: Map<string, Promise<string>>,
 ): Promise<CustomerCheck> {
-  if (!local || typeof asaasCustomerId !== "string" || !asaasCustomerId) {
+  // O que falta do lado da venda vem antes e dispensa a consulta ao Asaas.
+  if (typeof customerId !== "string" || !customerId || !local) {
+    return "no_customer";
+  }
+  if (!local.cpf && !local.cnpj) return "no_person_document";
+  if (typeof asaasCustomerId !== "string" || !asaasCustomerId) {
     return "unknown";
   }
   if (!cache.has(asaasCustomerId)) {
@@ -282,7 +298,7 @@ async function compareCustomer(
     );
   }
   const asaasDocument = await cache.get(asaasCustomerId)!;
-  if (!asaasDocument) return "unknown";
+  if (!asaasDocument) return "no_asaas_document";
   if (local.cpf && asaasDocument === local.cpf) return "match";
   if (local.cnpj && asaasDocument === local.cnpj) return "match_cnpj";
   return "mismatch";
@@ -327,6 +343,7 @@ async function checkOrder(
     const customerCheck = paid
       ? await compareCustomer(
         lookup.payment.customer,
+        row.customer_id,
         localDocuments,
         customerCache,
       )

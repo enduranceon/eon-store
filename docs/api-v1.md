@@ -393,10 +393,17 @@ valor em alguma parcela, o registro usa a projeção do método de pagamento.
 Em cobranças pagas, a rota também compara o documento do cliente da fatura no
 Asaas com o CPF do cliente da venda e com o CNPJ opcional da ficha dele
 (`presale_customers.cnpj`, para quem paga pela empresa) e devolve só
-`customer_check` (`match` = CPF, `match_cnpj` = CNPJ cadastrado, `mismatch`,
-`unknown`; `skipped` nas que não foram pagas). Os documentos não saem do
-servidor. O painel só deixa registrar com `match` ou `match_cnpj`, e avisa na
-confirmação quando foi pago com o CNPJ.
+`customer_check` (`match` = CPF, `match_cnpj` = CNPJ cadastrado, `mismatch`;
+`skipped` nas que não foram pagas). Quando não há como comparar, o valor diz o
+que falta: `no_customer` (a venda não está ligada a uma pessoa; é o caso da
+compra pública da loja ou da pré-venda antes de a equipe vincular o cadastro),
+`no_person_document` (a pessoa está sem CPF e sem CNPJ na ficha),
+`no_asaas_document` (o cliente da fatura no Asaas está sem CPF/CNPJ) e
+`unknown` (o Asaas não informou o cliente da cobrança). Nos dois primeiros a
+rota nem consulta o cliente no Asaas. Os documentos não saem do servidor. O
+painel só deixa registrar com `match` ou `match_cnpj`, mostra o motivo de cada
+caso em "Precisam de conferência" e avisa na confirmação quando foi pago com o
+CNPJ.
 
 Antes de gravar, o painel chama a rota de novo só para as vendas escolhidas e
 registra apenas as que continuam iguais (forma, data, total e parcelas) ao que

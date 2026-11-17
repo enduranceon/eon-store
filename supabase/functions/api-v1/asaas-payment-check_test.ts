@@ -523,10 +523,95 @@ Deno.test("the CPF is compared only for paid charges", async () => {
     );
     const { data } = await response!.json();
     assert(
-      data.results[0].customer_check === "unknown",
-      "sale without CPF cannot be compared",
+      data.results[0].customer_check === "no_customer",
+      "sale without a person cannot be compared",
     );
   });
+});
+
+Deno.test("when the CPF cannot be compared the reason says what is missing", async () => {
+  const STOCK_NO_PERSON = "99999999-9999-4999-8999-999999999999";
+  const STOCK_PERSON_NO_CPF = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  TABLE_ROWS.stock_orders.push(
+    {
+      id: STOCK_NO_PERSON,
+      payment_status: "charge_sent",
+      external_payment_link: "https://www.asaas.com/i/pedidosempessoa001",
+      asaas_charge_id: null,
+      customer_id: null,
+    },
+    {
+      id: STOCK_PERSON_NO_CPF,
+      payment_status: "charge_sent",
+      external_payment_link: "https://www.asaas.com/i/pessoasemcpf000001",
+      asaas_charge_id: null,
+      customer_id: "cust-sem-cpf",
+    },
+  );
+  TABLE_ROWS.presale_customers.push({ id: "cust-sem-cpf", cpf: null });
+  const respond = (url: URL) => {
+    if (url.pathname.startsWith("/v3/payments/pay_")) {
+      return json(asaasPayment());
+    }
+    return asaasCustomer(url) ??
+      json({ errors: [{ description: "rota inesperada" }] }, 500);
+  };
+  const run = async (orders: { type: string; id: string }[]) => {
+    const { client } = fakeDatabase();
+    const response = await handleAsaasPaymentCheckRequest(
+      checkRequest(orders),
+      "/asaas/payment-check",
+      client,
+    );
+    return (await response!.json()).data.results as {
+      id: string;
+      customer_check: string;
+    }[];
+  };
+  try {
+    await withAsaas(respond, async (calls) => {
+      const results = await run([
+        { type: "stock", id: STOCK_NO_PERSON },
+        { type: "stock", id: STOCK_PERSON_NO_CPF },
+      ]);
+      const byId = Object.fromEntries(
+        results.map((item) => [item.id, item.customer_check]),
+      );
+      assert(
+        byId[STOCK_NO_PERSON] === "no_customer",
+        "store order without a linked person",
+      );
+      assert(
+        byId[STOCK_PERSON_NO_CPF] === "no_person_document",
+        "person without CPF or CNPJ",
+      );
+      assert(
+        calls.every((call) => !call.url.pathname.startsWith("/v3/customers/")),
+        "no Asaas customer lookup when the sale side is already missing",
+      );
+    });
+
+    const withoutAsaasDocument = (url: URL) =>
+      url.pathname === "/v3/payments/pay_pixpago0000000001"
+        ? json(asaasPayment({ customer: "cus_sem_documento" }))
+        : url.pathname === "/v3/customers/cus_sem_documento"
+        ? json({ id: "cus_sem_documento", cpfCnpj: null })
+        : json({ errors: [{ description: "rota inesperada" }] }, 500);
+    await withAsaas(withoutAsaasDocument, async () => {
+      const [result] = await run([{ type: "contract", id: CONTRACT_PAID }]);
+      assert(
+        result.customer_check === "no_asaas_document",
+        "Asaas customer without a document",
+      );
+    });
+  } finally {
+    TABLE_ROWS.stock_orders = TABLE_ROWS.stock_orders.filter((row) =>
+      row.id !== STOCK_NO_PERSON && row.id !== STOCK_PERSON_NO_CPF
+    );
+    TABLE_ROWS.presale_customers = TABLE_ROWS.presale_customers.filter((row) =>
+      row.id !== "cust-sem-cpf"
+    );
+  }
 });
 
 Deno.test("one failing charge does not hide the others", async () => {

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildOrderBoard,
+  deliveryDateWarning,
   nextFulfillmentStep,
   orderBoardColumn,
   orderCardSignals,
@@ -103,4 +104,30 @@ test('the board hides old deliveries and cancelled orders unless asked', () => {
   assert.deepEqual(byId.delivered.items.map(item => item.order.order_number), ['C']);
   const withCancelled = buildOrderBoard(orders, { today: '2026-10-13', showCancelled: true });
   assert.equal(withCancelled.columns.at(-1).items[0].order.order_number, 'E');
+});
+
+test('a delivered order that is still unpaid stays on the board however old it is', () => {
+  // Caso EST-000086: entregue sem pagamento e com a data de entrega antiga. O quadro
+  // o escondia como "entregue antigo" e a cobrança vencida sumia da vista.
+  const orders = [
+    order({ order_number: 'PAID-OLD', payment_status: 'paid', delivery_status: 'delivered', delivery_date: '2026-08-01' }),
+    order({ order_number: 'OPEN-OLD', payment_status: 'charge_sent', delivery_status: 'delivered', delivery_date: '2026-08-01' }),
+    order({ order_number: 'PARTIAL-OLD', payment_status: 'partially_paid', delivery_status: 'delivered', delivery_date: '2026-08-01' }),
+  ];
+  const board = buildOrderBoard(orders, { today: '2026-10-13' });
+  const delivered = board.columns.find(column => column.id === 'delivered');
+  assert.deepEqual(delivered.items.map(item => item.order.order_number).sort(), ['OPEN-OLD', 'PARTIAL-OLD']);
+  assert.ok(delivered.items.every(item => item.signals.unpaid), 'the card flags the missing payment');
+  assert.equal(board.olderDelivered, 1, 'only the paid old delivery is counted as hidden');
+});
+
+test('a delivery date that looks wrong gets a warning but is not blocked', () => {
+  const created = order({ created_date: '2026-11-05T16:55:40Z' });
+  // Caso EST-000086: criado em 05/11, entrega digitada como 10/10.
+  assert.match(deliveryDateWarning('2026-10-10', created, '2026-11-17'), /anterior à criação do pedido \(05\/11\/2026\)/);
+  assert.match(deliveryDateWarning('2026-12-01', created, '2026-11-17'), /no futuro/);
+  assert.equal(deliveryDateWarning('2026-11-05', created, '2026-11-17'), null, 'same day as the order is fine');
+  assert.equal(deliveryDateWarning('2026-11-17', created, '2026-11-17'), null, 'today is fine');
+  assert.equal(deliveryDateWarning('', created, '2026-11-17'), null, 'no date, no warning');
+  assert.equal(deliveryDateWarning('2026-10-10', {}, '2026-11-17'), null, 'unknown creation date cannot be compared');
 });
